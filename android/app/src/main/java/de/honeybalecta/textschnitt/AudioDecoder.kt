@@ -83,7 +83,9 @@ object AudioDecoder {
     }
 
     class FloatBuf(cap: Int) {
-        private var a = FloatArray(cap); var n = 0; private set
+        private var a = FloatArray(cap)
+        var n = 0
+            private set
         fun add(x: Float) { if (n == a.size) a = a.copyOf(a.size * 2); a[n++] = x }
         fun toArray(): FloatArray = a.copyOf(n)
     }

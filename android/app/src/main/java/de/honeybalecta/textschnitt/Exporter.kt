@@ -82,7 +82,9 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
             )
         }
         require(mainItems.isNotEmpty()) { "Nach dem Schnitt bleibt nichts übrig." }
-        val mainSeq = EditedMediaItemSequence.Builder(mainItems).build()
+        // Ton und Bild ausdrücklich: Einschübe ohne Tonspur bekommen so Stille statt eines Fehlers
+        val mainSeq = EditedMediaItemSequence.Builder(setOf(C.TRACK_TYPE_AUDIO, C.TRACK_TYPE_VIDEO))
+            .addItems(mainItems).build()
 
         // Overlays (B-Roll / Bild-im-Bild)
         val ovs = plan.optJSONArray("overlays") ?: JSONArray()
