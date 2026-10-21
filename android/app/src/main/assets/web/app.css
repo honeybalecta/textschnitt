@@ -88,6 +88,9 @@ input[type=number]{width:72px}
 .transcript p{margin:0 0 1em}
 .transcript .ts{display:block;font:11px var(--mono);color:var(--muted);margin-bottom:2px}
 .tk{border-radius:4px;padding:1px 2px}
+.transcript{-webkit-touch-callout:none}
+.transcript.dragging{cursor:text}
+.transcript.dragging .tk.sel{box-shadow:0 0 0 2px var(--honig)}
 .tk.low{text-decoration:underline dotted var(--muted);text-underline-offset:4px}
 .tk.filler{color:var(--honig-d)}
 .tk.pause{font:12px var(--mono);color:var(--muted);border:1px dashed var(--line);padding:1px 7px;border-radius:20px;white-space:nowrap;vertical-align:1px}

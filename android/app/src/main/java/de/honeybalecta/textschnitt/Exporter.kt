@@ -167,22 +167,34 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
     private fun finish() {
         job.message = "Speichere in der Galerie …"
         Thread {
+            var uri: Uri? = null
             try {
-                val name = plan.optString("name", "Textschnitt").ifBlank { "Textschnitt" } + ".mp4"
+                val base = plan.optString("name", "Textschnitt").ifBlank { "Textschnitt" }
+                    .replace(Regex("[\\\\/:*?\"<>|]"), "_").take(80)
+                val stamp = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.GERMANY).format(java.util.Date())
+                val name = "${base}_$stamp.mp4"
+                val now = System.currentTimeMillis()
                 val values = ContentValues().apply {
                     put(MediaStore.Video.Media.DISPLAY_NAME, name)
+                    put(MediaStore.Video.Media.TITLE, base)
                     put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
-                    put(MediaStore.Video.Media.RELATIVE_PATH, "Movies/Textschnitt")
+                    put(MediaStore.Video.Media.RELATIVE_PATH, "DCIM/Textschnitt")
+                    put(MediaStore.Video.Media.DATE_TAKEN, now)
+                    put(MediaStore.Video.Media.DATE_ADDED, now / 1000)
+                    put(MediaStore.Video.Media.DATE_MODIFIED, now / 1000)
                     put(MediaStore.Video.Media.IS_PENDING, 1)
                 }
                 val coll = MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-                val uri = ctx.contentResolver.insert(coll, values) ?: throw IllegalStateException("Galerie nicht erreichbar")
-                ctx.contentResolver.openOutputStream(uri)!!.use { out -> outFile.inputStream().use { it.copyTo(out, 1 shl 20) } }
+                uri = ctx.contentResolver.insert(coll, values) ?: throw IllegalStateException("Galerie nicht erreichbar")
+                ctx.contentResolver.openOutputStream(uri, "w")!!.use { out -> outFile.inputStream().use { it.copyTo(out, 1 shl 20) } }
                 values.clear(); values.put(MediaStore.Video.Media.IS_PENDING, 0)
                 ctx.contentResolver.update(uri, values, null, null)
                 outFile.delete()
-                job.done(JSONObject().put("uri", uri.toString()).put("name", name))
-            } catch (e: Throwable) { job.fail(e) }
+                job.done(JSONObject().put("uri", uri.toString()).put("name", name).put("folder", "DCIM/Textschnitt"))
+            } catch (e: Throwable) {
+                uri?.let { runCatching { ctx.contentResolver.delete(it, null, null) } }
+                job.fail(e)
+            }
         }.start()
     }
 

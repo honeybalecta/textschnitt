@@ -419,23 +419,94 @@ function paint(i){
   if (t.type === 'pause'){ const d = (t.e - t.s).toFixed(1).replace('.', ','), tr = P.trims[i];
     sp.classList.toggle('trim', tr != null && !deleted.has(i)); sp.textContent = tr != null ? `⏸ ${d}→${String(tr).replace('.', ',')}` : `⏸ ${d}`; }
 }
+// Antippen/Klicken: erstes Wort, zweites Wort = Bereich; Umschalt+Klick erweitert.
+// Ziehen: Maus mit gedrückter Taste, Finger nach kurzem Gedrückthalten.
+let dragSuppressClick = false;
 $('#transcript').addEventListener('click', e => {
+  if (dragSuppressClick){ dragSuppressClick = false; return; }
   const sp = e.target.closest('.tk'); if (!sp) return;
   const i = +sp.dataset.i;
-  if (selA == null){ selA = selB = i; }
+  if (e.shiftKey && selA != null){ selB = i; }
+  else if (selA == null){ selA = selB = i; }
   else if (i >= Math.min(selA, selB) && i <= Math.max(selA, selB) && selA !== selB){ selA = selB = i; }
   else if (selA === selB && i === selA){ clearSel(); return; }
   else selB = i;
   showSel();
   if (!playing){ const t = tokens[i]; seekOut(srcToOut(snapSrc(t.ws ?? t.s)), false); }
 });
+const TDrag = { on:false, anchor:null, moved:false, timer:0, x:0, y:0, scroller:null, auto:0, lastX:0, lastY:0 };
+function tokAt(x, y){
+  let el = document.elementFromPoint(x, y); let sp = el && el.closest && el.closest('#transcript .tk');
+  if (sp) return +sp.dataset.i;
+  // zwischen Wörtern oder am Zeilenrand: nächstgelegenes Wort derselben Zeile suchen
+  for (const dx of [-12, 12, -28, 28, -60, 60]){ el = document.elementFromPoint(x + dx, y); sp = el && el.closest && el.closest('#transcript .tk'); if (sp) return +sp.dataset.i; }
+  return null;
+}
+function scrollParent(el){ for (let n = el.parentElement; n; n = n.parentElement){ const o = getComputedStyle(n).overflowY; if ((o === 'auto' || o === 'scroll') && n.scrollHeight > n.clientHeight) return n; } return document.scrollingElement; }
+function dragBegin(i, x, y){
+  TDrag.on = true; TDrag.anchor = i; TDrag.moved = false; TDrag.lastX = x; TDrag.lastY = y;
+  TDrag.scroller = scrollParent($('#transcript'));
+  selA = selB = i; showSel(); $('#transcript').classList.add('dragging');
+  autoScroll();
+}
+function dragMove(x, y){
+  if (!TDrag.on) return; TDrag.lastX = x; TDrag.lastY = y;
+  const i = tokAt(x, y); if (i == null || i === selB) return;
+  TDrag.moved = true; selA = TDrag.anchor; selB = i; showSel();
+}
+function dragEnd(){
+  if (!TDrag.on) return; TDrag.on = false; cancelAnimationFrame(TDrag.auto); $('#transcript').classList.remove('dragging');
+  if (TDrag.moved){ dragSuppressClick = true; setTimeout(() => dragSuppressClick = false, 400); }
+  if (!playing && selA != null){ const t = tokens[Math.min(selA, selB)]; seekOut(srcToOut(snapSrc(t.ws ?? t.s)), false); }
+}
+function autoScroll(){
+  if (!TDrag.on) return;
+  const sc = TDrag.scroller, r = sc === document.scrollingElement ? {top:0, bottom:innerHeight} : sc.getBoundingClientRect();
+  const edge = 56, y = TDrag.lastY; let dy = 0;
+  if (y < r.top + edge) dy = -Math.ceil((r.top + edge - y) / 5); else if (y > r.bottom - edge) dy = Math.ceil((y - (r.bottom - edge)) / 5);
+  if (dy){ sc.scrollTop += dy; dragMove(TDrag.lastX, TDrag.lastY); }
+  TDrag.auto = requestAnimationFrame(autoScroll);
+}
+// Maus / Stift
+$('#transcript').addEventListener('pointerdown', e => {
+  if (e.pointerType === 'touch' || e.button !== 0) return;
+  const sp = e.target.closest('.tk'); if (!sp) return;
+  TDrag.x = e.clientX; TDrag.y = e.clientY; TDrag.pending = +sp.dataset.i; TDrag.shift = e.shiftKey;
+});
+window.addEventListener('pointermove', e => {
+  if (e.pointerType === 'touch') return;
+  if (TDrag.pending != null && !TDrag.on && (e.buttons & 1) && Math.hypot(e.clientX - TDrag.x, e.clientY - TDrag.y) > 4){
+    const a = TDrag.shift && selA != null ? selA : TDrag.pending; TDrag.pending = null; dragBegin(a, e.clientX, e.clientY);
+  }
+  if (TDrag.on){ e.preventDefault(); dragMove(e.clientX, e.clientY); }
+});
+window.addEventListener('pointerup', e => { if (e.pointerType === 'touch') return; TDrag.pending = null; dragEnd(); });
+// Finger: kurz gedrückt halten (≈ 0,3 s), dann ziehen. Sofortiges Wischen scrollt wie gewohnt.
+$('#transcript').addEventListener('touchstart', e => {
+  if (e.touches.length !== 1) { clearTimeout(TDrag.timer); return; }
+  const sp = e.target.closest('.tk'); if (!sp) return;
+  const t = e.touches[0]; TDrag.x = t.clientX; TDrag.y = t.clientY; const i = +sp.dataset.i;
+  clearTimeout(TDrag.timer);
+  TDrag.timer = setTimeout(() => { dragBegin(i, TDrag.x, TDrag.y); try { navigator.vibrate && navigator.vibrate(15); } catch(_){} }, 300);
+}, {passive:true});
+$('#transcript').addEventListener('touchmove', e => {
+  const t = e.touches[0];
+  if (TDrag.on){ e.preventDefault(); dragMove(t.clientX, t.clientY); return; }
+  if (Math.hypot(t.clientX - TDrag.x, t.clientY - TDrag.y) > 8) clearTimeout(TDrag.timer);
+}, {passive:false});
+$('#transcript').addEventListener('touchend', e => {
+  clearTimeout(TDrag.timer);
+  if (TDrag.on){ e.preventDefault(); dragSuppressClick = true; setTimeout(() => dragSuppressClick = false, 400); dragEnd(); }
+});
+$('#transcript').addEventListener('touchcancel', () => { clearTimeout(TDrag.timer); dragEnd(); });
+$('#transcript').addEventListener('contextmenu', e => e.preventDefault());
 function selIds(){ if (selA == null) return []; const a = Math.min(selA, selB), b = Math.max(selA, selB); const r = []; for (let i = a; i <= b; i++) r.push(i); return r; }
 function showSel(){
   spans.forEach(s => s && s.classList.remove('sel'));
   const ids = selIds(); ids.forEach(i => spans[i] && spans[i].classList.add('sel'));
   $('#selbar').classList.toggle('hidden', !ids.length);
   if (ids.length){ const allDel = ids.every(i => deleted.has(i) || (tokens[i].type === 'word' && isSrcDeleted((tokens[i].ws + tokens[i].we) / 2))); $('#selDel').textContent = allDel ? 'Wiederherstellen' : 'Löschen';
-    $('#selInfo').textContent = ids.length === 1 ? 'Tippe ein zweites Wort für einen Bereich' : `${ids.filter(i => tokens[i].type === 'word').length} Wörter`; }
+    $('#selInfo').textContent = ids.length === 1 ? 'Zweites Wort antippen – oder gedrückt halten und ziehen' : `${ids.filter(i => tokens[i].type === 'word').length} Wörter`; }
 }
 function clearSel(){ selA = selB = null; showSel(); }
 $('#selClose').onclick = clearSel;
@@ -726,7 +797,7 @@ $('#exBtn').onclick = () => {
   exJob = TS.exportVideo(JSON.stringify(plan)); $('#exBtn').disabled = true; $('#exCancel').classList.remove('hidden'); $('#exProg').classList.remove('hidden');
   const end = () => { $('#exBtn').disabled = false; $('#exCancel').classList.add('hidden'); };
   watchJob(exJob, j => { $('#exProg i').style.width = (j.progress * 100).toFixed(1) + '%'; $('#exMsg').textContent = j.message || ''; },
-    j => { end(); exResult = j.result; $('#exMsg').textContent = 'Fertig – in der Galerie unter Movies/Textschnitt.'; $('#exDone').classList.remove('hidden'); },
+    j => { end(); exResult = j.result; $('#exMsg').textContent = 'Fertig – das Video ist in deiner Galerie (Ordner „Textschnitt“).'; $('#exDone').classList.remove('hidden'); },
     j => { end(); $('#exMsg').textContent = j.status === 'cancelled' ? 'Abgebrochen.' : ('Fehler: ' + (j.error || 'unbekannt')); });
 };
 $('#exCancel').onclick = () => exJob && TS.cancel(exJob);
