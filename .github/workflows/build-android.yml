@@ -1,0 +1,96 @@
+name: Android-App bauen
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Versionsnummer"
+        required: true
+        default: "1.0.0"
+      publish:
+        description: "Als Release veröffentlichen (nur mit Signaturschlüssel)"
+        type: boolean
+        default: true
+  push:
+    branches: [main]
+    paths: ["android/**", ".github/workflows/build-android.yml"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      TS_VERSION: ${{ github.event.inputs.version || '1.0.0' }}
+      TS_VERSION_CODE: ${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.14.3"
+
+      - name: whisper.cpp holen
+        run: git clone --depth 1 -b v1.9.5 https://github.com/ggml-org/whisper.cpp android/third_party/whisper.cpp
+
+      - name: Whisper-Modell einbauen (small, q5_1)
+        run: |
+          mkdir -p android/app/src/main/assets/models
+          curl -L --fail --retry 3 -o android/app/src/main/assets/models/ggml-small-q5_1.bin \
+            https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small-q5_1.bin
+          ls -la android/app/src/main/assets/models
+
+      - name: NDK wählen
+        run: |
+          NDK=$(ls "$ANDROID_HOME/ndk" | sort -V | tail -1)
+          echo "TS_NDK_VERSION=$NDK" >> "$GITHUB_ENV"
+          echo "NDK: $NDK"
+
+      - name: Signaturschlüssel
+        env:
+          KS_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          KS_PW: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          if [ -n "$KS_B64" ]; then
+            echo "$KS_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+            {
+              echo "TS_KEYSTORE=$RUNNER_TEMP/release.jks"
+              echo "TS_KEYSTORE_PASSWORD=$KS_PW"
+              echo "TS_KEY_PASSWORD=$KS_PW"
+              echo "TS_KEY_ALIAS=textschnitt"
+              echo "TS_SIGNED=1"
+            } >> "$GITHUB_ENV"
+            echo "Signiere mit dem Release-Schlüssel."
+          else
+            echo "::warning::Kein Signaturschlüssel hinterlegt – Testbuild mit Debug-Signatur."
+          fi
+
+      - name: APK bauen
+        run: gradle -p android --no-daemon --stacktrace assembleRelease
+
+      - name: APK bereitstellen
+        run: |
+          mkdir -p out
+          cp android/app/build/outputs/apk/release/*.apk "out/Textschnitt-Android-$TS_VERSION.apk"
+          ls -la out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Textschnitt-Android
+          path: out/*.apk
+
+      - name: Als Release veröffentlichen
+        if: env.TS_SIGNED == '1' && (github.event_name == 'push' || github.event.inputs.publish == 'true')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="android-v$TS_VERSION"
+          if gh release view "$TAG" >/dev/null 2>&1; then gh release upload "$TAG" out/*.apk --clobber
+          else gh release create "$TAG" out/*.apk --title "Textschnitt für Android $TS_VERSION" --notes "APK für Android 10 und neuer (ARM64). Mit eingebautem Whisper-Modell „small“."; fi

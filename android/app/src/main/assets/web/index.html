@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<title>Textschnitt</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+
+<!-- ───────────── Projektliste ───────────── -->
+<section id="home" class="screen">
+  <header class="bar">
+    <div class="brand"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 2 28 9v14l-12 7L4 23V9z" fill="#E89B0C"/><path d="M10 12h12M10 16h6M18.5 15.2l4 1.6M10 20h12" stroke="#1C1A22" stroke-width="2.2" stroke-linecap="round"/></svg>Textschnitt</div>
+    <button class="icon-btn" id="modelsBtn" title="Modelle">⚙</button>
+  </header>
+  <div class="home-body">
+    <div id="projList"></div>
+    <div class="empty-home hidden" id="homeEmpty">
+      <h2>Noch keine Projekte</h2>
+      <p>Wähle ein Video aus deiner Galerie. Es wird auf dem Handy transkribiert – du schneidest dann über den Text.</p>
+    </div>
+  </div>
+  <button class="fab" id="newProj">＋ Neues Projekt</button>
+</section>
+
+<!-- ───────────── Projekt ───────────── -->
+<section id="proj" class="screen hidden">
+  <header class="bar">
+    <button class="icon-btn" id="backBtn" title="Zurück">‹</button>
+    <div class="title" id="projName"></div>
+    <span class="saved" id="saved"></span>
+    <button class="icon-btn" id="undoBtn" title="Rückgängig">↶</button>
+    <button class="icon-btn" id="redoBtn" title="Wiederholen">↷</button>
+  </header>
+
+  <div class="stage-wrap">
+    <div class="stage" id="stage">
+      <video id="v" playsinline preload="auto"></video>
+      <video id="ov" playsinline muted preload="auto" class="hidden"></video>
+      <video id="iv" playsinline preload="auto" class="hidden"></video>
+      <div class="subov" id="subOv"></div>
+      <div class="pin hidden" id="pin"></div>
+      <div class="stage-hint hidden" id="stageHint">Tippe ins Bild, um den Zoom-Mittelpunkt zu setzen</div>
+    </div>
+  </div>
+  <div class="transport">
+    <button class="play" id="playBtn">▶</button>
+    <div class="scrub" id="scrub"><div class="segs" id="segs"></div><div class="head" id="head"></div></div>
+    <div class="times mono"><b id="tNow">0:00</b><span id="tTot">0:00</span></div>
+  </div>
+
+  <main class="panes">
+    <!-- Transkription -->
+    <div class="pane" id="paneTrans">
+      <div class="card stack">
+        <h3>Transkribieren</h3>
+        <p class="muted small">Whisper läuft direkt auf deinem Handy. Bitte die App währenddessen geöffnet lassen.</p>
+        <label class="row">Modell <select id="model"></select></label>
+        <label class="row">Sprache <select id="lang"><option value="de" selected>Deutsch</option><option value="en">Englisch</option><option value="">automatisch</option></select></label>
+        <label class="row"><input type="checkbox" id="fillers" checked> Füllwörter (äh, ähm) mit erkennen</label>
+        <div class="row"><button class="btn primary" id="transBtn">Transkription starten</button><button class="btn hidden" id="transCancel">Abbrechen</button></div>
+        <div class="progress hidden" id="transProg"><i></i></div>
+        <div class="small muted" id="transMsg"></div>
+      </div>
+    </div>
+
+    <!-- Text -->
+    <div class="pane hidden" id="paneText">
+      <div class="toolrow">
+        <button class="chip" id="fillerBtn">Füllwörter weg</button>
+        <button class="chip" id="pauseBtn">Pausen kürzen</button>
+        <label class="chip"><input type="checkbox" id="hideDel"> Gelöschtes ausblenden</label>
+      </div>
+      <div class="transcript" id="transcript"></div>
+    </div>
+
+    <!-- Untertitel -->
+    <div class="pane hidden" id="paneSubs">
+      <div class="card stack">
+        <label class="switch"><input type="checkbox" id="subsMaster" checked><span class="knob"></span><b id="subsMasterLbl">Untertitel an</b></label>
+        <div class="grid2">
+          <label>Aufteilung <select id="stMode"><option value="lines">Zeilen</option><option value="word">1 Wort pro Untertitel</option></select></label>
+          <label class="lineopt">Zeichen/Zeile <input type="number" id="stChars" min="12" max="60" value="32"></label>
+          <label class="lineopt">Zeilen <select id="stLines"><option value="1">1</option><option value="2" selected>2</option></select></label>
+          <label class="lineopt">max. Dauer (s) <input type="number" id="stDur" min="1" max="10" step="0.5" value="4"></label>
+          <label>Größe <select id="stSize"><option>klein</option><option selected>mittel</option><option>groß</option></select></label>
+          <label>Position <select id="stPos"><option>unten</option><option>mitte</option><option>oben</option></select></label>
+          <label>Farbe <input type="color" id="stColor" value="#ffffff"></label>
+          <label class="row"><input type="checkbox" id="stOutline" checked> Umrandung</label>
+        </div>
+        <div class="row"><button class="btn" id="regenBtn">Neu aufteilen</button><span class="muted small" id="subCount"></span></div>
+      </div>
+      <div id="cueList"></div>
+    </div>
+
+    <!-- Studio -->
+    <div class="pane hidden" id="paneStudio">
+      <div class="card stack">
+        <h3>An der Abspielposition einfügen <span class="muted mono small" id="atLbl"></span></h3>
+        <div class="grid4">
+          <button class="tile" data-add="broll"><b>B-Roll</b><span>Bild drüber, Ton läuft weiter</span></button>
+          <button class="tile" data-add="insert"><b>Einschub</b><span>Clip mit eigenem Ton dazwischen</span></button>
+          <button class="tile" data-add="pip"><b>Bild-im-Bild</b><span>kleines Fenster in der Ecke</span></button>
+          <button class="tile" data-add="zoom"><b>Zoom</b><span>Sprung oder Zoomfahrt</span></button>
+        </div>
+      </div>
+      <div class="card stack">
+        <h3>Elemente</h3>
+        <div id="itemList"></div>
+        <p class="muted small hidden" id="itemsEmpty">Noch nichts eingefügt.</p>
+      </div>
+      <div class="card stack">
+        <h3>Feinschnitt</h3>
+        <p class="muted small">Jede Schnittkante bildgenau verschieben. ▶ spielt die Stelle mit etwas Vorlauf ab.</p>
+        <div id="cutList"></div>
+      </div>
+    </div>
+
+    <!-- Export -->
+    <div class="pane hidden" id="paneExport">
+      <div class="card stack">
+        <h3>Video exportieren</h3>
+        <label class="row">Auflösung <select id="exRes"><option value="1080" selected>1080p</option><option value="720">720p</option><option value="0">Original</option></select></label>
+        <label class="row"><input type="checkbox" id="exSubs" checked> Untertitel ins Video einbrennen</label>
+        <label class="row">Name <input type="text" id="exName"></label>
+        <div class="summary small muted" id="exSummary"></div>
+        <div class="row"><button class="btn primary" id="exBtn">Exportieren</button><button class="btn hidden" id="exCancel">Abbrechen</button></div>
+        <div class="progress hidden" id="exProg"><i></i></div>
+        <div class="small muted" id="exMsg"></div>
+        <div class="row hidden" id="exDone"><button class="btn" id="exShare">Teilen</button><button class="btn" id="exOpen">Ansehen</button></div>
+        <p class="muted small">Das Video landet in der Galerie unter „Movies/Textschnitt“. Bitte die App während des Exports geöffnet lassen.</p>
+      </div>
+    </div>
+  </main>
+
+  <div class="selbar hidden" id="selbar">
+    <span id="selInfo"></span>
+    <button class="btn" id="selPlay">▶</button>
+    <button class="btn primary" id="selDel">Löschen</button>
+    <button class="btn" id="selClose">✕</button>
+  </div>
+
+  <nav class="tabs" id="tabs">
+    <button data-tab="text" class="on">Text</button>
+    <button data-tab="subs">Untertitel</button>
+    <button data-tab="studio">Studio</button>
+    <button data-tab="export">Export</button>
+  </nav>
+</section>
+
+<!-- Bearbeitungsblatt -->
+<div class="sheet-back hidden" id="sheetBack"></div>
+<div class="sheet hidden" id="sheet">
+  <div class="sheet-grip"></div>
+  <div id="sheetBody"></div>
+</div>
+
+<!-- Modelle -->
+<div class="sheet hidden" id="modelSheet">
+  <div class="sheet-grip"></div>
+  <h3>Whisper-Modelle</h3>
+  <div id="modelList"></div>
+  <div class="row"><button class="btn" id="modelClose">Schließen</button></div>
+</div>
+
+<div class="toast" id="toast"></div>
+<script src="app.js"></script>
+</body>
+</html>
