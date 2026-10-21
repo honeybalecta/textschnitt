@@ -31,6 +31,8 @@ import androidx.media3.effect.Presentation
 import androidx.media3.effect.StaticOverlaySettings
 import androidx.media3.effect.TextureOverlay
 import androidx.media3.transformer.Composition
+import androidx.media3.transformer.DefaultEncoderFactory
+import androidx.media3.transformer.VideoEncoderSettings
 import androidx.media3.transformer.EditedMediaItem
 import androidx.media3.transformer.EditedMediaItemSequence
 import androidx.media3.transformer.Effects
@@ -58,6 +60,17 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
     private val h = plan.getInt("height")
 
     private fun us(sec: Double) = (sec * 1_000_000).roundToLong()
+    private val fps = plan.optDouble("fps", 30.0).let { if (it < 1 || it > 240) 30.0 else it }
+
+    /** Ein Clip aus dem Plan: Video mit Ausschnitt oder Foto mit fester Dauer. */
+    private fun item(o: JSONObject, inS: Double, outS: Double, removeAudio: Boolean, effects: List<Effect>): EditedMediaItem {
+        val b = if (o.optBoolean("image")) EditedMediaItem.Builder(
+            MediaItem.Builder().setUri(Uri.parse(o.getString("uri"))).setImageDurationMs(((outS - inS) * 1000).roundToLong()).build()
+        ).setFrameRate(Math.round(fps).toInt())
+        else EditedMediaItem.Builder(clip(o.getString("uri"), inS, outS)).setRemoveAudio(removeAudio)
+        return b.setEffects(Effects(listOf(), effects)).build()
+    }
+
     private fun clip(uri: String, inS: Double, outS: Double): MediaItem =
         MediaItem.Builder().setUri(Uri.parse(uri)).setClippingConfiguration(
             MediaItem.ClippingConfiguration.Builder()
@@ -76,10 +89,7 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
             val zooms = s.optJSONArray("zooms")
             if (zooms != null && zooms.length() > 0) fx.add(ZoomEffect(s.getDouble("in"), zooms))
             fx.add(Presentation.createForWidthAndHeight(w, h, Presentation.LAYOUT_SCALE_TO_FIT))
-            mainItems.add(
-                EditedMediaItem.Builder(clip(s.getString("uri"), s.getDouble("in"), s.getDouble("out")))
-                    .setEffects(Effects(listOf(), fx)).build()
-            )
+            mainItems.add(item(s, s.getDouble("in"), s.getDouble("out"), false, fx))
         }
         require(mainItems.isNotEmpty()) { "Nach dem Schnitt bleibt nichts übrig." }
         // Ton und Bild ausdrücklich: Einschübe ohne Tonspur bekommen so Stille statt eines Fehlers
@@ -100,12 +110,7 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
                 val dur = minOf(outS - inS, total - at)
                 if (dur <= 0.05) continue
                 if (at - cursor > 0.01) seq.addGap(us(at - cursor))
-                seq.addItem(
-                    EditedMediaItem.Builder(clip(o.getString("uri"), inS, inS + dur))
-                        .setRemoveAudio(true)
-                        .setEffects(Effects(listOf(), listOf(Presentation.createForWidthAndHeight(w, h, Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP))))
-                        .build()
-                )
+                seq.addItem(item(o, inS, inS + dur, true, listOf(Presentation.createForWidthAndHeight(w, h, Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP))))
                 spans.add(OvSpan(at, at + dur, o.getString("mode"), o.optString("corner", "or"), o.optDouble("size", 0.33).toFloat()))
                 cursor = at + dur
             }
@@ -124,7 +129,13 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
         }
 
         outFile = File(ctx.cacheDir, "export_${System.currentTimeMillis()}.mp4")
+        // Bitrate passend zur Auflösung (≈ 0,14 Bit pro Pixel), damit die Qualität dem Original nahekommt
+        val bitrate = (w.toDouble() * h * fps * 0.14).coerceIn(4e6, 80e6).toInt()
+        val encoders = DefaultEncoderFactory.Builder(ctx)
+            .setRequestedVideoEncoderSettings(VideoEncoderSettings.Builder().setBitrate(bitrate).build())
+            .setEnableFallback(true).build()
         val t = Transformer.Builder(ctx)
+            .setEncoderFactory(encoders)
             .setVideoMimeType(MimeTypes.VIDEO_H264)
             .setAudioMimeType(MimeTypes.AUDIO_AAC)
             .addListener(object : Transformer.Listener {

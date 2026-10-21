@@ -25,7 +25,7 @@ class Bridge(private val act: MainActivity) {
     @JavascriptInterface
     fun pick(id: String, kind: String) {
         pickId = id
-        main.post { act.launchPicker(arrayOf("video/*")) }
+        main.post { act.launchPicker(if (kind == "clip") arrayOf("video/*", "image/*") else arrayOf("video/*")) }
     }
 
     fun onPicked(uri: Uri?) {

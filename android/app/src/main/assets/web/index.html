@@ -30,7 +30,8 @@
     <button class="icon-btn" id="backBtn" title="Zurück">‹</button>
     <div class="title" id="projName"></div>
     <span class="saved" id="saved"></span>
-    <button class="icon-btn" id="undoBtn" title="Rückgängig">↶</button>
+    <button class="icon-btn" id="keysBtn" title="Tastenkürzel">⌨</button>
+    <button class="icon-btn" id="undoBtn" title="Rückgängig (Strg+Z)">↶</button>
     <button class="icon-btn" id="redoBtn" title="Wiederholen">↷</button>
   </header>
 
@@ -39,6 +40,8 @@
       <video id="v" playsinline preload="auto"></video>
       <video id="ov" playsinline muted preload="auto" class="hidden"></video>
       <video id="iv" playsinline preload="auto" class="hidden"></video>
+      <img id="oi" class="hidden" alt="">
+      <img id="ii" class="hidden" alt="">
       <div class="subov" id="subOv"></div>
       <div class="pin hidden" id="pin"></div>
       <div class="proxy-bar hidden" id="proxyBar"><span id="proxyMsg"></span>
@@ -122,7 +125,7 @@
     <div class="pane hidden" id="paneExport">
       <div class="card stack">
         <h3>Video exportieren</h3>
-        <label class="row">Auflösung <select id="exRes"><option value="1080" selected>1080p</option><option value="720">720p</option><option value="0">Original</option></select></label>
+        <label class="row">Auflösung <select id="exRes"><option value="0" selected>Original</option><option value="1080">1080p</option><option value="720">720p</option></select></label>
         <label class="row"><input type="checkbox" id="exSubs" checked> Untertitel ins Video einbrennen</label>
         <label class="row">Name <input type="text" id="exName"></label>
         <div class="summary small muted" id="exSummary"></div>

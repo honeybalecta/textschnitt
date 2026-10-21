@@ -6,11 +6,14 @@ import android.media.MediaFormat
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.provider.OpenableColumns
+import android.graphics.BitmapFactory
+import android.media.ExifInterface
 import org.json.JSONObject
 
 /** Liest Länge, Größe, Drehung und Bildrate eines Videos. */
 object Probe {
     fun probe(ctx: Context, uri: Uri): JSONObject? {
+        if (ctx.contentResolver.getType(uri)?.startsWith("image/") == true) return probeImage(ctx, uri)
         val r = MediaMetadataRetriever()
         try {
             r.setDataSource(ctx, uri)
@@ -50,4 +53,33 @@ object Probe {
             runCatching { r.release() }
         }
     }
+
+    private fun displayName(ctx: Context, uri: Uri): String {
+        var name = uri.lastPathSegment ?: "Bild"
+        ctx.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+            if (c.moveToFirst() && !c.isNull(0)) name = c.getString(0)
+        }
+        return name
+    }
+
+    /** Bild: Größe (mit EXIF-Drehung) – als Clip mit frei wählbarer Länge. */
+    fun probeImage(ctx: Context, uri: Uri): JSONObject? = runCatching {
+        val o = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        ctx.contentResolver.openInputStream(uri)!!.use { BitmapFactory.decodeStream(it, null, o) }
+        val rot = exifRotation(ctx, uri)
+        val (w, h) = if (rot % 180 != 0) o.outHeight to o.outWidth else o.outWidth to o.outHeight
+        JSONObject().apply {
+            put("uri", uri.toString()); put("name", displayName(ctx, uri)); put("kind", "image")
+            put("duration", 600.0); put("width", w); put("height", h); put("rotation", 0); put("fps", 30.0)
+            put("hasAudio", false); put("hasVideo", true)
+        }
+    }.getOrNull()
+
+    fun exifRotation(ctx: Context, uri: Uri): Int = runCatching {
+        ctx.contentResolver.openInputStream(uri)!!.use {
+            when (ExifInterface(it).getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)) {
+                ExifInterface.ORIENTATION_ROTATE_90 -> 90; ExifInterface.ORIENTATION_ROTATE_180 -> 180; ExifInterface.ORIENTATION_ROTATE_270 -> 270; else -> 0
+            }
+        }
+    }.getOrDefault(0)
 }

@@ -214,7 +214,7 @@ function edgeMax(g, side){ const R = g.R || {}; const dur = P.main.duration; if 
 function previewDrag(side, d){
   const s = TL.sel;
   if (s.kind === 'main'){ const g = timeline[s.i]; V.currentTime = side === 'l' ? g.in + d : Math.max(g.in, g.out + d - 0.04); V.style.transform = ''; IV.classList.add('hidden'); }
-  if (s.kind === 'insert'){ const g = timeline[s.i]; const url = MEDIA(g.uri); if (IV.dataset.src !== url){ IV.src = url; IV.dataset.src = url; } IV.classList.remove('hidden'); IV.currentTime = side === 'l' ? g.in + d : g.out + d - 0.04; }
+  if (s.kind === 'insert'){ const g = timeline[s.i]; if (isImg(g.item.clip)) return; const url = MEDIA(g.uri); if (IV.dataset.src !== url){ IV.src = url; IV.dataset.src = url; } IV.classList.remove('hidden'); IV.currentTime = side === 'l' ? g.in + d : g.out + d - 0.04; }
 }
 function applyDrag(side, d){
   const s = TL.sel;
@@ -317,7 +317,7 @@ function addZoom(){
 }
 function addClip(){
   const body = $('#sheetBody');
-  body.innerHTML = `<h3>Clip einfügen an der Abspiellinie</h3><div class="choice">
+  body.innerHTML = `<h3>Clip einfügen an der Abspiellinie</h3><p class="muted small">Videos und Fotos aus der Galerie</p><div class="choice">
     <button class="tile" data-t="broll"><b>B-Roll</b><span>Bild drüber, dein Ton läuft weiter</span></button>
     <button class="tile" data-t="insert"><b>Einschub</b><span>Hauptvideo pausiert, Clip läuft mit eigenem Ton</span></button>
     <button class="tile" data-t="pip"><b>Bild-im-Bild</b><span>kleines Fenster in einer Ecke</span></button></div>`;
@@ -326,8 +326,9 @@ function addClip(){
     const b = e.target.closest('[data-t]'); if (!b) return; const type = b.dataset.t;
     $('#sheet').classList.add('hidden'); $('#sheetBack').classList.add('hidden');
     const at = +outToSrc(outPos).toFixed(3);
-    const clip = await pickMedia('video'); if (!clip) return;
-    let it; commit(() => { it = {id:newId(), type, at, clip, in:0, out: type === 'insert' ? clip.duration : Math.min(clip.duration, 4), corner:'or', size:0.33}; P.items.push(it); }, false);
+    const clip = await pickMedia('clip'); if (!clip) return;
+    const img = clip.kind === 'image';
+    let it; commit(() => { it = {id:newId(), type, at, clip, in:0, out: img ? 4 : (type === 'insert' ? clip.duration : Math.min(clip.duration, 4)), corner:'or', size:0.33}; P.items.push(it); }, false);
     TL.sel = type === 'insert' ? {kind:'insert', itemId: it.id, i:0} : {kind:'ovl', id: it.id}; renderTimeline();
     toast(`${TYPE_LBL[type]} eingefügt – Griffe ziehen zum Kürzen`);
   };
@@ -351,3 +352,102 @@ function splitCue(){
   commit(() => { const c2 = {id:newId(), a: ids[k-1] + 1, b: c.b, text:null, ds:0, de:c.de || 0, off:c.off}; c.b = ids[k-1]; c.text = null; c.de = 0; P.cues.splice(idx + 1, 0, c2); }, false);
 }
 window.addEventListener('resize', () => { if (tab === 'studio') renderTimeline(); });
+
+// ───────── Tastatur (wie CapCut) und Maus ─────────
+const KEYS = [
+  ['Leertaste', 'Abspielen / Pause'], ['K / L', 'Pause / Abspielen'],
+  ['← / →', 'ein Bild zurück / vor'], ['Umschalt + ← / →', 'fünf Bilder zurück / vor'],
+  ['↑ / ↓', 'zum vorigen / nächsten Schnitt springen'], ['Pos1 / Ende', 'an den Anfang / das Ende'],
+  ['Strg + B', 'an der Abspiellinie teilen'], ['Q / W', 'links / rechts der Abspiellinie löschen'],
+  ['Entf / Rücktaste', 'Auswahl löschen'], ['Alt + ← / →', 'Auswahl um ein Bild verschieben'],
+  [', / .', 'Anfang / Ende der Auswahl zur Abspiellinie trimmen'],
+  ['Strg + Z', 'rückgängig'], ['Strg + Umschalt + Z / Strg + Y', 'wiederholen'],
+  ['Strg + + / Strg + −', 'Zeitleiste vergrößern / verkleinern'], ['Strg + 0', 'ganze Zeitleiste zeigen'],
+  ['Esc', 'Auswahl aufheben / Fenster schließen'], ['Alt + 1 … 4', 'Text · Untertitel · Studio · Export'],
+  ['Mausrad', 'Zeitleiste scrollen (mit Strg: zoomen)'], ['Klick auf die Zeitskala', 'Abspiellinie dorthin setzen'],
+];
+$('#keysBtn').onclick = () => {
+  const body = $('#sheetBody');
+  body.innerHTML = '<h3>Tastenkürzel</h3><div class="keys">' + KEYS.map(([k, v]) => `<kbd>${k}</kbd><span>${v}</span>`).join('') + '</div><div class="row" style="margin-top:12px"><button class="btn primary" id="keysOk" style="margin-left:auto">Schließen</button></div>';
+  body.onclick = e => { if (e.target.id === 'keysOk') closeSheet(); };
+  $('#sheet').classList.remove('hidden', 'passive'); $('#sheetBack').classList.remove('hidden');
+};
+
+function stepFrames(n){ if (playing) pausePlay(); seekOut(clamp(outPos + n / fps(), 0, total), false); if (tab === 'studio') syncScroll(outPos); }
+function editPoints(){
+  const pts = new Set([0, total]);
+  timeline.forEach(g => { pts.add(+g.o.toFixed(3)); pts.add(+(g.o + g.out - g.in).toFixed(3)); });
+  overlays.forEach(o => { pts.add(+o.at.toFixed(3)); pts.add(+o.end.toFixed(3)); });
+  return [...pts].sort((a, b) => a - b);
+}
+function jumpEdit(dir){
+  const pts = editPoints(), o = outPos;
+  const t = dir < 0 ? [...pts].reverse().find(p => p < o - 0.02) : pts.find(p => p > o + 0.02);
+  if (t == null) return; if (playing) pausePlay(); seekOut(Math.min(t, Math.max(0, total - 0.01)), false); if (tab === 'studio') syncScroll(outPos);
+}
+// Kante der Auswahl an die Abspiellinie holen (wie Trimmen in CapCut)
+function trimToPlayhead(side){
+  const s = TL.sel; if (!s) return toast('Erst einen Clip auswählen');
+  let a, e;
+  if (s.kind === 'main' || s.kind === 'insert'){ const g = timeline[s.i]; a = g.o; e = g.o + g.out - g.in; }
+  else if (s.kind === 'cue'){ const t = cueTimes(selCue()); if (!t) return; a = t.s; e = t.e; }
+  else { [a, e] = itemOutRange(selItem()); }
+  let d = side === 'l' ? outPos - a : outPos - e;
+  if (s.kind === 'main' || s.kind === 'insert') d = snapF(d);
+  d = clampDrag(side, d); if (Math.abs(d) < 1e-4) return;
+  applyDrag(side, d);
+}
+function moveSel(frames){
+  const s = TL.sel; if (!s || s.kind === 'main' || s.kind === 'insert') return;
+  const d = clampDrag('m', frames / fps()); if (Math.abs(d) > 1e-6) applyDrag('m', d);
+}
+function fitTimeline(){ if (total > 0) setPps((tlEl.clientWidth - 40) / total); }
+
+document.addEventListener('keydown', e => {
+  if (!P || $('#proj').classList.contains('hidden')) return;
+  const tag = document.activeElement?.tagName, typing = tag === 'TEXTAREA' || tag === 'SELECT' || (tag === 'INPUT' && !['checkbox', 'radio', 'range'].includes(document.activeElement.type));
+  const mod = e.ctrlKey || e.metaKey, k = e.key;
+  if (k === 'Escape'){ if (!$('#sheet').classList.contains('hidden')) closeSheet(); else { select(null); clearSel(); } return; }
+  if (typing) return;
+  const handled = () => e.preventDefault();
+  if (e.altKey && /^[1-4]$/.test(k)){ handled(); const t = ['text', 'subs', 'studio', 'export'][+k - 1]; if (tokens.length || t === 'studio' || t === 'export') setTab(t); return; }
+  if (mod && k.toLowerCase() === 'z'){ handled(); (e.shiftKey ? $('#redoBtn') : $('#undoBtn')).click(); return; }
+  if (mod && k.toLowerCase() === 'y'){ handled(); $('#redoBtn').click(); return; }
+  if (mod && k.toLowerCase() === 'b'){ handled(); splitHere(); return; }
+  if (mod && (k === '+' || k === '=')){ handled(); setPps(TL.pps * 1.4); return; }
+  if (mod && k === '-'){ handled(); setPps(TL.pps / 1.4); return; }
+  if (mod && k === '0'){ handled(); fitTimeline(); return; }
+  if (mod) return;
+  switch (k){
+    case ' ': handled(); togglePlay(); return;
+    case 'k': case 'K': handled(); pausePlay(); return;
+    case 'l': case 'L': handled(); if (!playing) startPlay(); return;
+    case 'ArrowLeft': handled(); if (e.altKey) moveSel(-1); else stepFrames(e.shiftKey ? -5 : -1); return;
+    case 'ArrowRight': handled(); if (e.altKey) moveSel(1); else stepFrames(e.shiftKey ? 5 : 1); return;
+    case 'ArrowUp': handled(); jumpEdit(-1); return;
+    case 'ArrowDown': handled(); jumpEdit(1); return;
+    case 'Home': handled(); if (playing) pausePlay(); seekOut(0, false); syncScroll(0); return;
+    case 'End': handled(); if (playing) pausePlay(); seekOut(total, false); syncScroll(outPos); return;
+    case 'q': case 'Q': handled(); cutTo('l'); return;
+    case 'w': case 'W': handled(); cutTo('r'); return;
+    case ',': handled(); trimToPlayhead('l'); return;
+    case '.': handled(); trimToPlayhead('r'); return;
+    case 'Delete': case 'Backspace':
+      handled();
+      if (tab === 'text' && selA != null) $('#selDel').click();
+      else if (TL.sel) delSel();
+      return;
+  }
+});
+// Mausrad: scrollen, mit Strg zoomen
+tlEl.addEventListener('wheel', e => {
+  if (e.ctrlKey){ e.preventDefault(); const o = outPos; setPps(TL.pps * (e.deltaY < 0 ? 1.15 : 1 / 1.15)); syncScroll(o, true); return; }
+  if (Math.abs(e.deltaY) > Math.abs(e.deltaX)){ e.preventDefault(); tlEl.scrollLeft += e.deltaY; }
+}, {passive:false});
+// Klick auf die Zeitskala setzt die Abspiellinie
+$('#ruler').addEventListener('click', e => {
+  const r = tlInner.getBoundingClientRect(); const o = clamp((e.clientX - r.left - half()) / TL.pps, 0, total);
+  if (playing) pausePlay(); seekOut(o, false); syncScroll(outPos, true); e.stopPropagation();
+});
+// Doppelklick auf einen Untertitel öffnet den Text
+tlInner.addEventListener('dblclick', e => { const b = e.target.closest('.blk.cue'); if (b){ select({kind:'cue', id:b.dataset.cid}); editCue(); } });

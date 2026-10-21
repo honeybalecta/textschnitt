@@ -195,7 +195,7 @@ class LocalServer(private val ctx: Context) {
         val t = r.query["t"]?.toDoubleOrNull() ?: 0.0
         val h = (r.query["h"]?.toIntOrNull() ?: 120).coerceIn(32, 360)
         val key = "$u|$t|$h"
-        val bytes = thumbs.get(key) ?: run {
+        val bytes = thumbs.get(key) ?: imageThumb(u, h, key) ?: run {
             val mmr = retrievers.getOrPut(u) { MediaMetadataRetriever().apply { setDataSource(ctx, Uri.parse(u)) } }
             val bmp: Bitmap? = synchronized(mmr) {
                 runCatching {
@@ -212,5 +212,26 @@ class LocalServer(private val ctx: Context) {
             bo.toByteArray().also { thumbs.put(key, it) }
         }
         send(out, 200, "OK", "image/jpeg", bytes)
+    }
+
+    /** Vorschau für Fotos: verkleinert dekodieren, EXIF-Drehung anwenden. */
+    private fun imageThumb(u: String, h: Int, key: String): ByteArray? {
+        val uri = Uri.parse(u)
+        if (ctx.contentResolver.getType(uri)?.startsWith("image/") != true) return null
+        return runCatching {
+            val o = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            ctx.contentResolver.openInputStream(uri)!!.use { android.graphics.BitmapFactory.decodeStream(it, null, o) }
+            var sample = 1
+            while (minOf(o.outWidth, o.outHeight) / (sample * 2) >= h) sample *= 2
+            val bmp0 = ctx.contentResolver.openInputStream(uri)!!.use {
+                android.graphics.BitmapFactory.decodeStream(it, null, android.graphics.BitmapFactory.Options().apply { inSampleSize = sample })
+            } ?: return null
+            val rot = Probe.exifRotation(ctx, uri)
+            val m = android.graphics.Matrix().apply { postRotate(rot.toFloat()) }
+            val rotated = if (rot != 0) Bitmap.createBitmap(bmp0, 0, 0, bmp0.width, bmp0.height, m, true) else bmp0
+            val scaled = Bitmap.createScaledBitmap(rotated, maxOf(16, rotated.width * h / maxOf(1, rotated.height)), h, true)
+            val bo = ByteArrayOutputStream(); scaled.compress(Bitmap.CompressFormat.JPEG, 75, bo)
+            bo.toByteArray().also { thumbs.put(key, it) }
+        }.getOrNull()
     }
 }
