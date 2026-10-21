@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+build/
+dist/
+textschnitt.log
+.webview/
+*.textschnitt.json
+Textschnitt starten.bat

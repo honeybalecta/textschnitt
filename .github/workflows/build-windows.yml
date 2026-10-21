@@ -1,0 +1,87 @@
+name: Windows-Installer bauen
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Versionsnummer"
+        required: true
+        default: "1.0.0"
+      models:
+        description: "Mitgelieferte Whisper-Modelle (Leerzeichen-getrennt)"
+        required: true
+        default: "small"
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    env:
+      TS_VERSION: ${{ github.event.inputs.version || github.ref_name }}
+      TS_MODELS: ${{ github.event.inputs.models || 'small' }}
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Abhängigkeiten installieren
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller huggingface_hub
+
+      - name: ffmpeg holen
+        shell: pwsh
+        run: |
+          $zip = "$env:RUNNER_TEMP\ffmpeg.zip"
+          Invoke-WebRequest "https://github.com/GyanD/codexffmpeg/releases/download/7.1/ffmpeg-7.1-essentials_build.zip" -OutFile $zip
+          Expand-Archive $zip "$env:RUNNER_TEMP\ffmpeg"
+          New-Item -ItemType Directory -Force build\ffmpeg | Out-Null
+          Get-ChildItem "$env:RUNNER_TEMP\ffmpeg" -Recurse -Include ffmpeg.exe,ffprobe.exe | Copy-Item -Destination build\ffmpeg
+          Get-ChildItem "$env:RUNNER_TEMP\ffmpeg" -Recurse -Include LICENSE* | Select-Object -First 1 | Copy-Item -Destination build\ffmpeg\LICENSE-ffmpeg.txt
+          build\ffmpeg\ffmpeg.exe -hide_banner -version | Select-Object -First 1
+
+      - name: Whisper-Modelle holen
+        shell: pwsh
+        run: |
+          foreach ($m in $env:TS_MODELS.Split(" ", [StringSplitOptions]::RemoveEmptyEntries)) {
+            $repo = if ($m -eq "large-v3-turbo") { "mobiuslabsgmbh/faster-whisper-large-v3-turbo" } else { "Systran/faster-whisper-$m" }
+            python -c "from huggingface_hub import snapshot_download; snapshot_download('$repo', local_dir='build/models/$m')"
+            Remove-Item -Recurse -Force "build/models/$m/.cache" -ErrorAction SilentlyContinue
+            Get-ChildItem "build/models/$m"
+          }
+
+      - name: App bauen (PyInstaller)
+        run: pyinstaller --noconfirm --clean packaging/textschnitt.spec
+
+      - name: Selbsttest der gebauten App
+        shell: pwsh
+        run: |
+          $p = Start-Process dist\Textschnitt\Textschnitt.exe -ArgumentList "--selftest", "$pwd\selftest.json" -Wait -PassThru
+          Get-Content selftest.json
+          if ($p.ExitCode -ne 0) { throw "Selbsttest fehlgeschlagen" }
+
+      - name: Installer bauen (Inno Setup)
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "C:\Program Files (x86)\Inno Setup 6\ISCC.exe")) { choco install innosetup -y --no-progress }
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" packaging\installer.iss
+          Get-ChildItem dist\*.exe | Format-Table Name, Length
+
+      - name: Installer als Release veröffentlichen
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = if ($env:TS_VERSION.StartsWith("v")) { $env:TS_VERSION } else { "v$env:TS_VERSION" }
+          $file = (Get-ChildItem dist\Textschnitt-Setup-*.exe | Select-Object -First 1).FullName
+          gh release view $tag 2>$null
+          if ($LASTEXITCODE -eq 0) { gh release upload $tag $file --clobber }
+          else { gh release create $tag $file --title "Textschnitt $tag" --notes "Windows-Installer. Mitgelieferte Modelle: $env:TS_MODELS" }
