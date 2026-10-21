@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Versionsnummer"
-        required: true
-        default: "1.0.0"
+        description: "Versionsnummer (leer = android/version.txt)"
+        required: false
+        default: ""
       publish:
         description: "Als Release veröffentlichen (nur mit Signaturschlüssel)"
         type: boolean
@@ -23,10 +23,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
-      TS_VERSION: ${{ github.event.inputs.version || '1.0.0' }}
+      TS_VERSION_INPUT: ${{ github.event.inputs.version }}
       TS_VERSION_CODE: ${{ github.run_number }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Version
+        run: echo "TS_VERSION=${TS_VERSION_INPUT:-$(cat android/version.txt)}" >> "$GITHUB_ENV"
 
       - uses: actions/setup-java@v4
         with:

@@ -90,6 +90,13 @@ class Bridge(private val act: MainActivity) {
         return job.id
     }
 
+    @JavascriptInterface
+    fun makeProxy(uri: String): String {
+        val job = Jobs.create()
+        main.post { try { Proxy.start(ctx, uri, job) } catch (e: Throwable) { job.fail(e) } }
+        return job.id
+    }
+
     @JavascriptInterface fun job(id: String): String = Jobs.get(id)?.toJson() ?: "null"
     @JavascriptInterface fun cancel(id: String) { Jobs.get(id)?.cancel() }
 

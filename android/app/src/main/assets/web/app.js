@@ -3,7 +3,8 @@
 const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
 const TS = window.TS;
-const MEDIA = uri => 'https://ts.app/media?u=' + encodeURIComponent(uri);
+const MEDIA = uri => 'media?u=' + encodeURIComponent(uri);
+const THUMB = (uri, t, h) => `thumb?u=${encodeURIComponent(uri)}&t=${t.toFixed(1)}&h=${h}`;
 
 const fmtT = t => { t = Math.max(0, t || 0); const h = Math.floor(t / 3600), m = Math.floor(t % 3600 / 60), s = Math.floor(t % 60);
   return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(s).padStart(2, '0'); };
@@ -38,7 +39,7 @@ function watchJob(id, onTick, onDone, onFail){
 // ───────── Zustand ─────────
 let P = null;                    // aktuelles Projekt
 let tokens = [], spans = [], deleted = new Set();
-let ranges = [], rangeToks = [], timeline = [], total = 0, overlays = [];
+let ranges = [], rangeToks = [], pieces = [], timeline = [], total = 0, overlays = [];
 let undo = [], redo = [], saveT = null;
 let tab = 'text';
 const DEF_STYLE = {enabled:true, mode:'lines', chars:32, lines:2, dur:4, size:'mittel', pos:'unten', color:'#FFFFFF', outline:true};
@@ -70,25 +71,29 @@ $('#newProj').onclick = async () => {
 // ───────── Projekt öffnen ─────────
 function openProject(id){
   P = J(TS.loadProject(id)); if (!P) return toast('Projekt konnte nicht geladen werden');
-  P.adj ||= {}; P.items ||= []; P.trims ||= {}; P.settings ||= {pad:0.06}; P.cues ||= []; P.sub_style = {...DEF_STYLE, ...(P.sub_style || {})};
+  P.adj ||= {}; P.items ||= []; P.dels ||= []; P.splits ||= []; P.trims ||= {}; P.settings ||= {pad:0.06}; P.cues ||= []; P.sub_style = {...DEF_STYLE, ...(P.sub_style || {})};
   tokens = P.tokens || []; deleted = new Set(P.deleted || []); undo = []; redo = [];
   $('#home').classList.add('hidden'); $('#proj').classList.remove('hidden');
   $('#projName').textContent = P.name; $('#exName').value = P.name + '_geschnitten';
   const [w, h] = dispSize(P.main); $('#stage').style.aspectRatio = `${w} / ${h}`;
-  $('#v').src = MEDIA(P.main.uri);
+  setMainSource();
   fillModels();
   syncStyleInputs();
   if (tokens.length){ renderTranscript(); if (!P.cues.length) genCues(); }
   recompute();
   setTab(tokens.length ? 'text' : 'trans');
 }
+function setMainSource(){
+  const url = P.main.proxy ? 'media?f=' + encodeURIComponent(P.main.proxy) : MEDIA(P.main.uri);
+  V.dataset.err = ''; V.src = url; $('#proxyBar').classList.add('hidden');
+}
 function closeProject(){ pausePlay(); saveNow(); P = null; $('#v').removeAttribute('src'); $('#v').load(); hideOverlay(); showHome(); }
 $('#backBtn').onclick = closeProject;
 function dispSize(m){ const r = Math.abs(m.rotation || 0) % 180 === 90; return r ? [m.height, m.width] : [m.width, m.height]; }
 
 // ───────── Speichern & Rückgängig ─────────
-function snapshot(){ return JSON.stringify({d:[...deleted], t:P.trims, c:P.cues, i:P.items, a:P.adj}); }
-function restore(s){ const o = JSON.parse(s); deleted = new Set(o.d); P.trims = o.t; P.cues = o.c; P.items = o.i; P.adj = o.a; tokens.forEach(t => paint(t.i)); changed(true); }
+function snapshot(){ return JSON.stringify({d:[...deleted], t:P.trims, c:P.cues, i:P.items, a:P.adj, x:P.dels, y:P.splits}); }
+function restore(s){ const o = JSON.parse(s); deleted = new Set(o.d); P.trims = o.t; P.cues = o.c; P.items = o.i; P.adj = o.a; P.dels = o.x || []; P.splits = o.y || []; tokens.forEach(t => paint(t.i)); changed(true); }
 function commit(fn, rerender = true){ undo.push(snapshot()); if (undo.length > 200) undo.shift(); redo = []; fn(); changed(rerender); }
 $('#undoBtn').onclick = () => { if (!undo.length || !P) return; redo.push(snapshot()); restore(undo.pop()); };
 $('#redoBtn').onclick = () => { if (!redo.length || !P) return; undo.push(snapshot()); restore(redo.pop()); };
@@ -167,23 +172,60 @@ function computeRanges(){
   }
   ranges = out.map(r => [+r[0].toFixed(3), +r[1].toFixed(3)]); rangeToks = toks;
 }
+// Freie Schnitte aus dem Studio: gelöschte Quellbereiche (P.dels) und Teilungspunkte (P.splits)
+function normDels(){
+  const d = P.dels.filter(x => x[1] - x[0] > 0.005).sort((a, b) => a[0] - b[0]), out = [];
+  for (const x of d){ const l = out[out.length-1]; if (l && x[0] <= l[1] + 0.005) l[1] = Math.max(l[1], x[1]); else out.push([x[0], x[1]]); }
+  P.dels = out.map(x => [+x[0].toFixed(3), +x[1].toFixed(3)]);
+}
+const isSrcDeleted = t => P.dels.some(d => t > d[0] + 1e-4 && t < d[1] - 1e-4);
+function addDel(a, b){ if (b - a < 0.005) return; P.dels.push([a, b]); normDels(); }
+function removeDel(a, b){
+  const out = [];
+  for (const d of P.dels){ if (b <= d[0] || a >= d[1]){ out.push(d); continue; } if (d[0] < a) out.push([d[0], a]); if (d[1] > b) out.push([b, d[1]]); }
+  P.dels = out; normDels();
+}
+function computePieces(){
+  normDels();
+  const sp = [...P.splits].sort((a, b) => a - b), out = [];
+  ranges.forEach(([s, e], ri) => {
+    // Bereich minus gelöschte Stücke
+    let parts = [{s, e, L:{k:'adj', key:'s' + rangeToks[ri][0]}, R:{k:'adj', key:'e' + rangeToks[ri][1]}}];
+    P.dels.forEach((d, di) => {
+      const next = [];
+      for (const p of parts){
+        if (d[1] <= p.s || d[0] >= p.e){ next.push(p); continue; }
+        if (d[0] > p.s) next.push({s:p.s, e:d[0], L:p.L, R:{k:'del', di, side:'start'}});
+        if (d[1] < p.e) next.push({s:d[1], e:p.e, L:{k:'del', di, side:'end'}, R:p.R});
+      }
+      parts = next;
+    });
+    // an Teilungspunkten trennen
+    for (const p of parts){
+      let cur = p;
+      for (const x of sp){ if (x > cur.s + 0.05 && x < cur.e - 0.05){ out.push({...cur, e:x, R:{k:'split', x}}); cur = {...cur, s:x, L:{k:'split', x}}; } }
+      if (cur.e - cur.s > 0.03) out.push(cur);
+    }
+  });
+  pieces = out;
+}
 // Anker (Quellzeit) auf die nächste behaltene Stelle schieben
 function snapSrc(t){
-  for (const [s, e] of ranges){ if (t < s) return s; if (t <= e) return t; }
-  return ranges.length ? ranges[ranges.length-1][1] : 0;
+  for (const p of pieces){ if (t < p.s) return p.s; if (t <= p.e) return t; }
+  return pieces.length ? pieces[pieces.length-1].e : 0;
 }
 function buildTimeline(){
   const ins = P.items.filter(x => x.type === 'insert').map(x => ({x, a: snapSrc(x.at)})).sort((p, q) => p.a - q.a);
   const segs = []; let o = 0, k = 0;
   const pushIns = it => { const d = Math.max(0.1, it.x.out - it.x.in); segs.push({kind:'insert', item:it.x, uri:it.x.clip.uri, in:it.x.in, out:it.x.in + d, o}); o += d; };
-  for (let ri = 0; ri < ranges.length; ri++){
-    let [s, e] = ranges[ri];
+  for (const pc of pieces){
+    let s = pc.s; const e = pc.e; let L = pc.L;
     while (k < ins.length && ins[k].a <= s + 1e-6){ pushIns(ins[k]); k++; }
     while (k < ins.length && ins[k].a < e - 1e-6){
-      if (ins[k].a - s > 0.02){ segs.push({kind:'main', in:s, out:ins[k].a, o}); o += ins[k].a - s; s = ins[k].a; }
+      if (ins[k].a - s > 0.02){ segs.push({kind:'main', in:s, out:ins[k].a, o, L, R:{k:'ins'}}); o += ins[k].a - s; s = ins[k].a; L = {k:'ins'}; }
       pushIns(ins[k]); k++;
     }
-    if (e - s > 0.001){ segs.push({kind:'main', in:s, out:e, o}); o += e - s; }
+    if (e - s > 0.001){ segs.push({kind:'main', in:s, out:e, o, L, R:pc.R}); o += e - s; }
   }
   while (k < ins.length){ pushIns(ins[k]); k++; }
   timeline = segs; total = o;
@@ -217,7 +259,8 @@ function zoomAt(src){
   return {s, cx, cy};
 }
 function recompute(){
-  computeRanges(); buildTimeline(); computeOverlays(); drawScrub();
+  computeRanges(); computePieces(); buildTimeline(); computeOverlays(); drawScrub();
+  if (tab === 'studio' && window.renderTimeline) renderTimeline();
   $('#tTot').textContent = fmtT(total);
 }
 function drawScrub(){
@@ -251,7 +294,7 @@ function seekOut(o, keepPlaying = playing){
   }
   updateOverlay(o); updateZoom(); updateSubs(o); updateHead(o);
 }
-function togglePlay(){ playing ? pausePlay() : startPlay(); }
+function togglePlay(){ if (V.dataset.err){ toast('Vorschau nicht abspielbar – siehe Hinweis oben'); return; } playing ? pausePlay() : startPlay(); }
 function startPlay(){
   if (!timeline.length) return; if (outPos >= total - 0.05) seekOut(0, false);
   playing = true; $('#playBtn').textContent = '❚❚'; seekOut(outPos, true); TS.keepAwake(true);
@@ -273,7 +316,7 @@ function loop(){
   requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);
-function updateHead(o){ $('#head').style.left = (total ? o / total * 100 : 0) + '%'; $('#tNow').textContent = fmtT(o); $('#atLbl').textContent = '@ ' + fmtS(o); }
+function updateHead(o){ $('#head').style.left = (total ? o / total * 100 : 0) + '%'; $('#tNow').textContent = fmtT(o); }
 function updateOverlay(o){
   const a = overlays.find(x => o >= x.at && o < x.end);
   if (!a){ hideOverlay(); return; }
@@ -301,6 +344,14 @@ function updateZoom(){
     sc.onpointermove = ev => seekOut(at(ev), false); sc.onpointerup = () => { sc.onpointermove = null; if (was) startPlay(); }; });
 })();
 V.addEventListener('loadedmetadata', () => { if (!timeline.length) return; seekOut(outPos, false); });
+V.addEventListener('error', () => { if (!P) return; V.dataset.err = '1'; $('#proxyBar').classList.remove('hidden');
+  $('#proxyMsg').textContent = P.main.proxy ? 'Auch die Vorschau-Datei lässt sich nicht abspielen.' : 'Dein Handy kann dieses Videoformat in der Vorschau nicht abspielen. Schneiden und Export funktionieren trotzdem.'; });
+$('#proxyBtn').onclick = () => {
+  $('#proxyBtn').disabled = true; $('#proxyProg').classList.remove('hidden'); TS.keepAwake(true);
+  watchJob(TS.makeProxy(P.main.uri), j => { $('#proxyProg i').style.width = (j.progress * 100) + '%'; $('#proxyMsg').textContent = j.message || ''; },
+    j => { TS.keepAwake(false); $('#proxyBtn').disabled = false; $('#proxyProg').classList.add('hidden'); P.main.proxy = j.result.path; saveNow(); setMainSource(); toast('Vorschau bereit'); },
+    j => { TS.keepAwake(false); $('#proxyBtn').disabled = false; $('#proxyMsg').textContent = 'Fehler: ' + (j.error || ''); });
+};
 
 // ───────── Transkription ─────────
 function fillModels(){
@@ -339,7 +390,7 @@ function renderTranscript(){
 }
 function paint(i){
   const t = tokens[i], sp = spans[i]; if (!sp) return;
-  sp.classList.toggle('del', deleted.has(i));
+  sp.classList.toggle('del', deleted.has(i) || (t.type === 'word' && isSrcDeleted((t.ws + t.we) / 2)));
   if (t.type === 'pause'){ const d = (t.e - t.s).toFixed(1).replace('.', ','), tr = P.trims[i];
     sp.classList.toggle('trim', tr != null && !deleted.has(i)); sp.textContent = tr != null ? `⏸ ${d}→${String(tr).replace('.', ',')}` : `⏸ ${d}`; }
 }
@@ -358,14 +409,17 @@ function showSel(){
   spans.forEach(s => s && s.classList.remove('sel'));
   const ids = selIds(); ids.forEach(i => spans[i] && spans[i].classList.add('sel'));
   $('#selbar').classList.toggle('hidden', !ids.length);
-  if (ids.length){ const allDel = ids.every(i => deleted.has(i)); $('#selDel').textContent = allDel ? 'Wiederherstellen' : 'Löschen';
+  if (ids.length){ const allDel = ids.every(i => deleted.has(i) || (tokens[i].type === 'word' && isSrcDeleted((tokens[i].ws + tokens[i].we) / 2))); $('#selDel').textContent = allDel ? 'Wiederherstellen' : 'Löschen';
     $('#selInfo').textContent = ids.length === 1 ? 'Tippe ein zweites Wort für einen Bereich' : `${ids.filter(i => tokens[i].type === 'word').length} Wörter`; }
 }
 function clearSel(){ selA = selB = null; showSel(); }
 $('#selClose').onclick = clearSel;
 $('#selDel').onclick = () => {
-  const ids = selIds(); if (!ids.length) return; const restoreIt = ids.every(i => deleted.has(i));
-  commit(() => ids.forEach(i => { restoreIt ? deleted.delete(i) : deleted.add(i); paint(i); }), false);
+  const ids = selIds(); if (!ids.length) return;
+  const gone = i => deleted.has(i) || (tokens[i].type === 'word' && isSrcDeleted((tokens[i].ws + tokens[i].we) / 2));
+  const restoreIt = ids.every(gone);
+  commit(() => ids.forEach(i => { if (restoreIt){ deleted.delete(i); removeDel(tokens[i].s, tokens[i].e); } else deleted.add(i); }), false);
+  tokens.forEach(t => paint(t.i));
   clearSel(); toast(restoreIt ? 'Wiederhergestellt' : 'Gelöscht');
 };
 $('#selPlay').onclick = () => { const ids = selIds(); if (!ids.length) return; const t = tokens[ids[0]]; const a = srcToOut(snapSrc(t.ws ?? t.s)); seekOut(Math.max(0, a - 0.5), false); startPlay(); };
@@ -394,7 +448,7 @@ function highlightNow(){
 // ───────── Untertitel (wie Desktop) ─────────
 const S = () => P.sub_style;
 const isWord = i => tokens[i] && tokens[i].type === 'word';
-function cueWords(c){ const ids = []; for (let i = c.a; i <= c.b && i < tokens.length; i++) if (isWord(i) && !deleted.has(i)) ids.push(i); return ids; }
+function cueWords(c){ const ids = []; for (let i = c.a; i <= c.b && i < tokens.length; i++) if (isWord(i) && !deleted.has(i) && !isSrcDeleted((tokens[i].ws + tokens[i].we) / 2)) ids.push(i); return ids; }
 function autoText(c){ return cueWords(c).map(i => tokens[i].text).join(' '); }
 function cueText(c){ return c.text != null ? c.text : autoText(c); }
 function genCues(){
@@ -539,69 +593,6 @@ $('#cueList').addEventListener('click', e => {
 
 // ───────── Studio ─────────
 const TYPE_LBL = {broll:'B-Roll', insert:'Einschub', pip:'Bild-im-Bild', zoom:'Zoom'};
-$$('[data-add]').forEach(b => b.onclick = async () => {
-  if (!tokens.length && !P.main) return;
-  const type = b.dataset.add, at = +curSrc().toFixed(3);
-  if (type === 'zoom'){
-    let it; commit(() => { it = {id:newId(), type, at, dur:2, kind:'punch', strength:1.25, cx:.5, cy:.4}; P.items.push(it); });
-    return openItem(it.id);
-  }
-  const clip = await pickMedia('video'); if (!clip) return;
-  let it; commit(() => { it = {id:newId(), type, at, clip, in:0, out: type === 'insert' ? clip.duration : Math.min(clip.duration, 4), corner:'or', size:0.33}; P.items.push(it); });
-  openItem(it.id);
-});
-function renderStudio(){
-  const box = $('#itemList'); box.innerHTML = '';
-  const items = [...P.items].sort((a, b) => srcToOut(snapSrc(a.at)) - srcToOut(snapSrc(b.at)));
-  $('#itemsEmpty').classList.toggle('hidden', items.length > 0);
-  for (const it of items){
-    const el = document.createElement('div'); el.className = 'item';
-    const o = srcToOut(snapSrc(it.at));
-    const desc = it.type === 'zoom' ? `${it.kind === 'punch' ? 'Sprung' : it.kind === 'in' ? 'Zoomfahrt rein' : 'Zoomfahrt raus'} · ${it.strength.toFixed(2).replace('.', ',')}× · ${it.dur.toFixed(1).replace('.', ',')} s`
-      : `${it.clip.name} · ${fmtS(it.out - it.in)}`;
-    el.innerHTML = `<span class="badge ${it.type}">${TYPE_LBL[it.type]}</span><div class="meta"><b></b><span class="muted mono small">${fmtS(o)}</span></div><button class="btn">Bearbeiten</button>`;
-    el.querySelector('b').textContent = desc;
-    el.onclick = () => openItem(it.id); box.append(el);
-  }
-  renderCuts();
-}
-function renderCuts(){
-  const box = $('#cutList'); box.innerHTML = '';
-  if (!tokens.length){ box.innerHTML = '<p class="muted small">Erst transkribieren und im Text schneiden.</p>'; return; }
-  const fps = P.main.fps || 30, fr = 1 / fps;
-  const edges = [];
-  for (let k = 0; k <= ranges.length; k++){
-    const before = k > 0 ? rangeToks[k-1][1] : null, after = k < ranges.length ? rangeToks[k][0] : null;
-    if (before == null && (after == null || ranges[0][0] < 0.05)) continue;
-    if (after == null && ranges[k-1][1] > P.main.duration - 0.05) continue;
-    edges.push({k, before, after});
-  }
-  if (!edges.length){ box.innerHTML = '<p class="muted small">Noch keine Schnitte.</p>'; return; }
-  const word = (i, dir) => { if (i == null || i < 0) return '';
-    let j = i; while (j >= 0 && j < tokens.length && tokens[j].type !== 'word') j += dir; return j >= 0 && j < tokens.length ? tokens[j].text : ''; };
-  for (const ed of edges){
-    const el = document.createElement('div'); el.className = 'cut';
-    const o = ed.k > 0 ? srcToOut(ranges[ed.k-1][1]) : 0;
-    const ctl = (key, label) => key == null ? '' : `<div class="nudge"><span style="min-width:96px">${label}</span>
-      <button data-k="${key}" data-d="${-fr}">−1 F</button><span class="val" data-v="${key}"></span><button data-k="${key}" data-d="${fr}">+1 F</button>
-      <button data-k="${key}" data-d="-0.1">−0,1</button><button data-k="${key}" data-d="0.1">+0,1</button></div>`;
-    el.innerHTML = `<div class="ctx"><i>…</i> <b class="w1"></b> ✂ <b class="w2"></b> <i>…</i> <span class="muted mono small">${fmtS(o)}</span>
-        <button class="btn" data-play="${o}" style="float:right;min-height:32px;padding:4px 12px">▶</button></div>
-      ${ctl(ed.before != null ? 'e' + ed.before : null, 'Ende davor')}${ctl(ed.after != null ? 's' + ed.after : null, 'Anfang danach')}`;
-    el.querySelector('.w1').textContent = word(ed.before, -1); el.querySelector('.w2').textContent = word(ed.after, 1);
-    box.append(el);
-  }
-  paintCutVals();
-}
-function paintCutVals(){ $$('#cutList [data-v]').forEach(s => { const v = P.adj[s.dataset.v] || 0; s.textContent = (v >= 0 ? '+' : '') + Math.round(v * 1000) + ' ms'; }); }
-$('#cutList').addEventListener('click', e => {
-  const pb = e.target.closest('[data-play]'); if (pb){ const o = +pb.dataset.play; seekOut(Math.max(0, o - 2), false); stopAt = o + 2; startPlay(); stopAt = o + 2; return; }
-  const b = e.target.closest('[data-k]'); if (!b) return;
-  const key = b.dataset.k, d = +b.dataset.d;
-  commit(() => { P.adj[key] = Math.round(((P.adj[key] || 0) + d) * 1000) / 1000; if (Math.abs(P.adj[key]) < 0.0005) delete P.adj[key]; }, false);
-  paintCutVals();
-});
-
 // Bearbeitungsblatt für ein Element
 let sheetItem = null, pinMode = false;
 function openItem(id){

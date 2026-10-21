@@ -6,7 +6,6 @@ import android.os.Bundle
 import android.view.ViewGroup
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
-import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
@@ -21,6 +20,7 @@ class MainActivity : ComponentActivity() {
     lateinit var web: WebView
         private set
     private lateinit var bridge: Bridge
+    private lateinit var server: LocalServer
 
     private val picker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
         bridge.onPicked(uri)
@@ -53,23 +53,15 @@ class MainActivity : ComponentActivity() {
         bridge = Bridge(this)
         web.addJavascriptInterface(bridge, "TS")
         web.webChromeClient = WebChromeClient()
+        server = LocalServer(applicationContext).start()
         web.webViewClient = object : WebViewClient() {
-            override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? =
-                LocalServer.handle(this@MainActivity, request)
-
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean =
-                request.url.host != LocalServer.HOST
+                request.url.host != "127.0.0.1"
         }
         onBackPressedDispatcher.addCallback(this) {
             web.evaluateJavascript("window.TSApp && TSApp.onBack()") { r -> if (r != "true") finish() }
         }
-        if (savedInstanceState == null) web.loadUrl("https://${LocalServer.HOST}/index.html")
-        else web.restoreState(savedInstanceState)
-    }
-
-    override fun onSaveInstanceState(outState: Bundle) {
-        super.onSaveInstanceState(outState)
-        web.saveState(outState)
+        web.loadUrl(server.base + "index.html")
     }
 
     override fun onPause() {
@@ -79,6 +71,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         web.destroy()
+        server.stop()
         super.onDestroy()
     }
 
