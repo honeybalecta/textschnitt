@@ -128,6 +128,10 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
             composition.setEffects(Effects(listOf(), listOf(OverlayEffect(listOf(overlay)))))
         }
 
+        // Handyvideos sind oft HDR (HLG/HDR10). Bild-Overlays (Untertitel, Fotos) gehen in HDR nicht –
+        // deshalb wird beim Export nach SDR umgerechnet; das ist auch das Format, das überall abspielbar ist.
+        composition.setHdrMode(Composition.HDR_MODE_TONE_MAP_HDR_TO_SDR_USING_OPEN_GL)
+
         outFile = File(ctx.cacheDir, "export_${System.currentTimeMillis()}.mp4")
         // Bitrate passend zur Auflösung (≈ 0,14 Bit pro Pixel), damit die Qualität dem Original nahekommt
         val bitrate = (w.toDouble() * h * fps * 0.14).coerceIn(4e6, 80e6).toInt()
@@ -244,36 +248,49 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
         }
     }
 
-    // ── Untertitel als Bild-Overlay in Ausgabegröße ──
+    // ── Untertitel als Bild-Overlay in Ausgabegröße, an freier Position (x/y = Mittelpunkt, 0…1) ──
     class SubtitleOverlay(private val w: Int, private val h: Int, cues: JSONArray, style: JSONObject) : BitmapOverlay() {
-        private data class Cue(val s: Double, val e: Double, val text: String)
-        private val list = (0 until cues.length()).map { cues.getJSONObject(it) }.map { Cue(it.getDouble("start"), it.getDouble("end"), it.getString("text")) }
-        private val blank: Bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        private data class Cue(val s: Double, val e: Double, val text: String, val x: Float, val y: Float)
+        private val defX = style.optDouble("x", 0.5).toFloat()
+        private val defY = style.optDouble("y", when (style.optString("pos", "unten")) { "oben" -> 0.12; "mitte" -> 0.5; else -> 0.88 }).toFloat()
+        private val list = (0 until cues.length()).map { cues.getJSONObject(it) }.map {
+            Cue(it.getDouble("start"), it.getDouble("end"), it.getString("text"),
+                if (it.isNull("x")) defX else it.optDouble("x", defX.toDouble()).toFloat(),
+                if (it.isNull("y")) defY else it.optDouble("y", defY.toDouble()).toFloat())
+        }
+        // Ein einziges Bild, das bei jedem Wechsel neu bemalt wird (spart bei 4K viel Speicher)
+        private val bmp: Bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
         private var curIdx = -2
-        private var cur: Bitmap = blank
         private val size = (when (style.optString("size", "mittel")) { "klein" -> 0.045; "groß" -> 0.075; else -> 0.058 } * minOf(w, h) * (if (h > w) 1.25 else 1.0)).toFloat()
-        private val pos = style.optString("pos", "unten")
         private val color = runCatching { Color.parseColor(style.optString("color", "#FFFFFF")) }.getOrDefault(Color.WHITE)
         private val outline = style.optBoolean("outline", true)
 
         override fun getBitmap(presentationTimeUs: Long): Bitmap {
             val t = presentationTimeUs / 1e6
             val idx = list.indexOfFirst { t >= it.s && t < it.e }
-            if (idx != curIdx) { curIdx = idx; cur = if (idx < 0) blank else render(list[idx].text) }
-            return cur
+            if (idx != curIdx) {
+                curIdx = idx
+                bmp.eraseColor(Color.TRANSPARENT)
+                if (idx >= 0) render(list[idx])
+            }
+            return bmp
         }
 
-        private fun render(text: String): Bitmap {
-            val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        private fun render(cue: Cue) {
             val c = Canvas(bmp)
+            val text = cue.text
             val paint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { textSize = size; typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD) }
             val width = (w * 0.88).toInt()
             fun layout(p: TextPaint) = StaticLayout.Builder.obtain(text, 0, text.length, p, width)
                 .setAlignment(Layout.Alignment.ALIGN_CENTER).setLineSpacing(0f, 1.08f).build()
             val fill = layout(paint.apply { color = this@SubtitleOverlay.color; style = Paint.Style.FILL })
-            val margin = h * 0.07f
-            val y = when (pos) { "oben" -> margin; "mitte" -> (h - fill.height) / 2f; else -> h - margin - fill.height }
-            c.save(); c.translate((w - width) / 2f, y)
+            // tatsächliche Breite des Textblocks, damit er ganz im Bild bleibt
+            var lw = 0f
+            for (i in 0 until fill.lineCount) lw = maxOf(lw, fill.getLineWidth(i))
+            val m = 0.02f
+            val cx = if (lw >= w * (1 - 2 * m)) w / 2f else (cue.x * w).coerceIn(lw / 2 + m * w, w - lw / 2 - m * w)
+            val top = (cue.y * h - fill.height / 2f).coerceIn(m * h, maxOf(m * h, h - m * h - fill.height))
+            c.save(); c.translate(cx - width / 2f, top)
             if (outline) {
                 val sp = TextPaint(paint).apply { style = Paint.Style.STROKE; strokeWidth = size / 7f; strokeJoin = Paint.Join.ROUND; color = Color.BLACK }
                 layout(sp).draw(c)
@@ -282,7 +299,6 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
             }
             fill.draw(c)
             c.restore()
-            return bmp
         }
 
         override fun getOverlaySettings(presentationTimeUs: Long): OverlaySettings = StaticOverlaySettings.Builder().build()

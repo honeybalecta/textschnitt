@@ -45,7 +45,7 @@ object Probe {
             return JSONObject().apply {
                 put("uri", uri.toString()); put("name", name); put("duration", durMs / 1000.0)
                 put("width", w); put("height", h); put("rotation", rot); put("fps", fps)
-                put("hasAudio", hasAudio); put("hasVideo", hasVideo)
+                put("hasAudio", hasAudio); put("hasVideo", hasVideo); put("kind", "video")
             }
         } catch (e: Exception) {
             return null

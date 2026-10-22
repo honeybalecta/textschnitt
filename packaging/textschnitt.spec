@@ -4,7 +4,7 @@ from pathlib import Path
 from PyInstaller.utils.hooks import collect_all
 
 ROOT = Path(SPECPATH).parent
-datas = [(str(ROOT / "index.html"), "."), (str(ROOT / "textschnitt.ico"), ".")]
+datas = [(str(ROOT / "core" / "web"), "web"), (str(ROOT / "textschnitt.ico"), ".")]
 for sub in ("ffmpeg", "models"):
     src = ROOT / "build" / sub
     if src.exists():

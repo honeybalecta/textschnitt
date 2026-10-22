@@ -4,15 +4,17 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Versionsnummer"
-        required: true
-        default: "1.0.0"
+        description: "Versionsnummer (leer = packaging/app-version.txt)"
+        required: false
+        default: ""
       models:
         description: "Mitgelieferte Whisper-Modelle (Leerzeichen-getrennt)"
         required: true
         default: "small"
   push:
     tags: ["v*"]
+    branches: [main]
+    paths: ["textschnitt.py", "textschnitt_app.py", "core/**", "packaging/**", "requirements.txt", ".github/workflows/build-windows.yml"]
 
 permissions:
   contents: write
@@ -22,11 +24,17 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 90
     env:
-      TS_VERSION: ${{ github.event.inputs.version || github.ref_name }}
+      TS_VERSION_INPUT: ${{ github.event.inputs.version || (startsWith(github.ref, 'refs/tags/') && github.ref_name) || '' }}
       TS_MODELS: ${{ github.event.inputs.models || 'small' }}
       PYTHONUTF8: "1"
     steps:
       - uses: actions/checkout@v4
+
+      - name: Version
+        shell: pwsh
+        run: |
+          $v = if ($env:TS_VERSION_INPUT) { $env:TS_VERSION_INPUT } else { (Get-Content packaging/app-version.txt -Raw).Trim() }
+          "TS_VERSION=$($v.TrimStart('v'))" >> $env:GITHUB_ENV
 
       - uses: actions/setup-python@v5
         with:
@@ -59,7 +67,10 @@ jobs:
           }
 
       - name: App bauen (PyInstaller)
-        run: pyinstaller --noconfirm --clean packaging/textschnitt.spec
+        shell: pwsh
+        run: |
+          pyinstaller --noconfirm --clean packaging/textschnitt.spec 2>&1 | Tee-Object -FilePath build.log
+          if (-not (Test-Path dist\Textschnitt\Textschnitt.exe)) { throw "PyInstaller hat keine EXE erzeugt" }
 
       - name: Selbsttest der gebauten App
         shell: pwsh
@@ -85,3 +96,16 @@ jobs:
           gh release view $tag 2>$null
           if ($LASTEXITCODE -eq 0) { gh release upload $tag $file --clobber }
           else { gh release create $tag $file --title "Textschnitt $tag" --notes "Windows-Installer. Mitgelieferte Modelle: $env:TS_MODELS" }
+
+      - name: Fehlerbericht als Commit-Kommentar
+        if: failure()
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $r = @("### Windows-Build fehlgeschlagen", '```')
+          if (Test-Path selftest.json) { $r += Get-Content selftest.json }
+          if (Test-Path build.log) { $r += (Get-Content build.log | Select-String -Pattern "Error|error:|Traceback|not found|failed" | Select-Object -Last 40 | ForEach-Object { $_.Line }) ; $r += "----- letzte Zeilen -----"; $r += (Get-Content build.log -Tail 30) }
+          $r += '```'
+          $r -join "`n" | Out-File -Encoding utf8 report.md
+          gh api "repos/${{ github.repository }}/commits/${{ github.sha }}/comments" -F body=@report.md | Out-Null

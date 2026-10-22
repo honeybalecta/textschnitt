@@ -46,6 +46,20 @@ object Transcriber {
         val res = JSONObject(String(bytes, Charsets.UTF_8))
         if (res.has("error")) throw IllegalStateException(res.getString("error"))
         res.put("seconds", (System.currentTimeMillis() - t0) / 1000)
+        res.put("env", envelope(audio))
         return res
+    }
+
+    /** Lautstärke in 10-ms-Schritten (dB, 0…255) als Base64 – damit setzt die Oberfläche Schnitte in Sprechpausen. */
+    fun envelope(a: FloatArray): String {
+        val n = a.size / 160
+        val out = ByteArray(n)
+        for (i in 0 until n) {
+            var sum = 0.0
+            for (j in i * 160 until i * 160 + 160) { val x = a[j].toDouble(); sum += x * x }
+            val db = (20 * kotlin.math.log10(kotlin.math.sqrt(sum / 160) + 1e-9)).coerceIn(-90.0, 0.0)
+            out[i] = Math.round((db + 90) * 2.8).toInt().coerceIn(0, 255).toByte()
+        }
+        return android.util.Base64.encodeToString(out, android.util.Base64.NO_WRAP)
     }
 }

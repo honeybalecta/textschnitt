@@ -1,70 +1,46 @@
 # Textschnitt
 
-Gesprochene Videos über das Transkript schneiden: Video öffnen, transkribieren lassen, im Text löschen, was raus soll, exportieren.
+Gesprochene Videos über das Transkript schneiden – mit einem kleinen Studio dazu: Videos öffnen (auch mehrere hintereinander), transkribieren lassen, im Text löschen, was raus soll, in der Zeitleiste feinschneiden, Clips, Fotos, Bild-im-Bild und Zooms einsetzen, Untertitel gestalten und frei platzieren, exportieren.
 
-## Einrichtung (einmalig)
+Textschnitt gibt es für **Windows** und **Android**; eine Web-Version ist geplant.
 
-1. **Python 3.9+** installieren (python.org; unter Windows beim Installieren „Add to PATH“ anhaken).
-2. **ffmpeg** installieren und in den PATH aufnehmen
-   - macOS: `brew install ffmpeg`
-   - Windows: `winget install Gyan.FFmpeg`
-3. **Whisper** für die Transkription: `pip install faster-whisper`
+## Aufbau
 
-Beim ersten Transkribieren lädt Whisper das gewählte Modell herunter (large-v3-turbo ≈ 1,6 GB). Danach läuft alles offline.
+| Ordner | Inhalt |
+|---|---|
+| `core/web/` | **Der gemeinsame Studio-Kern**: Oberfläche, Schnittmodell, Zeitleiste, Untertitel, Export-Plan. Läuft unverändert auf allen Plattformen. |
+| `textschnitt.py`, `textschnitt_app.py` | Windows-Adapter: lokales Backend (faster-whisper, ffmpeg) und Programmfenster (Edge WebView2) |
+| `android/` | Android-Adapter: whisper.cpp, Media3-Export, Galerie; bindet `core/web` beim Bauen ein |
 
-## Starten
+Die Plattformen stellen dem Kern dieselbe Schnittstelle `window.TS` bereit (Dateiauswahl, Projekte, Transkription, Export). Neue Studio-Funktionen entstehen einmal im Kern; nur was plattformabhängig ist (Transkription, Rendern, Dateizugriff), lebt in den Adaptern.
 
-Nach der Einrichtung (install.bat) liegt **Textschnitt** auf dem Desktop und im Startmenü. Es öffnet sich als eigenes Programmfenster – ohne Terminal und ohne Browser.
+## Installieren
 
-- Video öffnen: „Öffnen“, oder die Datei ins Fenster bzw. auf die Verknüpfung ziehen
-- Ist Textschnitt schon offen, landet eine weitere Datei im vorhandenen Fenster
-- Fehlersuche: `textschnitt.log` im Programmordner; `Textschnitt starten.bat` startet die alte Variante mit Terminal und Browser
+- **Windows**: Installer unter [Releases](https://github.com/honeybalecta/textschnitt/releases) (`Textschnitt-Setup-….exe`). Whisper-Modell „small“ und ffmpeg sind dabei, alles läuft offline.
+- **Android**: APK unter Releases (`Textschnitt-Android-….apk`), Android 10 oder neuer.
 
 ## Arbeiten
 
-| Aktion | So geht's |
-|---|---|
-| Stelle löschen | Text markieren → `Entf` oder `Backspace` |
-| Wiederherstellen | Gelöschtes markieren → nochmal `Entf` |
-| Springen | Auf ein Wort oder den Zeitstempel am Absatz klicken |
-| Abspielen | `Leertaste` – gelöschte Stellen werden übersprungen |
-| Rückgängig / Wiederholen | `Strg+Z` / `Strg+Umschalt+Z` (Mac: `⌘`) |
-| Suchen | `Strg+F`, `Enter` markiert den nächsten Treffer – direkt mit `Entf` löschbar |
-
-Werkzeuge:
-- **Füllwörter entfernen** löscht alle „äh“, „ähm“, „hm“ usw. in einem Rutsch (vorher mit „Füllwörter mit transkribieren“ transkribieren, sonst lässt Whisper sie oft weg).
-- **Pausen kürzen** setzt alle langen Pausen auf eine Wunschlänge. Pausen erscheinen im Text als ⏸-Marken und lassen sich auch einzeln löschen.
-- **Luft an Schnitten** lässt an jeder Schnittkante ein paar Millisekunden Ton stehen, damit nichts abgehackt klingt. Zusätzlich blendet der Export an jedem Schnitt 8 ms Ton ein und aus – so gibt es keine Knackser.
-- Gepunktet unterstrichene Wörter hat Whisper unsicher erkannt.
-
-Transkript und Schnitte werden automatisch als `<video>.textschnitt.json` neben dem Video gespeichert und beim nächsten Öffnen wiederhergestellt.
-
-## Untertitel
-
-Über den Reiter **Untertitel** oben im Editor:
-- Schalter **Untertitel an/aus**: schaltet Untertitel mit einem Klick für Vorschau und alle Exporte ab
-- Aufteilung **Zeilen** oder **1 Wort pro Untertitel**
-- Text jedes Untertitels direkt bearbeiten (eigener Text wird orange markiert; „↺ automatisch“ holt den gesprochenen Text zurück)
-- **✂ teilen** an der Cursorposition, **⤓ zusammenführen** mit dem nächsten, **ausblenden**
-- Start und Ende in 0,1-s-Schritten verschieben
-- Zeichen pro Zeile, Zeilenzahl und Maximaldauer festlegen und **Neu aufteilen**
-- Größe, Position, Farbe und Umrandung – die Vorschau im Player zeigt das Ergebnis
-- Gelöschte Stellen verschwinden automatisch aus den Untertiteln, die Zeiten folgen dem Schnitt
+- **Neues Projekt**: ein oder mehrere Videos wählen. Mehrere werden hintereinandergehängt und gemeinsam transkribiert; weitere lassen sich später mit „＋ Video anhängen“ ergänzen.
+- **Text**: Wörter anklicken/antippen oder mit gedrückter Maustaste bzw. nach kurzem Gedrückthalten mit dem Finger über mehrere Wörter ziehen, dann löschen. „Füllwörter weg“, „Pausen kürzen“, Suche mit `Strg+F`.
+- **Saubere Schnitte**: Bei der Transkription wird zusätzlich der Lautstärkeverlauf gespeichert. Jede Schnittkante wird damit in die nächste Sprechpause gelegt – auch wenn Whisper die Wortgrenzen etwas ungenau liefert. „▶ Letzten Schnitt anhören“ spielt die Stelle zur Kontrolle ab.
+- **Studio** (am Desktop dauerhaft unten, am Handy als Reiter): Zeitleiste wie in CapCut – teilen, trimmen, verschieben, B-Roll, Einschub, Bild-im-Bild, Fotos, Zoom-Sprünge und -Fahrten.
+- **Untertitel**: Aufteilung in Zeilen oder ein Wort pro Untertitel, Text bearbeiten, Stil wählen. **Direkt im Bild ziehen**, um sie zu platzieren – alle gemeinsam oder (im Studio ausgewählt) einzeln.
+- Tastenkürzel wie in CapCut (`⌨` in der Kopfzeile zeigt alle): `Leertaste`, `←/→` bildweise, `Strg+B` teilen, `Q/W` links/rechts löschen, `Entf`, `Strg+Z`.
 
 ## Exporte
 
-Video-, Audio- und SRT-Exporte landen im Ordner `<video>_textschnitt` neben der Quelldatei, CapCut-Projekte in CapCuts Entwurfsordner, Concat-Projekte in `Desktop\Concat`.
+| Format | Windows | Android |
+|---|---|---|
+| Video (MP4, Originalauflösung, Untertitel eingebrannt) | ✓ Ordner `…_textschnitt` neben dem ersten Video | ✓ direkt in die Galerie (Ordner „Textschnitt“) |
+| Audio (WAV, MP3, M4A, FLAC) | ✓ | – |
+| CapCut-Entwurf (Schnitte, Clips, Bild-im-Bild, Zooms, Untertitel an ihrer Position) | ✓ | – |
+| Concat-Projekt (`Desktop\Concat`) | ✓ | – |
+| SRT-Untertitel | ✓ zu jedem Export | – |
 
-- **Video**: MP4 (H.264/AAC), bildgenau geschnitten; Untertitel wahlweise eingebrannt.
-- **Audio**: WAV, MP3, M4A oder FLAC.
-- **CapCut-Projekt**: ein Entwurf mit der Originaldatei auf der Zeitleiste, jeder behaltene Abschnitt als eigener Clip, dazu eine Textspur „Untertitel“ mit allen Untertiteln in deinem Stil. Wenn CapCut gefunden wird, legt Textschnitt den Entwurf direkt in den Entwurfsordner; nach einem Neustart von CapCut steht er in der Projektliste. Sonst den erzeugten Ordner selbst dorthin kopieren:
-  - Windows: `%LOCALAPPDATA%\CapCut\User Data\Projects\com.lveditor.draft\`
-  - macOS: `~/Movies/CapCut/User Data/Projects/com.lveditor.draft/`
-- **Concat-Projekt**: ein Projektordner für das Schnittprogramm Concat in `Desktop\Concat`. Spur 1 enthält die behaltenen Abschnitte des Originals, Spur 2 die Untertitel als Textclips. In Concat einfach den Ordner öffnen. Das Projekt greift auf die Originaldatei zu – die also nicht verschieben.
-- **SRT**: bei „Untertitel mitnehmen“ zu jedem Export – mit den Zeiten des geschnittenen Ergebnisses.
+Weiche Zoomfahrten werden in CapCut und Concat als Zoom-Sprung angelegt. HDR-Videos vom Handy werden beim Video-Export nach SDR umgerechnet.
 
-## Hinweise
+## Entwickeln
 
-- **Geschwindigkeit**: Mit NVIDIA-Grafikkarte (CUDA) nutzt Whisper automatisch die GPU. Auf dem Mac läuft es auf der CPU; für lange Rohschnitte ist `small` oder `medium` deutlich schneller.
-- **Vorschau**: Kann der Browser eine Datei nicht abspielen (etwa HEVC vom iPhone in Firefox oder ProRes), bietet Textschnitt eine Vorschau-Datei an. Exportiert wird immer aus dem Original.
-- **CapCut** hat kein offizielles Projektformat. Der Entwurf folgt dem Aufbau, den aktuelle Desktop-Versionen lesen. Sollte ein CapCut-Update ihn nicht mehr öffnen, bleiben Video-Export und EDL als verlässlicher Weg.
+- Windows/macOS/Linux ohne Installer: `pip install -r requirements.txt`, ffmpeg in den PATH, dann `python textschnitt.py` (Browser) oder `pythonw textschnitt_app.pyw` (Fenster).
+- Builds laufen über GitHub Actions: Änderungen an `core/` bauen beide Plattformen neu. Versionen: `packaging/app-version.txt` (Windows), `android/version.txt` (Android).

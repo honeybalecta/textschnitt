@@ -13,7 +13,7 @@ on:
         default: true
   push:
     branches: [main]
-    paths: ["android/**", ".github/workflows/build-android.yml"]
+    paths: ["android/**", "core/**", ".github/workflows/build-android.yml"]
 
 permissions:
   contents: write

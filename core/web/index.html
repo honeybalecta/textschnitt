@@ -12,13 +12,13 @@
 <section id="home" class="screen">
   <header class="bar">
     <div class="brand"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 2 28 9v14l-12 7L4 23V9z" fill="#E89B0C"/><path d="M10 12h12M10 16h6M18.5 15.2l4 1.6M10 20h12" stroke="#1C1A22" stroke-width="2.2" stroke-linecap="round"/></svg>Textschnitt</div>
-    <button class="icon-btn" id="modelsBtn" title="Modelle">⚙</button>
+    <button class="icon-btn" id="modelsBtn" title="Whisper-Modelle">⚙</button>
   </header>
   <div class="home-body">
     <div id="projList"></div>
     <div class="empty-home hidden" id="homeEmpty">
       <h2>Noch keine Projekte</h2>
-      <p>Wähle ein Video aus deiner Galerie. Es wird auf dem Handy transkribiert – du schneidest dann über den Text.</p>
+      <p id="homeHint"></p>
     </div>
   </div>
   <button class="fab" id="newProj">＋ Neues Projekt</button>
@@ -27,12 +27,12 @@
 <!-- ───────────── Projekt ───────────── -->
 <section id="proj" class="screen hidden">
   <header class="bar">
-    <button class="icon-btn" id="backBtn" title="Zurück">‹</button>
+    <button class="icon-btn" id="backBtn" title="Zurück zur Projektliste">‹</button>
     <div class="title" id="projName"></div>
     <span class="saved" id="saved"></span>
     <button class="icon-btn" id="keysBtn" title="Tastenkürzel">⌨</button>
     <button class="icon-btn" id="undoBtn" title="Rückgängig (Strg+Z)">↶</button>
-    <button class="icon-btn" id="redoBtn" title="Wiederholen">↷</button>
+    <button class="icon-btn" id="redoBtn" title="Wiederholen (Strg+Umschalt+Z)">↷</button>
   </header>
 
   <div class="stage-wrap">
@@ -42,25 +42,40 @@
       <video id="iv" playsinline preload="auto" class="hidden"></video>
       <img id="oi" class="hidden" alt="">
       <img id="ii" class="hidden" alt="">
-      <div class="subov" id="subOv"></div>
+      <div class="audio-note">♪</div>
+      <div class="snap-guide"></div>
+      <div class="subov" id="subOv" title="Ziehen, um die Untertitel zu verschieben"></div>
       <div class="pin hidden" id="pin"></div>
       <div class="proxy-bar hidden" id="proxyBar"><span id="proxyMsg"></span>
         <button class="btn primary" id="proxyBtn">Vorschau-Datei erstellen</button><div class="progress hidden" id="proxyProg"><i></i></div></div>
-      <div class="stage-hint hidden" id="stageHint">Tippe ins Bild, um den Zoom-Mittelpunkt zu setzen</div>
+      <div class="stage-hint hidden" id="stageHint">Ins Bild tippen oder klicken, um den Zoom-Mittelpunkt zu setzen</div>
     </div>
   </div>
   <div class="transport">
-    <button class="play" id="playBtn">▶</button>
+    <button class="play" id="playBtn" title="Abspielen / Pause (Leertaste)">▶</button>
     <div class="scrub" id="scrub"><div class="segs" id="segs"></div><div class="head" id="head"></div></div>
     <div class="times mono"><b id="tNow">0:00</b><span id="tTot">0:00</span></div>
   </div>
 
+  <nav class="tabs" id="tabs">
+    <button data-tab="text" class="on">Text</button>
+    <button data-tab="subs">Untertitel</button>
+    <button data-tab="studio">Studio</button>
+    <button data-tab="export">Export</button>
+  </nav>
+
   <main class="panes">
-    <!-- Transkription -->
+    <!-- Videos & Transkription -->
     <div class="pane" id="paneTrans">
       <div class="card stack">
+        <h3>Videos</h3>
+        <p class="muted small">Die Videos werden in dieser Reihenfolge hintereinandergehängt und gemeinsam transkribiert.</p>
+        <div id="srcList"></div>
+        <div class="row"><button class="btn" id="addSrcBtn">＋ Video anhängen</button></div>
+      </div>
+      <div class="card stack">
         <h3>Transkribieren</h3>
-        <p class="muted small">Whisper läuft direkt auf deinem Handy. Bitte die App währenddessen geöffnet lassen.</p>
+        <p class="muted small">Whisper läuft direkt auf deinem Gerät – deine Videos werden nirgends hochgeladen.</p>
         <label class="row">Modell <select id="model"></select></label>
         <label class="row">Sprache <select id="lang"><option value="de" selected>Deutsch</option><option value="en">Englisch</option><option value="">automatisch</option></select></label>
         <label class="row"><input type="checkbox" id="fillers" checked> Füllwörter (äh, ähm) mit erkennen</label>
@@ -72,10 +87,14 @@
 
     <!-- Text -->
     <div class="pane hidden" id="paneText">
+      <div class="todo hidden" id="textTodo"><span><b></b> noch nicht transkribiert.</span><button class="btn primary" id="textTodoBtn">Jetzt transkribieren</button></div>
+      <div class="findrow"><input type="search" id="findIn" placeholder="Im Text suchen (Strg+F) – Enter: nächster Treffer" autocomplete="off"><span class="muted small" id="findInfo"></span></div>
       <div class="toolrow">
         <button class="chip" id="fillerBtn">Füllwörter weg</button>
         <button class="chip" id="pauseBtn">Pausen kürzen</button>
+        <button class="chip" id="cutPlayBtn" title="2 Sekunden vor bis 2 Sekunden nach dem letzten Schnitt abspielen">▶ Letzten Schnitt anhören</button>
         <label class="chip"><input type="checkbox" id="hideDel"> Gelöschtes ausblenden</label>
+        <button class="chip" onclick="addSources()">＋ Video anhängen</button>
       </div>
       <div class="transcript" id="transcript"></div>
     </div>
@@ -90,10 +109,11 @@
           <label class="lineopt">Zeilen <select id="stLines"><option value="1">1</option><option value="2" selected>2</option></select></label>
           <label class="lineopt">max. Dauer (s) <input type="number" id="stDur" min="1" max="10" step="0.5" value="4"></label>
           <label>Größe <select id="stSize"><option>klein</option><option selected>mittel</option><option>groß</option></select></label>
-          <label>Position <select id="stPos"><option>unten</option><option>mitte</option><option>oben</option></select></label>
+          <label>Position <select id="stPos"><option>unten</option><option>mitte</option><option>oben</option><option value="frei" disabled>frei (im Bild gezogen)</option></select></label>
           <label>Farbe <input type="color" id="stColor" value="#ffffff"></label>
           <label class="row"><input type="checkbox" id="stOutline" checked> Umrandung</label>
         </div>
+        <p class="muted small">Tipp: Untertitel lassen sich direkt im Bild an jede Stelle ziehen. Ein einzelner Untertitel bekommt eine eigene Position, wenn er im Studio ausgewählt ist.</p>
         <div class="row"><button class="btn" id="regenBtn">Neu aufteilen</button><span class="muted small" id="subCount"></span></div>
       </div>
       <div id="cueList"></div>
@@ -103,7 +123,7 @@
     <div class="pane hidden studio" id="paneStudio">
       <div class="tl-top">
         <span class="mono"><b id="tlTime">0:00,0</b> <span class="muted" id="tlTotal"></span></span>
-        <span class="tl-zoom"><button id="tlOut" title="Zeitleiste verkleinern">−</button><button id="tlIn" title="Zeitleiste vergrößern">＋</button></span>
+        <span class="tl-zoom"><button id="tlOut" title="Zeitleiste verkleinern (Strg+−)">−</button><button id="tlIn" title="Zeitleiste vergrößern (Strg++)">＋</button></span>
       </div>
       <div class="tl-box">
         <div class="tl" id="tl">
@@ -117,40 +137,46 @@
         </div>
         <div class="playline"></div>
       </div>
-      <div class="tl-info small" id="tlInfo">Wische über die Zeitleiste zum Spulen · zwei Finger zoomen · Clip antippen zum Bearbeiten</div>
+      <div class="tl-info small" id="tlInfo"></div>
       <div class="tools" id="tools"></div>
     </div>
 
     <!-- Export -->
     <div class="pane hidden" id="paneExport">
       <div class="card stack">
-        <h3>Video exportieren</h3>
-        <label class="row">Auflösung <select id="exRes"><option value="0" selected>Original</option><option value="1080">1080p</option><option value="720">720p</option></select></label>
-        <label class="row"><input type="checkbox" id="exSubs" checked> Untertitel ins Video einbrennen</label>
+        <h3>Exportieren</h3>
+        <div class="seg-ctl" id="exFmt"></div>
+        <label class="row" data-fmt="video">Auflösung <select id="exRes"><option value="0" selected>Original</option><option value="1080">1080p</option><option value="720">720p</option></select></label>
+        <label class="row" data-fmt="video" id="exQualityRow">Qualität <select id="exQuality"><option value="hoch">hoch</option><option value="standard" selected>standard</option><option value="klein">kleine Datei</option></select></label>
+        <label class="row" data-fmt="video"><input type="checkbox" id="exSubs" checked> Untertitel ins Video einbrennen</label>
+        <label class="row" data-fmt="audio">Format <select id="exAudioFmt"><option value="wav">WAV</option><option value="mp3">MP3</option><option value="m4a">M4A</option><option value="flac">FLAC</option></select></label>
+        <div data-fmt="capcut" class="stack">
+          <label class="row"><input type="checkbox" id="exCapcutInstall" checked> direkt in CapCut öffnen (als Entwurf ablegen)</label>
+          <span class="muted small" id="exCapcutDir"></span>
+          <span class="muted small">Schnitte, eingefügte Clips, Bild-im-Bild, Zooms und Untertitel (an ihrer Position) werden übernommen. Weiche Zoomfahrten werden als Zoom-Sprung angelegt.</span>
+        </div>
+        <div data-fmt="concat" class="stack">
+          <span class="muted small" id="exConcatDir"></span>
+          <span class="muted small">Schnitte, eingefügte Clips, Bild-im-Bild, Zooms und Untertitel werden als Spuren angelegt. Weiche Zoomfahrten werden als Zoom-Sprung angelegt.</span>
+        </div>
         <label class="row">Name <input type="text" id="exName"></label>
         <div class="summary small muted" id="exSummary"></div>
         <div class="row"><button class="btn primary" id="exBtn">Exportieren</button><button class="btn hidden" id="exCancel">Abbrechen</button></div>
         <div class="progress hidden" id="exProg"><i></i></div>
         <div class="small muted" id="exMsg"></div>
+        <pre class="small files" id="exFiles"></pre>
         <div class="row hidden" id="exDone"><button class="btn" id="exShare">Teilen</button><button class="btn" id="exOpen">Ansehen</button></div>
-        <p class="muted small">Das Video landet direkt in deiner Galerie (Ordner „Textschnitt“). Bitte die App während des Exports geöffnet lassen.</p>
+        <p class="muted small" id="exNote"></p>
       </div>
     </div>
   </main>
 
   <div class="selbar hidden" id="selbar">
     <span id="selInfo"></span>
-    <button class="btn" id="selPlay">▶</button>
+    <button class="btn" id="selPlay" title="Ab hier abspielen">▶</button>
     <button class="btn primary" id="selDel">Löschen</button>
-    <button class="btn" id="selClose">✕</button>
+    <button class="btn" id="selClose" title="Auswahl aufheben (Esc)">✕</button>
   </div>
-
-  <nav class="tabs" id="tabs">
-    <button data-tab="text" class="on">Text</button>
-    <button data-tab="subs">Untertitel</button>
-    <button data-tab="studio">Studio</button>
-    <button data-tab="export">Export</button>
-  </nav>
 </section>
 
 <!-- Bearbeitungsblatt -->
@@ -169,6 +195,7 @@
 </div>
 
 <div class="toast" id="toast"></div>
+<script src="bridge-http.js"></script>
 <script src="app.js"></script>
 <script src="studio.js"></script>
 </body>

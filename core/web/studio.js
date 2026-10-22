@@ -3,7 +3,7 @@
 const TL = {pps: 60, sel: null, expect: -1, drag: null, pinch: null, seekPending: null};
 const tlEl = $('#tl'), tlInner = $('#tlInner');
 const half = () => tlEl.clientWidth / 2;
-const fps = () => (P && P.main.fps) || 30;
+const fps = () => (P && primary().fps) || 30;
 const snapF = d => Math.round(d * fps()) / fps();
 const fmtD = t => (Math.round(t * 10) / 10).toFixed(1).replace('.', ',');
 
@@ -20,7 +20,7 @@ function itemOutRange(it){
 // ───────── Zeichnen ─────────
 function renderStudio(){ renderTimeline(); }
 function renderTimeline(){
-  if (!P || tab !== 'studio') return;
+  if (!P || !studioOn()) return;
   const pad = half();
   tlInner.style.width = Math.ceil(total * TL.pps + 2 * pad) + 'px';
   $('#tlTotal').textContent = '/ ' + fmtS(total);
@@ -60,13 +60,17 @@ function thumbs(b, uri, inS, d, aspect){
 }
 function renderMain(pad){
   const tr = $('#trMain'); tr.innerHTML = '';
-  const [w, h] = dispSize(P.main); const asp = w / h;
+  const [w, h] = dispSize(primary()); const asp = w / h, multi = P.sources.length > 1;
+  let lastSi = -1;
   timeline.forEach((g, i) => {
     const d = g.out - g.in;
-    const b = blk(g.kind === 'main' ? 'main' : 'insert', g.o, d, pad, {kind: g.kind, i});
-    if (g.kind === 'main') thumbs(b, P.main.uri, g.in, d, asp);
-    else { const c = g.item.clip; thumbs(b, c.uri, g.in, d, (c.width && c.height) ? dispSize(c)[0] / dispSize(c)[1] : asp); }
-    b.insertAdjacentHTML('beforeend', `<span class="lbl">${g.kind === 'insert' ? 'Einschub · ' : ''}${fmtD(d)} s</span>`);
+    const b = blk(g.kind === 'main' ? 'main' + (g.si % 2 ? ' alt' : '') : 'insert', g.o, d, pad, {kind: g.kind, i});
+    let lbl = '';
+    if (g.kind === 'main'){ const s = P.sources[g.si];
+      if (hasVid(s)){ const [sw, sh] = dispSize(s); thumbs(b, s.uri, g.in - s.off, d, sw / sh); } else b.classList.add('audio');
+      if (multi && g.si !== lastSi) lbl = `${g.si + 1} · `; lastSi = g.si; }
+    else { const c = g.item.clip; thumbs(b, c.uri, g.in, d, (c.width && c.height) ? dispSize(c)[0] / dispSize(c)[1] : asp); lbl = 'Einschub · '; }
+    b.insertAdjacentHTML('beforeend', `<span class="lbl">${lbl}${fmtD(d)} s</span>`);
     tr.append(b);
   });
 }
@@ -146,7 +150,7 @@ tlEl.addEventListener('scroll', () => {
   const first = TL.seekPending == null; TL.seekPending = o;
   if (first) requestAnimationFrame(() => { const v = TL.seekPending; TL.seekPending = null; seekOut(v, false); TL.expect = Math.round(v * TL.pps); });
 }, {passive:true});
-(function follow(){ if (P && tab === 'studio' && playing && !TL.drag) syncScroll(outPos); requestAnimationFrame(follow); })();
+(function follow(){ if (P && studioOn() && playing && !TL.drag) syncScroll(outPos); requestAnimationFrame(follow); })();
 
 // Zoomen der Zeitleiste
 function setPps(p){ TL.pps = clamp(p, 6, 800); renderTimeline(); }
@@ -209,11 +213,11 @@ function clampDrag(side, d){
   return d;
 }
 // Wie weit eine Hauptspur-Kante nach außen darf
-function edgeMin(g, side){ const L = g.L || {}; if (L.k === 'adj') return -g.in; if (L.k === 'del') return P.dels[L.di] ? -(P.dels[L.di][1] - P.dels[L.di][0]) : 0; return 0; }
-function edgeMax(g, side){ const R = g.R || {}; const dur = P.main.duration; if (R.k === 'adj') return dur - g.out; if (R.k === 'del') return P.dels[R.di] ? P.dels[R.di][1] - P.dels[R.di][0] : 0; return 0; }
+function edgeMin(g, side){ const L = g.L || {}; if (L.k === 'adj') return -(g.in - P.sources[g.si].off); if (L.k === 'del') return P.dels[L.di] ? -(P.dels[L.di][1] - P.dels[L.di][0]) : 0; return 0; }
+function edgeMax(g, side){ const R = g.R || {}; if (R.k === 'adj') return srcEnd(g.si) - g.out; if (R.k === 'del') return P.dels[R.di] ? P.dels[R.di][1] - P.dels[R.di][0] : 0; return 0; }
 function previewDrag(side, d){
   const s = TL.sel;
-  if (s.kind === 'main'){ const g = timeline[s.i]; V.currentTime = side === 'l' ? g.in + d : Math.max(g.in, g.out + d - 0.04); V.style.transform = ''; IV.classList.add('hidden'); }
+  if (s.kind === 'main'){ const g = timeline[s.i], off = P.sources[g.si].off; seekV(g.si, (side === 'l' ? g.in + d : Math.max(g.in, g.out + d - 0.04)) - off, false); V.style.transform = ''; IV.classList.add('hidden'); II.classList.add('hidden'); }
   if (s.kind === 'insert'){ const g = timeline[s.i]; if (isImg(g.item.clip)) return; const url = MEDIA(g.uri); if (IV.dataset.src !== url){ IV.src = url; IV.dataset.src = url; } IV.classList.remove('hidden'); IV.currentTime = side === 'l' ? g.in + d : g.out + d - 0.04; }
 }
 function applyDrag(side, d){
@@ -269,24 +273,25 @@ function updateTools(){
     ...(it.type === 'pip' ? [T('↗', 'Ecke', cycleCorner), T('⤢', 'Größe', cycleSize)] : []), T('⇄', 'Als Einschub', () => convert('insert'))]; }
   else if (s.kind === 'zoom'){ const it = selItem(); list = [T('◎', 'Mittelpunkt', () => openItem(it.id)), T('⟳', it.kind === 'punch' ? 'Sprung' : it.kind === 'in' ? 'Fahrt rein' : 'Fahrt raus', cycleZoomKind),
     T('−', 'Schwächer', () => zoomStrength(-0.05)), T('＋', 'Stärker', () => zoomStrength(0.05)), T('🗑', 'Löschen', delSel, 'danger')]; }
-  else if (s.kind === 'cue'){ const c = selCue(); list = [T('✎', 'Text', editCue), T('✂', 'Teilen', splitCue), T(c && c.off ? '👁' : '⦸', c && c.off ? 'Einblenden' : 'Ausblenden', () => { commit(() => c.off = !c.off, false); })]; }
+  else if (s.kind === 'cue'){ const c = selCue(); list = [T('✎', 'Text', editCue), T('✂', 'Teilen', splitCue), T(c && c.off ? '👁' : '⦸', c && c.off ? 'Einblenden' : 'Ausblenden', () => { commit(() => c.off = !c.off, false); }),
+    ...(c && c.x != null ? [T('⌖', 'Position ↺', () => { commit(() => { delete c.x; delete c.y; }, false); placeOverlay(); })] : [])]; }
   for (const t of list){ const b = document.createElement('button'); b.className = 'tool ' + t.cls; b.innerHTML = `<i>${t.icon}</i>${t.label}`; b.onclick = t.fn; box.append(b); }
   // Info
   const info = $('#tlInfo');
-  if (!s) info.textContent = 'Wische zum Spulen · zwei Finger zoomen · Clip antippen zum Bearbeiten';
+  if (!s) info.textContent = FINE ? 'Mausrad oder ←/→ spulen · Strg+Mausrad zoomt · Clip anklicken zum Bearbeiten · ⌨ zeigt alle Tastenkürzel' : 'Wische zum Spulen · zwei Finger zoomen · Clip antippen zum Bearbeiten';
   else if (g) info.textContent = `${s.kind === 'insert' ? 'Einschub' : 'Clip'} · ${fmtS(g.o)} – ${fmtS(g.o + g.out - g.in)} (${fmtD(g.out - g.in)} s) · Griffe ziehen zum Trimmen`;
-  else if (s.kind === 'cue'){ const c = selCue(), t = c && cueTimes(c); info.textContent = t ? `Untertitel · ${fmtS(t.s)} – ${fmtS(t.e)} · Griffe ziehen verschiebt Anfang/Ende` : 'Untertitel'; }
+  else if (s.kind === 'cue'){ const c = selCue(), t = c && cueTimes(c); info.textContent = t ? `Untertitel · ${fmtS(t.s)} – ${fmtS(t.e)} · Griffe ziehen verschiebt Anfang/Ende · im Bild ziehen setzt die Position nur für diesen` : 'Untertitel'; }
   else { const it = selItem(); if (it){ const [a, e] = itemOutRange(it); info.textContent = `${TYPE_LBL[it.type]} · ${fmtS(a)} – ${fmtS(e)} · ziehen zum Verschieben, Griffe zum Trimmen`; } }
 }
 function curMainSeg(){ const g = timeline[curSeg]; return g && g.kind === 'main' ? g : null; }
 function splitHere(){
   const g = curMainSeg(); if (!g) return toast('Abspiellinie auf einen Clip der Hauptspur setzen');
-  const x = V.currentTime; if (x - g.in < 0.05 || g.out - x < 0.05) return toast('Zu nah an einer Kante');
+  const x = vT(); if (x - g.in < 0.05 || g.out - x < 0.05) return toast('Zu nah an einer Kante');
   commit(() => P.splits.push(+x.toFixed(3)), false); select({kind:'main', i: segAtOut(outPos), src: x + 0.05}); toast('Geteilt');
 }
 function cutTo(side){
   const g = curMainSeg(); if (!g) return;
-  const x = V.currentTime;
+  const x = vT();
   commit(() => side === 'l' ? addDel(g.in, x) : addDel(x, g.out), false); tokens.forEach(t => paint(t.i));
 }
 function delSel(){
@@ -351,14 +356,13 @@ function splitCue(){
   const idx = P.cues.indexOf(c);
   commit(() => { const c2 = {id:newId(), a: ids[k-1] + 1, b: c.b, text:null, ds:0, de:c.de || 0, off:c.off}; c.b = ids[k-1]; c.text = null; c.de = 0; P.cues.splice(idx + 1, 0, c2); }, false);
 }
-window.addEventListener('resize', () => { if (tab === 'studio') renderTimeline(); });
 
 // ───────── Tastatur (wie CapCut) und Maus ─────────
 const KEYS = [
   ['Leertaste', 'Abspielen / Pause'], ['K / L', 'Pause / Abspielen'],
   ['← / →', 'ein Bild zurück / vor'], ['Umschalt + ← / →', 'fünf Bilder zurück / vor'],
   ['↑ / ↓', 'zum vorigen / nächsten Schnitt springen'], ['Pos1 / Ende', 'an den Anfang / das Ende'],
-  ['Strg + B', 'an der Abspiellinie teilen'], ['Q / W', 'links / rechts der Abspiellinie löschen'],
+  ['Strg + F', 'im Text suchen (Enter: nächster Treffer, dann Entf löscht)'], ['Strg + B', 'an der Abspiellinie teilen'], ['Q / W', 'links / rechts der Abspiellinie löschen'],
   ['Entf / Rücktaste', 'Auswahl löschen'], ['Alt + ← / →', 'Auswahl um ein Bild verschieben'],
   [', / .', 'Anfang / Ende der Auswahl zur Abspiellinie trimmen'],
   ['Strg + Z', 'rückgängig'], ['Strg + Umschalt + Z / Strg + Y', 'wiederholen'],
@@ -373,7 +377,7 @@ $('#keysBtn').onclick = () => {
   $('#sheet').classList.remove('hidden', 'passive'); $('#sheetBack').classList.remove('hidden');
 };
 
-function stepFrames(n){ if (playing) pausePlay(); seekOut(clamp(outPos + n / fps(), 0, total), false); if (tab === 'studio') syncScroll(outPos); }
+function stepFrames(n){ if (playing) pausePlay(); seekOut(clamp(outPos + n / fps(), 0, total), false); if (studioOn()) syncScroll(outPos, true); }
 function editPoints(){
   const pts = new Set([0, total]);
   timeline.forEach(g => { pts.add(+g.o.toFixed(3)); pts.add(+(g.o + g.out - g.in).toFixed(3)); });
@@ -383,7 +387,7 @@ function editPoints(){
 function jumpEdit(dir){
   const pts = editPoints(), o = outPos;
   const t = dir < 0 ? [...pts].reverse().find(p => p < o - 0.02) : pts.find(p => p > o + 0.02);
-  if (t == null) return; if (playing) pausePlay(); seekOut(Math.min(t, Math.max(0, total - 0.01)), false); if (tab === 'studio') syncScroll(outPos);
+  if (t == null) return; if (playing) pausePlay(); seekOut(Math.min(t, Math.max(0, total - 0.01)), false); if (studioOn()) syncScroll(outPos, true);
 }
 // Kante der Auswahl an die Abspiellinie holen (wie Trimmen in CapCut)
 function trimToPlayhead(side){
@@ -414,6 +418,7 @@ document.addEventListener('keydown', e => {
   if (mod && k.toLowerCase() === 'z'){ handled(); (e.shiftKey ? $('#redoBtn') : $('#undoBtn')).click(); return; }
   if (mod && k.toLowerCase() === 'y'){ handled(); $('#redoBtn').click(); return; }
   if (mod && k.toLowerCase() === 'b'){ handled(); splitHere(); return; }
+  if (mod && k.toLowerCase() === 'f' && tokens.length){ handled(); if (tab !== 'text') setTab('text'); $('#findIn').focus(); $('#findIn').select(); return; }
   if (mod && (k === '+' || k === '=')){ handled(); setPps(TL.pps * 1.4); return; }
   if (mod && k === '-'){ handled(); setPps(TL.pps / 1.4); return; }
   if (mod && k === '0'){ handled(); fitTimeline(); return; }

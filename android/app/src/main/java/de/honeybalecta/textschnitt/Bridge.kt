@@ -22,20 +22,29 @@ class Bridge(private val act: MainActivity) {
     private fun safeId(id: String) = id.filter { it.isLetterOrDigit() || it == '-' || it == '_' }.take(40)
 
     // ── Dateiauswahl ──
+    @Volatile private var pickKind: String = "video"
+
+    /** kind: "videos" = mehrere Videos (Liste), "clip" = ein Video oder Foto, sonst ein Video. */
     @JavascriptInterface
     fun pick(id: String, kind: String) {
-        pickId = id
-        main.post { act.launchPicker(if (kind == "clip") arrayOf("video/*", "image/*") else arrayOf("video/*")) }
+        pickId = id; pickKind = kind
+        main.post { act.launchPicker(if (kind == "clip") arrayOf("video/*", "image/*") else arrayOf("video/*"), kind == "videos") }
     }
 
-    fun onPicked(uri: Uri?) {
+    fun onPicked(uris: List<Uri>) {
         val id = pickId ?: return
         pickId = null
-        if (uri == null) { js("TSApp.onPicked(${q(id)}, null)"); return }
-        runCatching { ctx.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+        if (uris.isEmpty()) { js("TSApp.onPicked(${q(id)}, null)"); return }
+        uris.forEach { runCatching { ctx.contentResolver.takePersistableUriPermission(it, Intent.FLAG_GRANT_READ_URI_PERMISSION) } }
+        val multi = pickKind == "videos"
         Thread {
-            val info = Probe.probe(ctx, uri)
-            js("TSApp.onPicked(${q(id)}, ${if (info == null) "null" else q(info.toString())})")
+            val infos = uris.mapNotNull { Probe.probe(ctx, it) }
+            val res = when {
+                infos.isEmpty() -> null
+                multi -> JSONArray(infos).toString()
+                else -> infos[0].toString()
+            }
+            js("TSApp.onPicked(${q(id)}, ${if (res == null) "null" else q(res)})")
         }.start()
     }
 
@@ -46,9 +55,12 @@ class Bridge(private val act: MainActivity) {
         projects.listFiles { f -> f.extension == "json" }?.forEach { f ->
             runCatching {
                 val p = JSONObject(f.readText())
+                val srcs = p.optJSONArray("sources") ?: JSONArray().put(p.getJSONObject("main"))
+                var dur = 0.0
+                for (i in 0 until srcs.length()) dur += srcs.getJSONObject(i).optDouble("duration", 0.0)
                 arr.put(JSONObject().apply {
                     put("id", p.getString("id")); put("name", p.optString("name"))
-                    put("updated", p.optLong("updated")); put("duration", p.getJSONObject("main").optDouble("duration"))
+                    put("updated", p.optLong("updated")); put("duration", dur); put("sources", srcs.length())
                     put("transcribed", (p.optJSONArray("tokens")?.length() ?: 0) > 0)
                 })
             }
@@ -123,6 +135,8 @@ class Bridge(private val act: MainActivity) {
 
     @JavascriptInterface
     fun info(): String = JSONObject().apply {
+        put("platform", "android")
+        put("exportFormats", JSONArray().put("video"))
         put("version", ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName)
         put("whisper", runCatching { Whisper.systemInfo() }.getOrDefault("?"))
     }.toString()

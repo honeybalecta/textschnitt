@@ -29,8 +29,10 @@ if links.is_dir():
 
 FIRST_PORT = 8765
 TITLE = "Textschnitt"
-VIDEO_TYPES = ("Video und Audio (*.mp4;*.mov;*.mkv;*.m4v;*.webm;*.avi;*.mts;*.mp3;*.wav;*.m4a;*.flac;*.aac)",
+VIDEO_TYPES = ("Video und Audio (*.mp4;*.mov;*.mkv;*.m4v;*.webm;*.avi;*.mts;*.m2ts;*.wmv;*.mp3;*.wav;*.m4a;*.flac;*.aac;*.ogg)",
                "Alle Dateien (*.*)")
+CLIP_TYPES = ("Videos und Bilder (*.mp4;*.mov;*.mkv;*.m4v;*.webm;*.avi;*.jpg;*.jpeg;*.png;*.webp;*.bmp;*.gif)",
+              "Alle Dateien (*.*)")
 
 
 def fail(msg: str):
@@ -60,8 +62,8 @@ def port_free(port: int) -> bool:
             return False
 
 
-def hand_over(port: int, path: str | None):
-    body = json.dumps({"path": path} if path else {}).encode("utf-8")
+def hand_over(port: int, paths: list[str]):
+    body = json.dumps({"paths": paths}).encode("utf-8")
     req = urllib.request.Request(f"http://127.0.0.1:{port}/api/focus", data=body,
                                  headers={"Content-Type": "application/json"})
     try:
@@ -85,7 +87,9 @@ def selftest(out_path: str) -> int:
         rep["ffmpeg"] = subprocess.run([T.FFMPEG, "-version"], capture_output=True, text=True,
                                        **T.NOWIN).stdout.splitlines()[0]
         rep["models"] = T.bundled_models()
-        rep["index_html"] = (T.RES_DIR / "index.html").exists()
+        rep["web"] = all((T.WEB_DIR / f).exists() for f in ("index.html", "app.js", "studio.js", "app.css", "bridge-http.js"))
+        if not rep["web"]:
+            raise RuntimeError(f"Oberfläche fehlt in {T.WEB_DIR}")
         wav = Path(tempfile.gettempdir()) / "textschnitt_selftest.wav"
         subprocess.run([T.FFMPEG, "-y", "-v", "error", "-f", "lavfi", "-i", "sine=frequency=300:duration=3",
                         "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", str(wav)], check=True, **T.NOWIN)
@@ -105,11 +109,11 @@ def selftest(out_path: str) -> int:
 def main():
     if len(sys.argv) > 2 and sys.argv[1] == "--selftest":
         sys.exit(selftest(sys.argv[2]))
-    arg = sys.argv[1] if len(sys.argv) > 1 else None
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
 
     # Schon offen? Dann dorthin übergeben und beenden.
     if running_instance(FIRST_PORT):
-        hand_over(FIRST_PORT, arg)
+        hand_over(FIRST_PORT, args)
         return
 
     try:
@@ -126,12 +130,6 @@ def main():
     if port is None:
         fail("Kein freier lokaler Port gefunden (8765–8784).")
 
-    if arg:
-        try:
-            T.open_source(arg)
-        except Exception as e:  # noqa: BLE001
-            T.log(f"Startdatei nicht geöffnet: {e}")
-
     srv = T.make_server(port)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     T.log(f"Desktop-App gestartet auf Port {port} – Python {sys.version.split()[0]}")
@@ -142,30 +140,38 @@ def main():
     except Exception:
         pass
 
-    window = webview.create_window(TITLE, f"http://127.0.0.1:{port}/", width=1440, height=920,
-                                   min_size=(980, 640), background_color="#FAF6EE", text_select=True)
+    window = webview.create_window(TITLE, T.app_url(port), width=1480, height=940,
+                                   min_size=(1000, 640), background_color="#FAF6EE", text_select=False)
 
-    def pick():
+    def pick(kind: str):
+        multi = kind == "videos"
+        types = CLIP_TYPES if kind == "clip" else VIDEO_TYPES
         try:
-            res = window.create_file_dialog(webview.OPEN_DIALOG, allow_multiple=False, file_types=VIDEO_TYPES)
+            res = window.create_file_dialog(webview.OPEN_DIALOG, allow_multiple=multi, file_types=types)
         except Exception:
-            res = window.create_file_dialog(webview.OPEN_DIALOG, allow_multiple=False)
+            res = window.create_file_dialog(webview.OPEN_DIALOG, allow_multiple=multi)
         if not res:
-            return None
-        return res[0] if isinstance(res, (list, tuple)) else res
+            return []
+        return list(res) if isinstance(res, (list, tuple)) else [res]
 
-    def focus(reload_ui: bool):
+    def focus():
         try:
             window.restore()
             window.show()
             window.on_top = True
             window.on_top = False
-            if reload_ui:
-                window.evaluate_js("window.refresh && refresh()")
         except Exception:
             pass
 
-    T.APP_HOOKS.update(pick=pick, focus=focus)
+    def open_files(media: list):
+        try:
+            window.evaluate_js("window.TSApp && TSApp.onOpenFiles(" + json.dumps(json.dumps(media)) + ")")
+        except Exception:
+            pass
+
+    T.APP_HOOKS.update(pick=pick, focus=focus, open_files=open_files)
+    if args:  # beim Start übergebene Dateien öffnen, sobald die Oberfläche geladen ist
+        window.events.loaded += lambda: threading.Timer(0.8, T.handle_open_paths, args=(args,)).start()
 
     def on_closing():
         return True

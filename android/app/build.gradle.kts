@@ -47,6 +47,8 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+    // Die Oberfläche kommt aus dem gemeinsamen Studio-Kern (../../core/web)
+    sourceSets { getByName("main") { assets.srcDirs("src/main/assets", "../../core") } }
     androidResources { noCompress += listOf("bin") }
     packaging { jniLibs { useLegacyPackaging = false } }
 }

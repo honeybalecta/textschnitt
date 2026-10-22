@@ -23,7 +23,10 @@ class MainActivity : ComponentActivity() {
     private lateinit var server: LocalServer
 
     private val picker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
-        bridge.onPicked(uri)
+        bridge.onPicked(if (uri == null) emptyList() else listOf(uri))
+    }
+    private val multiPicker = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris: List<Uri> ->
+        bridge.onPicked(uris)
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -75,5 +78,5 @@ class MainActivity : ComponentActivity() {
         super.onDestroy()
     }
 
-    fun launchPicker(mimes: Array<String>) = picker.launch(mimes)
+    fun launchPicker(mimes: Array<String>, multiple: Boolean) = if (multiple) multiPicker.launch(mimes) else picker.launch(mimes)
 }
