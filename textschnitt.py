@@ -304,13 +304,19 @@ def model_ref(name: str) -> str:
     return str(local) if (local / "model.bin").exists() else name
 
 
+_models_cache: dict = {"t": 0.0, "v": None}
+
+
 def models_list() -> list[dict]:
+    if _models_cache["v"] is not None and time.time() - _models_cache["t"] < 600:
+        return _models_cache["v"]
     out = []
     inst = {n: model_cached(n) for n, _, _ in MODELS} if whisper_available() else {}
     rec = "large-v3-turbo" if inst.get("large-v3-turbo") else "small"
     for n, label, mb in MODELS:
         out.append({"name": n, "label": label, "sizeMb": mb, "installed": bool(inst.get(n)),
                     "bundled": n in bundled_models(), "recommended": n == rec})
+    _models_cache.update(t=time.time(), v=out)
     return out
 
 
@@ -352,6 +358,7 @@ def download_job(job: dict, name: str):
         download_model(MODEL_REPO.get(name, name))
     finally:
         stop.set()
+        _models_cache["v"] = None
     return {"name": name}
 
 
@@ -414,6 +421,7 @@ def get_model(name: str, phase: dict, job: dict):
             stop.set()
         _model_cache.clear()
         _model_cache[name] = (m, device)
+        _models_cache["v"] = None   # Modell ist jetzt sicher vorhanden
         return _model_cache[name]
 
 
