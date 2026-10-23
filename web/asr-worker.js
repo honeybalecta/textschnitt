@@ -19,6 +19,8 @@ async function useLocalOrt(){
 
 const REPO = {tiny:'onnx-community/whisper-tiny_timestamped', base:'onnx-community/whisper-base_timestamped', small:'onnx-community/whisper-small_timestamped'};
 let pipe = null, key = '', device = '';
+let bundled = null;
+const bundledModels = () => bundled ||= fetch(new URL('./models/bundled.json', import.meta.url)).then(r => r.ok ? r.json() : []).catch(() => []);
 
 async function hasGpu(){
   try { return !!(navigator.gpu && await navigator.gpu.requestAdapter()); } catch(_){ return false; }
@@ -29,6 +31,10 @@ async function load(name, want, onProgress){
   if (pipe && key === repo + dev) return dev;
   if (pipe){ try { await pipe.dispose(); } catch(_){} pipe = null; }
   await useLocalOrt();
+  // tiny und base liefert die Seite selbst aus, small kommt von Hugging Face
+  const local = (await bundledModels()).includes(repo);
+  env.allowLocalModels = local; env.allowRemoteModels = !local;
+  env.localModelPath = new URL('./models/', import.meta.url).href;
   const files = new Map();
   const progress_callback = p => {
     if (p.status === 'progress' && p.total){ files.set(p.file, [p.loaded || 0, p.total]);

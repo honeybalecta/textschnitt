@@ -28,6 +28,8 @@ R.browserVersion = browser.version();
 const ctx = await browser.newContext({acceptDownloads: true, viewport: {width: 1400, height: 900}, locale: 'de-DE'});
 const page = await ctx.newPage();
 page.on('console', m => { const t = `[${m.type()}] ${m.text()}`; R.console.push(t.slice(0, 500)); if (m.type() === 'error') console.log(t.slice(0, 300)); });
+const hfRequests = [];
+page.on('request', r => { if (/huggingface\.co|hf\.co/.test(r.url())) hfRequests.push(r.url()); });
 page.on('pageerror', e => { R.errors.push(String(e).slice(0, 500)); console.log('PAGEERROR', String(e).slice(0, 300)); });
 const shot = name => page.screenshot({path: path.join(OUT, name + '.png')}).catch(() => {});
 const ev = (fn, arg) => page.evaluate(fn, arg);
@@ -64,6 +66,7 @@ try {
   step('Transkription im Browser', tr.words.length >= 8 && mono && spread > 0.6 && tr.env > 100,
     {secs: Math.round((Date.now() - t0) / 1000), n: tr.words.length, mono, spread: +spread.toFixed(2), env: tr.env, msg: tr.msg, text: tr.words.map(w => w.w).join('').slice(0, 300),
      first: tr.words.slice(0, 6), models});
+  step('Modell base von der eigenen Seite (keine Anfrage an Hugging Face)', hfRequests.length === 0, {hf: hfRequests.slice(0, 5)});
   await shot('03-text');
 
   // Schneiden: zwei Wörter löschen, Titel und Tempo/Schwarzweiß

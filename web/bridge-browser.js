@@ -212,7 +212,7 @@
   const MODELS = [
     {name:'tiny',  label:'Whisper tiny – sehr schnell, ungenauer', gpu:155, cpu:45},
     {name:'base',  label:'Whisper base – schnell',                 gpu:290, cpu:80},
-    {name:'small', label:'Whisper small – genau (empfohlen)',      gpu:665, cpu:250},
+    {name:'small', label:'Whisper small – genau, lädt von Hugging Face (empfohlen)',      gpu:665, cpu:250},
   ];
   const forced = params.get('device') === 'wasm' ? 'wasm' : '';
   const dev = () => forced || (hasGpu ? 'webgpu' : 'wasm');
@@ -437,7 +437,7 @@
       const n = document.createElement('div'); n.className = 'web-note';
       const miss = supportNote();
       n.innerHTML = (miss.length ? `<p class="web-warn">Dieser Browser kann nicht alles, was Textschnitt braucht (${miss.join(', ')}). Am besten funktioniert ein aktueller Chrome oder Edge am Computer.</p>` : '') +
-        `<p>🔒 Deine Videos bleiben auf deinem Gerät: Transkription, Schnitt und Export laufen vollständig in diesem Browser. Nur das Whisper-Modell wird beim ersten Mal von Hugging Face geladen.</p>` +
+        `<p>🔒 Deine Videos bleiben auf deinem Gerät: Transkription, Schnitt und Export laufen vollständig in diesem Browser. Die Whisper-Modelle tiny und base kommen beim ersten Mal von dieser Seite und werden im Browser gespeichert; nur das größere Modell small wird von Hugging Face geladen.</p>` +
         `<p class="muted">Textschnitt ${VERSION} · Projekte werden in diesem Browser gespeichert · <a href="https://github.com/honeybalecta/textschnitt" target="_blank" rel="noopener">Windows- und Android-App</a></p>`;
       home.append(n);
     }
