@@ -127,6 +127,10 @@ function repeatGroups(items, textOf, sameSrc){
 // Wörter an den tatsächlichen Ton anpassen:
 //  1. Wiederholte Anläufe („ich wollte – ich wollte heute“) bekommen je einen Sprachabschnitt – Whisper verteilt deren Zeiten oft falsch.
 //  2. Sprache, zu der Whisper kein Wort geliefert hat (ausgelassene Wiederholungen), wird als eigener Eintrag (🗣) sichtbar.
+let srcForAlign = null;
+function alignThr(a){ const n = a.length, hist = new Uint32Array(256); for (let i = 0; i < n; i++) hist[a[i]]++;
+  const pct = q => { let c = 0, lim = q * n; for (let v = 0; v < 256; v++){ c += hist[v]; if (c >= lim) return v / 2.8 - 90; } return 0; };
+  return Math.max(pct(0.2) + 10, pct(0.9) - 25); }
 function alignWithAudio(words, bursts){
   if (!bursts || !bursts.length || !words.length) return words;
   words = words.map(w => ({...w}));
@@ -139,6 +143,24 @@ function alignWithAudio(words, bursts){
   const plaus = idx => { idx = idx.filter(k => !isFill(k)); if (!idx.length) return true; const d = words[idx[idx.length-1]].end - words[idx[0]].start; return d / idx.length >= 0.1 && d / idx.length <= 1.5; };
   const burstAt = t => bursts.findIndex(b => t >= b[0] - 0.05 && t <= b[1] + 0.05);
   const attBursts = new Set();
+  // Unplausibel lange Wörter: Whisper hat davor Sprache verschluckt (meist einen Neuansatz) und dem nächsten
+  // erkannten Wort einen viel zu frühen Anfang gegeben. Das Wort behält sein Ende, der Rest wird 🗣.
+  const loudIn = (a, b) => bursts.reduce((n, x) => n + Math.max(0, Math.min(b, x[1]) - Math.max(a, x[0])), 0);
+  const unk = [];
+  for (const w of words){
+    const n = norm(w.text || '').length, dur = w.end - w.start;
+    if (!n || dur <= Math.max(1.1, 0.1 * n + 0.5)) continue;
+    const est = clamp(0.06 * n + 0.12, 0.15, 0.9);
+    // letzte Lücke in der Hüllkurve innerhalb des Wortes: dahinter liegt das eigentliche Wort
+    let ws = w.end - est;
+    const a = envArr(srcForAlign); if (a){
+      const thr = alignThr(a); let q = -1;
+      for (let i = Math.floor((w.end - est) * 100); i > Math.floor(w.start * 100) + 10; i--){ if (a[i] / 2.8 - 90 < thr){ let j = i; while (j > 0 && a[j-1] / 2.8 - 90 < thr) j--; if (i - j >= 10){ q = i / 100; break; } i = j; } }
+      if (q > 0 && w.end - q <= Math.max(1.1, 0.1 * n + 0.5)) ws = Math.max(q, w.start + 0.1);   // Lücke nur nutzen, wenn das Wort danach plausibel kurz ist
+    }
+    if (loudIn(w.start, ws) >= 0.4) unk.push({start:r3(w.start), end:r3(ws), att:false});
+    w.start = r3(ws);
+  }
   for (const g of repeatGroups(words, w => w.text || '', (i, j) => words[j].start - words[i].start <= 30)){
     const first = g.att[0][0], m = g.att.length;
     let endW = g.fin[1];
@@ -167,8 +189,8 @@ function alignWithAudio(words, bursts){
     }
   }
   // Sprache ohne Wörter → 🗣 (innerhalb von Anlauf-Bereichen als „Anlauf“ gekennzeichnet)
-  const cov = words.map(w => [w.start - 0.12, w.end + 0.12]).sort((a, b) => a[0] - b[0]);
-  const unk = [];
+  const cov = words.map(w => [w.start - 0.12, w.end + 0.12]).concat(unk.map(u => [u.start, u.end])).sort((a, b) => a[0] - b[0]);
+  unk.forEach(u => { if ([...attBursts].some(k => bursts[k][0] < u.end && bursts[k][1] > u.start)) u.att = true; });
   bursts.forEach(([bs, be], k) => {
     let t = bs;
     for (const [cs, ce] of cov){ if (ce <= t) continue; if (cs >= be) break; if (cs - t >= 0.4) unk.push({start:r3(t), end:r3(cs), att:attBursts.has(k)}); t = Math.max(t, ce); if (t >= be) break; }
@@ -421,7 +443,7 @@ function buildTokens(words, duration, bursts){
 // Transkript einer Quelle an die Tokens anhängen (Zeiten auf der gemeinsamen Zeitachse)
 function appendSourceTokens(k, words){
   const s = P.sources[k], base = tokens.length, para0 = tokens.length ? tokens[tokens.length-1].p + 1 : 0;
-  const tk = buildTokens(words, s.duration, burstsOf(s));
+  srcForAlign = s; const tk = buildTokens(words, s.duration, burstsOf(s));
   tk.forEach((t, j) => { t.s = r3(t.s + s.off); t.e = r3(t.e + s.off); if (t.ws != null){ t.ws = r3(t.ws + s.off); t.we = r3(t.we + s.off); }
     t.p += para0; t.src = k; t.i = base + j; });
   tokens.push(...tk); s.tr = true;
@@ -1068,7 +1090,7 @@ function findRepeats(minTok = 0){
       const b = B.map(t => norm(tokText(t))).filter(Boolean);
       if (b.length < 3 || a[0] !== b[0] || (a.length > 3 && a[1] !== b[1])) continue;
       const l = lcs(a, b.slice(0, a.length + 2));
-      if (l / a.length >= 0.6){
+      if (l / a.length >= 0.55){
         for (let i = A[0].i; i < B[0].i; i++) if (tokens[i].type !== 'pause' && !deleted.has(i)) out.add(i);
         k = j - 1; break;
       }
@@ -1078,7 +1100,7 @@ function findRepeats(minTok = 0){
   for (const t of tokens){
     if (t.i < minTok || t.type !== 'unk' || deleted.has(t.i)) continue;
     let j = t.i + 1; while (j < tokens.length && tokens[j].type === 'pause') j++;
-    if (j < tokens.length && tokens[j].src === t.src && tokens[j].type !== 'pause') out.add(t.i);
+    if (j < tokens.length && tokens[j].src === t.src && tokens[j].type !== 'pause' && (t.att || t.we - t.ws >= 1.0)) out.add(t.i);
   }
   return [...out];
 }
