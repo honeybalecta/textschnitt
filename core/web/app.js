@@ -8,8 +8,9 @@ const TS = window.TS;
 const CAP = Object.assign({platform:'android', exportFormats:['video']}, J(TS.info ? TS.info() : '') || {});
 document.documentElement.dataset.platform = CAP.platform;
 const FINE = matchMedia('(pointer: fine)').matches;
-const MEDIA = uri => 'media?u=' + encodeURIComponent(uri);
-const THUMB = (uri, t, h) => `thumb?u=${encodeURIComponent(uri)}&t=${t.toFixed(1)}&h=${h}`;
+// Medien-Adressen: Desktop/Android liefern sie über den lokalen Server, der Browser über die Brücke (Datei bleibt auf dem Gerät)
+const MEDIA = uri => TS.mediaUrl ? TS.mediaUrl(uri) : 'media?u=' + encodeURIComponent(uri);
+const THUMB = (uri, t, h) => TS.thumbUrl ? TS.thumbUrl(uri, +t.toFixed(1), h) : `thumb?u=${encodeURIComponent(uri)}&t=${t.toFixed(1)}&h=${h}`;
 
 const fmtT = t => { t = Math.max(0, t || 0); const h = Math.floor(t / 3600), m = Math.floor(t % 3600 / 60), s = Math.floor(t % 60);
   return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(s).padStart(2, '0'); };
@@ -249,7 +250,8 @@ function showHome(){
     el.querySelector('.del').onclick = () => { if (confirm(`„${p.name}“ löschen? Deine Videos bleiben erhalten.`)) { TS.deleteProject(p.id); showHome(); } };
     box.append(el);
   });
-  $('#homeHint').textContent = CAP.platform === 'desktop' ? 'Wähle ein oder mehrere Videos (Strg/Umschalt für mehrere). Sie werden hintereinandergehängt und gemeinsam transkribiert.'
+  $('#homeHint').textContent = CAP.platform === 'web' ? 'Wähle ein oder mehrere Videos von deinem Gerät. Sie werden nicht hochgeladen: Transkription, Schnitt und Export laufen komplett in deinem Browser.'
+    : CAP.platform === 'desktop' ? 'Wähle ein oder mehrere Videos (Strg/Umschalt für mehrere). Sie werden hintereinandergehängt und gemeinsam transkribiert.'
     : 'Wähle ein oder mehrere Videos aus deiner Galerie. Sie werden hintereinandergehängt und auf dem Gerät transkribiert – du schneidest dann über den Text.';
 }
 $('#newProj').onclick = async () => { const list = asList(await pickMedia('videos')); if (list.length) createProject(list); };
@@ -272,6 +274,11 @@ function cleanSrc(m){ const s = {...m}; delete s.legacy; s.tr = false; return s;
 
 // ───────── Projekt öffnen ─────────
 function openProject(id, keep){
+  // Browser: vorher Zugriff auf die Videodateien sicherstellen (ggf. nach Rückfrage)
+  if (TS.prepare && !keep) return TS.prepare(id).then(ok => { if (ok) openProjectNow(id); });
+  openProjectNow(id, keep);
+}
+function openProjectNow(id, keep){
   const keepTab = keep ? tab : null, keepPos = keep ? outPos : 0;
   P = J(TS.loadProject(id)); if (!P) return toast('Projekt konnte nicht geladen werden');
   if (!P.sources){ P.sources = [P.main]; P.sources[0].tr = !!(P.tokens || []).length; delete P.main; }   // altes Format (ein Video)
@@ -351,12 +358,14 @@ const WIN = newId();
 let busPid = null, busSeq = -1, busT = null, applyingRemote = false, posSent = {o:-1, at:0};
 function busSend(msg){
   if (!CAP.bus || !P) return;
+  if (TS.busPost) return TS.busPost(P.id, WIN, JSON.stringify(msg));
   fetch('api/bus?p=' + encodeURIComponent(P.id) + '&from=' + WIN, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(msg)}).catch(() => {});
 }
 let busGen = 0;
 function busStart(){
   if (!CAP.bus || !P || busPid === P.id) return; busPid = P.id; busSeq = -1;
   const pid = P.id, gen = ++busGen;
+  if (TS.busListen){ TS.busListen(pid, WIN, m => { if (busPid === pid && gen === busGen) busApply(J(m)); }); return; }
   (async function poll(){
     while (busPid === pid && gen === busGen){
       try {
@@ -683,7 +692,7 @@ function vT(){ return vSi < 0 ? 0 : P.sources[vSi].off + vLocal(); }
 function setVSrc(si){
   if (vSi === si) return; vSi = si; const s = P.sources[si];
   V.dataset.err = ''; $('#proxyBar').classList.add('hidden');
-  V.src = s.proxy ? 'media?f=' + encodeURIComponent(s.proxy) : MEDIA(s.uri);
+  V.src = s.proxy ? (TS.mediaUrl ? MEDIA(s.proxy) : 'media?f=' + encodeURIComponent(s.proxy)) : MEDIA(s.uri);
   $('#stage').classList.toggle('audio-only', !hasVid(s));
 }
 function seekV(si, local, play){
@@ -1551,7 +1560,8 @@ function renderExportForm(){
   $('#exCapcutInstall').disabled = !CAP.capcutDir; if (!CAP.capcutDir) $('#exCapcutInstall').checked = false;
   $('#exConcatDir').textContent = CAP.concatDir ? `Wird gespeichert in: ${CAP.concatDir}` : '';
   $('#exQualityRow').dataset.fmt = CAP.platform === 'android' ? 'keins' : 'video';
-  $('#exNote').textContent = CAP.platform === 'android' ? 'Das Video landet direkt in deiner Galerie (Ordner „Textschnitt“). Bitte die App während des Exports geöffnet lassen.'
+  $('#exNote').textContent = CAP.platform === 'web' ? 'Das Video wird in deinem Browser berechnet und danach heruntergeladen – nichts verlässt dein Gerät. Lass diesen Tab während des Exports geöffnet. Untertitel kommen zusätzlich als SRT-Datei mit.'
+    : CAP.platform === 'android' ? 'Das Video landet direkt in deiner Galerie (Ordner „Textschnitt“). Bitte die App während des Exports geöffnet lassen.'
     : 'Die Dateien landen im Ordner „…_textschnitt“ neben deinem ersten Video. Untertitel kommen zusätzlich als SRT-Datei mit.';
   paintExportForm();
 }
@@ -1615,7 +1625,8 @@ $('#exBtn').onclick = () => {
 $('#exCancel').onclick = () => exJob && TS.cancel(exJob);
 $('#exShare').onclick = () => exResult && TS.share(exResult.uri || exResult.folder || (exResult.files || [])[0]);
 $('#exOpen').onclick = () => exResult && TS.view(exResult.uri || exResult.playable);
-if (CAP.platform !== 'android'){ $('#exShare').textContent = 'Im Ordner zeigen'; $('#exOpen').textContent = 'Abspielen'; }
+if (CAP.platform === 'web'){ $('#exShare').textContent = 'Nochmal speichern'; $('#exOpen').textContent = 'Abspielen'; }
+else if (CAP.platform !== 'android'){ $('#exShare').textContent = 'Im Ordner zeigen'; $('#exOpen').textContent = 'Abspielen'; }
 
 // ───────── Reiter ─────────
 function setTab(t){
@@ -1660,4 +1671,4 @@ function renderModels(){
 
 showHome();
 (() => { const h = new URLSearchParams(location.hash.slice(1)); const p = h.get('p');
-  if (p){ openProject(p); if (P && h.get('view')) setTab(h.get('view')); document.body.classList.add('solo'); } })();
+  if (p){ document.body.classList.add('solo'); Promise.resolve(openProject(p)).then(() => { if (P && h.get('view')) setTab(h.get('view')); }); } })();

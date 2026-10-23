@@ -61,7 +61,7 @@ function thumbs(b, uri, inS, d, aspect, speed = 1){
   for (let i = 0; i < n; i++){
     const t = Math.round((inS + (i + 0.5) * tw / TL.pps * speed) / q) * q;
     const img = document.createElement('img'); img.loading = 'lazy'; img.decoding = 'async'; img.style.width = tw + 'px'; img.alt = '';
-    img.src = THUMB(uri, Math.min(t, inS + d), 120); box.append(img);
+    const u = THUMB(uri, Math.min(t, inS + d), 120); if (u && u.then) u.then(x => { if (x) img.src = x; }); else img.src = u; box.append(img);
   }
   b.prepend(box);
 }

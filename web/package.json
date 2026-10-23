@@ -1,0 +1,17 @@
+{
+  "name": "textschnitt-web",
+  "private": true,
+  "type": "module",
+  "description": "Browser-Version von Textschnitt: Bibliotheken für Medienverarbeitung (mediabunny) und Spracherkennung (transformers.js)",
+  "dependencies": {
+    "mediabunny": "1.62.1",
+    "@mediabunny/aac-encoder": "1.62.1",
+    "@mediabunny/mp3-encoder": "1.62.1",
+    "@mediabunny/flac-encoder": "1.62.1",
+    "@huggingface/transformers": "4.3.1"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0",
+    "playwright": "^1.50.0"
+  }
+}

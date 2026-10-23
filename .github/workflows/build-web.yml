@@ -1,0 +1,82 @@
+name: Web-Version bauen
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ["core/**", "web/**", ".github/workflows/build-web.yml"]
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Bibliotheken holen
+        working-directory: web
+        run: npm install --no-audit --no-fund
+
+      - name: Seite bauen
+        run: python3 web/build.py site && ls -la site site/vendor site/vendor/ort
+
+      - name: Testmedien erzeugen
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq espeak-ng ffmpeg > /dev/null
+          pip install -q pillow
+          mkdir -p testmedia
+          espeak-ng -v de -s 135 -w testmedia/speech.wav "Hallo und herzlich willkommen. Heute zeige ich euch, wie man Videos über den Text schneidet. Das ist wirklich ganz einfach. Man löscht die Wörter, die man nicht braucht, und exportiert das fertige Video."
+          D=$(ffprobe -v error -show_entries format=duration -of csv=p=0 testmedia/speech.wav)
+          ffmpeg -v error -y -f lavfi -i testsrc2=size=1280x720:rate=30 -i testmedia/speech.wav \
+            -filter_complex "[1:a]adelay=500|500,apad[a]" -map 0:v -map "[a]" -t $(python3 -c "print($D+1.5)") \
+            -c:v libx264 -pix_fmt yuv420p -c:a aac -b:a 128k testmedia/test.mp4
+          ffprobe -v error -show_entries format=duration -of csv=p=0 testmedia/test.mp4
+
+      - name: Browser-Test (Chrome)
+        working-directory: web
+        run: node test/e2e.mjs ../site ../testmedia ../test-out
+
+      - name: Ergebnis prüfen
+        id: report
+        run: python3 web/test/report.py test-out
+
+      - name: Bericht als Kommentar
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          [ -f test-out/report.md ] || echo "Browser-Test lief nicht durch (siehe Log)." > test-out/report.md
+          gh api "repos/${{ github.repository }}/commits/${{ github.sha }}/comments" -F body=@test-out/report.md > /dev/null || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: web-test
+          path: test-out
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
