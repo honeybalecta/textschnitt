@@ -70,6 +70,100 @@ function envArr(s){
     Object.defineProperty(s, '_env', {value:a, writable:true, enumerable:false}); }
   return s._env;
 }
+// Sprachabschnitte („Bursts“) aus der Hüllkurve: [[start, ende], …] in Sekunden der Quelle (ohne off).
+// Schwelle liegt zwischen Grundrauschen und Sprachpegel; Lücken unter 0,18 s werden geschlossen.
+function burstsOf(src){
+  const a = envArr(src); if (!a) return null;
+  if (src._bursts) return src._bursts;
+  const n = a.length, hist = new Uint32Array(256); for (let i = 0; i < n; i++) hist[a[i]]++;
+  const pct = q => { let c = 0, lim = q * n; for (let v = 0; v < 256; v++){ c += hist[v]; if (c >= lim) return v / 2.8 - 90; } return 0; };
+  const thr = Math.max(pct(0.2) + 10, pct(0.9) - 25);
+  const db = i => a[i] / 2.8 - 90, loud = new Uint8Array(n);
+  for (let i = 0; i < n; i++){ let m = -90; for (let j = Math.max(0, i - 2); j <= Math.min(n - 1, i + 2); j++) m = Math.max(m, db(j)); loud[i] = m > thr ? 1 : 0; }
+  const raw = []; let st = -1;
+  for (let i = 0; i <= n; i++){ const l = i < n && loud[i]; if (l && st < 0) st = i; if (!l && st >= 0){ raw.push([st / 100, i / 100]); st = -1; } }
+  const merged = [];
+  for (const b of raw){ const l = merged[merged.length-1]; if (l && b[0] - l[1] < 0.18) l[1] = b[1]; else merged.push(b); }
+  const res = merged.filter(b => b[1] - b[0] >= 0.12);
+  Object.defineProperty(src, '_bursts', {value: res, writable: true, enumerable: false, configurable: true});
+  return res;
+}
+// Wiederholte Anläufe finden (generisch): items mit text(), Rückgabe Gruppen {att:[[i0,i1],…], fin:[j0,j1]}
+function repeatGroups(items, textOf, sameSrc){
+  const raw = items.map(textOf), W = raw.map(norm), fill = W.map(w => FILLER.test(w) || !w);
+  const same = (a, b) => W[a] === W[b] || (/[-–…]$/.test(raw[a]) && W[a].length >= 2 && W[b].startsWith(W[a]));
+  const groups = []; let i = 0, cur = null;
+  while (i < items.length){
+    let found = null, mm = 0;
+    if (!fill[i]) for (let j = i + 1; j < items.length && j <= i + 30; j++){
+      if (!sameSrc(i, j)) break;
+      if (!same(i, j)) continue;
+      let end = j - 1; while (end > i && fill[end]) end--;
+      const att = []; for (let k = i; k <= end; k++) if (!fill[k]) att.push(k);
+      let m = 0; while (m < att.length && j + m < items.length && same(att[m], j + m)) m++;
+      const last = raw[end], n = att.length;
+      let ok;
+      if (n === 1) ok = m >= 1 && !KEEP_REPEAT.has(W[i]) && !/[.?!…]$/.test(last);
+      else if (/[.?!…,;:]$/.test(last)) ok = m === n;
+      else ok = m >= Math.max(2, n - 1);
+      if (ok){ found = j; mm = m; break; }
+    }
+    if (found != null){
+      if (cur && cur.fin[0] === i) cur.att.push([i, found - 1]); else { cur = {att:[[i, found - 1]], fin:[found, found + mm - 1]}; groups.push(cur); }
+      cur.fin = [found, found + Math.max(mm, 1) - 1]; i = found;
+    } else { if (cur && cur.fin[0] !== i) cur = null; i++; }
+  }
+  return groups;
+}
+// Wörter an den tatsächlichen Ton anpassen:
+//  1. Wiederholte Anläufe („ich wollte – ich wollte heute“) bekommen je einen Sprachabschnitt – Whisper verteilt deren Zeiten oft falsch.
+//  2. Sprache, zu der Whisper kein Wort geliefert hat (ausgelassene Wiederholungen), wird als eigener Eintrag (🗣) sichtbar.
+function alignWithAudio(words, bursts){
+  if (!bursts || !bursts.length || !words.length) return words;
+  words = words.map(w => ({...w}));
+  const len = w => Math.max(1, norm(w.text || '').length);
+  const isFill = k => FILLER.test(norm(words[k].text || ''));
+  const spread = (idx, t0, t1) => { idx = idx.filter(k => !isFill(k)); if (!idx.length) return; const tot = idx.reduce((n, k) => n + len(words[k]), 0); let t = t0; const d = Math.max(0.05, t1 - t0);
+    idx.forEach(k => { const w = d * len(words[k]) / tot; words[k].start = r3(t); words[k].end = r3(Math.min(t1, t + w)); t += w; }); };
+  const burstAt = t => bursts.findIndex(b => t >= b[0] - 0.05 && t <= b[1] + 0.05);
+  const unk = [], used = new Set();
+  for (const g of repeatGroups(words, w => w.text || '', (i, j) => words[j].start - words[i].start <= 15)){
+    const m = g.att.length, span0 = words[g.att[0][0]].start;
+    // Der endgültige Satz: die letzten Anlauf-Wörter plus Fortsetzung bis zum Satzende
+    let endW = g.fin[1];
+    for (let k = g.fin[1] + 1; k < words.length && k <= g.fin[1] + 25; k++){ if (words[k].start - words[k-1].end > 0.8) break; endW = k; if (/[.?!…]$/.test(words[k].text || '')) break; }
+    const cont = g.fin[1] + 1 <= endW ? g.fin[1] + 1 : null;
+    // Sprachabschnitt, in dem der endgültige Satz beginnt: dort, wo laut Whisper die Fortsetzung anfängt
+    let cb = cont != null ? burstAt(words[cont].start) : burstAt(words[g.fin[1]].end);
+    if (cb < 0) cb = bursts.findIndex(b => b[0] >= (cont != null ? words[cont].start : words[g.fin[1]].end) - 0.05);
+    const first = bursts.findIndex(b => b[1] > span0 - 0.1);
+    if (cb < 0 || first < 0 || cb < first) continue;
+    const avail = cb - first;                         // Abschnitte vor dem endgültigen Satz
+    if (avail >= m){
+      g.att.forEach(([a, b], k) => { spread(range(a, b), bursts[first + k][0], bursts[first + k][1]); used.add(first + k); });
+      for (let k = first + m; k < cb; k++){ if (bursts[k][1] - bursts[k][0] >= 0.3){ unk.push(bursts[k]); } used.add(k); }
+    } else if (avail > 0){
+      spread(range(g.att[0][0], g.att[m-1][1]), bursts[first][0], bursts[cb-1][1]);   // weniger Pausen als Anläufe: gemeinsam verteilen
+      for (let k = first; k < cb; k++) used.add(k);
+    } else continue;                                  // alles in einem Abschnitt: Whisper-Zeiten lassen
+    const ew = words[endW].end;
+    let last = cb; while (last + 1 < bursts.length && bursts[last + 1][0] < ew - 0.1) last++;
+    spread(range(g.fin[0], endW), bursts[cb][0], Math.max(bursts[cb][1], Math.min(ew + 0.05, bursts[last][1])));
+    for (let k = cb; k <= last; k++) used.add(k);
+  }
+  // Sprache ohne Wörter (übrige Abschnitte)
+  const cov = words.map(w => [w.start - 0.12, w.end + 0.12]).sort((a, b) => a[0] - b[0]);
+  bursts.forEach(([bs, be], k) => {
+    if (used.has(k)) return;
+    let t = bs;
+    for (const [cs, ce] of cov){ if (ce <= t) continue; if (cs >= be) break; if (cs - t >= 0.4) unk.push([t, cs]); t = Math.max(t, ce); if (t >= be) break; }
+    if (be - t >= 0.4) unk.push([t, be]);
+  });
+  for (const [a, b] of unk) words.push({text:'', unk:true, start:r3(a), end:r3(b), prob:0});
+  words.sort((a, b) => a.start - b.start || a.end - b.end);
+  return words;
+}
+const range = (a, b) => { const r = []; for (let k = a; k <= b; k++) r.push(k); return r; };
 function envDb(si, t){ const s = P.sources[si], a = envArr(s); if (!a) return 0; const i = Math.round((t - s.off) * 100); return i < 0 || i >= a.length ? -90 : a[i] / 2.8 - 90; }
 
 // ───────── Projektliste ─────────
@@ -152,8 +246,23 @@ function backfillEnv(){
   (function next(){
     const s = todo.shift(); if (!s || !P || P.id !== pid) return;
     let id; try { id = TS.envelope(s.uri); } catch(_){ return; }
-    watchJob(id, () => {}, j => { if (P && P.id === pid && j.result && j.result.env){ s.env = j.result.env; changed(false); toast('Schnittkanten an Sprechpausen ausgerichtet'); } next(); }, () => next());
+    watchJob(id, () => {}, j => { if (P && P.id === pid && j.result && j.result.env){ s.env = j.result.env; delete s._env; delete s._bursts; if (untouched()) rebuildTokens(); changed(false); toast(untouched() ? 'Transkript am Ton ausgerichtet' : 'Schnittkanten an Sprechpausen ausgerichtet'); } next(); }, () => next());
   })();
+}
+
+function untouched(){
+  return !deleted.size && !Object.keys(P.edits || {}).length && !Object.keys(P.trims).length && !Object.keys(P.adj).length && !P.items.length && !P.dels.length && !P.splits.length && !(P.moves || []).length
+    && !P.cues.some(c => c.text != null || c.ds || c.de || c.off || c.x != null);
+}
+// Tokens aller Quellen aus den Wortzeiten neu aufbauen (nach dem Nachrechnen der Hüllkurve)
+function rebuildTokens(){
+  const old = tokens; tokens = [];
+  P.sources.forEach((src, k) => {
+    const words = old.filter(t => t.src === k && t.type === 'word').map(t => ({text:t.text, start:r3(t.ws - src.off), end:r3(t.we - src.off), prob:t.pr}));
+    if (!src.tr) return;
+    appendSourceTokens(k, words);
+  });
+  genCues(); renderTranscript();
 }
 
 // ───────── Mehrere Fenster: Abgleich über das Desktop-Backend ─────────
@@ -217,21 +326,22 @@ function saveNow(){
 }
 
 // ───────── Wörter → Tokens ─────────
-function buildTokens(words, duration){
+function buildTokens(words, duration, bursts){
   const PAUSE_MIN = 0.45, PARA_GAP = 1.2, PARA_MAX = 55;
+  words = alignWithAudio(words, bursts);
   const out = []; let cursor = 0, para = 0, paraWords = 0;
   // Satzzeichen, die als eigenes „Wort“ kommen, an das vorige Wort hängen
   const ws0 = [];
   for (const w of words){
-    const text = (w.text || '').trim(); if (!text) continue;
-    if (/^[.,!?;:…»«"“”)]+$/.test(text) && ws0.length){ ws0[ws0.length-1].text += text; ws0[ws0.length-1].end = Math.max(ws0[ws0.length-1].end, w.end); continue; }
+    const text = (w.text || '').trim(); if (!text && !w.unk) continue;
+    if (!w.unk && /^[.,!?;:…»«"“”)]+$/.test(text) && ws0.length){ ws0[ws0.length-1].text += text; ws0[ws0.length-1].end = Math.max(ws0[ws0.length-1].end, w.end); continue; }
     ws0.push({...w, text});
   }
   for (const w of ws0){
     let ws = Math.max(w.start, cursor); const we = Math.max(w.end, ws + 0.02); const gap = ws - cursor;
     let newPara = false;
     if (out.length){
-      const last = [...out].reverse().find(t => t.type === 'word');
+      const last = [...out].reverse().find(t => t.type !== 'pause');
       const ends = last && /[.?!…]$/.test(last.text);
       if (gap >= PARA_GAP || (paraWords >= PARA_MAX && ends)) newPara = true;
     }
@@ -240,7 +350,7 @@ function buildTokens(words, duration){
     else if (out.length){ out[out.length-1].e = ws; regionStart = ws; }
     else regionStart = 0;
     if (newPara){ para++; paraWords = 0; }
-    out.push({type:'word', text:w.text, s:regionStart, e:we, ws, we, pr:+(w.prob ?? 1).toFixed(2), p:para});
+    out.push(w.unk ? {type:'unk', text:'', s:regionStart, e:we, ws, we, pr:0, p:para} : {type:'word', text:w.text, s:regionStart, e:we, ws, we, pr:+(w.prob ?? 1).toFixed(2), p:para});
     paraWords++; cursor = we;
   }
   if (duration > cursor){
@@ -252,7 +362,7 @@ function buildTokens(words, duration){
 // Transkript einer Quelle an die Tokens anhängen (Zeiten auf der gemeinsamen Zeitachse)
 function appendSourceTokens(k, words){
   const s = P.sources[k], base = tokens.length, para0 = tokens.length ? tokens[tokens.length-1].p + 1 : 0;
-  const tk = buildTokens(words, s.duration);
+  const tk = buildTokens(words, s.duration, burstsOf(s));
   tk.forEach((t, j) => { t.s = r3(t.s + s.off); t.e = r3(t.e + s.off); if (t.ws != null){ t.ws = r3(t.ws + s.off); t.we = r3(t.we + s.off); }
     t.p += para0; t.src = k; t.i = base + j; });
   tokens.push(...tk); s.tr = true;
@@ -276,6 +386,20 @@ function snapCut(si, t, lo, hi, prefer){
   const cl = ql == null ? Infinity : (t - ql) * (prefer < 0 ? 0.6 : 1), cr = qr == null ? Infinity : (qr - t) * (prefer > 0 ? 0.6 : 1);
   if (cl === Infinity && cr === Infinity) return t;
   return cl <= cr ? Math.max(lo, ql - 0.01) : Math.min(hi, qr + 0.01);
+}
+// Anfang: liegt die Kante in einem Sprachabschnitt, der laut Transkript erst nach dem vorigen Wort beginnt,
+// wird an den Anfang dieses Abschnitts gegangen (Whisper setzt Wortanfänge oft zu spät).
+function snapStart(si, t, lo, hi, prevT){
+  const bs = burstsOf(P.sources[si]), off = P.sources[si].off; t = clamp(t, lo, hi);
+  const b = bs && bs.find(x => t >= x[0] + off - 0.05 && t < x[1] + off);
+  if (b){ const st = b[0] + off - 0.03; if (st >= lo && st >= prevT - 0.08 && t - st < 1.5) return Math.max(lo, st); }
+  return snapCut(si, t, lo, hi, -1);
+}
+function snapEnd(si, t, lo, hi, nextT){
+  const bs = burstsOf(P.sources[si]), off = P.sources[si].off; t = clamp(t, lo, hi);
+  const b = bs && bs.find(x => t > x[0] + off && t <= x[1] + off + 0.05);
+  if (b){ const en = b[1] + off + 0.03; if (en <= hi && en <= nextT + 0.08 && en - t < 1.5) return Math.min(hi, en); }
+  return snapCut(si, t, lo, hi, 1);
 }
 // Auf welcher Seite der Kante liegt laut Transkript Sprache? (−1: Wort beginnt hier → Pause links, +1: Wort endet hier)
 function speechSide(key, t, isStart){
@@ -306,8 +430,10 @@ function computeRanges(){
     const nx = raw[k+1], nextStart = nx && nx[4] === si ? nx[0] : S1;
     let s = rs, e = re;
     if (snap && envArr(P.sources[si])){
-      if (rs > S0 + 0.01) s = snapCut(si, rs, prevEnd + 0.01, re - 0.05, speechSide(a, rs, true));
-      if (re < S1 - 0.01) e = snapCut(si, re, s + 0.05, nextStart - 0.01, speechSide(b, re, false));
+      const prevT = typeof a === 'number' && a > 0 && tokens[a-1].src === si ? (tokens[a-1].we ?? tokens[a-1].e) : S0;
+      const nextT = typeof b === 'number' && b + 1 < tokens.length && tokens[b+1].src === si ? (tokens[b+1].ws ?? tokens[b+1].s) : S1;
+      if (rs > S0 + 0.01) s = snapStart(si, rs, prevEnd + 0.01, re - 0.05, prevT);
+      if (re < S1 - 0.01) e = snapEnd(si, re, s + 0.05, nextStart - 0.01, nextT);
     } else {
       if (rs > S0) s = rs - Math.min(pad, prev && prev.si === si ? (rs - prevEnd) / 2 : rs - S0);
       if (re < S1) e = re + Math.min(pad, nx && nx[4] === si ? (nextStart - re) / 2 : S1 - re);
@@ -632,7 +758,9 @@ $('#transBtn').onclick = () => {
     if (firstTime){ deleted = new Set(); P.trims = {}; P.adj = {}; }
     const cleaned = autoClean(startTok);
     if (firstTime) genCues(); else genCues(startTok);
-    renderTranscript(); changed(); saveNow(); busSend({t:'reload'}); setTab('text'); toast(`${words} Wörter erkannt` + (cleaned.length ? ` · entfernt: ${cleaned.join(', ')}` : ''));
+    renderTranscript(); changed(); saveNow(); busSend({t:'reload'}); setTab('text');
+    const unk = tokens.filter(t => t.i >= startTok && t.type === 'unk' && !deleted.has(t.i)).length;
+    toast(`${words} Wörter erkannt` + (cleaned.length ? ` · entfernt: ${cleaned.join(', ')}` : '') + (unk ? ` · ${unk}× 🗣 nicht erkannte Sprache` : ''));
   };
   const next = () => {
     if (n >= todo.length || transCancelled) return n ? finish() : end();
@@ -665,6 +793,7 @@ function renderTranscript(){
       const ts = document.createElement('span'); ts.className = 'ts'; ts.textContent = (jump ? '↕ ' : '') + fmtT(t.ws ?? t.s); pEl.append(ts); frag.append(pEl); }
     const sp = document.createElement('span'); sp.dataset.i = t.i;
     if (t.type === 'word'){ sp.className = 'tk word' + (t.pr < 0.5 ? ' low' : ''); if (FILLER.test(norm(tokText(t)))){ sp.classList.add('filler'); fillers++; } }
+    else if (t.type === 'unk'){ sp.className = 'tk unk'; sp.title = 'Hier wurde gesprochen, aber Whisper hat kein Wort erkannt – meist ein ausgelassener Anlauf. Antippen spielt die Stelle ab; löschen wie ein Wort.'; }
     else sp.className = 'tk pause';
     spans[t.i] = sp; pEl.append(sp, ' ');
     prev = i;
@@ -680,6 +809,7 @@ function paint(i){
   const t = tokens[i], sp = spans[i]; if (!sp) return;
   if (t.type === 'word'){ const tx = tokText(t); if (sp.textContent !== tx) sp.textContent = tx; sp.classList.toggle('empty', !tx); sp.classList.toggle('edited', P.edits[t.i] != null); }
   sp.classList.toggle('del', deleted.has(i) || (t.type === 'word' && isSrcDeleted((t.ws + t.we) / 2)));
+  if (t.type === 'unk') sp.textContent = `🗣 ${(t.we - t.ws).toFixed(1).replace('.', ',')} s`;
   if (t.type === 'pause'){ const d = (t.e - t.s).toFixed(1).replace('.', ','), tr = P.trims[i];
     sp.classList.toggle('trim', tr != null && !deleted.has(i)); sp.textContent = tr != null ? `⏸ ${d}→${String(tr).replace('.', ',')}` : `⏸ ${d}`; }
 }
@@ -802,7 +932,9 @@ $('#selDel').onclick = () => {
   commit(() => { ids.forEach(i => { if (restoreIt){ deleted.delete(i); removeDel(tokens[i].s, tokens[i].e); } else deleted.add(i); });
     if (!restoreIt) tidyPauses(ids).forEach(i => deleted.add(i)); }, false);
   tokens.forEach(t => paint(t.i));
-  const at = tokens[ids[0]]; clearSel(); toast(restoreIt ? 'Wiederhergestellt' : 'Gelöscht');
+  const at = tokens[ids[0]]; clearSel();
+  let nxt = Math.max(...ids) + 1; while (nxt < tokens.length && tokens[nxt].type === 'pause') nxt++;
+  toast(restoreIt ? 'Wiederhergestellt' : (!restoreIt && tokens[nxt] && tokens[nxt].type === 'unk' && !deleted.has(nxt) ? 'Gelöscht – danach folgt nicht erkannte Sprache (🗣), ggf. mitlöschen' : 'Gelöscht'));
   lastCut = srcToOut(snapSrc(at.s));
 };
 // Nach dem Löschen: Pausen, die nun leer im Raum stehen, mitlöschen.
@@ -814,7 +946,7 @@ function tidyPauses(ids){
   for (const i of sorted){ const g = groups[groups.length-1]; if (g && i <= g[1] + 1) g[1] = i; else groups.push([i, i]); }
   for (const [a, b] of groups){
     const si = tokens[a].src, inSrc = i => i >= 0 && i < tokens.length && tokens[i].src === si;
-    const keptWord = i => !gone(i) && tokens[i].type === 'word';
+    const keptWord = i => !gone(i) && tokens[i].type !== 'pause';
     let before = false; for (let i = a - 1; inSrc(i); i--) if (keptWord(i)){ before = true; break; }
     let after = false; for (let i = b + 1; inSrc(i); i++) if (keptWord(i)){ after = true; break; }
     if (!before){
@@ -858,27 +990,12 @@ const KEEP_REPEAT = new Set(['sehr','ganz','so','ja','nein','nee','immer','mehr'
   'der','die','das','den','dem','des','was','wer','sie','es','wir','ihr','er','man','dass','da','hier','jetzt','gerade','auch','noch','schon','mal']);
 function findRepeats(minTok = 0){
   const ws = tokens.filter(t => t.i >= minTok && t.type === 'word' && !deleted.has(t.i) && tokText(t) && !isSrcDeleted((t.ws + t.we) / 2));
-  const raw = ws.map(t => tokText(t)), W = raw.map(norm), fill = W.map(w => FILLER.test(w) || !w);
-  const same = (a, b) => W[a] === W[b] || (/[-–…]$/.test(raw[a]) && W[a].length >= 2 && W[b].startsWith(W[a]));
-  const out = []; let i = 0;
-  while (i < ws.length){
-    let found = null;
-    if (!fill[i]) for (let j = i + 1; j < ws.length && j <= i + 30; j++){
-      if (ws[j].src !== ws[i].src || ws[j].ws - ws[i].ws > 12) break;
-      if (!same(i, j)) continue;
-      let end = j - 1; while (end > i && fill[end]) end--;
-      const att = []; for (let k = i; k <= end; k++) if (!fill[k]) att.push(k);
-      let m = 0; while (m < att.length && j + m < ws.length && same(att[m], j + m)) m++;
-      const last = raw[end], n = att.length;
-      let ok;
-      if (n === 1) ok = m >= 1 && !KEEP_REPEAT.has(W[i]) && !/[.?!…]$/.test(last);
-      else if (/[.?!…,;:]$/.test(last)) ok = m === n;
-      else ok = m >= Math.max(2, n - 1);
-      if (ok){ found = j; break; }
-    }
-    if (found != null){ for (let k = i; k < found; k++) out.push(ws[k].i); i = found; } else i++;
+  const out = new Set();
+  for (const g of repeatGroups(ws, t => tokText(t), (i, j) => ws[i].src === ws[j].src && ws[j].ws - ws[i].ws <= 12)){
+    const from = ws[g.att[0][0]].i, to = ws[g.fin[0]].i;
+    for (let i = from; i < to; i++) if (tokens[i].type !== 'pause' && !deleted.has(i)) out.add(i);
   }
-  return out;
+  return [...out];
 }
 $('#repeatBtn').onclick = () => {
   const ids = findRepeats(0); if (!ids.length) return toast('Keine Wiederholungen gefunden');

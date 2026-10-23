@@ -58,6 +58,22 @@ function thumbs(b, uri, inS, d, aspect){
   }
   b.prepend(box);
 }
+// Lautstärkeverlauf unten im Clip – so sieht man, wo wirklich gesprochen wird
+function wave(b, src, inS, d){
+  const a = envArr(src); if (!a) return;
+  const w = Math.max(2, Math.round(d * TL.pps)), h = 16, c = document.createElement('canvas'); c.className = 'wave'; c.width = w; c.height = h;
+  const ctx = c.getContext('2d'); ctx.fillStyle = 'rgba(255,255,255,.75)';
+  const bs = burstsOf(src) || [];
+  for (let x = 0; x < w; x++){
+    const t0 = inS + x / TL.pps, t1 = inS + (x + 1) / TL.pps; let m = 0;
+    for (let i = Math.floor(t0 * 100); i <= Math.floor(t1 * 100) && i < a.length; i++) m = Math.max(m, a[i]);
+    const v = Math.max(0, (m / 2.8 - 90 + 60) / 60);          // −60 … 0 dB → 0 … 1
+    const sp = bs.some(x => t0 < x[1] && t1 > x[0]);
+    ctx.fillStyle = sp ? 'rgba(232,155,12,.9)' : 'rgba(255,255,255,.45)';
+    const y = Math.round(v * (h - 2)); ctx.fillRect(x, h - y, 1, y);
+  }
+  b.append(c);
+}
 function renderMain(pad){
   const tr = $('#trMain'); tr.innerHTML = '';
   const [w, h] = dispSize(primary()); const asp = w / h, multi = P.sources.length > 1;
@@ -68,6 +84,7 @@ function renderMain(pad){
     let lbl = '';
     if (g.kind === 'main'){ const s = P.sources[g.si];
       if (hasVid(s)){ const [sw, sh] = dispSize(s); thumbs(b, s.uri, g.in - s.off, d, sw / sh); } else b.classList.add('audio');
+      wave(b, s, g.in - s.off, d);
       if (multi && g.si !== lastSi) lbl = `${g.si + 1} · `; lastSi = g.si; }
     else { const c = g.item.clip; thumbs(b, c.uri, g.in, d, (c.width && c.height) ? dispSize(c)[0] / dispSize(c)[1] : asp); lbl = 'Einschub · '; }
     b.insertAdjacentHTML('beforeend', `<span class="lbl">${lbl}${fmtD(d)} s</span>`);

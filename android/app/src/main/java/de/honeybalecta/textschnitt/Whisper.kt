@@ -17,8 +17,8 @@ object Whisper {
 
 object Transcriber {
     private val FILLER_PROMPT = mapOf(
-        "de" to "Ähm, also, äh, ich mein, hm, ja. Ähm, äh.",
-        "en" to "Um, uh, so, like, you know, hmm. Uh, um.",
+        "de" to "Ähm, also, äh, ich mein, hm, ja. Also ich – ich wollte, das ist, das ist ja so. Ähm, äh.",
+        "en" to "Um, uh, so, like, you know, hmm. So I – I wanted, this is, this is like. Uh, um.",
     )
 
     fun run(ctx: Context, uri: Uri, model: String, lang: String, fillers: Boolean, job: Job): JSONObject {

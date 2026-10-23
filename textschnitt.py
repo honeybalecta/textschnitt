@@ -37,7 +37,7 @@ os.environ.setdefault("HF_HUB_DISABLE_IMPLICIT_TOKEN", "1")
 import warnings  # noqa: E402
 warnings.filterwarnings("ignore", module="huggingface_hub")
 
-VERSION = "2.1.0"
+VERSION = "2.1.1"
 APP_DIR = Path(__file__).resolve().parent
 FROZEN = bool(getattr(sys, "frozen", False))          # als installierte .exe gebaut
 RES_DIR = Path(getattr(sys, "_MEIPASS", APP_DIR))      # mitgelieferte Dateien (Oberfläche, ffmpeg, Modelle)
@@ -362,7 +362,8 @@ def download_job(job: dict, name: str):
     return {"name": name}
 
 
-FILLER_PROMPT = {"de": "Ähm, also, äh, ich mein, hm, ja. Ähm, äh.", "en": "Um, uh, so, like, you know, hmm. Uh, um."}
+FILLER_PROMPT = {"de": "Ähm, also, äh, ich mein, hm, ja. Also ich – ich wollte, das ist, das ist ja so. Ähm, äh.",
+                 "en": "Um, uh, so, like, you know, hmm. So I – I wanted, this is, this is like. Uh, um."}
 _model_cache: dict = {}
 _model_lock = threading.Lock()
 
