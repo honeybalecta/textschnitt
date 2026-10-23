@@ -85,20 +85,28 @@ try {
   await shot('04-studio');
 
   // Video-Export
+  const downloads = [];
+  page.on('download', d => downloads.push(d));
   const exportAs = async (fmt, file, audioFmt) => {
     await ev(() => setTab('export'));
     await page.click(`#exFmt button[data-v="${fmt}"]`);
     if (audioFmt) await page.selectOption('#exAudioFmt', audioFmt);
-    const t1 = Date.now();
-    const dl = page.waitForEvent('download', {timeout: 900000});
+    const ext = path.extname(file), t1 = Date.now(), before = downloads.length;
     await page.click('#exBtn');
-    const d = await Promise.race([dl, page.waitForFunction(() => /Fehler/.test(document.querySelector('#exMsg').textContent), null, {timeout: 900000}).then(() => null)]);
+    let d = null;
+    for (let i = 0; i < 1800 && !d; i++){
+      d = downloads.slice(before).find(x => x.suggestedFilename().endsWith(ext)) || null;
+      if (!d && /Fehler/.test(await ev(() => document.querySelector('#exMsg').textContent))) break;
+      if (!d) await page.waitForTimeout(500);
+    }
     const msg = await ev(() => document.querySelector('#exMsg').textContent);
-    if (!d){ step(`Export ${fmt}${audioFmt ? ' ' + audioFmt : ''}`, false, {msg}); return; }
+    const label = `Export ${fmt}${audioFmt ? ' ' + audioFmt : ''}`;
+    if (!d){ step(label, false, {msg}); return; }
     await d.saveAs(path.join(OUT, file));
-    await page.waitForFunction(() => !document.querySelector('#exBtn').disabled, null, {timeout: 60000}).catch(() => {});
-    step(`Export ${fmt}${audioFmt ? ' ' + audioFmt : ''}`, fs.statSync(path.join(OUT, file)).size > 1000,
-      {secs: Math.round((Date.now() - t1) / 1000), size: fs.statSync(path.join(OUT, file)).size, name: d.suggestedFilename(), msg: await ev(() => document.querySelector('#exMsg').textContent)});
+    await page.waitForTimeout(1500);
+    const srt = downloads.slice(before).find(x => x.suggestedFilename().endsWith('.srt'));
+    if (srt) await srt.saveAs(path.join(OUT, file + '.srt'));
+    step(label, fs.statSync(path.join(OUT, file)).size > 1000, {secs: Math.round((Date.now() - t1) / 1000), size: fs.statSync(path.join(OUT, file)).size, name: d.suggestedFilename(), srt: !!srt, msg});
   };
   await exportAs('video', 'out.mp4');
   await shot('05-export');

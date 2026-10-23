@@ -248,7 +248,7 @@ export async function render(plan, fileOf, job){
     for (const s of segs){
       if (job.cancel) throw new Error('Abgebrochen');
       // Ton dieses Abschnitts (exakt auf Abtastwerte gerundet, damit Bild und Ton nicht auseinanderlaufen)
-      const n = Math.round((o + s.d) * SR) - A.written;
+      const n = Math.round((o + s.d) * SR) - A.pos;
       await segmentAudio(s, n, fileOf, A, job);
       if (video){
         const f1 = Math.ceil((o + s.d) * fps - 1e-6);
