@@ -11,6 +11,7 @@ struct TsOptions {
     int threads = 4;
     bool dtw = true;          // Wortzeiten über die Aufmerksamkeits-Ausrichtung (wie faster-whisper); sonst Schätzung
     int beam = 0;             // Strahlsuche mit so vielen Kandidaten (0 = gierig, schneller)
+    bool single_segment = true; // Stück in einem Durchlauf dekodieren
     int audio_ctx = 768;      // >0: Encoder-Kontext an die Stücklänge anpassen (etwa doppelt so schnell), Mindestwert; 0 = voll
 };
 

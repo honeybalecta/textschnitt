@@ -30,14 +30,19 @@ jobs:
 
       - name: Transkribieren (DTW und Schätzung)
         run: |
-          ./build-wtest/wtest ggml-small-q5_1.bin testaudio/test16k.wav dtw de > dtw.json
-          ./build-wtest/wtest ggml-small-q5_1.bin testaudio/test16k.wav heuristic de > heur.json
+          ./build-wtest/wtest ggml-small-q5_1.bin testaudio/test16k.wav dtw de 0 768 > dtw.json
+          ./build-wtest/wtest ggml-small-q5_1.bin testaudio/test16k.wav heuristic de 0 768 > heur.json
+          ./build-wtest/wtest ggml-small-q5_1.bin testaudio/test16k.wav dtw de 0 0 > v_ctx0.json
+          ./build-wtest/wtest ggml-small-q5_1.bin testaudio/test16k.wav dtw de 0 768 multi > v_multi.json
+          ./build-wtest/wtest ggml-small-q5_1.bin testaudio/test16k.wav dtw de 0 0 multi > v_ctx0_multi.json
+          ./build-wtest/wtest ggml-small-q5_1.bin testaudio/test16k.wav dtw de 3 768 > v_beam3.json
 
       - name: Auswerten
         run: |
           { echo "### Android-Transkription: Wortzeiten (whisper.cpp small-q5_1)"; echo;
             python3 android/tools/check.py testaudio/windows.json dtw.json "Neu: DTW-Ausrichtung"; echo;
-            python3 android/tools/check.py testaudio/windows.json heur.json "Bisher: Schätzung"; } > report.md
+            python3 android/tools/check.py testaudio/windows.json heur.json "Bisher: Schätzung"; echo;
+            for v in v_ctx0 v_multi v_ctx0_multi v_beam3; do python3 android/tools/check.py testaudio/windows.json $v.json "Variante $v"; echo; done; } > report.md
           cat report.md
           python3 - <<'PY'
           import json, sys

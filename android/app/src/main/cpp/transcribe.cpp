@@ -101,7 +101,7 @@ std::string ts_transcribe(const TsOptions & opt, const float * audio, int n,
     p.print_progress = false; p.print_realtime = false; p.print_timestamps = false; p.print_special = false;
     p.translate = false;
     p.no_context = true;         // jedes Stück für sich (wie condition_on_previous_text=False)
-    p.single_segment = true;     // ein Stück = ein Durchlauf, kein Weiterrücken innerhalb des Stücks
+    p.single_segment = opt.single_segment;   // ein Stück = ein Durchlauf, kein Weiterrücken innerhalb des Stücks
     p.token_timestamps = true;   // Zeitstempel pro Wort:
     p.max_len = 1;               //   jedes Segment ist ein Wort
     p.split_on_word = true;
