@@ -45,6 +45,7 @@
       <div class="audio-note">♪</div>
       <div class="snap-guide"></div>
       <div class="subov" id="subOv" title="Ziehen, um die Untertitel zu verschieben"></div>
+      <div class="title-ov" id="titleOv"></div>
       <div class="pin hidden" id="pin"></div>
       <div class="proxy-bar hidden" id="proxyBar"><span id="proxyMsg"></span>
         <button class="btn primary" id="proxyBtn">Vorschau-Datei erstellen</button><div class="progress hidden" id="proxyProg"><i></i></div></div>
@@ -131,24 +132,59 @@
 
     <!-- Studio: Zeitleiste wie in CapCut -->
     <div class="pane hidden studio" id="paneStudio">
-      <div class="tl-top">
-        <span class="mono"><b id="tlTime">0:00,0</b> <span class="muted" id="tlTotal"></span></span>
-        <span class="tl-zoom"><button id="tlOut" title="Zeitleiste verkleinern (Strg+−)">−</button><button id="tlIn" title="Zeitleiste vergrößern (Strg++)">＋</button></span>
-      </div>
-      <div class="tl-box">
-        <div class="tl" id="tl">
-          <div class="tl-inner" id="tlInner">
-            <div class="ruler" id="ruler"></div>
-            <div class="track t-main" id="trMain"></div>
-            <div class="track t-ovl" id="trOvl"><span class="track-ph">B-Roll · Bild-im-Bild</span></div>
-            <div class="track t-fx" id="trFx"><span class="track-ph">Zoom</span></div>
-            <div class="track t-txt" id="trTxt"></div>
-          </div>
+      <div class="tl-bar">
+        <div class="tl-grp">
+          <button class="tb" id="barSplit" title="Teilen (Strg+B)"><i>✂</i><span>Teilen</span></button>
+          <button class="tb" id="barDel" title="Auswahl löschen (Entf)"><i>🗑</i><span>Löschen</span></button>
         </div>
-        <div class="playline"></div>
+        <div class="tl-grp">
+          <button class="tb" id="barClip" title="Video oder Foto einfügen"><i>＋</i><span>Clip</span></button>
+          <button class="tb" id="barTitle" title="Titel einfügen (T)"><i>T</i><span>Titel</span></button>
+          <button class="tb" id="barZoom" title="Zoom einfügen"><i>🔍</i><span>Zoom</span></button>
+          <button class="tb" id="barFx" title="Clip anpassen: Tempo, Lautstärke, Farbe (E)"><i>⚙</i><span>Anpassen</span></button>
+        </div>
+        <div class="tl-grp">
+          <button class="tb" id="barUndo" title="Rückgängig (Strg+Z)"><i>↶</i></button>
+          <button class="tb" id="barRedo" title="Wiederholen (Strg+Umschalt+Z)"><i>↷</i></button>
+        </div>
+        <span class="tl-time mono"><b id="tlTime">0:00,0</b> <span id="tlTotal"></span></span>
+        <div class="tl-grp right">
+          <button class="tb tog" id="snapBtn" title="Einrasten an Kanten (S)"><i>⌁</i></button>
+          <button class="tb tog" id="modeBtn" title="Zeiger-Modus"><i>⇥</i></button>
+          <button class="tb" id="tlOut" title="Zeitleiste verkleinern (Strg+−)"><i>−</i></button>
+          <input type="range" id="tlZoom" min="0" max="100" value="48" title="Zeitleiste zoomen">
+          <button class="tb" id="tlIn" title="Zeitleiste vergrößern (Strg++)"><i>＋</i></button>
+          <button class="tb" id="tlFit" title="Ganze Zeitleiste zeigen (Strg+0)"><i>⤢</i></button>
+        </div>
       </div>
-      <div class="tl-info small" id="tlInfo"></div>
-      <div class="tools" id="tools"></div>
+      <div class="tl-body">
+        <div class="tl-gutter">
+          <div class="g-ruler"></div>
+          <div class="g-row g-main"><i>🎬</i><span>Video</span></div>
+          <div class="g-row g-ovl"><i>🎞</i><span>B-Roll · PiP</span></div>
+          <div class="g-row g-fx"><i>✨</i><span>Zoom · Effekte</span></div>
+          <div class="g-row g-title"><i>T</i><span>Titel</span></div>
+          <div class="g-row g-txt"><i>💬</i><span>Untertitel</span></div>
+        </div>
+        <div class="tl-box">
+          <div class="tl" id="tl">
+            <div class="tl-inner" id="tlInner">
+              <div class="ruler" id="ruler"></div>
+              <div class="track t-main" id="trMain"></div>
+              <div class="track t-ovl" id="trOvl"><span class="track-ph">B-Roll · Bild-im-Bild einfügen: ＋ Clip</span></div>
+              <div class="track t-fx" id="trFx"><span class="track-ph">Zoom · Anpassungen</span></div>
+              <div class="track t-title" id="trTitle"><span class="track-ph">Titel: T</span></div>
+              <div class="track t-txt" id="trTxt"></div>
+            </div>
+          </div>
+          <div class="playline"><div class="knob"></div></div>
+        </div>
+      </div>
+      <div class="tl-foot">
+        <span class="sel-lbl" id="selLbl"></span>
+        <div class="tools" id="tools"></div>
+        <div class="tl-info small" id="tlInfo"></div>
+      </div>
     </div>
 
     <!-- Export -->

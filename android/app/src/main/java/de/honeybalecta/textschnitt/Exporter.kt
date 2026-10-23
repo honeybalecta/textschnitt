@@ -24,7 +24,15 @@ import androidx.media3.common.OverlaySettings
 import androidx.media3.common.VideoCompositorSettings
 import androidx.media3.common.util.Size
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.common.audio.AudioProcessor
+import androidx.media3.common.audio.ChannelMixingAudioProcessor
+import androidx.media3.common.audio.ChannelMixingMatrix
+import androidx.media3.common.audio.SpeedProvider
 import androidx.media3.effect.BitmapOverlay
+import androidx.media3.effect.Brightness
+import androidx.media3.effect.Contrast
+import androidx.media3.effect.HslAdjustment
+import androidx.media3.effect.RgbFilter
 import androidx.media3.effect.MatrixTransformation
 import androidx.media3.effect.OverlayEffect
 import androidx.media3.effect.Presentation
@@ -62,13 +70,31 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
     private fun us(sec: Double) = (sec * 1_000_000).roundToLong()
     private val fps = plan.optDouble("fps", 30.0).let { if (it < 1 || it > 240) 30.0 else it }
 
-    /** Ein Clip aus dem Plan: Video mit Ausschnitt oder Foto mit fester Dauer. */
+    /** Ein Clip aus dem Plan: Video mit Ausschnitt oder Foto mit fester Dauer – plus Tempo, Lautstärke, Farbe. */
     private fun item(o: JSONObject, inS: Double, outS: Double, removeAudio: Boolean, effects: List<Effect>): EditedMediaItem {
         val b = if (o.optBoolean("image")) EditedMediaItem.Builder(
             MediaItem.Builder().setUri(Uri.parse(o.getString("uri"))).setImageDurationMs(((outS - inS) * 1000).roundToLong()).build()
         ).setFrameRate(Math.round(fps).toInt())
         else EditedMediaItem.Builder(clip(o.getString("uri"), inS, outS)).setRemoveAudio(removeAudio)
-        return b.setEffects(Effects(listOf(), effects)).build()
+        val fx = ArrayList<Effect>()
+        val bright = o.optDouble("bright", 0.0).toFloat(); if (Math.abs(bright) > 0.001) fx.add(Brightness(bright.coerceIn(-1f, 1f)))
+        val contrast = o.optDouble("contrast", 0.0).toFloat(); if (Math.abs(contrast) > 0.001) fx.add(Contrast(contrast.coerceIn(-1f, 1f)))
+        val sat = o.optDouble("sat", 0.0).toFloat(); if (Math.abs(sat) > 0.01) fx.add(HslAdjustment.Builder().adjustSaturation(sat.coerceIn(-100f, 100f)).build())
+        if (o.optBoolean("gray")) fx.add(RgbFilter.createGrayscaleFilter())
+        fx.addAll(effects)
+        val audio = ArrayList<AudioProcessor>()
+        val vol = o.optDouble("vol", 1.0).toFloat()
+        if (!removeAudio && Math.abs(vol - 1f) > 0.001) {
+            val mix = ChannelMixingAudioProcessor()
+            for (ch in 1..6) mix.putChannelMixingMatrix(ChannelMixingMatrix.createForConstantGain(ch, ch).scaleBy(vol.coerceIn(0f, 4f)))
+            audio.add(mix)
+        }
+        val speed = o.optDouble("speed", 1.0).toFloat().coerceIn(0.25f, 4f)
+        if (Math.abs(speed - 1f) > 0.001) b.setSpeed(object : SpeedProvider {
+            override fun getSpeed(timeUs: Long): Float = speed
+            override fun getNextSpeedChangeTimeUs(timeUs: Long): Long = C.TIME_UNSET
+        })
+        return b.setEffects(Effects(audio, fx)).build()
     }
 
     private fun clip(uri: String, inS: Double, outS: Double): MediaItem =
@@ -250,28 +276,35 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
 
     // ── Untertitel als Bild-Overlay in Ausgabegröße, an freier Position (x/y = Mittelpunkt, 0…1) ──
     class SubtitleOverlay(private val w: Int, private val h: Int, cues: JSONArray, style: JSONObject) : BitmapOverlay() {
-        private data class Cue(val s: Double, val e: Double, val text: String, val x: Float, val y: Float)
+        private data class Cue(val s: Double, val e: Double, val text: String, val x: Float, val y: Float, val size: Float, val color: Int, val outline: Boolean, val bg: Boolean)
         private val defX = style.optDouble("x", 0.5).toFloat()
         private val defY = style.optDouble("y", when (style.optString("pos", "unten")) { "oben" -> 0.12; "mitte" -> 0.5; else -> 0.88 }).toFloat()
+        private val baseSize = (when (style.optString("size", "mittel")) { "klein" -> 0.045; "groß" -> 0.075; else -> 0.058 } * minOf(w, h) * (if (h > w) 1.25 else 1.0)).toFloat()
+        private val baseColor = runCatching { Color.parseColor(style.optString("color", "#FFFFFF")) }.getOrDefault(Color.WHITE)
+        private val baseOutline = style.optBoolean("outline", true)
         private val list = (0 until cues.length()).map { cues.getJSONObject(it) }.map {
+            val isTitle = it.optBoolean("title")
             Cue(it.getDouble("start"), it.getDouble("end"), it.getString("text"),
                 if (it.isNull("x")) defX else it.optDouble("x", defX.toDouble()).toFloat(),
-                if (it.isNull("y")) defY else it.optDouble("y", defY.toDouble()).toFloat())
+                if (it.isNull("y")) defY else it.optDouble("y", defY.toDouble()).toFloat(),
+                if (it.isNull("size")) baseSize else (it.getDouble("size") * minOf(w, h) * (if (h > w) 1.25 else 1.0)).toFloat(),
+                if (it.isNull("color")) baseColor else runCatching { Color.parseColor(it.getString("color")) }.getOrDefault(baseColor),
+                if (isTitle && it.has("outline")) it.optBoolean("outline", true) else baseOutline,
+                it.optBoolean("bg"))
         }
         // Ein einziges Bild, das bei jedem Wechsel neu bemalt wird (spart bei 4K viel Speicher)
         private val bmp: Bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-        private var curIdx = -2
-        private val size = (when (style.optString("size", "mittel")) { "klein" -> 0.045; "groß" -> 0.075; else -> 0.058 } * minOf(w, h) * (if (h > w) 1.25 else 1.0)).toFloat()
-        private val color = runCatching { Color.parseColor(style.optString("color", "#FFFFFF")) }.getOrDefault(Color.WHITE)
-        private val outline = style.optBoolean("outline", true)
+        private var curKey = "?"
 
         override fun getBitmap(presentationTimeUs: Long): Bitmap {
             val t = presentationTimeUs / 1e6
-            val idx = list.indexOfFirst { t >= it.s && t < it.e }
-            if (idx != curIdx) {
-                curIdx = idx
+            // Untertitel und Titel können gleichzeitig sichtbar sein
+            val act = list.indices.filter { t >= list[it].s && t < list[it].e }
+            val key = act.joinToString(",")
+            if (key != curKey) {
+                curKey = key
                 bmp.eraseColor(Color.TRANSPARENT)
-                if (idx >= 0) render(list[idx])
+                for (i in act) render(list[i])
             }
             return bmp
         }
@@ -279,19 +312,25 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
         private fun render(cue: Cue) {
             val c = Canvas(bmp)
             val text = cue.text
+            val size = cue.size
             val paint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { textSize = size; typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD) }
             val width = (w * 0.88).toInt()
             fun layout(p: TextPaint) = StaticLayout.Builder.obtain(text, 0, text.length, p, width)
                 .setAlignment(Layout.Alignment.ALIGN_CENTER).setLineSpacing(0f, 1.08f).build()
-            val fill = layout(paint.apply { color = this@SubtitleOverlay.color; style = Paint.Style.FILL })
+            val fill = layout(paint.apply { color = cue.color; style = Paint.Style.FILL })
             // tatsächliche Breite des Textblocks, damit er ganz im Bild bleibt
             var lw = 0f
             for (i in 0 until fill.lineCount) lw = maxOf(lw, fill.getLineWidth(i))
             val m = 0.02f
             val cx = if (lw >= w * (1 - 2 * m)) w / 2f else (cue.x * w).coerceIn(lw / 2 + m * w, w - lw / 2 - m * w)
             val top = (cue.y * h - fill.height / 2f).coerceIn(m * h, maxOf(m * h, h - m * h - fill.height))
+            if (cue.bg) {
+                val pad = size * 0.25f
+                val box = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(140, 0, 0, 0) }
+                c.drawRoundRect(cx - lw / 2 - pad, top - pad * 0.6f, cx + lw / 2 + pad, top + fill.height + pad * 0.6f, size * 0.15f, size * 0.15f, box)
+            }
             c.save(); c.translate(cx - width / 2f, top)
-            if (outline) {
+            if (cue.outline && !cue.bg) {
                 val sp = TextPaint(paint).apply { style = Paint.Style.STROKE; strokeWidth = size / 7f; strokeJoin = Paint.Join.ROUND; color = Color.BLACK }
                 layout(sp).draw(c)
             } else {

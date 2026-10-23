@@ -37,7 +37,7 @@ os.environ.setdefault("HF_HUB_DISABLE_IMPLICIT_TOKEN", "1")
 import warnings  # noqa: E402
 warnings.filterwarnings("ignore", module="huggingface_hub")
 
-VERSION = "2.1.3"
+VERSION = "2.2.0"
 APP_DIR = Path(__file__).resolve().parent
 FROZEN = bool(getattr(sys, "frozen", False))          # als installierte .exe gebaut
 RES_DIR = Path(getattr(sys, "_MEIPASS", APP_DIR))      # mitgelieferte Dateien (Oberfläche, ffmpeg, Modelle)
@@ -576,7 +576,9 @@ def clean_cues(raw) -> list[dict]:
         if txt and e - s > 0.05:
             cues.append({"start": max(0.0, s), "end": e, "text": txt.replace("\r", ""),
                          "x": float(c.get("x", 0.5) if c.get("x") is not None else 0.5),
-                         "y": float(c.get("y", 0.88) if c.get("y") is not None else 0.88)})
+                         "y": float(c.get("y", 0.88) if c.get("y") is not None else 0.88),
+                         "size": float(c["size"]) if c.get("size") else None, "color": c.get("color"),
+                         "outline": c.get("outline"), "bg": bool(c.get("bg")), "title": bool(c.get("title"))})
     cues.sort(key=lambda c: c["start"])
     return cues
 
@@ -615,13 +617,24 @@ def write_ass(cues: list[dict], style: dict, out: Path, w: int, h: int):
              "", "[Events]", "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"]
     for c in cues:
         rows = c["text"].split("\n")
-        bw = max(len(x) for x in rows) * size * 0.56
-        bh = len(rows) * size * 1.15
+        csize = c["size"] * min(w, h) * (1.25 if h > w else 1.0) if c.get("size") else size
+        bw = max(len(x) for x in rows) * csize * 0.56
+        bh = len(rows) * csize * 1.15
         m = 0.02
         cx = min(max(c["x"] * w, bw / 2 + m * w), w - bw / 2 - m * w) if bw < w * (1 - 2 * m) else w / 2
         cy = min(max(c["y"] * h, bh / 2 + m * h), h - bh / 2 - m * h)
         txt = c["text"].replace("{", "(").replace("}", ")").replace("\n", "\\N")
-        lines.append(f"Dialogue: 0,{ts(c['start'])},{ts(c['end'])},Default,,0,0,0,,{{\\an5\\pos({cx:.0f},{cy:.0f})}}{txt}")
+        ov = f"\\an5\\pos({cx:.0f},{cy:.0f})"
+        if c.get("size"):
+            ov += f"\\fs{csize:.0f}"
+        if c.get("color"):
+            cr, cg, cb = hex_rgb(c["color"])
+            ov += f"\\1c&H{cb:02X}{cg:02X}{cr:02X}&"
+        if c.get("outline") is not None and c.get("title"):
+            ov += f"\\bord{max(1.0, csize / 14):.1f}" if c["outline"] else "\\bord0\\shad1"
+        if c.get("bg"):
+            ov += f"\\bord{max(2.0, csize / 8):.1f}\\3c&H000000&\\3a&H60&"   # dunkler Kasten statt Umrandung
+        lines.append(f"Dialogue: 0,{ts(c['start'])},{ts(c['end'])},Default,,0,0,0,,{{{ov}}}{txt}")
     out.write_text("\n".join(lines) + "\n", encoding="utf-8-sig")
 
 
@@ -648,6 +661,30 @@ def zoom_expr(zooms: list[dict], seg_in: float):
         cx = f"if({cond},{z['cx']:.4f},{cx})"
         cy = f"if({cond},{z['cy']:.4f},{cy})"
     return zx, cx, cy
+
+
+def seg_fx(s: dict) -> dict:
+    return {"speed": max(0.25, min(4.0, float(s.get("speed") or 1))), "vol": max(0.0, min(4.0, float(s.get("vol", 1) if s.get("vol") is not None else 1))),
+            "bright": float(s.get("bright") or 0), "contrast": float(s.get("contrast") or 0), "sat": float(s.get("sat") or 0), "gray": bool(s.get("gray"))}
+
+
+def video_fx_chain(fx: dict) -> str:
+    parts = []
+    if fx["bright"] or fx["contrast"] or fx["sat"]:
+        parts.append(f"eq=brightness={fx['bright'] * 0.5:.3f}:contrast={1 + fx['contrast']:.3f}:saturation={max(0.0, 1 + fx['sat'] / 100):.3f}")
+    if fx["gray"]:
+        parts.append("hue=s=0")
+    return "".join("," + p for p in parts)
+
+
+def atempo_chain(speed: float) -> str:
+    """atempo kann 0,5–100; kleinere Werte werden verkettet."""
+    out = []
+    while speed < 0.5:
+        out.append("atempo=0.5")
+        speed /= 0.5
+    out.append(f"atempo={speed:.4f}")
+    return "".join("," + p for p in out)
 
 
 def build_graph(plan: dict, with_video: bool, ass_name: str | None):
@@ -678,7 +715,9 @@ def build_graph(plan: dict, with_video: bool, ass_name: str | None):
     parts, labels = [], []
     for k, s in enumerate(plan["segments"]):
         a0, b0 = float(s["in"]), float(s["out"])
-        d = max(0.04, b0 - a0)
+        fx = seg_fx(s) if s.get("kind") == "main" else seg_fx({})
+        sp = fx["speed"]
+        d = max(0.04, (b0 - a0) / sp)
         img = bool(s.get("image"))
         vlab, alab = f"[v{k}]", f"[a{k}]"
         if img:
@@ -694,14 +733,19 @@ def build_graph(plan: dict, with_video: bool, ass_name: str | None):
                     z = ""
                     if s.get("zooms"):
                         zx, cx, cy = zoom_expr(s["zooms"], a0)
+                        if abs(sp - 1) > 1e-3:
+                            zx, cx, cy = (e.replace("it", f"(it*{sp:.4f})") for e in (zx, cx, cy))
                         z = (f",zoompan=z='{zx}':x='{cx}*iw*(1-1/zoom)':y='{cy}*ih*(1-1/zoom)':d=1:s={W}x{H}:fps={fps_s}")
-                    parts.append(f"[{i}:v:0]trim=start={a0 + off:.4f}:end={b0 + off:.4f},setpts=PTS-STARTPTS,{fit},fps={fps_s}{z},format=yuv420p{vlab}")
+                    spv = f"setpts=(PTS-STARTPTS)/{sp:.4f}" if abs(sp - 1) > 1e-3 else "setpts=PTS-STARTPTS"
+                    parts.append(f"[{i}:v:0]trim=start={a0 + off:.4f}:end={b0 + off:.4f},{spv},{fit},fps={fps_s}{z}{video_fx_chain(fx)},format=yuv420p{vlab}")
                 else:
                     parts.append(f"color=c=black:s={W}x{H}:r={fps_s},trim=duration={d:.4f},format=yuv420p,setsar=1{vlab}")
             if s.get("hasAudio", True):
                 f = min(0.008, d / 4)
+                spa = atempo_chain(sp) if abs(sp - 1) > 1e-3 else ""
+                vol = f",volume={fx['vol']:.3f}" if abs(fx["vol"] - 1) > 1e-3 else ""
                 parts.append(f"[{i}:a:0]atrim=start={a0 + off:.4f}:end={b0 + off:.4f},asetpts=PTS-STARTPTS,"
-                             f"aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,"
+                             f"aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo{spa}{vol},"
                              f"afade=t=in:st=0:d={f:.4f},afade=t=out:st={max(0, d - f):.4f}:d={f:.4f}{alab}")
             else:
                 parts.append(f"anullsrc=r=48000:cl=stereo,atrim=duration={d:.4f},aformat=sample_fmts=fltp:channel_layouts=stereo{alab}")
@@ -865,13 +909,14 @@ def write_concat(plan: dict, name: str, cues: list[dict], style: dict) -> Path:
         m = med(s["uri"], img)
         kind = "image" if img else ("video" if s.get("hasVideo", True) else "audio")
         pieces = [(float(s["in"]), float(s["out"]), 1.0, 0.5, 0.5)] if img else split_zooms(s)
+        fx = seg_fx(s) if s.get("kind") == "main" else seg_fx({})
         for a, b, sc, cx, cy in pieces:
-            d = b - a
+            d = (b - a) / fx["speed"]
             if d <= 0.0005:
                 continue
             c = {**base, "id": f"c{len(clips) + 1}", "trackId": "T1", "kind": kind, "mediaId": m,
                  "name": Path(s["uri"]).name, "start": round(cursor, 6), "duration": round(d, 6),
-                 "sourceStart": round(0.0 if img else a, 6)}
+                 "sourceStart": round(0.0 if img else a, 6), "speed": round(fx["speed"], 4), "volume": round(fx["vol"], 3)}
             if sc > 1.001:
                 c.update(scale=round(sc, 4), offsetX=round((cx - 0.5) * (1 - sc), 4), offsetY=round((cy - 0.5) * (1 - sc), 4))
             clips.append(c)
@@ -897,8 +942,8 @@ def write_concat(plan: dict, name: str, cues: list[dict], style: dict) -> Path:
         clips.append({**base, "id": f"c{len(clips) + 1}", "trackId": "T3", "kind": "text", "mediaId": "",
                       "name": cu["text"].split("\n")[0][:40], "start": round(cu["start"], 6), "duration": round(d, 6),
                       "offsetX": round(cu["x"] - 0.5, 4), "offsetY": round(cu["y"] - 0.5, 4),
-                      "text": {"content": cu["text"], "fontSize": CONCAT_SIZES.get(style.get("size", "mittel"), 0.045),
-                               "fontWeight": 700, "italic": False, "color": (style.get("color") or "#FFFFFF").lower(),
+                      "text": {"content": cu["text"], "fontSize": round(cu["size"] * 0.78, 4) if cu.get("size") else CONCAT_SIZES.get(style.get("size", "mittel"), 0.045),
+                               "fontWeight": 700, "italic": False, "color": (cu.get("color") or style.get("color") or "#FFFFFF").lower(),
                                "align": "center", "opacity": 1.0, "strokeWidth": 0.0045 if outline else 0.0,
                                "strokeColor": "#000000", "shadow": bool(outline), "background": "", "lineHeight": 1.2,
                                "tracking": 0.0, "maxWidth": 0.9, "maxHeight": 0.0}})
@@ -958,12 +1003,14 @@ VISUAL = {"enable_adjust": True, "enable_color_correct_adjust": False, "enable_c
           "enable_smart_color_adjust": False}
 
 
-def capcut_text(text: str, style: dict) -> tuple[dict, str]:
-    r, g, b = hex_rgb(style.get("color", "#FFFFFF"))
-    outline = style.get("outline", True)
+def capcut_text(text: str, style: dict, cue: dict | None = None) -> tuple[dict, str]:
+    cue = cue or {}
+    r, g, b = hex_rgb(cue.get("color") or style.get("color", "#FFFFFF"))
+    outline = cue["outline"] if cue.get("title") and cue.get("outline") is not None else style.get("outline", True)
     content = {"styles": [{
         "fill": {"alpha": 1.0, "content": {"render_type": "solid", "solid": {"alpha": 1.0, "color": [r / 255, g / 255, b / 255]}}},
-        "range": [0, len(text.encode("utf-16-le")) // 2], "size": CAPCUT_SIZES.get(style.get("size", "mittel"), 8.0),
+        "range": [0, len(text.encode("utf-16-le")) // 2],
+        "size": round(cue["size"] / 0.058 * 8.0, 2) if cue.get("size") else CAPCUT_SIZES.get(style.get("size", "mittel"), 8.0),
         "bold": False, "italic": False, "underline": False,
         "strokes": [{"content": {"solid": {"alpha": 1.0, "color": [0, 0, 0]}}, "width": 0.08}] if outline else [],
     }], "text": text}
@@ -1023,13 +1070,13 @@ def write_capcut(plan: dict, root: Path, name: str, cues: list[dict], style: dic
         mats[uri] = (mid, kind, info)
         return mats[uri]
 
-    def segment(mid: str, kind: str, target: float, src: float | None, d: float, volume=1.0, scale=1.0, tx=0.0, ty=0.0, render=0):
+    def segment(mid: str, kind: str, target: float, src: float | None, d: float, volume=1.0, scale=1.0, tx=0.0, ty=0.0, render=0, speed=1.0):
         speed_id = uuid.uuid4().hex
-        materials["speeds"].append({"curve_speed": None, "id": speed_id, "mode": 0, "speed": 1.0, "type": "speed"})
+        materials["speeds"].append({"curve_speed": None, "id": speed_id, "mode": 0, "speed": speed, "type": "speed"})
         seg = {"last_nonzero_volume": 1.0, "reverse": False, "track_attribute": 0, "track_render_index": 0,
                "visible": True, "id": uuid.uuid4().hex, "material_id": mid,
                "target_timerange": {"start": us(target), "duration": us(d)}, "common_keyframes": [], "keyframe_refs": [],
-               "source_timerange": {"start": us(src or 0.0), "duration": us(d)}, "speed": 1.0, "volume": volume,
+               "source_timerange": {"start": us(src or 0.0), "duration": us(d * speed)}, "speed": speed, "volume": volume,
                "extra_material_refs": [speed_id], "is_tone_modify": False}
         if kind == "video":
             seg.update(VISUAL)
@@ -1047,12 +1094,13 @@ def write_capcut(plan: dict, root: Path, name: str, cues: list[dict], style: dic
         img = bool(s.get("image"))
         mid, kind, _ = material(s["uri"], img)
         pieces = [(float(s["in"]), float(s["out"]), 1.0, 0.5, 0.5)] if img else split_zooms(s)
+        fx = seg_fx(s) if s.get("kind") == "main" else seg_fx({})
         for a, b, sc, cx, cy in pieces:
-            d = b - a
+            d = (b - a) / fx["speed"]
             if d <= 0.0005:
                 continue
             tx, ty = (2 * (cx - 0.5) * (1 - sc), 2 * (cy - 0.5) * (sc - 1)) if sc > 1.001 else (0.0, 0.0)
-            seg = segment(mid, kind, cursor, 0.0 if img else a, d, scale=round(sc, 4), tx=round(tx, 4), ty=round(ty, 4))
+            seg = segment(mid, kind, cursor, 0.0 if img else a, d, volume=round(fx["vol"], 3), scale=round(sc, 4), tx=round(tx, 4), ty=round(ty, 4), speed=round(fx["speed"], 4))
             (main_segs if kind == "video" else audio_segs).append(seg)
             cursor += d
     tracks = []
@@ -1083,7 +1131,7 @@ def write_capcut(plan: dict, root: Path, name: str, cues: list[dict], style: dic
             d = min(c["end"], cursor) - c["start"]
             if d <= 0:
                 continue
-            mat, mid = capcut_text(c["text"], style)
+            mat, mid = capcut_text(c["text"], style, c)
             materials["texts"].append(mat)
             tsegs.append({**VISUAL, "last_nonzero_volume": 1.0, "reverse": False, "track_attribute": 0,
                           "track_render_index": 0, "visible": True, "id": uuid.uuid4().hex, "material_id": mid,

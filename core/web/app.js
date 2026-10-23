@@ -539,9 +539,13 @@ function removeDel(a, b){
   for (const d of P.dels){ if (b <= d[0] || a >= d[1]){ out.push(d); continue; } if (d[0] < a) out.push([d[0], a]); if (d[1] > b) out.push([b, d[1]]); }
   P.dels = out; normDels();
 }
+const FX_DEF = {speed:1, vol:1, bright:0, contrast:0, sat:0, gray:false};
+function fxAt(t){ let r = null; for (const x of P.items){ if (x.type === 'fx' && t >= x.at - 1e-6 && t <= x.at + x.dur + 1e-6) r = x; } return r ? {...FX_DEF, ...r.fx} : {...FX_DEF}; }
+const segDur = g => (g.out - g.in) / (g.speed || 1);
 function computePieces(){
   normDels();
-  const sp = [...P.splits].sort((a, b) => a - b), out = [];
+  const fxCuts = P.items.filter(x => x.type === 'fx').flatMap(x => [x.at, x.at + x.dur]);
+  const sp = [...P.splits, ...fxCuts].sort((a, b) => a - b), out = [];
   ranges.forEach(([s, e, si], ri) => {
     let parts = [{s, e, si, L:{k:'adj', key:'s' + rangeToks[ri][0]}, R:{k:'adj', key:'e' + rangeToks[ri][1]}}];
     P.dels.forEach((d, di) => {
@@ -555,7 +559,7 @@ function computePieces(){
     });
     for (const p of parts){
       let cur = p;
-      for (const x of sp){ if (x > cur.s + 0.05 && x < cur.e - 0.05){ out.push({...cur, e:x, R:{k:'split', x}}); cur = {...cur, s:x, L:{k:'split', x}}; } }
+      for (const x of sp){ if (x > cur.s + 0.05 && x < cur.e - 0.05){ const fx = P.splits.includes(x) ? {k:'split', x} : {k:'fx', x}; out.push({...cur, e:x, R:fx}); cur = {...cur, s:x, L:fx}; } }
       if (cur.e - cur.s > 0.03) out.push(cur);
     }
   });
@@ -597,16 +601,17 @@ function buildTimeline(){
   const ins = P.items.filter(x => x.type === 'insert').map(x => ({x, a: snapSrc(x.at), pc: null})).sort((p, q) => p.a - q.a);
   for (const it of ins) it.pc = pieces.find(p => it.a <= p.e + 1e-6) || null;
   const segs = []; let o = 0;
-  const pushIns = it => { const d = Math.max(0.1, it.x.out - it.x.in); segs.push({kind:'insert', item:it.x, uri:it.x.clip.uri, in:it.x.in, out:it.x.in + d, o}); o += d; it.done = true; };
+  const pushIns = it => { const d = Math.max(0.1, it.x.out - it.x.in); segs.push({kind:'insert', item:it.x, uri:it.x.clip.uri, in:it.x.in, out:it.x.in + d, o, speed:1, fx:{...FX_DEF}}); o += d; it.done = true; };
+  const pushMain = (si, a, b, L, R) => { const fx = fxAt((a + b) / 2); const g = {kind:'main', si, in:a, out:b, o, L, R, speed:fx.speed || 1, fx}; segs.push(g); o += segDur(g); };
   for (const pc of ordered){
     let s = pc.s; const e = pc.e; let L = pc.L;
     const own = ins.filter(it => it.pc === pc);
     const after = own.filter(it => it.a >= e - 0.001), before = own.filter(it => it.a < e - 0.001);
     for (const it of before){
-      if (it.a - s > 0.02){ segs.push({kind:'main', si:pc.si, in:s, out:it.a, o, L, R:{k:'ins'}}); o += it.a - s; s = it.a; L = {k:'ins'}; }
+      if (it.a - s > 0.02){ pushMain(pc.si, s, it.a, L, {k:'ins'}); s = it.a; L = {k:'ins'}; }
       pushIns(it);
     }
-    if (e - s > 0.001){ segs.push({kind:'main', si:pc.si, in:s, out:e, o, L, R:pc.R}); o += e - s; }
+    if (e - s > 0.001) pushMain(pc.si, s, e, L, pc.R);
     after.forEach(pushIns);
   }
   ins.filter(it => !it.done).forEach(pushIns);
@@ -617,14 +622,14 @@ function srcToOut(t){
   let best = null;
   for (const g of timeline){
     if (g.kind !== 'main') continue;
-    if (t >= g.in - 1e-6 && t <= g.out + 1e-6) return g.o + clamp(t - g.in, 0, g.out - g.in);
+    if (t >= g.in - 1e-6 && t <= g.out + 1e-6) return g.o + clamp(t - g.in, 0, g.out - g.in) / (g.speed || 1);
     if (g.in > t && (!best || g.in < best.in)) best = g;
   }
   return best ? best.o : total;
 }
 function segAtOut(o){
   let lo = 0, hi = timeline.length - 1;
-  while (lo <= hi){ const m = (lo + hi) >> 1, g = timeline[m]; const d = g.out - g.in;
+  while (lo <= hi){ const m = (lo + hi) >> 1, g = timeline[m]; const d = segDur(g);
     if (o < g.o) hi = m - 1; else if (o >= g.o + d) lo = m + 1; else return m; }
   return o >= total ? timeline.length - 1 : 0;
 }
@@ -654,7 +659,7 @@ function recompute(){
 function drawScrub(){
   const box = $('#segs'); box.innerHTML = ''; if (!total) return;
   const pct = x => (x / total * 100) + '%';
-  for (const g of timeline){ const d = document.createElement('div'); d.className = 's ' + g.kind + (g.kind === 'main' && g.si % 2 ? ' alt' : ''); d.style.left = pct(g.o); d.style.width = `calc(${pct(g.out - g.in)} - 1px)`; box.append(d); }
+  for (const g of timeline){ const d = document.createElement('div'); d.className = 's ' + g.kind + (g.kind === 'main' && g.si % 2 ? ' alt' : ''); d.style.left = pct(g.o); d.style.width = `calc(${pct(segDur(g))} - 1px)`; box.append(d); }
   for (const o of overlays){ const d = document.createElement('div'); d.className = 'ovl'; d.style.left = pct(o.at); d.style.width = pct(o.end - o.at); box.append(d); }
   for (const z of P.items.filter(x => x.type === 'zoom')){ const a = srcToOut(snapSrc(z.at)), b = srcToOut(snapSrc(z.at + z.dur)); const d = document.createElement('div'); d.className = 'zm'; d.style.left = pct(a); d.style.width = pct(Math.max(0.2, b - a)); box.append(d); }
 }
@@ -695,12 +700,12 @@ function segLocal(g){
   if (isImg(g.item.clip)) return imgClock.local + (playing ? (performance.now() - imgClock.t0) / 1000 : 0);
   return IV.currentTime;
 }
-function curOut(){ const g = timeline[curSeg]; if (!g) return 0; return g.o + clamp(segLocal(g) - g.in, 0, g.out - g.in); }
+function curOut(){ const g = timeline[curSeg]; if (!g) return 0; return g.o + clamp(segLocal(g) - g.in, 0, g.out - g.in) / (g.speed || 1); }
 function curSrc(){ const g = timeline[curSeg]; return g && g.kind === 'main' ? vT() : (g ? snapSrc(g.item.at) : 0); }
 function seekOut(o, keepPlaying = playing){
   if (!timeline.length) return;
   o = clamp(o, 0, Math.max(0, total - 0.01)); curSeg = segAtOut(o); outPos = o;
-  const g = timeline[curSeg], local = g.in + (o - g.o);
+  const g = timeline[curSeg], local = g.in + (o - g.o) * (g.speed || 1);
   if (g.kind === 'main'){
     IV.pause(); IV.classList.add('hidden'); II.classList.add('hidden');
     seekV(g.si, local - P.sources[g.si].off, keepPlaying);
@@ -713,7 +718,7 @@ function seekOut(o, keepPlaying = playing){
     const url = MEDIA(g.uri); if (IV.dataset.src !== url){ IV.src = url; IV.dataset.src = url; }
     IV.classList.remove('hidden'); IV.currentTime = local; if (keepPlaying) IV.play().catch(() => {});
   }
-  updateOverlay(o); updateZoom(); updateSubs(o); updateHead(o);
+  updateOverlay(o); updateZoom(); updateSubs(o); updateTitles(o); updateHead(o);
 }
 // Nahtloser Übergang: folgt das nächste Stück direkt in derselben Quelle, wird nicht gesprungen
 function advanceSeg(){
@@ -740,7 +745,7 @@ function loop(){
     if (playing){
       outPos = curOut();
       if (stopAt != null && outPos >= stopAt) pausePlay();
-      updateOverlay(outPos); updateZoom(); updateSubs(outPos); updateHead(outPos); highlightNow();
+      updateOverlay(outPos); updateZoom(); updateSubs(outPos); updateTitles(outPos); updateHead(outPos); highlightNow();
     }
   }
   requestAnimationFrame(loop);
@@ -763,9 +768,50 @@ function updateOverlay(o){
   if (Math.abs(OV.currentTime - target) > (playing ? 0.3 : 0.05)) OV.currentTime = target;
   if (playing && OV.paused) OV.play().catch(() => {}); if (!playing && !OV.paused) OV.pause();
 }
+// Titel (freie Texte) in der Vorschau
+const titleEls = new Map();
+function updateTitles(o){
+  const box = $('#titleOv'); if (!box) return;
+  const act = P.items.filter(x => x.type === 'title').map(x => ({x, a: srcToOut(snapSrc(x.at))})).filter(t => o >= t.a && o < t.a + t.x.dur);
+  for (const [id, el] of titleEls) if (!act.some(t => t.x.id === id)){ el.remove(); titleEls.delete(id); }
+  const st = $('#stage'), W = st.clientWidth, H = st.clientHeight;
+  for (const {x} of act){
+    let el = titleEls.get(x.id);
+    if (!el){ el = document.createElement('div'); el.className = 'titlebox'; el.dataset.id = x.id; box.append(el); titleEls.set(x.id, el); }
+    if (!(TitleDrag.on && TitleDrag.id === x.id)){ el.textContent = x.text || 'Titel'; el.style.left = (x.x * W) + 'px'; el.style.top = (x.y * H) + 'px'; }
+    const px = (SIZE_F[x.size] || 0.058) * Math.min(W, H) * (H > W ? 1.25 : 1) * (x.scale || 1), ol = Math.max(1, px / 14);
+    el.style.fontSize = px.toFixed(1) + 'px'; el.style.color = x.color || '#FFFFFF';
+    el.style.textShadow = x.outline !== false ? [[-1,-1],[1,-1],[-1,1],[1,1],[0,-1.4],[0,1.4],[-1.4,0],[1.4,0]].map(([a, b]) => `${(a*ol).toFixed(1)}px ${(b*ol).toFixed(1)}px 0 #000`).join(',') : 'none';
+    el.style.background = x.bg ? 'rgba(0,0,0,.55)' : ''; el.classList.toggle('sel', !!(window.TL && TL.sel && TL.sel.id === x.id));
+  }
+}
+const TitleDrag = {on:false};
+$('#titleOv').addEventListener('pointerdown', e => {
+  const el = e.target.closest('.titlebox'); if (!el) return; e.preventDefault(); e.stopPropagation(); el.setPointerCapture(e.pointerId);
+  const it = P.items.find(x => x.id === el.dataset.id); if (!it) return;
+  Object.assign(TitleDrag, {on:true, id:it.id, it, x0:e.clientX, y0:e.clientY, sx:it.x, sy:it.y, nx:it.x, ny:it.y, moved:false, el});
+  if (playing) pausePlay(); if (window.select) select({kind:'title', id:it.id});
+});
+$('#titleOv').addEventListener('pointermove', e => {
+  if (!TitleDrag.on) return; const st = $('#stage').getBoundingClientRect();
+  const x = clamp(TitleDrag.sx + (e.clientX - TitleDrag.x0) / st.width, 0.02, 0.98), y = clamp(TitleDrag.sy + (e.clientY - TitleDrag.y0) / st.height, 0.02, 0.98);
+  if (Math.abs(e.clientX - TitleDrag.x0) + Math.abs(e.clientY - TitleDrag.y0) > 3) TitleDrag.moved = true;
+  TitleDrag.el.style.left = (x * st.width) + 'px'; TitleDrag.el.style.top = (y * st.height) + 'px'; TitleDrag.nx = x; TitleDrag.ny = y;
+});
+const endTitleDrag = () => { if (!TitleDrag.on) return; TitleDrag.on = false; if (TitleDrag.moved){ const it = TitleDrag.it; commit(() => { it.x = r3(TitleDrag.nx); it.y = r3(TitleDrag.ny); }, false); } };
+$('#titleOv').addEventListener('pointerup', endTitleDrag);
+$('#titleOv').addEventListener('pointercancel', endTitleDrag);
+$('#titleOv').addEventListener('click', e => e.stopPropagation());
+$('#titleOv').addEventListener('dblclick', e => { const el = e.target.closest('.titlebox'); if (el && window.editTitle) editTitle(el.dataset.id); });
 function hideOverlay(){ if (!OV.classList.contains('hidden')){ OV.pause(); OV.classList.add('hidden'); } OI.classList.add('hidden'); }
+const cssFilter = fx => !fx ? '' : [fx.bright ? `brightness(${(1 + fx.bright).toFixed(3)})` : '', fx.contrast ? `contrast(${(1 + fx.contrast).toFixed(3)})` : '', fx.sat ? `saturate(${(1 + fx.sat / 100).toFixed(3)})` : '', fx.gray ? 'grayscale(1)' : ''].filter(Boolean).join(' ');
+function applySegFx(g){
+  const fx = g && g.kind === 'main' ? g.fx : null;
+  V.style.filter = cssFilter(fx); const rate = g && g.kind === 'main' ? (g.speed || 1) : 1; if (Math.abs(V.playbackRate - rate) > 0.001) V.playbackRate = clamp(rate, 0.25, 4);
+  const vol = fx ? clamp(fx.vol, 0, 1) : 1; if (Math.abs(V.volume - vol) > 0.001) V.volume = vol;
+}
 function updateZoom(){
-  const g = timeline[curSeg];
+  const g = timeline[curSeg]; applySegFx(g);
   if (!g || g.kind !== 'main'){ V.style.transform = ''; return; }
   const z = zoomAt(vT());
   V.style.transformOrigin = `${z.cx * 100}% ${z.cy * 100}%`; V.style.transform = z.s > 1.001 ? `scale(${z.s})` : '';
@@ -1253,7 +1299,7 @@ function cueTimes(c){
   const ids = cueWords(c); if (!ids.length) return null;
   const w0 = tokens[ids[0]], w1 = tokens[ids[ids.length-1]];
   let s = srcToOut(w0.ws) + (c.ds || 0), e = srcToOut(w1.we) + (c.de || 0);
-  if (e < s || e - s > (w1.we - w0.ws) + 0.5){ const g = timeline[segAtOut(s - (c.ds || 0))]; e = (g ? g.o + g.out - g.in : s + 1) + (c.de || 0); }
+  if (e < s || e - s > (w1.we - w0.ws) + 0.5){ const g = timeline[segAtOut(s - (c.ds || 0))]; e = (g ? g.o + segDur(g) : s + 1) + (c.de || 0); }
   for (const g of timeline) if (g.kind === 'insert' && s < g.o && e > g.o) e = g.o;   // nicht in einen Einschub hineinlaufen
   return {s: Math.max(0, s), e: Math.max(s + 0.2, e), src: tokens[ids[0]].ws};
 }
@@ -1418,7 +1464,7 @@ $('#cueList').addEventListener('click', e => {
 });
 
 // ───────── Elemente (Clips, Zoom) ─────────
-const TYPE_LBL = {broll:'B-Roll', insert:'Einschub', pip:'Bild-im-Bild', zoom:'Zoom'};
+const TYPE_LBL = {broll:'B-Roll', insert:'Einschub', pip:'Bild-im-Bild', zoom:'Zoom', fx:'Anpassung', title:'Titel'};
 let sheetItem = null, pinMode = false;
 function openSheet(passive){ $('#sheet').classList.remove('hidden'); $('#sheet').classList.toggle('passive', !!passive); $('#sheetBack').classList.toggle('hidden', !!passive); }
 function openItem(id){
@@ -1530,11 +1576,16 @@ function buildPlan(){
     const s = P.sources[g.si], off = s.off;
     const zs = P.items.filter(z => z.type === 'zoom' && z.at < g.out && z.at + z.dur > g.in)
       .map(z => ({at:r3(z.at - off), dur:z.dur, kind:z.kind, strength:z.strength, cx:z.cx, cy:z.cy}));
-    return {kind:'main', src:g.si, uri:s.uri, in:r3(g.in - off), out:r3(g.out - off), zooms:zs, hasAudio: s.hasAudio !== false, hasVideo: hasVid(s)};
+    const fx = g.fx || FX_DEF;
+    return {kind:'main', src:g.si, uri:s.uri, in:r3(g.in - off), out:r3(g.out - off), zooms:zs, hasAudio: s.hasAudio !== false, hasVideo: hasVid(s),
+      speed:+(fx.speed || 1), vol:+(fx.vol ?? 1), bright:+(fx.bright || 0), contrast:+(fx.contrast || 0), sat:+(fx.sat || 0), gray:!!fx.gray};
   });
   const ovs = overlays.map(o => ({mode:o.x.type, image: isImg(o.x.clip), uri:o.x.clip.uri, in:o.x.in, out:r3(o.x.in + (o.end - o.at)), at:r3(o.at), corner:o.x.corner || 'or', size:o.x.size || 0.33,
     width:o.x.clip.width, height:o.x.clip.height, rotation:o.x.clip.rotation || 0}));
-  const subs = S().enabled !== false && tokens.length ? {cues: computedCues().map(x => { const [cx, cy] = cueXY(x.c); return {start:r3(x.s), end:r3(x.e), text:wrapText(x.text), x:cx, y:cy}; }), style:S()} : null;
+  const cues = S().enabled !== false && tokens.length ? computedCues().map(x => { const [cx, cy] = cueXY(x.c); return {start:r3(x.s), end:r3(x.e), text:wrapText(x.text), x:cx, y:cy}; }) : [];
+  for (const t of P.items.filter(x => x.type === 'title' && (x.text || '').trim())){ const a = srcToOut(snapSrc(t.at)); if (a >= total) continue;
+    cues.push({start:r3(a), end:r3(Math.min(total, a + t.dur)), text:t.text.trim(), x:t.x, y:t.y, size:+((SIZE_F[t.size] || 0.058) * (t.scale || 1)).toFixed(4), color:t.color || '#FFFFFF', outline:t.outline !== false, bg:!!t.bg, title:true}); }
+  const subs = cues.length ? {cues, style:S()} : null;
   const media = P.sources.map(s => ({uri:s.uri, name:s.name, duration:s.duration, width:s.width, height:s.height, fps:s.fps, hasAudio:s.hasAudio !== false, hasVideo:hasVid(s), kind:s.kind || 'video'}));
   return {format:exFmt, name: ($('#exName').value || P.name).replace(/[\\/:*?"<>|]/g, '_'), width:W, height:H, fps:primary().fps || 30, total:r3(total),
     segments:segs, overlays:ovs, subs, burn: P.settings.burn !== false, quality: $('#exQuality').value, audioFormat: $('#exAudioFmt').value,
@@ -1543,7 +1594,7 @@ function buildPlan(){
 function renderExport(){
   const [W, H] = outSize(), n = P.items.reduce((m, x) => (m[x.type] = (m[x.type] || 0) + 1, m), {});
   $('#exSummary').textContent = `${fmtT(total)}${exFmt === 'audio' ? '' : ` · ${W}×${H}`} · ${timeline.filter(g => g.kind === 'main').length} Abschnitte` + (P.sources.length > 1 ? ` aus ${P.sources.length} Videos` : '') +
-    (n.insert ? ` · ${n.insert} Einschub` : '') + (n.broll ? ` · ${n.broll} B-Roll` : '') + (n.pip ? ` · ${n.pip} Bild-im-Bild` : '') + (n.zoom ? ` · ${n.zoom} Zoom` : '') +
+    (n.insert ? ` · ${n.insert} Einschub` : '') + (n.broll ? ` · ${n.broll} B-Roll` : '') + (n.pip ? ` · ${n.pip} Bild-im-Bild` : '') + (n.zoom ? ` · ${n.zoom} Zoom` : '') + (n.fx ? ` · ${n.fx} Anpassungen` : '') + (n.title ? ` · ${n.title} Titel` : '') +
     (S().enabled !== false && tokens.length ? ` · ${computedCues().length} Untertitel` : '');
 }
 $('#exRes').onchange = renderExport;
