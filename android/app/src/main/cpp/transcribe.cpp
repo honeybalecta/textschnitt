@@ -56,28 +56,28 @@ static std::vector<float> envelope(const float * a, int n) {
 
 // Ton an Sprechpausen in Stücke von höchstens MAXC Sekunden teilen. Kurze Stücke halten Whisper davon ab,
 // Neuansätze zu „bereinigen“, und die Wortzeiten können sich nicht über lange Strecken verschieben.
-struct Chunk { int s, e; };   // in 10-ms-Rahmen
+struct Chunk { int s, e; bool pause; };   // in 10-ms-Rahmen; pause: Schnitt liegt in einer Sprechpause
 static std::vector<Chunk> split_chunks(const std::vector<float> & db, float thr) {
-    const int MAXC = 1400, MINC = 600;
+    const int MAXC = 1400, MINC = 500;   // Rahmen à 10 ms
     std::vector<Chunk> out;
     const int m = (int) db.size();
     int s = 0;
     while (m - s > MAXC) {
-        // längste leise Lücke zwischen s+MINC und s+MAXC; Schnitt in ihrer Mitte
-        int best_len = 0, best_mid = -1, run = 0;
+        // erste Pause ab MINC von mindestens 0,5 s → Schnitt in ihrer Mitte (Anläufe landen so meist in eigenen Stücken);
+        // sonst die längste Lücke ab 0,25 s; sonst die leiseste Stelle im letzten Drittel
+        int cut = -1, run = 0, best_len = 0, best_mid = -1;
         for (int k = s + MINC; k < s + MAXC; ++k) {
-            if (db[k] < thr) { ++run; if (run > best_len) { best_len = run; best_mid = k - run / 2; } }
+            if (db[k] < thr) { ++run; if (run > best_len) { best_len = run; best_mid = k - run / 2; } if (run >= 50) { cut = k - run / 2; break; } }
             else run = 0;
         }
-        int cut;
-        if (best_len >= 25) cut = best_mid;
-        else {   // keine Pause: leiseste Stelle im letzten Drittel
+        if (cut < 0 && best_len >= 25) cut = best_mid;
+        if (cut < 0) {
             cut = s + MAXC - 1; float bv = 1e9f;
             for (int k = s + MAXC * 2 / 3; k < s + MAXC; ++k) { float v = 0; for (int j = -10; j <= 10; ++j) v += db[std::max(0, std::min(m - 1, k + j))]; if (v < bv) { bv = v; cut = k; } }
         }
-        out.push_back({s, cut}); s = cut;
+        out.push_back({s, cut, run >= 50 || best_len >= 25}); s = cut;
     }
-    out.push_back({s, m});
+    out.push_back({s, m, true});
     return out;
 }
 
@@ -126,6 +126,7 @@ std::string ts_transcribe(const TsOptions & opt, const float * audio, int n,
     std::vector<W> words;
     std::string lang;
     bool used_dtw = false;
+    double last = 0;
     const whisper_token eot = whisper_token_eot(ctx);
     for (size_t ci = 0; ci < chunks.size(); ++ci) {
         const auto & c = chunks[ci];
@@ -181,8 +182,7 @@ std::string ts_transcribe(const TsOptions & opt, const float * audio, int n,
             w.t0 = start; w.t1 = std::max(end, start + 0.02);
             prev_end = has_end ? w.dtw_end : -1;
         }
-        // In Stückzeit → Videozeit; Reihenfolge sichern; Wörter jenseits des Stücks (erfundene Fortsetzungen) weg
-        double last = 0;
+        // In Stückzeit → Videozeit; Reihenfolge sichern (auch über Stückgrenzen); Wörter jenseits des Stücks (erfundene Fortsetzungen) weg
         size_t keep = w0;
         for (size_t k = w0; k < words.size(); ++k) {
             W w = words[k];
@@ -191,6 +191,7 @@ std::string ts_transcribe(const TsOptions & opt, const float * audio, int n,
             if (w.t1 < w.t0 + 0.02) w.t1 = w.t0 + 0.02;
             last = w.t0;
             if (w.t0 > s0 / 16000.0 + chunk_len + 0.3) continue;
+            if (c.pause && ci + 1 < chunks.size() && w.t0 > s0 / 16000.0 + chunk_len - 0.15) continue;   // Schnitt lag in einer Pause: dort beginnt kein echtes Wort mehr
             // Wort liegt komplett in Stille → erfunden
             int f0 = std::max(0, (int) (w.t0 * 100)), f1 = std::min((int) db.size(), (int) (w.t1 * 100) + 1);
             float m2 = -90; for (int f = f0; f < f1; ++f) m2 = std::max(m2, db[f]);

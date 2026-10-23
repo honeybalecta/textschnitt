@@ -29,8 +29,12 @@ int main(int argc, char ** argv) {
     opt.language = argc > 4 ? argv[4] : "de";
     opt.threads = 4;
     opt.beam = argc > 5 ? atoi(argv[5]) : 0;
-    opt.audio_ctx = argc > 6 ? atoi(argv[6]) : 768;
+    opt.audio_ctx = argc > 6 ? atoi(argv[6]) : 512;
     opt.single_segment = !(argc > 7 && strcmp(argv[7], "multi") == 0);
+    const char * pm = argc > 8 ? argv[8] : "app";
+    if (!strcmp(pm, "app")) opt.prompt = "Ähm, also, äh, ich mein, hm, ja. Also ich – ich wollte, das ist, das ist ja so. Ähm, äh.";
+    else if (!strcmp(pm, "strong")) opt.prompt = "Ähm, also, äh. Ich wollte – ich wollte heute, ähm, ich wollte heute sagen. Das ist, das ist ja so. Nochmal: Das ist ja so, das ist ja so. Äh, hm.";
+    else if (strcmp(pm, "none")) opt.prompt = pm;
     auto audio = read_wav(argv[2]);
     if (audio.empty()) { fprintf(stderr, "WAV nicht lesbar\n"); return 1; }
     std::string json = ts_transcribe(opt, audio.data(), (int) audio.size(), [](int p) { fprintf(stderr, "\r%d %%", p); }, []() { return false; });
