@@ -1,0 +1,66 @@
+name: Android-Transkription prüfen
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ["android/app/src/main/cpp/**", "android/tools/**", ".github/workflows/test-android-asr.yml"]
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: whisper.cpp und Modell holen
+        run: |
+          git clone --depth 1 -b v1.9.5 https://github.com/ggml-org/whisper.cpp android/third_party/whisper.cpp
+          curl -L --fail --retry 3 -o ggml-small-q5_1.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small-q5_1.bin
+          sudo apt-get update -qq && sudo apt-get install -y -qq espeak-ng ffmpeg cmake > /dev/null
+
+      - name: Testwerkzeug bauen (derselbe Code wie in der App)
+        run: cmake -S android/tools -B build-wtest -DCMAKE_BUILD_TYPE=Release > /dev/null && cmake --build build-wtest --target wtest -j4 2>&1 | tail -5
+
+      - name: Testton mit Neuansätzen erzeugen
+        run: android/tools/make-testaudio.sh testaudio
+
+      - name: Transkribieren (DTW und Schätzung)
+        run: |
+          ./build-wtest/wtest ggml-small-q5_1.bin testaudio/test16k.wav dtw de > dtw.json
+          ./build-wtest/wtest ggml-small-q5_1.bin testaudio/test16k.wav heuristic de > heur.json
+
+      - name: Auswerten
+        run: |
+          { echo "### Android-Transkription: Wortzeiten (whisper.cpp small-q5_1)"; echo;
+            python3 android/tools/check.py testaudio/windows.json dtw.json "Neu: DTW-Ausrichtung"; echo;
+            python3 android/tools/check.py testaudio/windows.json heur.json "Bisher: Schätzung"; } > report.md
+          cat report.md
+          python3 - <<'PY'
+          import json, sys
+          d = json.load(open("dtw.json.score.json")); h = json.load(open("heur.json.score.json"))
+          ok = d["timing" if False else "n"] >= 20 and d["order_ok"] and d["overlap_err"] <= max(1.0, h["overlap_err"])
+          print("DTW:", d, "\nSchätzung:", h)
+          sys.exit(0 if ok else 1)
+          PY
+
+      - name: Bericht als Commit-Kommentar
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          [ -f report.md ] || echo "Transkriptionstest lief nicht durch (siehe Log)." > report.md
+          gh api "repos/${{ github.repository }}/commits/${{ github.sha }}/comments" -F body=@report.md > /dev/null || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-asr-test
+          path: |
+            dtw.json
+            heur.json
+            testaudio/windows.json
+            testaudio/test16k.wav

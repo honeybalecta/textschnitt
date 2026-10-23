@@ -19,7 +19,7 @@ set(GGML_CPU_ARM_ARCH "armv8.2-a+fp16+dotprod" CACHE STRING "" FORCE)
 
 add_subdirectory(${WHISPER_DIR} whisper EXCLUDE_FROM_ALL)
 
-add_library(tsnative SHARED jni.cpp)
+add_library(tsnative SHARED jni.cpp transcribe.cpp)
 target_compile_options(tsnative PRIVATE -O3)
 target_link_libraries(tsnative PRIVATE whisper log)
 target_link_options(tsnative PRIVATE -Wl,--gc-sections)
