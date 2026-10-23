@@ -12,7 +12,7 @@ struct TsOptions {
     bool dtw = true;          // Wortzeiten über die Aufmerksamkeits-Ausrichtung (wie faster-whisper); sonst Schätzung
     int beam = 0;             // Strahlsuche mit so vielen Kandidaten (0 = gierig, schneller)
     bool single_segment = true; // Stück in einem Durchlauf dekodieren
-    int audio_ctx = 512;      // >0: Encoder-Kontext an die Stücklänge anpassen (etwa doppelt so schnell), Mindestwert; 0 = voll
+    int audio_ctx = 0;        // 0 = voller Encoder-Kontext (genauer bei Anläufen); >0 = Mindestkontext, an die Stücklänge angepasst (schneller)
 };
 
 // Liefert JSON: {"words":[{"text","start","end","prob"}], "lang":"de", "timing":"dtw"|"heuristic"} oder {"error":"…"}

@@ -30,8 +30,8 @@ jobs:
 
       - name: Transkribieren (DTW und Schätzung)
         run: |
-          ./build-wtest/wtest ggml-small-q5_1.bin testaudio/test16k.wav dtw de 0 768 > dtw.json
-          ./build-wtest/wtest ggml-small-q5_1.bin testaudio/test16k.wav heuristic de 0 768 > heur.json
+          ./build-wtest/wtest ggml-small-q5_1.bin testaudio/test16k.wav dtw de 0 0 > dtw.json
+          ./build-wtest/wtest ggml-small-q5_1.bin testaudio/test16k.wav heuristic de 0 0 > heur.json
           ./build-wtest/wtest ggml-small-q5_1.bin testaudio/test16k.wav dtw de 0 0 > v_ctx0.json
           ./build-wtest/wtest ggml-small-q5_1.bin testaudio/test16k.wav dtw de 0 768 multi > v_multi.json
           ./build-wtest/wtest ggml-small-q5_1.bin testaudio/test16k.wav dtw de 0 0 multi > v_ctx0_multi.json

@@ -29,7 +29,7 @@ int main(int argc, char ** argv) {
     opt.language = argc > 4 ? argv[4] : "de";
     opt.threads = 4;
     opt.beam = argc > 5 ? atoi(argv[5]) : 0;
-    opt.audio_ctx = argc > 6 ? atoi(argv[6]) : 512;
+    opt.audio_ctx = argc > 6 ? atoi(argv[6]) : 0;
     opt.single_segment = !(argc > 7 && strcmp(argv[7], "multi") == 0);
     const char * pm = argc > 8 ? argv[8] : "app";
     if (!strcmp(pm, "app")) opt.prompt = "Ähm, also, äh, ich mein, hm, ja. Also ich – ich wollte, das ist, das ist ja so. Ähm, äh.";
