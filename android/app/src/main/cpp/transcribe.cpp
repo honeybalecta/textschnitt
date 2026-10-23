@@ -118,7 +118,7 @@ std::string ts_transcribe(const TsOptions & opt, const float * audio, int n,
         if (!dtw) break;
         const bool has_end = w.dtw_end >= 0;
         double start = (prev_end >= 0 && (!has_end || prev_end < w.dtw_end) && (!has_end || w.dtw_end - prev_end < 8.0)) ? prev_end : -1;
-        if (start < 0) start = has_end ? std::max(w.t0, w.dtw_end - 1.5) : w.t0;
+        if (start < 0) start = has_end ? std::max(w.t0, w.dtw_end - std::min(1.0, 0.07 * (double) w.text.size() + 0.2)) : w.t0;   // erstes Wort im Fenster: Länge schätzen
         double end = has_end ? w.dtw_end : std::min(std::max(w.t1, start + 0.05), start + 1.5);
         if (has_end || prev_end >= 0) used_dtw = true;
         w.t0 = start; w.t1 = std::max(end, start + 0.02);

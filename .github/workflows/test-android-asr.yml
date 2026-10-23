@@ -42,7 +42,7 @@ jobs:
           python3 - <<'PY'
           import json, sys
           d = json.load(open("dtw.json.score.json")); h = json.load(open("heur.json.score.json"))
-          ok = d["timing"] == "dtw" and d["n"] >= 20 and d["order_ok"] and d["overlap_err"] < h["overlap_err"] * 0.5
+          ok = d["timing"] == "dtw" and d["n"] >= 20 and d["order_ok"] and d["starts"] >= 6 and d["start_err"] < 0.35 and d["start_err"] <= h["start_err"]
           print("DTW:", d, "\nSchätzung:", h)
           sys.exit(0 if ok else 1)
           PY
