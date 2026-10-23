@@ -2,7 +2,7 @@
 
 Gesprochene Videos über das Transkript schneiden – mit einem kleinen Studio dazu: Videos öffnen (auch mehrere hintereinander), transkribieren lassen, im Text löschen, was raus soll, in der Zeitleiste feinschneiden, Clips, Fotos, Bild-im-Bild und Zooms einsetzen, Untertitel gestalten und frei platzieren, exportieren.
 
-Textschnitt gibt es für **Windows** und **Android**; eine Web-Version ist geplant.
+Textschnitt gibt es für **Windows**, **Android** und als **Web-Version** direkt im Browser: **https://honeybalecta.github.io/textschnitt/**
 
 ## Aufbau
 
@@ -11,6 +11,7 @@ Textschnitt gibt es für **Windows** und **Android**; eine Web-Version ist gepla
 | `core/web/` | **Der gemeinsame Studio-Kern**: Oberfläche, Schnittmodell, Zeitleiste, Untertitel, Export-Plan. Läuft unverändert auf allen Plattformen. |
 | `textschnitt.py`, `textschnitt_app.py` | Windows-Adapter: lokales Backend (faster-whisper, ffmpeg) und Programmfenster (Edge WebView2) |
 | `android/` | Android-Adapter: whisper.cpp, Media3-Export, Galerie; bindet `core/web` beim Bauen ein |
+| `web/` | Browser-Adapter: Whisper über transformers.js (WebGPU/WebAssembly), Export über WebCodecs (mediabunny), Projekte in IndexedDB – nichts wird hochgeladen |
 
 Die Plattformen stellen dem Kern dieselbe Schnittstelle `window.TS` bereit (Dateiauswahl, Projekte, Transkription, Export). Neue Studio-Funktionen entstehen einmal im Kern; nur was plattformabhängig ist (Transkription, Rendern, Dateizugriff), lebt in den Adaptern.
 
@@ -18,6 +19,7 @@ Die Plattformen stellen dem Kern dieselbe Schnittstelle `window.TS` bereit (Date
 
 - **Windows**: Installer unter [Releases](https://github.com/honeybalecta/textschnitt/releases) (`Textschnitt-Setup-….exe`). Whisper-Modell „small“ und ffmpeg sind dabei, alles läuft offline.
 - **Android**: APK unter Releases (`Textschnitt-Android-….apk`), Android 10 oder neuer.
+- **Browser**: https://honeybalecta.github.io/textschnitt/ – ohne Installation. Videos bleiben auf dem Gerät; nur das Whisper-Modell wird beim ersten Mal von Hugging Face geladen und danach zwischengespeichert. Am besten in aktuellem Chrome oder Edge (mit Grafikkarte deutlich schneller); läuft nach dem ersten Besuch auch offline und lässt sich als App installieren.
 
 ## Arbeiten
 
@@ -39,6 +41,8 @@ Die Plattformen stellen dem Kern dieselbe Schnittstelle `window.TS` bereit (Date
 | CapCut-Entwurf (Schnitte, Clips, Bild-im-Bild, Zooms, Untertitel an ihrer Position) | ✓ | – |
 | Concat-Projekt (`Desktop\Concat`) | ✓ | – |
 | SRT-Untertitel | ✓ zu jedem Export | – |
+
+Im Browser: Video (MP4) und Audio (WAV, MP3, M4A, FLAC) samt SRT als Download.
 
 Weiche Zoomfahrten werden in CapCut und Concat als Zoom-Sprung angelegt. HDR-Videos vom Handy werden beim Video-Export nach SDR umgerechnet.
 
