@@ -34,7 +34,8 @@ async function load(name, want, onProgress){
   // tiny und base liefert die Seite selbst aus, small kommt von Hugging Face
   const local = (await bundledModels()).includes(repo);
   env.allowLocalModels = local; env.allowRemoteModels = !local;
-  env.localModelPath = new URL('./models/', import.meta.url).href;
+  // Nur der Pfad (ohne https://…): transformers.js behandelt volle Adressen nicht als lokale Modelle
+  env.localModelPath = new URL('./models/', import.meta.url).pathname;
   const files = new Map();
   const progress_callback = p => {
     if (p.status === 'progress' && p.total){ files.set(p.file, [p.loaded || 0, p.total]);
