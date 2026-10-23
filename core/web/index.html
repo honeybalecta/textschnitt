@@ -62,6 +62,7 @@
     <button data-tab="subs">Untertitel</button>
     <button data-tab="studio">Studio</button>
     <button data-tab="export">Export</button>
+    <button class="detach" id="detachBtn" title="Diesen Bereich in einem eigenen Fenster öffnen (z. B. auf dem zweiten Bildschirm)">⧉</button>
   </nav>
 
   <main class="panes">
@@ -79,6 +80,12 @@
         <label class="row">Modell <select id="model"></select></label>
         <label class="row">Sprache <select id="lang"><option value="de" selected>Deutsch</option><option value="en">Englisch</option><option value="">automatisch</option></select></label>
         <label class="row"><input type="checkbox" id="fillers" checked> Füllwörter (äh, ähm) mit erkennen</label>
+        <div class="auto-opts">
+          <span class="muted small">Direkt danach automatisch:</span>
+          <label class="row"><input type="checkbox" id="autoFillers"> Füllwörter entfernen</label>
+          <label class="row"><input type="checkbox" id="autoRepeats"> Wiederholungen entfernen (der letzte Versuch bleibt)</label>
+          <label class="row"><input type="checkbox" id="autoPauses"> Pausen kürzen auf <select id="autoPauseLen"><option value="0">ganz weg</option><option value="0.1">0,1 s</option><option value="0.2">0,2 s</option><option value="0.3" selected>0,3 s</option><option value="0.5">0,5 s</option></select></label>
+        </div>
         <div class="row"><button class="btn primary" id="transBtn">Transkription starten</button><button class="btn hidden" id="transCancel">Abbrechen</button></div>
         <div class="progress hidden" id="transProg"><i></i></div>
         <div class="small muted" id="transMsg"></div>
@@ -88,10 +95,12 @@
     <!-- Text -->
     <div class="pane hidden" id="paneText">
       <div class="todo hidden" id="textTodo"><span><b></b> noch nicht transkribiert.</span><button class="btn primary" id="textTodoBtn">Jetzt transkribieren</button></div>
-      <div class="findrow"><input type="search" id="findIn" placeholder="Im Text suchen (Strg+F) – Enter: nächster Treffer" autocomplete="off"><span class="muted small" id="findInfo"></span></div>
+      <div class="findrow"><input type="search" id="findIn" placeholder="Im Text suchen (Strg+F) – Enter: nächster Treffer" autocomplete="off"><span class="muted small" id="findInfo"></span><button class="chip" id="replToggle" title="Suchen und ersetzen (Strg+H)">⇄ Ersetzen</button></div>
+      <div class="findrow hidden" id="replRow"><input type="text" id="replIn" placeholder="Ersetzen durch …" autocomplete="off"><button class="chip" id="replOne">Ersetzen</button><button class="chip" id="replAll">Alle ersetzen</button><button class="chip danger" id="findDelAll">Alle Treffer löschen</button></div>
       <div class="toolrow">
         <button class="chip" id="fillerBtn">Füllwörter weg</button>
-        <button class="chip" id="pauseBtn">Pausen kürzen</button>
+        <button class="chip" id="repeatBtn" title="Wiederholte Anläufe finden und löschen – der letzte Versuch bleibt stehen">Wiederholungen weg</button>
+        <span class="chip combo"><button id="pauseBtn">Pausen kürzen auf</button><select id="pauseLen"><option value="0">ganz weg</option><option value="0.1">0,1 s</option><option value="0.2">0,2 s</option><option value="0.3" selected>0,3 s</option><option value="0.5">0,5 s</option></select></span>
         <button class="chip" id="cutPlayBtn" title="2 Sekunden vor bis 2 Sekunden nach dem letzten Schnitt abspielen">▶ Letzten Schnitt anhören</button>
         <label class="chip"><input type="checkbox" id="hideDel"> Gelöschtes ausblenden</label>
         <button class="chip" onclick="addSources()">＋ Video anhängen</button>

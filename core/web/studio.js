@@ -125,10 +125,17 @@ function select(sel){
   TL.sel = sel; const b = selBlock(); if (b) b.classList.add('sel'); else TL.sel = null;
   updateTools();
 }
+function selectBlock(b){
+  const tr = b.parentElement.id;
+  if (tr === 'trMain'){ const g = timeline[+b.dataset.i]; select(g.kind === 'insert' ? {kind:'insert', i:+b.dataset.i, itemId:g.item.id} : {kind:'main', i:+b.dataset.i, src:(g.in + g.out) / 2}); }
+  else if (tr === 'trTxt') select({kind:'cue', id:b.dataset.cid});
+  else { const it = P.items.find(x => x.id === b.dataset.id); select({kind: it.type === 'zoom' ? 'zoom' : 'ovl', id: it.id}); }
+}
 tlInner.addEventListener('click', e => {
   if (TL.drag && TL.drag.moved) return;
   const b = e.target.closest('.blk');
   if (!b){ select(null); return; }
+  if (b.classList.contains('sel') && TL.justSelected){ TL.justSelected = false; return; }
   const tr = b.parentElement.id;
   if (tr === 'trMain'){ const g = timeline[+b.dataset.i]; select(g.kind === 'insert' ? {kind:'insert', i:+b.dataset.i, itemId:g.item.id} : {kind:'main', i:+b.dataset.i, src:(g.in + g.out) / 2}); }
   else if (tr === 'trTxt') select({kind:'cue', id:b.dataset.cid});
@@ -169,9 +176,11 @@ tlEl.addEventListener('touchend', e => { if (e.touches.length < 2 && TL.pinch){ 
 
 // ───────── Ziehen: Griffe (Trimmen) und Verschieben ─────────
 tlInner.addEventListener('pointerdown', e => {
-  const b = e.target.closest('.blk.sel'); if (!b) return;
+  let b = e.target.closest('.blk.sel');
+  if (!b && e.pointerType === 'mouse' && e.button === 0){   // mit der Maus: Clip direkt greifen
+    const nb = e.target.closest('.blk'); if (!nb) return; selectBlock(nb); TL.justSelected = true; b = selBlock(); if (!b) return; }
+  if (!b) return;
   const h = e.target.closest('.h');
-  if (!h && (TL.sel.kind === 'main')) return;              // Hauptspur-Clips werden nur getrimmt
   e.preventDefault(); b.setPointerCapture(e.pointerId);
   TL.drag = {b, side: h ? (h.classList.contains('l') ? 'l' : 'r') : 'm', x0: e.clientX, left0: parseFloat(b.style.left), w0: parseFloat(b.style.width), moved: false, d: 0};
   if (playing) pausePlay();
@@ -179,6 +188,7 @@ tlInner.addEventListener('pointerdown', e => {
 tlInner.addEventListener('pointermove', e => {
   const g = TL.drag; if (!g) return;
   const dx = e.clientX - g.x0; if (Math.abs(dx) > 3) g.moved = true; if (!g.moved) return;
+  g.ptr = (e.clientX - tlInner.getBoundingClientRect().left - half()) / TL.pps;   // Zeit unter dem Mauszeiger
   let d = dx / TL.pps; if (TL.sel.kind === 'main' || TL.sel.kind === 'insert') d = snapF(d);
   d = clampDrag(g.side, d); g.d = d; const px = d * TL.pps;
   if (g.side === 'l'){ g.b.style.left = (g.left0 + px) + 'px'; g.b.style.width = Math.max(4, g.w0 - px) + 'px'; }
@@ -200,6 +210,7 @@ function selItem(){ return TL.sel && P.items.find(x => x.id === TL.sel.id); }
 function selCue(){ return TL.sel && P.cues.find(c => c.id === TL.sel.id); }
 function clampDrag(side, d){
   const s = TL.sel;
+  if ((s.kind === 'main' || s.kind === 'insert') && side === 'm'){ const g = timeline[s.i]; return clamp(d, -g.o, total - g.o - (g.out - g.in)); }
   if (s.kind === 'main'){ const g = timeline[s.i], len = g.out - g.in;
     if (side === 'l') return clamp(d, edgeMin(g, 'l'), len - 0.1); return clamp(d, -(len - 0.1), edgeMax(g, 'r')); }
   if (s.kind === 'insert'){ const it = timeline[s.i].item;
@@ -216,12 +227,39 @@ function clampDrag(side, d){
 function edgeMin(g, side){ const L = g.L || {}; if (L.k === 'adj') return -(g.in - P.sources[g.si].off); if (L.k === 'del') return P.dels[L.di] ? -(P.dels[L.di][1] - P.dels[L.di][0]) : 0; return 0; }
 function edgeMax(g, side){ const R = g.R || {}; if (R.k === 'adj') return srcEnd(g.si) - g.out; if (R.k === 'del') return P.dels[R.di] ? P.dels[R.di][1] - P.dels[R.di][0] : 0; return 0; }
 function previewDrag(side, d){
-  const s = TL.sel;
+  const s = TL.sel; if (side === 'm' && (s.kind === 'main' || s.kind === 'insert')){ dropMark(s, d); return; }
   if (s.kind === 'main'){ const g = timeline[s.i], off = P.sources[g.si].off; seekV(g.si, (side === 'l' ? g.in + d : Math.max(g.in, g.out + d - 0.04)) - off, false); V.style.transform = ''; IV.classList.add('hidden'); II.classList.add('hidden'); }
   if (s.kind === 'insert'){ const g = timeline[s.i]; if (isImg(g.item.clip)) return; const url = MEDIA(g.uri); if (IV.dataset.src !== url){ IV.src = url; IV.dataset.src = url; } IV.classList.remove('hidden'); IV.currentTime = side === 'l' ? g.in + d : g.out + d - 0.04; }
 }
+// Umsortieren: Clip auf der Hauptspur an eine andere Stelle ziehen
+function dropTarget(s, d){
+  const g = timeline[s.i], center = TL.drag && TL.drag.ptr != null ? TL.drag.ptr : g.o + (g.out - g.in) / 2 + d;
+  const k = timeline.findIndex((x, i) => i !== s.i && x.o + (x.out - x.in) / 2 > center);
+  return k < 0 ? null : k;   // vor diesem Segment einfügen (null = ans Ende)
+}
+function dropMark(s, d){
+  tlInner.querySelectorAll('.drop-line').forEach(x => x.remove());
+  const k = dropTarget(s, d), x = k == null ? total : timeline[k].o;
+  const m = document.createElement('div'); m.className = 'drop-line'; m.style.left = (half() + x * TL.pps - 1) + 'px'; $('#trMain').append(m);
+}
+function reorderDrop(s, d){
+  const g = timeline[s.i], k = dropTarget(s, d);
+  if (k === s.i + 1 || (k == null && s.i === timeline.length - 1)) return false;   // gleiche Stelle
+  const tg = k == null ? null : timeline[k];
+  const to = tg == null ? null : (tg.kind === 'main' ? tg.in : snapSrc(tg.item.at));
+  if (s.kind === 'main'){ P.moves.push({a: r3(g.in), b: r3(g.out), to: to == null ? null : r3(to)}); P.splits.push(r3(g.in), r3(g.out)); if (to != null) P.splits.push(r3(to)); s.src = g.in + 0.05; }
+  else g.item.at = to == null ? r3(srcTotal) : r3(to);
+  return true;
+}
 function applyDrag(side, d){
   const s = TL.sel;
+  tlInner.querySelectorAll('.drop-line').forEach(x => x.remove());
+  if (side === 'm' && (s.kind === 'main' || s.kind === 'insert') && TL.drag && TL.drag.ptr == null) return;
+  if (side === 'm' && (s.kind === 'main' || s.kind === 'insert')){
+    let moved = false; commit(() => { moved = reorderDrop(s, d); }, true);
+    if (moved){ if (tokens.length) renderTranscript(); toast('Clip verschoben – Strg+Z macht es rückgängig'); } else renderTimeline();
+    return;
+  }
   commit(() => {
     if (s.kind === 'main'){
       const g = timeline[s.i];
@@ -264,7 +302,8 @@ const T = (icon, label, fn, cls = '') => ({icon, label, fn, cls});
 function updateTools(){
   const box = $('#tools'); box.innerHTML = ''; const s = TL.sel; let list = [];
   const g = s && (s.kind === 'main' || s.kind === 'insert') ? timeline[s.i] : null;
-  if (!s) list = [T('✂', 'Teilen', splitHere), T('＋', 'Clip', addClip), T('🔍', 'Zoom', addZoom), T('⌫', 'Bis hier weg', () => cutTo('l')), T('⌦', 'Ab hier weg', () => cutTo('r'))];
+  if (!s) list = [T('✂', 'Teilen', splitHere), T('＋', 'Clip', addClip), T('🔍', 'Zoom', addZoom), T('⌫', 'Bis hier weg', () => cutTo('l')), T('⌦', 'Ab hier weg', () => cutTo('r')),
+    ...(P.moves.length ? [T('↺', 'Reihenfolge zurück', () => { commit(() => P.moves = [], true); if (tokens.length) renderTranscript(); toast('Ursprüngliche Reihenfolge'); })] : [])];
   else if (s.kind === 'main') list = [T('✂', 'Teilen', splitHere), T('🗑', 'Löschen', delSel, 'danger'), T('⇤', 'Anfang −1', () => nudge('l', -1)), T('⇥', 'Anfang +1', () => nudge('l', 1)),
     T('⇤', 'Ende −1', () => nudge('r', -1)), T('⇥', 'Ende +1', () => nudge('r', 1)), T('🔍', 'Zoom', addZoom), T('＋', 'Clip', addClip)];
   else if (s.kind === 'insert') list = [T('🎞', 'Ausschnitt', () => openItem(g.item.id)), T('🗑', 'Löschen', delSel, 'danger'), T('⇄', 'Als B-Roll', () => convert('broll'))];
@@ -279,7 +318,7 @@ function updateTools(){
   // Info
   const info = $('#tlInfo');
   if (!s) info.textContent = FINE ? 'Mausrad oder ←/→ spulen · Strg+Mausrad zoomt · Clip anklicken zum Bearbeiten · ⌨ zeigt alle Tastenkürzel' : 'Wische zum Spulen · zwei Finger zoomen · Clip antippen zum Bearbeiten';
-  else if (g) info.textContent = `${s.kind === 'insert' ? 'Einschub' : 'Clip'} · ${fmtS(g.o)} – ${fmtS(g.o + g.out - g.in)} (${fmtD(g.out - g.in)} s) · Griffe ziehen zum Trimmen`;
+  else if (g) info.textContent = `${s.kind === 'insert' ? 'Einschub' : 'Clip'} · ${fmtS(g.o)} – ${fmtS(g.o + g.out - g.in)} (${fmtD(g.out - g.in)} s) · Griffe ziehen zum Trimmen · Clip ziehen zum Umsortieren`;
   else if (s.kind === 'cue'){ const c = selCue(), t = c && cueTimes(c); info.textContent = t ? `Untertitel · ${fmtS(t.s)} – ${fmtS(t.e)} · Griffe ziehen verschiebt Anfang/Ende · im Bild ziehen setzt die Position nur für diesen` : 'Untertitel'; }
   else { const it = selItem(); if (it){ const [a, e] = itemOutRange(it); info.textContent = `${TYPE_LBL[it.type]} · ${fmtS(a)} – ${fmtS(e)} · ziehen zum Verschieben, Griffe zum Trimmen`; } }
 }
@@ -362,7 +401,8 @@ const KEYS = [
   ['Leertaste', 'Abspielen / Pause'], ['K / L', 'Pause / Abspielen'],
   ['← / →', 'ein Bild zurück / vor'], ['Umschalt + ← / →', 'fünf Bilder zurück / vor'],
   ['↑ / ↓', 'zum vorigen / nächsten Schnitt springen'], ['Pos1 / Ende', 'an den Anfang / das Ende'],
-  ['Strg + F', 'im Text suchen (Enter: nächster Treffer, dann Entf löscht)'], ['Strg + B', 'an der Abspiellinie teilen'], ['Q / W', 'links / rechts der Abspiellinie löschen'],
+  ['Strg + F', 'im Text suchen (Enter: nächster Treffer, dann Entf löscht)'], ['Strg + H', 'suchen und ersetzen'], ['Doppelklick auf ein Wort', 'Wort korrigieren'],
+  ['Markierten Text ziehen', 'Abschnitt verschieben'], ['Clip in der Zeitleiste ziehen', 'Clips umsortieren'], ['Strg + B', 'an der Abspiellinie teilen'], ['Q / W', 'links / rechts der Abspiellinie löschen'],
   ['Entf / Rücktaste', 'Auswahl löschen'], ['Alt + ← / →', 'Auswahl um ein Bild verschieben'],
   [', / .', 'Anfang / Ende der Auswahl zur Abspiellinie trimmen'],
   ['Strg + Z', 'rückgängig'], ['Strg + Umschalt + Z / Strg + Y', 'wiederholen'],
@@ -418,6 +458,7 @@ document.addEventListener('keydown', e => {
   if (mod && k.toLowerCase() === 'z'){ handled(); (e.shiftKey ? $('#redoBtn') : $('#undoBtn')).click(); return; }
   if (mod && k.toLowerCase() === 'y'){ handled(); $('#redoBtn').click(); return; }
   if (mod && k.toLowerCase() === 'b'){ handled(); splitHere(); return; }
+  if (mod && k.toLowerCase() === 'h' && tokens.length){ handled(); if (tab !== 'text') setTab('text'); $('#replRow').classList.remove('hidden'); ($('#findIn').value ? $('#replIn') : $('#findIn')).focus(); return; }
   if (mod && k.toLowerCase() === 'f' && tokens.length){ handled(); if (tab !== 'text') setTab('text'); $('#findIn').focus(); $('#findIn').select(); return; }
   if (mod && (k === '+' || k === '=')){ handled(); setPps(TL.pps * 1.4); return; }
   if (mod && k === '-'){ handled(); setPps(TL.pps / 1.4); return; }

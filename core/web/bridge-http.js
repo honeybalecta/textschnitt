@@ -40,5 +40,7 @@
     share: path => { call('POST', 'reveal', {path}); },
     view: path => { call('POST', 'open', {path}); },
     keepAwake: () => {},
+    envelope: uri => jobOf(call('POST', 'envelope', {uri})),
+    openWindow: (project, view) => { try { return JSON.parse(call('POST', 'window', {project, view})).url || ''; } catch(_){ return ''; } },
   };
 })();

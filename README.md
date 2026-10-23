@@ -22,9 +22,11 @@ Die Plattformen stellen dem Kern dieselbe Schnittstelle `window.TS` bereit (Date
 ## Arbeiten
 
 - **Neues Projekt**: ein oder mehrere Videos wählen. Mehrere werden hintereinandergehängt und gemeinsam transkribiert; weitere lassen sich später mit „＋ Video anhängen“ ergänzen.
-- **Text**: Wörter anklicken/antippen oder mit gedrückter Maustaste bzw. nach kurzem Gedrückthalten mit dem Finger über mehrere Wörter ziehen, dann löschen. „Füllwörter weg“, „Pausen kürzen“, Suche mit `Strg+F`.
+- **Text**: Wörter anklicken/antippen oder mit gedrückter Maustaste bzw. nach kurzem Gedrückthalten mit dem Finger über mehrere Wörter ziehen, dann löschen. Markierten Text an eine andere Stelle ziehen verschiebt den Abschnitt. Suchen (`Strg+F`) und Ersetzen (`Strg+H`), Doppelklick korrigiert ein Wort.
+- **Aufräumen**: „Füllwörter weg“, „Wiederholungen weg“ (wiederholte Anläufe – der letzte Versuch bleibt stehen) und „Pausen kürzen auf …“ bis „ganz weg“ – auf Wunsch automatisch direkt nach der Transkription. Wird Text gelöscht, verschwinden Pausen, die danach leer stehen bleiben würden, gleich mit (z. B. am Videoanfang).
 - **Saubere Schnitte**: Bei der Transkription wird zusätzlich der Lautstärkeverlauf gespeichert. Jede Schnittkante wird damit in die nächste Sprechpause gelegt – auch wenn Whisper die Wortgrenzen etwas ungenau liefert. „▶ Letzten Schnitt anhören“ spielt die Stelle zur Kontrolle ab.
-- **Studio** (am Desktop dauerhaft unten, am Handy als Reiter): Zeitleiste wie in CapCut – teilen, trimmen, verschieben, B-Roll, Einschub, Bild-im-Bild, Fotos, Zoom-Sprünge und -Fahrten.
+- **Studio**: Zeitleiste wie in CapCut – teilen, trimmen, Clips per Ziehen umsortieren, B-Roll, Einschub, Bild-im-Bild, Fotos, Zoom-Sprünge und -Fahrten.
+- **Fenster**: Text, Untertitel, Studio und Export sind eigene Reiter; am Desktop lässt sich jeder mit ⧉ in ein eigenes Fenster abdocken (z. B. für einen zweiten Bildschirm). Alle Fenster bleiben synchron.
 - **Untertitel**: Aufteilung in Zeilen oder ein Wort pro Untertitel, Text bearbeiten, Stil wählen. **Direkt im Bild ziehen**, um sie zu platzieren – alle gemeinsam oder (im Studio ausgewählt) einzeln.
 - Tastenkürzel wie in CapCut (`⌨` in der Kopfzeile zeigt alle): `Leertaste`, `←/→` bildweise, `Strg+B` teilen, `Q/W` links/rechts löschen, `Entf`, `Strg+Z`.
 

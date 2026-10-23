@@ -37,7 +37,7 @@ os.environ.setdefault("HF_HUB_DISABLE_IMPLICIT_TOKEN", "1")
 import warnings  # noqa: E402
 warnings.filterwarnings("ignore", module="huggingface_hub")
 
-VERSION = "2.0.0"
+VERSION = "2.1.0"
 APP_DIR = Path(__file__).resolve().parent
 FROZEN = bool(getattr(sys, "frozen", False))          # als installierte .exe gebaut
 RES_DIR = Path(getattr(sys, "_MEIPASS", APP_DIR))      # mitgelieferte Dateien (Oberfläche, ffmpeg, Modelle)
@@ -472,6 +472,44 @@ def transcribe_job(job: dict, path: str, model_name: str, language: str | None, 
             rest = f" · noch ca. {r // 60}:{r % 60:02d}"
         phase["text"] = f"Transkribiere {fmt_ts(seg.end)[:8]} von {fmt_ts(duration)[:8]}{rest}"
     return {"words": words, "lang": language or getattr(tinfo, "language", None), "env": env}
+
+
+def envelope_job(job: dict, path: str):
+    """Nur die Lautstärke-Hüllkurve (für ältere Projekte ohne)."""
+    path = norm_path(path)
+    info = probe(path)
+    job["message"] = "Analysiere Ton …"
+    wav = Path(tempfile.gettempdir()) / f"textschnitt_{uuid.uuid4().hex[:8]}.wav"
+    try:
+        run_ffmpeg(["-i", path, "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", str(wav)], info["duration"], job)
+        return {"env": envelope(read_wav16k(wav))}
+    finally:
+        wav.unlink(missing_ok=True)
+
+
+# ───────────────────────────── Mehrere Fenster: Nachrichten zwischen den Fenstern ─────────────────────────────
+
+BUS: dict[str, dict] = {}
+_bus_lock = threading.Lock()
+
+
+def bus_post(pid: str, sender: str, msg: str):
+    with _bus_lock:
+        b = BUS.setdefault(pid, {"seq": 0, "msgs": []})
+        b["seq"] += 1
+        b["msgs"].append((b["seq"], sender, msg))
+        del b["msgs"][:-300]
+
+
+def bus_get(pid: str, since: int, sender: str) -> dict:
+    with _bus_lock:
+        b = BUS.get(pid) or {"seq": 0, "msgs": []}
+        if since < 0:
+            return {"seq": b["seq"], "msgs": []}
+        return {"seq": b["seq"], "msgs": [m for s, f, m in b["msgs"] if s > since and f != sender]}
+
+
+VIEW_LBL = {"text": "Text", "subs": "Untertitel", "studio": "Studio", "export": "Export"}
 
 
 def proxy_job(job: dict, path: str):
@@ -1276,7 +1314,7 @@ def open_file(path: str):
 
 def app_info() -> dict:
     cc = capcut_drafts_dir()
-    return {"platform": "desktop", "version": VERSION, "exportFormats": ["video", "audio", "capcut", "concat"],
+    return {"platform": "desktop", "version": VERSION, "exportFormats": ["video", "audio", "capcut", "concat"], "bus": True,
             "capcutDir": str(cc) if cc else None, "concatDir": str(concat_root()),
             "whisper": whisper_available(), "os": platform.system()}
 
@@ -1425,6 +1463,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._text(load_project(q.get("id", "")))
             if rest == "api/models":
                 return self._json(models_list())
+            if rest == "api/bus":
+                return self._json(bus_get(q.get("p", ""), int(q.get("since", "-1")), q.get("from", "")))
             if rest == "api/job":
                 job = JOBS.get(q.get("id", ""))
                 if not job:
@@ -1463,6 +1503,9 @@ class Handler(BaseHTTPRequestHandler):
                 except Exception:
                     pass
                 return self._text('"ok"')
+            if rest == "api/bus":
+                bus_post(q.get("p", ""), q.get("from", ""), raw.decode("utf-8"))
+                return self._json({"ok": True})
             if rest == "api/project/delete":
                 proj_path(q.get("id", "")).unlink(missing_ok=True)
                 return self._json({"ok": True})
@@ -1483,6 +1526,16 @@ class Handler(BaseHTTPRequestHandler):
                     raise ValueError("Nach dem Schnitt bleibt nichts übrig.")
                 job = run_job(new_job("export"), export_job, data)
                 return self._json({"job": job["id"]})
+            if rest == "api/envelope":
+                job = run_job(new_job("envelope"), envelope_job, data["uri"])
+                return self._json({"job": job["id"]})
+            if rest == "api/window":
+                pid, view = re.sub(r"[^A-Za-z0-9_-]", "", data.get("project", "")), data.get("view", "text")
+                url = app_url(self.server.server_address[1]) + f"#p={pid}&view={view}"
+                if APP_HOOKS.get("open_window"):
+                    APP_HOOKS["open_window"](url, VIEW_LBL.get(view, view))
+                    return self._json({"ok": True})
+                return self._json({"url": url})
             if rest == "api/proxy":
                 job = run_job(new_job("proxy"), proxy_job, data["uri"])
                 return self._json({"job": job["id"]})

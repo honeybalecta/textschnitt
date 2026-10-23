@@ -169,7 +169,14 @@ def main():
         except Exception:
             pass
 
-    T.APP_HOOKS.update(pick=pick, focus=focus, open_files=open_files)
+    def open_window(url: str, label: str):
+        try:
+            webview.create_window(f"{TITLE} – {label}", url, width=1280, height=860, min_size=(820, 560),
+                                  background_color="#FAF6EE", text_select=False)
+        except Exception as e:  # noqa: BLE001
+            T.log(f"Fenster nicht geöffnet: {e!r}")
+
+    T.APP_HOOKS.update(pick=pick, focus=focus, open_files=open_files, open_window=open_window)
     if args:  # beim Start übergebene Dateien öffnen, sobald die Oberfläche geladen ist
         window.events.loaded += lambda: threading.Timer(0.8, T.handle_open_paths, args=(args,)).start()
 

@@ -94,6 +94,12 @@ class Bridge(private val act: MainActivity) {
         Jobs.start { Transcriber.run(ctx, Uri.parse(uri), model, lang, fillers, it) }.id
 
     @JavascriptInterface
+    fun envelope(uri: String): String = Jobs.start {
+        val audio = AudioDecoder.decode(ctx, Uri.parse(uri), it, 0.95)
+        JSONObject().put("env", Transcriber.envelope(audio))
+    }.id
+
+    @JavascriptInterface
     fun exportVideo(plan: String): String {
         val job = Jobs.create()
         main.post {
