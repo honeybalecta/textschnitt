@@ -10,6 +10,8 @@ struct TsOptions {
     std::string prompt;       // Startkontext (Füllwörter), darf leer sein
     int threads = 4;
     bool dtw = true;          // Wortzeiten über die Aufmerksamkeits-Ausrichtung (wie faster-whisper); sonst Schätzung
+    int beam = 0;             // Strahlsuche mit so vielen Kandidaten (0 = gierig, schneller)
+    int audio_ctx = 768;      // >0: Encoder-Kontext an die Stücklänge anpassen (etwa doppelt so schnell), Mindestwert; 0 = voll
 };
 
 // Liefert JSON: {"words":[{"text","start","end","prob"}], "lang":"de", "timing":"dtw"|"heuristic"} oder {"error":"…"}

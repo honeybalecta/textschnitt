@@ -2,6 +2,7 @@
 // Aufruf: wtest <modell> <wav> [dtw|heuristic] [sprache]
 #include <cstdio>
 #include <cstring>
+#include <cstdlib>
 #include <string>
 #include <vector>
 #include "../app/src/main/cpp/transcribe.h"
@@ -27,6 +28,8 @@ int main(int argc, char ** argv) {
     opt.dtw = argc < 4 || strcmp(argv[3], "heuristic") != 0;
     opt.language = argc > 4 ? argv[4] : "de";
     opt.threads = 4;
+    opt.beam = argc > 5 ? atoi(argv[5]) : 0;
+    opt.audio_ctx = argc > 6 ? atoi(argv[6]) : 0;
     auto audio = read_wav(argv[2]);
     if (audio.empty()) { fprintf(stderr, "WAV nicht lesbar\n"); return 1; }
     std::string json = ts_transcribe(opt, audio.data(), (int) audio.size(), [](int p) { fprintf(stderr, "\r%d %%", p); }, []() { return false; });
