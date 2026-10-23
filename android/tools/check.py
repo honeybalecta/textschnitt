@@ -28,4 +28,4 @@ lines.append(f"Reihenfolge stimmt: {order_ok} · Wörter außerhalb aller Sätze
 lines += per
 lines.append("  Wörter: " + " ".join(f"{w['text'].strip()}[{w['start']:.2f}-{w['end']:.2f}]" for w in words))
 print("\n".join(lines))
-json.dump({"label": label, "n": len(words), "order_ok": order_ok, "outside": outside, "overlap_err": round(overlap_err, 2)}, open(sys.argv[2] + ".score.json", "w"))
+json.dump({"label": label, "timing": res.get("timing"), "n": len(words), "order_ok": order_ok, "outside": outside, "overlap_err": round(overlap_err, 2)}, open(sys.argv[2] + ".score.json", "w"))

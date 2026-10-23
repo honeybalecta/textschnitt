@@ -56,6 +56,7 @@ std::string ts_transcribe(const TsOptions & opt, const float * audio, int n,
     if (dtw) {
         cp.dtw_token_timestamps = true;
         cp.dtw_aheads_preset = preset;
+        cp.flash_attn = false;   // sonst schaltet whisper.cpp die DTW-Ausrichtung stillschweigend ab
     }
     whisper_context * ctx = whisper_init_from_file_with_params(opt.model.c_str(), cp);
     if (!ctx) return "{\"error\":\"Das Whisper-Modell konnte nicht geladen werden.\"}";
@@ -87,8 +88,9 @@ std::string ts_transcribe(const TsOptions & opt, const float * audio, int n,
         return out;
     }
 
-    // Wörter einsammeln: Text, geschätzte Zeiten, DTW-Zeit des ersten Tokens, mittlere Wahrscheinlichkeit
-    struct W { std::string text; double t0, t1; double dtw; float prob; };
+    // Wörter einsammeln: Text, geschätzte Zeiten, DTW-Zeit des letzten Tokens (= Ende des Wortes), mittlere Wahrscheinlichkeit.
+    // In whisper.cpp trägt ein Token die Zeit, an der die Ausrichtung zum nächsten Token springt – also sein Ende.
+    struct W { std::string text; double t0, t1; double dtw_end; float prob; };
     std::vector<W> words;
     const int ns = whisper_full_n_segments(ctx);
     const whisper_token eot = whisper_token_eot(ctx);
@@ -101,24 +103,26 @@ std::string ts_transcribe(const TsOptions & opt, const float * audio, int n,
         for (int j = 0; j < nt; ++j) {
             if (whisper_full_get_token_id(ctx, i, j) >= eot) continue;
             const auto td = whisper_full_get_token_data(ctx, i, j);
-            if (w.dtw < 0 && td.t_dtw >= 0) w.dtw = td.t_dtw / 100.0;
+            if (td.t_dtw >= 0) w.dtw_end = td.t_dtw / 100.0;
             psum += td.p; ++pn;
         }
         if (pn) w.prob = psum / pn;
         words.push_back(w);
     }
-    // Wie bei OpenAI/faster-whisper: ein Wort beginnt mit seinem ersten Token und endet, wo das nächste Wort beginnt.
-    // Für das letzte Wort eines Fensters bleibt die Schätzung (begrenzt), damit es nicht ins Leere läuft.
+    // Wie bei OpenAI/faster-whisper: ein Wort beginnt, wo das vorige endet, und endet mit seinem letzten Token.
+    // Das erste Wort eines Fensters beginnt bei der Schätzung (begrenzt), das letzte endet bei der Schätzung.
     bool used_dtw = false;
+    double prev_end = -1;
     for (size_t k = 0; k < words.size(); ++k) {
         W & w = words[k];
-        if (!dtw || w.dtw < 0) continue;
-        used_dtw = true;
-        const double start = w.dtw;
-        double end = -1;
-        if (k + 1 < words.size() && words[k + 1].dtw >= 0 && words[k + 1].dtw > start + 0.02 && words[k + 1].dtw < start + 8.0) end = words[k + 1].dtw;
-        if (end < 0) end = std::min(std::max(w.t1, start + 0.05), start + 1.5);
-        w.t0 = start; w.t1 = end;
+        if (!dtw) break;
+        const bool has_end = w.dtw_end >= 0;
+        double start = (prev_end >= 0 && (!has_end || prev_end < w.dtw_end) && (!has_end || w.dtw_end - prev_end < 8.0)) ? prev_end : -1;
+        if (start < 0) start = has_end ? std::max(w.t0, w.dtw_end - 1.5) : w.t0;
+        double end = has_end ? w.dtw_end : std::min(std::max(w.t1, start + 0.05), start + 1.5);
+        if (has_end || prev_end >= 0) used_dtw = true;
+        w.t0 = start; w.t1 = std::max(end, start + 0.02);
+        prev_end = has_end ? w.dtw_end : -1;
     }
     double last = 0;
     for (auto & w : words) {   // Reihenfolge sichern, keine negativen Längen
