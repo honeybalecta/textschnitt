@@ -37,6 +37,7 @@ object AudioDecoder {
         val info = MediaCodec.BufferInfo()
         var inDone = false
         var outDone = false
+        var placed = false   // erster Block: an seiner Zeit im Video einordnen, davor Stille
         try {
             while (!outDone) {
                 job.check()
@@ -52,6 +53,11 @@ object AudioDecoder {
                 val oi = codec.dequeueOutputBuffer(info, 10_000)
                 if (oi >= 0) {
                     if (info.size > 0) {
+                        if (!placed) {
+                            placed = true
+                            val lead = (info.presentationTimeUs / 1e6 * 16000).toLong().coerceIn(0, 16000L * 30)
+                            for (k in 0 until lead) out.add(0f)
+                        }
                         val ob = codec.getOutputBuffer(oi)!!.order(ByteOrder.nativeOrder())
                         ob.position(info.offset); ob.limit(info.offset + info.size)
                         if (encoding == AudioFormat.ENCODING_PCM_FLOAT) {

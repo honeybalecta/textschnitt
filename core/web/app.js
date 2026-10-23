@@ -243,11 +243,12 @@ function showHome(){
   $('#homeEmpty').classList.toggle('hidden', list.length > 0);
   list.sort((a, b) => b.updated - a.updated).forEach(p => {
     const el = document.createElement('div'); el.className = 'proj-item';
-    el.innerHTML = `<div class="meta"><b></b><span class="muted small"></span></div><button class="del" title="Löschen">🗑</button>`;
+    el.innerHTML = `<div class="meta"><b></b><span class="muted small"></span></div>${TS.shareProject ? '<button class="del share" title="Projektdatei teilen (z. B. zur Fehlersuche)">⤴</button>' : ''}<button class="del" title="Löschen">🗑</button>`;
     el.querySelector('b').textContent = p.name;
     el.querySelector('span').textContent = `${fmtT(p.duration)}${p.sources > 1 ? ` · ${p.sources} Videos` : ''} · ${p.transcribed ? 'transkribiert' : 'noch nicht transkribiert'} · ${new Date(p.updated).toLocaleDateString('de-DE')}`;
     el.onclick = e => { if (e.target.closest('.del')) return; openProject(p.id); };
-    el.querySelector('.del').onclick = () => { if (confirm(`„${p.name}“ löschen? Deine Videos bleiben erhalten.`)) { TS.deleteProject(p.id); showHome(); } };
+    const sh = el.querySelector('.share'); if (sh) sh.onclick = () => TS.shareProject(p.id);
+    el.querySelector('.del:not(.share)').onclick = () => { if (confirm(`„${p.name}“ löschen? Deine Videos bleiben erhalten.`)) { TS.deleteProject(p.id); showHome(); } };
     box.append(el);
   });
   $('#homeHint').textContent = CAP.platform === 'web' ? 'Wähle ein oder mehrere Videos von deinem Gerät. Sie werden nicht hochgeladen: Transkription, Schnitt und Export laufen komplett in deinem Browser.'

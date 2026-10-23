@@ -126,6 +126,23 @@ class Bridge(private val act: MainActivity) {
         act.startActivity(Intent.createChooser(i, "Video teilen"))
     }.let { }
 
+    /** Projektdatei (Transkript, Schnitt, Lautstärkeverlauf) zum Weitergeben, z. B. zur Fehlersuche. */
+    @JavascriptInterface
+    fun shareProject(id: String) = main.post {
+        runCatching {
+            val src = File(projects, safeId(id) + ".json")
+            val dir = File(act.cacheDir, "share").apply { mkdirs() }
+            val name = runCatching { JSONObject(src.readText()).optString("name") }.getOrDefault("").ifBlank { "Projekt" }
+                .replace(Regex("[^\\p{L}\\p{N} _.-]"), "_").take(60)
+            val f = File(dir, "$name.textschnitt.json")
+            src.copyTo(f, overwrite = true)
+            val uri = androidx.core.content.FileProvider.getUriForFile(act, act.packageName + ".files", f)
+            val i = Intent(Intent.ACTION_SEND).setType("application/json").putExtra(Intent.EXTRA_STREAM, uri)
+                .putExtra(Intent.EXTRA_SUBJECT, "Textschnitt-Projekt: $name").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            act.startActivity(Intent.createChooser(i, "Projektdatei teilen"))
+        }
+    }.let { }
+
     @JavascriptInterface
     fun view(uri: String) = main.post {
         runCatching {
