@@ -147,6 +147,13 @@ function alignWithAudio(words, bursts){
   // Unplausibel lange Wörter: Whisper hat davor Sprache verschluckt (meist einen Neuansatz) und dem nächsten
   // erkannten Wort einen viel zu frühen Anfang gegeben. Das Wort behält sein Ende, der Rest wird 🗣.
   const loudIn = (a, b) => bursts.reduce((n, x) => n + Math.max(0, Math.min(b, x[1]) - Math.max(a, x[0])), 0);
+  // Einsatz der Stimme vor einem Sprachabschnitt (leise Anlaute wie „Es“ liegen oft knapp unter der Abschnittsschwelle)
+  const onsetBefore = (bs, lo) => {
+    const a = envArr(srcForAlign); if (!a) return bs;
+    const quiet = alignThr(a) - 8; let i = Math.floor(bs * 100); const min = Math.max(Math.ceil(lo * 100), i - 40);
+    while (i - 1 > min && a[i-1] / 2.8 - 90 >= quiet) i--;
+    return r3(Math.max(lo, i / 100 - 0.02));
+  };
   const unk = [];
   for (const w of words){
     const n = norm(w.text || '').length, dur = w.end - w.start;
@@ -174,8 +181,12 @@ function alignWithAudio(words, bursts){
     let cb = burstAt(ref); if (cb < 0) cb = bursts.findIndex(b => b[0] >= ref - 0.05);
     if (cb < 0) continue;
     // Denkpause im endgültigen Satz: Whisper sieht dessen Anfang im Abschnitt davor
-    while (cb > 0 && bursts[cb][0] - bursts[cb-1][1] < 1.0 && f0 >= bursts[cb-1][0] - 0.05 && f0 < bursts[cb][0] - 0.3) cb--;
-    const fs = bursts[cb][0];
+    while (cb > 0 && bursts[cb][0] - bursts[cb-1][1] < 1.0 && f0 >= bursts[cb-1][0] - 0.05 && f0 <= bursts[cb-1][1] + 0.1 && f0 < bursts[cb][0] - 0.3) cb--;
+    let fs = bursts[cb][0];
+    // Neuansatz ohne Atempause: Der letzte Anlauf liegt im selben Sprachabschnitt wie der endgültige Satz.
+    // Dann beginnt der endgültige Satz dort, wo Whisper ihn sieht – nicht am Abschnittsanfang.
+    const la = g.att[m-1];
+    if (fs < f0 - 0.4 && words[la[0]].start >= fs - 0.4 && words[la[1]].end <= f0 + 0.15) fs = f0;
     if (fs < lo - 0.05 || fs <= span0 + 0.2 || fs > hi) continue;
     // Anläufe: Whisper-Zeiten behalten, wenn sie vor dem endgültigen Satz liegen und plausibel sind, sonst verteilen
     const attIdx = range(first, g.att[m-1][1]), attEnd = words[g.att[m-1][1]].end;
@@ -217,12 +228,23 @@ function alignWithAudio(words, bursts){
     if (out[c].start - out[w0].start > 40) continue;
     const durW = out[w1].end - out[w0].start, durH = out[c].start - out[a].start;
     if (durH < 0.3 || durW / durH > 2.2 || durH / durW > 2.2) continue;
-    const W = out.slice(w0, w1 + 1), oldS = W[0].start, oldE = W[W.length-1].end, head = out[a].start, cStart = out[c].start;
-    // W nach vorn hinter die 🗣 setzen, Kopf-🗣 entfernen, alter Platz wird Anlauf-🗣
+    const W = out.slice(w0, w1 + 1), oldS = W[0].start, oldE = W[W.length-1].end, cStart = out[c].start;
+    // Der Neuansatz beginnt nicht zwingend am Anfang des Kopf-🗣: oft hängt davor noch das Ende des alten Anlaufs
+    // („… einfach werden. | Es geht dabei ganz einfach darum“). Dann beginnt W am letzten Sprachabschnitt im Kopf,
+    // der für W noch genug Platz lässt; der Teil davor bleibt Anlauf-🗣.
+    const headS = out[a].start;
+    let head = headS;
+    for (let b = bursts.length - 1; b >= 0; b--){
+      const bs = bursts[b][0];
+      if (bs <= headS + 0.15 || bs >= cStart - 0.2) continue;
+      if ((cStart - bs) / durW >= 0.45 && bursts.some(x => x[1] > headS + 0.1 && x[1] <= bs + 0.01)){ head = onsetBefore(bs, headS); break; }
+    }
+    // W nach vorn hinter die 🗣 setzen, Kopf-🗣 entfernen (bzw. kürzen), alter Platz wird Anlauf-🗣
+    if (head > headS + 0.1){ out[a].end = r3(head); out[a].att = true; a++; out.splice(a, 0, {text:'', unk:true, att:false, start:r3(head), end:r3(cStart), prob:0}); }
     out.splice(a, 1);                                   // Kopf
     out.splice(w0, W.length);                           // W herausnehmen (Indizes vor a bleiben gleich)
-    for (let j = w0; j < a - 1; j++) out[j].att = true; // die 🗣 dazwischen
-    const ins = a - 1 - W.length + 1;                   // Position direkt vor C
+    for (let j = w0; j < a - W.length; j++) out[j].att = true; // die 🗣 dazwischen
+    const ins = a - W.length;                           // Position direkt vor C
     out.splice(ins, 0, ...W);
     out.splice(w0, 0, {text:'', unk:true, att:true, start:r3(oldS), end:r3(oldE), prob:0});
     // Zeiten von W über den Kopf verteilen
