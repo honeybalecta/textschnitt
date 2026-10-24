@@ -136,8 +136,13 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
                 val dur = minOf(outS - inS, total - at)
                 if (dur <= 0.05) continue
                 if (at - cursor > 0.01) seq.addGap(us(at - cursor))
-                seq.addItem(item(o, inS, inS + dur, true, listOf(Presentation.createForWidthAndHeight(w, h, Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP))))
-                spans.add(OvSpan(at, at + dur, o.getString("mode"), o.optString("corner", "or"), o.optDouble("size", 0.33).toFloat()))
+                val free = o.getString("mode") == "pip" && o.has("w")
+                // Frei platzierte Einblendung: Bild auf die eigene Größe bringen (Seitenverhältnis des Clips), dann an den Mittelpunkt setzen
+                val pw = if (free) (maxOf(2.0, w * o.getDouble("w")) / 2).toInt() * 2 else w
+                val ph = if (free) (maxOf(2.0, pw / maxOf(0.05, o.optDouble("aspect", 16.0 / 9))) / 2).toInt() * 2 else h
+                seq.addItem(item(o, inS, inS + dur, true, listOf(Presentation.createForWidthAndHeight(pw, ph, Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP))))
+                spans.add(OvSpan(at, at + dur, o.getString("mode"), o.optString("corner", "or"), o.optDouble("size", 0.33).toFloat(),
+                    free, (o.optDouble("x", 0.5) * 2 - 1).toFloat(), (1 - o.optDouble("y", 0.5) * 2).toFloat()))
                 cursor = at + dur
             }
             if (spans.isEmpty()) Composition.Builder(mainSeq)
@@ -229,7 +234,8 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
     }
 
     // ── Overlay-Steuerung ──
-    data class OvSpan(val a: Double, val b: Double, val mode: String, val corner: String, val size: Float)
+    data class OvSpan(val a: Double, val b: Double, val mode: String, val corner: String, val size: Float,
+                      val free: Boolean = false, val nx: Float = 0f, val ny: Float = 0f)
 
     class OvSettings(private val w: Int, private val h: Int, private val spans: List<OvSpan>) : VideoCompositorSettings {
         private val hidden = StaticOverlaySettings.Builder().setAlphaScale(0f).build()
@@ -240,6 +246,8 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
             val t = presentationTimeUs / 1e6
             val s = spans.firstOrNull { t >= it.a - 0.001 && t < it.b } ?: return hidden
             if (s.mode != "pip") return full
+            if (s.free) return StaticOverlaySettings.Builder()
+                .setOverlayFrameAnchor(0f, 0f).setBackgroundFrameAnchor(s.nx, s.ny).build()
             val m = 0.06f // Rand in NDC
             val right = s.corner.endsWith("r"); val top = s.corner.startsWith("o")
             val my = m * w / h

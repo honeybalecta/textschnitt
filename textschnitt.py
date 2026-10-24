@@ -37,7 +37,7 @@ os.environ.setdefault("HF_HUB_DISABLE_IMPLICIT_TOKEN", "1")
 import warnings  # noqa: E402
 warnings.filterwarnings("ignore", module="huggingface_hub")
 
-VERSION = "2.4.0"
+VERSION = "2.5.0"
 APP_DIR = Path(__file__).resolve().parent
 FROZEN = bool(getattr(sys, "frozen", False))          # als installierte .exe gebaut
 RES_DIR = Path(getattr(sys, "_MEIPASS", APP_DIR))      # mitgelieferte Dateien (Oberfläche, ffmpeg, Modelle)
@@ -782,7 +782,14 @@ def build_graph(plan: dict, with_video: bool, ass_name: str | None):
         for k, o in enumerate(plan.get("overlays") or []):
             at, inn, out = float(o["at"]), float(o["in"]), float(o["out"])
             d = max(0.05, out - inn)
-            if o.get("mode") == "pip":
+            if o.get("mode") == "pip" and o.get("w") is not None:
+                # frei platziert: Mittelpunkt x/y, Breite w (Anteil), Seitenverhältnis des Clips
+                pw = max(2, round(W * float(o["w"]) / 2) * 2)
+                ph = max(2, round(pw / max(0.05, float(o.get("aspect") or 16 / 9)) / 2) * 2)
+                x = round(float(o.get("x", 0.5)) * W - pw / 2)
+                y = round(float(o.get("y", 0.5)) * H - ph / 2)
+                sc = f"scale={pw}:{ph}:force_original_aspect_ratio=increase,crop={pw}:{ph},setsar=1"
+            elif o.get("mode") == "pip":
                 sz = float(o.get("size") or 0.33)
                 pw, ph = max(2, round(W * sz / 2) * 2), max(2, round(H * sz / 2) * 2)
                 m = round(0.03 * W)
@@ -887,7 +894,17 @@ def cover_factor(cw: float, ch: float, W: float, H: float) -> float:
     return max(W / cw, H / ch) / min(W / cw, H / ch)
 
 
+def pip_scale(o: dict, W: float, H: float) -> float:
+    """Skalierung einer Einblendung in CapCut/Concat (Clip wird dort zuerst ins Bild eingepasst)."""
+    if o.get("w") is None:
+        return float(o.get("size") or 0.33)
+    a = max(0.05, float(o.get("aspect") or 16 / 9))
+    return round(float(o["w"]) * W / min(W, H * a), 4)
+
+
 def pip_center(o: dict, W: float, H: float) -> tuple[float, float]:
+    if o.get("w") is not None:
+        return float(o.get("x", 0.5)), float(o.get("y", 0.5))
     sz = float(o.get("size") or 0.33)
     c = o.get("corner") or "or"
     mx, my = 0.03, 0.03 * W / H
@@ -957,7 +974,7 @@ def write_concat(plan: dict, name: str, cues: list[dict], style: dict) -> Path:
              "sourceStart": round(0.0 if img else float(o["in"]), 6), "volume": 0.0}
         if o.get("mode") == "pip":
             x, y = pip_center(o, W, H)
-            c.update(scale=float(o.get("size") or 0.33), offsetX=round(x - 0.5, 4), offsetY=round(y - 0.5, 4))
+            c.update(scale=pip_scale(o, W, H), offsetX=round(x - 0.5, 4), offsetY=round(y - 0.5, 4))
         else:
             c.update(scale=round(cover_factor(o.get("width") or 0, o.get("height") or 0, W, H), 4))
         clips.append(c)
@@ -1145,7 +1162,7 @@ def write_capcut(plan: dict, root: Path, name: str, cues: list[dict], style: dic
         if o.get("mode") == "pip":
             x, y = pip_center(o, W, H)
             ovl.append(segment(mid, "video", float(o["at"]), 0.0 if img else float(o["in"]), d, volume=0.0,
-                               scale=float(o.get("size") or 0.33), tx=round((x - 0.5) * 2, 4), ty=round((0.5 - y) * 2, 4), render=1))
+                               scale=pip_scale(o, W, H), tx=round((x - 0.5) * 2, 4), ty=round((0.5 - y) * 2, 4), render=1))
         else:
             ovl.append(segment(mid, "video", float(o["at"]), 0.0 if img else float(o["in"]), d, volume=0.0,
                                scale=round(cover_factor(info["width"], info["height"], W, H), 4), render=1))
@@ -1635,6 +1652,9 @@ class Handler(BaseHTTPRequestHandler):
                 proj_path(q.get("id", "")).unlink(missing_ok=True)
                 return self._json({"ok": True})
             data = json.loads(raw or b"{}")
+            if rest == "api/fullscreen":
+                fn = APP_HOOKS.get("fullscreen")
+                return self._json({"ok": bool(fn and fn(bool(data.get("on"))))})
             if rest == "api/fonts/delete":
                 return self._json({"ok": font_delete(data.get("uri", ""))})
             if rest == "api/pick":

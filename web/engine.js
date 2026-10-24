@@ -458,7 +458,10 @@ class Renderer {
     for (const o of this.ovs){
       if (t < o.at - 1e-6 || t >= o.at + o.d) { if (t >= o.at + o.d) this.endOverlay(o); continue; }
       let rect;
-      if (o.mode === 'pip'){
+      if (o.mode === 'pip' && o.w != null){
+        const pw = Math.max(2, Math.round(W * o.w / 2) * 2), ph = Math.max(2, Math.round(pw / Math.max(0.05, +o.aspect || 16 / 9) / 2) * 2);
+        rect = [Math.round((o.x ?? 0.5) * W - pw / 2), Math.round((o.y ?? 0.5) * H - ph / 2), pw, ph];
+      } else if (o.mode === 'pip'){
         const sz = +o.size || 0.33, pw = Math.max(2, Math.round(W * sz / 2) * 2), ph = Math.max(2, Math.round(H * sz / 2) * 2), m = Math.round(0.03 * W), c = o.corner || 'or';
         rect = [c[1] === 'r' ? W - pw - m : m, c[0] === 'o' ? m : H - ph - m, pw, ph];
       } else rect = [0, 0, W, H];

@@ -136,7 +136,8 @@ class Bridge(private val act: MainActivity) {
 
     @JavascriptInterface
     fun transcribe(uri: String, model: String, lang: String, fillers: Boolean): String =
-        Jobs.start { Transcriber.run(ctx, Uri.parse(uri), model, lang, fillers, it) }.id
+        Jobs.start { Transcriber.run(ctx, Uri.parse(uri), model, lang, fillers, it) }.also {
+            act.askNotifications(); WorkService.track(ctx, it, "Transkription") }.id
 
     @JavascriptInterface
     fun envelope(uri: String): String = Jobs.start {
@@ -148,7 +149,7 @@ class Bridge(private val act: MainActivity) {
     fun exportVideo(plan: String): String {
         val job = Jobs.create()
         main.post {
-            try { Exporter(ctx, JSONObject(plan), job).start() } catch (e: Throwable) { job.fail(e) }
+            try { Exporter(ctx, JSONObject(plan), job).start(); WorkService.track(ctx, job, "Export") } catch (e: Throwable) { job.fail(e) }
         }
         return job.id
     }
@@ -200,6 +201,10 @@ class Bridge(private val act: MainActivity) {
         if (on) act.window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         else act.window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
     }.let { }
+
+    /** Vollbild-Vorschau: Status- und Navigationsleiste ausblenden. */
+    @JavascriptInterface
+    fun immersive(on: Boolean): Boolean { main.post { act.setImmersive(on) }; return true }
 
     @JavascriptInterface
     fun info(): String = JSONObject().apply {

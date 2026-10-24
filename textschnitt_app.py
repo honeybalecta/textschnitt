@@ -156,6 +156,18 @@ def main():
             return []
         return list(res) if isinstance(res, (list, tuple)) else [res]
 
+    full_state = {"on": False}
+
+    def fullscreen(on: bool) -> bool:
+        """Vollbild-Vorschau: ganzes Fenster bildschirmfüllend."""
+        try:
+            if on != full_state["on"]:
+                window.toggle_fullscreen()
+                full_state["on"] = on
+            return True
+        except Exception:
+            return False
+
     def focus():
         try:
             window.restore()
@@ -178,7 +190,7 @@ def main():
         except Exception as e:  # noqa: BLE001
             T.log(f"Fenster nicht geöffnet: {e!r}")
 
-    T.APP_HOOKS.update(pick=pick, focus=focus, open_files=open_files, open_window=open_window)
+    T.APP_HOOKS.update(pick=pick, focus=focus, open_files=open_files, open_window=open_window, fullscreen=fullscreen)
     if args:  # beim Start übergebene Dateien öffnen, sobald die Oberfläche geladen ist
         window.events.loaded += lambda: threading.Timer(0.8, T.handle_open_paths, args=(args,)).start()
 

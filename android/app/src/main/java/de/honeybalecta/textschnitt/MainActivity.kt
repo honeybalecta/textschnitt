@@ -1,6 +1,9 @@
 package de.honeybalecta.textschnitt
 
+import android.Manifest
 import android.annotation.SuppressLint
+import android.content.pm.PackageManager
+import android.os.Build
 import android.net.Uri
 import android.os.Bundle
 import android.view.ViewGroup
@@ -13,7 +16,9 @@ import androidx.activity.ComponentActivity
 import androidx.activity.addCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 
 /** Ein Fenster mit der Web-Oberfläche; die Arbeit erledigt [Bridge]. */
 class MainActivity : ComponentActivity() {
@@ -28,6 +33,25 @@ class MainActivity : ComponentActivity() {
     private val multiPicker = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris: List<Uri> ->
         bridge.onPicked(uris)
     }
+
+    private val notifPerm = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    private var notifAsked = false
+
+    /** Einmal nach der Erlaubnis für Benachrichtigungen fragen (Fortschritt im Hintergrund). */
+    fun askNotifications() = runOnUiThread {
+        if (notifAsked || Build.VERSION.SDK_INT < 33) return@runOnUiThread
+        notifAsked = true
+        if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
+            notifPerm.launch(Manifest.permission.POST_NOTIFICATIONS)
+    }
+
+    fun setImmersive(on: Boolean) {
+        val c = WindowCompat.getInsetsController(window, window.decorView)
+        if (on) { c.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE; c.hide(WindowInsetsCompat.Type.systemBars()) }
+        else c.show(WindowInsetsCompat.Type.systemBars())
+    }
+
+    override fun onResume() { super.onResume(); App.visible = true }
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -69,6 +93,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onPause() {
         super.onPause()
+        App.visible = false
         web.evaluateJavascript("window.TSApp && TSApp.onPause()", null)
     }
 

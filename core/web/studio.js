@@ -423,8 +423,8 @@ function toolList(){
     T('⇤', 'Ende −1', () => nudge('r', -1)), T('⇥', 'Ende +1', () => nudge('r', 1)), T('🔍', 'Zoom', addZoom), T('T', 'Titel', addTitle), T('＋', 'Clip', addClip)];
   if (s.kind === 'insert') return [T('🎞', 'Ausschnitt', () => openItem(g.item.id)), T('🗑', 'Löschen', delSel, 'danger'), T('⇄', 'Als B-Roll', () => convert('broll'))];
   if (s.kind === 'ovl'){ const it = selItem(); return [T('🎞', 'Ausschnitt', () => openItem(it.id)), T('🗑', 'Löschen', delSel, 'danger'),
-    T(it.type === 'pip' ? '▣' : '◰', it.type === 'pip' ? 'Vollbild' : 'Bild-im-Bild', () => convert(it.type === 'pip' ? 'broll' : 'pip')),
-    ...(it.type === 'pip' ? [T('↗', 'Ecke', cycleCorner), T('⤢', 'Größe', cycleSize)] : []), T('⇄', 'Als Einschub', () => convert('insert'))]; }
+    T(it.type === 'pip' ? '▣' : '◰', it.type === 'pip' ? 'Vollbild' : 'Einblendung', () => convert(it.type === 'pip' ? 'broll' : 'pip')),
+    ...(it.type === 'pip' ? [T('↗', 'Ecke', cycleCorner), T('−', 'Kleiner', () => pipScale(1 / 1.15)), T('＋', 'Größer', () => pipScale(1.15)), T('⚙', 'Größe & Lage', () => openItem(it.id))] : []), T('⇄', 'Als Einschub', () => convert('insert'))]; }
   if (s.kind === 'zoom'){ const it = selItem(); return [T('◎', 'Mittelpunkt', () => openItem(it.id)), T('⟳', it.kind === 'punch' ? 'Sprung' : it.kind === 'in' ? 'Fahrt rein' : 'Fahrt raus', cycleZoomKind),
     T('−', 'Schwächer', () => zoomStrength(-0.05)), T('＋', 'Stärker', () => zoomStrength(0.05)), T('🗑', 'Löschen', delSel, 'danger')]; }
   if (s.kind === 'fx'){ const it = selItem(); return [T('⚙', 'Anpassen', () => openFxItem(it)), T('🗑', 'Löschen', delSel, 'danger')]; }
@@ -487,11 +487,11 @@ function nudge(side, frames){
 }
 function convert(type){
   const s = TL.sel; const it = s.kind === 'insert' ? timeline[s.i].item : selItem(); if (!it) return;
-  commit(() => { it.type = type; if (type !== 'insert') it.out = Math.min(it.out, it.in + Math.max(1, Math.min(it.out - it.in, 8))); }, false);
+  commit(() => { it.type = type; if (type === 'pip') pipFree(it); if (type !== 'insert') it.out = Math.min(it.out, it.in + Math.max(1, Math.min(it.out - it.in, 8))); }, false);
   TL.sel = type === 'insert' ? {kind:'insert', itemId: it.id, i:0} : {kind:'ovl', id: it.id}; renderTimeline();
 }
-function cycleCorner(){ const it = selItem(), order = ['or', 'ur', 'ul', 'ol']; commit(() => it.corner = order[(order.indexOf(it.corner || 'or') + 1) % 4], false); seekOut(outPos, false); }
-function cycleSize(){ const it = selItem(), order = [0.25, 0.33, 0.45]; const i = order.findIndex(v => Math.abs(v - (it.size || 0.33)) < 0.01); commit(() => it.size = order[(i + 1) % 3], false); seekOut(outPos, false); }
+function cycleCorner(){ const it = selItem(), order = ['or', 'ur', 'ul', 'ol']; commit(() => pipCorner(it, order[(order.indexOf(it.corner || 'or') + 1) % 4]), false); seekOut(outPos, false); }
+function pipScale(f){ const it = selItem(); commit(() => { pipFree(it); it.w = r3(clamp(it.w * f, 0.05, 1.5)); }, false); seekOut(outPos, false); toast(`Größe ${Math.round(it.w * 100)} %`); }
 function cycleZoomKind(){ const it = selItem(), order = ['punch', 'in', 'out']; commit(() => it.kind = order[(order.indexOf(it.kind) + 1) % 3], false); }
 function zoomStrength(d){ const it = selItem(); commit(() => it.strength = +clamp(it.strength + d, 1.05, 2).toFixed(2), false); toast(it.strength.toFixed(2).replace('.', ',') + '×'); seekOut(outPos, false); }
 function addZoom(){
@@ -504,7 +504,7 @@ function addClip(){
   body.innerHTML = `<h3>Clip einfügen an der Abspiellinie</h3><p class="muted small">Videos und Fotos</p><div class="choice">
     <button class="tile" data-t="broll"><b>B-Roll</b><span>Bild drüber, dein Ton läuft weiter</span></button>
     <button class="tile" data-t="insert"><b>Einschub</b><span>Hauptvideo pausiert, Clip läuft mit eigenem Ton</span></button>
-    <button class="tile" data-t="pip"><b>Bild-im-Bild</b><span>kleines Fenster in einer Ecke</span></button></div>`;
+    <button class="tile" data-t="pip"><b>Einblendung</b><span>Bild oder Video frei im Bild – Größe und Lage frei wählbar</span></button></div>`;
   openSheet(false);
   body.onclick = async e => {
     const b = e.target.closest('[data-t]'); if (!b) return; const type = b.dataset.t;
@@ -512,7 +512,7 @@ function addClip(){
     const at = +outToSrc(outPos).toFixed(3);
     const clip = await pickMedia('clip'); if (!clip) return;
     const img = clip.kind === 'image';
-    let it; commit(() => { it = {id:newId(), type, at, clip, in:0, out: img ? 4 : (type === 'insert' ? clip.duration : Math.min(clip.duration, 4)), corner:'or', size:0.33}; P.items.push(it); }, false);
+    let it; commit(() => { it = {id:newId(), type, at, clip, in:0, out: img ? 4 : (type === 'insert' ? clip.duration : Math.min(clip.duration, 4)), corner:'or', size:0.4}; if (type === 'pip'){ const [W, H] = outSize(); it.size = +Math.min(0.4, 0.45 * H * clipAspect(clip) / W).toFixed(3); pipCorner(it, 'or'); } P.items.push(it); }, false);
     TL.sel = type === 'insert' ? {kind:'insert', itemId: it.id, i:0} : {kind:'ovl', id: it.id}; renderTimeline();
     toast(`${TYPE_LBL[type]} eingefügt – Griffe ziehen zum Kürzen`);
   };
@@ -659,6 +659,8 @@ document.addEventListener('keydown', e => {
   if (!P || $('#proj').classList.contains('hidden')) return;
   const tag = document.activeElement?.tagName, typing = tag === 'TEXTAREA' || tag === 'SELECT' || (tag === 'INPUT' && !['checkbox', 'radio', 'range'].includes(document.activeElement.type));
   const mod = e.ctrlKey || e.metaKey, k = e.key;
+  if (k === 'Escape' && $('#proj').classList.contains('full')){ setFull(false); return; }
+  if (!typing && !mod && (k === 'f' || k === 'F')){ e.preventDefault(); setFull(!$('#proj').classList.contains('full')); return; }
   if (k === 'Escape'){ closeMenu(); if (!$('#sheet').classList.contains('hidden')) closeSheet(); else { select(null); clearSel(); } return; }
   if (typing) return;
   const handled = () => e.preventDefault();

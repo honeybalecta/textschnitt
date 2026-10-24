@@ -29,7 +29,8 @@ function toast(msg){ const t = $('#toast'); t.textContent = msg; t.classList.add
 const pending = new Map();
 window.TSApp = {
   onPicked(reqId, json){ const cb = pending.get(reqId); pending.delete(reqId); if (cb) cb(json ? J(json) : null); },
-  onBack(){ if (!$('#sheet').classList.contains('hidden')) { closeSheet(); return true; }
+  onBack(){ if ($('#proj').classList.contains('full')){ setFull(false); return true; }
+            if (!$('#sheet').classList.contains('hidden')) { closeSheet(); return true; }
             if (!$('#modelSheet').classList.contains('hidden')) { $('#modelSheet').classList.add('hidden'); $('#sheetBack').classList.add('hidden'); return true; }
             if (!$('#proj').classList.contains('hidden')) { closeProject(); return true; } return false; },
   onPause(){ if (P) { pausePlay(); saveNow(); } },
@@ -323,15 +324,43 @@ function openProjectNow(id, keep){
   seekOut(keepPos, false);
   busStart(); backfillEnv();
 }
-function closeProject(){ pausePlay(); saveNow(); busPid = null; P = null; V.removeAttribute('src'); V.load(); vSi = -1; hideOverlay(); showHome(); }
+// ── Vollbild-Vorschau: das ganze Projekt bildschirmfüllend ansehen ──
+let fullHide = null;
+function setFull(on){
+  if (!P) return; const pr = $('#proj'); if (on === pr.classList.contains('full')) return;
+  pr.classList.toggle('full', on); $('#fullBtn').innerHTML = icon(on ? '✕' : '⤢'); $('#fullBtn').title = on ? 'Vollbild beenden (Esc)' : 'Vollbild (F)';
+  // Apps schalten das Fenster selbst um (Android: Systemleisten aus, Windows: Fenster-Vollbild), der Browser per Fullscreen-API
+  let native = false; if (TS.immersive) try { native = !!TS.immersive(on); } catch(_){}
+  if (!native) try {
+    if (on && document.documentElement.requestFullscreen && !document.fullscreenElement) document.documentElement.requestFullscreen().catch(() => {});
+    if (!on && document.fullscreenElement) document.exitFullscreen().catch(() => {});
+  } catch(_){}
+  fullPoke(); setTimeout(fitStage, 0); setTimeout(fitStage, 300);
+}
+function fullPoke(){
+  const pr = $('#proj'); pr.classList.remove('full-idle'); clearTimeout(fullHide);
+  if (pr.classList.contains('full')) fullHide = setTimeout(() => { if (playing) pr.classList.add('full-idle'); }, 2500);
+}
+$('#sideFull').onclick = e => { e.stopPropagation(); setFull(true); };
+$('#fullBtn').onclick = e => { e.stopPropagation(); setFull(!$('#proj').classList.contains('full')); };
+document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement && $('#proj').classList.contains('full')) setFull(false); });
+$('#proj').addEventListener('pointermove', () => { if ($('#proj').classList.contains('full')) fullPoke(); });
+$('#proj').addEventListener('pointerdown', () => { if ($('#proj').classList.contains('full')) fullPoke(); }, true);
+function closeProject(){ setFull(false); pausePlay(); saveNow(); busPid = null; P = null; V.removeAttribute('src'); V.load(); vSi = -1; hideOverlay(); showHome(); }
 $('#backBtn').onclick = closeProject;
 const fillsWrap = () => isWide() || matchMedia('(orientation: landscape) and (max-height: 599px)').matches;
 // Bühne: ein 16:9-Feld. Hochformat-Videos lassen links und rechts Platz – dort sitzt zusätzliche Steuerung.
 function fitStage(){
   if (!P) return;
   const [w, h] = dispSize(primary()), wrap = $('.stage-wrap'), st = $('#stage');
-  const fill = fillsWrap(), availW = wrap.clientWidth || innerWidth;
+  const full = $('#proj').classList.contains('full');
+  const fill = fillsWrap(), availW = full ? innerWidth : wrap.clientWidth || innerWidth;
   let boxH;
+  if (full){ wrap.style.height = ''; boxH = innerHeight;
+    let W = availW, H = W * h / w; if (H > boxH){ H = boxH; W = H * w / h; }
+    st.style.width = Math.floor(W) + 'px'; st.style.height = Math.floor(H) + 'px';
+    for (const el of [$('#sideL'), $('#sideR')]) el.classList.add('hidden');
+    styleOverlay(); refreshStageOverlays(); return; }
   if (fill){ wrap.style.height = ''; boxH = wrap.clientHeight || innerHeight * 0.6; }
   else { boxH = Math.round(Math.min(availW * 9 / 16, Math.max(150, innerHeight * 0.36))); wrap.style.height = boxH + 'px'; }
   const boxW = fill ? availW : Math.min(availW, boxH * 16 / 9);
@@ -339,8 +368,10 @@ function fitStage(){
   st.style.width = Math.floor(W) + 'px'; st.style.height = Math.floor(H) + 'px';
   const side = Math.floor((availW - W) / 2), show = side >= 64;
   for (const el of [$('#sideL'), $('#sideR')]){ el.classList.toggle('hidden', !show); el.style.width = show ? Math.min(side, 170) + 'px' : ''; el.style.height = Math.floor(fill ? H : boxH) + 'px'; }
-  styleOverlay();
+  styleOverlay(); refreshStageOverlays();
 }
+// Einblendungen und Titel nach einer Größenänderung der Bühne neu setzen
+function refreshStageOverlays(){ if (!P || typeof outPos === 'undefined') return; try { updateOverlay(outPos); updateTitles(outPos); } catch(_){} }
 addEventListener('resize', () => { fitStage(); if (P && studioOn() && window.renderTimeline) renderTimeline(); });
 addEventListener('orientationchange', () => setTimeout(fitStage, 200));
 
@@ -766,7 +797,7 @@ function advanceSeg(){
   if (g.kind === 'main' && n.kind === 'main' && n.si === g.si && Math.abs(n.in - g.out) < 0.02){ curSeg++; return; }
   seekOut(n.o, true);
 }
-function setPlayIcons(on){ for (const b of [$('#playBtn'), $('#sidePlay')]) if (b) b.innerHTML = icon(on ? '❚❚' : '▶'); }
+function setPlayIcons(on){ if (typeof fullPoke === 'function') fullPoke(); for (const b of [$('#playBtn'), $('#sidePlay')]) if (b) b.innerHTML = icon(on ? '❚❚' : '▶'); }
 function togglePlay(){ if (V.dataset.err){ toast('Vorschau nicht abspielbar – siehe Hinweis im Bild'); return; } playing ? pausePlay() : startPlay(); }
 function startPlay(){
   if (!timeline.length) return; if (outPos >= total - 0.05) seekOut(0, false);
@@ -812,15 +843,74 @@ function updateOverlay(o){
   if (!other.classList.contains('hidden')){ if (other === OV) OV.pause(); other.classList.add('hidden'); }
   const url = MEDIA(a.x.clip.uri); if (el.dataset.src !== url){ el.src = url; el.dataset.src = url; }
   el.classList.remove('hidden');
-  const pip = a.x.type === 'pip'; el.classList.toggle('pip', pip);
-  if (pip){ const sz = (a.x.size || 0.33) * 100, st = $('#stage'), mx = 3, my = 3 * st.clientWidth / Math.max(1, st.clientHeight); const c = a.x.corner || 'or';
-    Object.assign(el.style, {width: sz + '%', height: sz + '%', left: c[1] === 'l' ? mx + '%' : '', right: c[1] === 'r' ? mx + '%' : '', top: c[0] === 'o' ? my + '%' : '', bottom: c[0] === 'u' ? my + '%' : ''}); }
+  const pip = a.x.type === 'pip'; el.classList.toggle('pip', pip); curPip = pip ? a.x : null;
+  if (pip) placePip(el, PipDrag.on && PipDrag.it === a.x ? PipDrag : a.x);
   else Object.assign(el.style, {width:'', height:'', left:'', right:'', top:'', bottom:''});
+  $('#pipBox').classList.toggle('hidden', !pip);
   if (img) return;
   const target = a.x.in + (o - a.at);
   if (Math.abs(OV.currentTime - target) > (playing ? 0.3 : 0.05)) OV.currentTime = target;
   if (playing && OV.paused) OV.play().catch(() => {}); if (!playing && !OV.paused) OV.pause();
 }
+// ── Bild-im-Bild frei platzieren: Mittelpunkt x/y und Breite w als Anteil des Bildes, Seitenverhältnis des Clips ──
+let curPip = null;
+const clipAspect = c => { const r = (c.rotation || 0) % 180 !== 0, w = r ? c.height : c.width, h = r ? c.width : c.height; return w > 0 && h > 0 ? w / h : 16 / 9; };
+const PIP_M = 0.03;
+function pipRect(it, W, H){
+  if (it.w == null){   // ältere Projekte: feste Ecke, Größe als Anteil beider Seiten
+    const sz = it.size || 0.33, pw = sz * W, ph = sz * H, m = PIP_M * W, c = it.corner || 'or';
+    return {cx: c[1] === 'l' ? m + pw / 2 : W - m - pw / 2, cy: c[0] === 'o' ? m + ph / 2 : H - m - ph / 2, w: pw, h: ph};
+  }
+  const pw = it.w * W; return {cx: it.x * W, cy: it.y * H, w: pw, h: pw / clipAspect(it.clip)};
+}
+function pipFree(it){
+  if (it.w != null) return; const [W, H] = outSize(), r = pipRect(it, W, H);
+  it.w = r3(r.w / W); const ph = it.w * W / clipAspect(it.clip), c = it.corner || 'or', m = PIP_M * W;
+  it.x = r3(r.cx / W); it.y = r3((c[0] === 'o' ? m + ph / 2 : H - m - ph / 2) / H);
+}
+function pipCorner(it, c){
+  pipFree(it); const [W, H] = outSize(), pw = it.w * W, ph = pw / clipAspect(it.clip), m = PIP_M * W;
+  it.x = r3((c[1] === 'l' ? m + pw / 2 : W - m - pw / 2) / W); it.y = r3((c[0] === 'o' ? m + ph / 2 : H - m - ph / 2) / H); it.corner = c;
+}
+function placePip(el, it){
+  const st = $('#stage'), W = st.clientWidth, H = st.clientHeight, r = pipRect(it.clip ? it : {...PipDrag.it, ...it}, W, H);
+  const css = {left: (r.cx - r.w / 2) + 'px', top: (r.cy - r.h / 2) + 'px', width: r.w + 'px', height: r.h + 'px', right: '', bottom: ''};
+  Object.assign(el.style, css); Object.assign($('#pipBox').style, css);
+}
+const PipDrag = {on:false};
+$('#pipBox').addEventListener('pointerdown', e => {
+  if (!curPip) return; e.preventDefault(); e.stopPropagation(); $('#pipBox').setPointerCapture(e.pointerId);
+  if (playing) pausePlay();
+  const it = curPip, st = $('#stage').getBoundingClientRect(), [W, H] = [st.width, st.height];
+  const tmp = {...it}; pipFree(tmp);
+  const pw = tmp.w * W, ph = pw / clipAspect(it.clip);
+  Object.assign(PipDrag, {on:true, moved:false, it, mode: e.target.classList.contains('pip-h') ? 'size' : 'move', x0:e.clientX, y0:e.clientY,
+    sx: tmp.x, sy: tmp.y, sw: tmp.w, left: tmp.x * W - pw / 2, top: tmp.y * H - ph / 2, x: tmp.x, y: tmp.y, w: tmp.w, clip: it.clip});
+});
+$('#pipBox').addEventListener('pointermove', e => {
+  const g = PipDrag; if (!g.on) return; const st = $('#stage').getBoundingClientRect(), W = st.width, H = st.height;
+  const dx = e.clientX - g.x0, dy = e.clientY - g.y0; if (Math.abs(dx) + Math.abs(dy) > 3) g.moved = true;
+  if (g.mode === 'move'){ let x = g.sx + dx / W, y = g.sy + dy / H; if (Math.abs(x - 0.5) < 0.02) x = 0.5; if (Math.abs(y - 0.5) < 0.02) y = 0.5; g.x = clamp(x, 0, 1); g.y = clamp(y, 0, 1); }
+  else { const a = clipAspect(g.clip); let pw = Math.max(dx + g.sw * W, W * 0.06, (dy + g.sw * W / a) * a); pw = Math.min(pw, W * 1.5);
+    g.w = pw / W; g.x = (g.left + pw / 2) / W; g.y = (g.top + pw / a / 2) / H; }
+  $('#stage').classList.toggle('snap-x', g.mode === 'move' && g.x === 0.5);
+  placePip(isImg(g.it.clip) ? OI : OV, g);
+});
+function endPipDrag(){
+  const g = PipDrag; if (!g.on) return; g.on = false; $('#stage').classList.remove('snap-x');
+  if (!g.moved) return; const it = g.it;
+  commit(() => { it.x = r3(g.x); it.y = r3(g.y); it.w = r3(clamp(g.w, 0.05, 1.5)); }, false);
+  seekOut(outPos, false); if (sheetItem === it) paintItem();
+  toast(`Größe ${Math.round(it.w * 100)} % der Bildbreite`);
+}
+$('#pipBox').addEventListener('pointerup', endPipDrag);
+$('#pipBox').addEventListener('pointercancel', endPipDrag);
+$('#pipBox').addEventListener('click', e => e.stopPropagation());
+$('#pipBox').addEventListener('wheel', e => {
+  if (!curPip) return; e.preventDefault(); const it = curPip;
+  commit(() => { pipFree(it); it.w = r3(clamp(it.w * (e.deltaY < 0 ? 1.06 : 1 / 1.06), 0.05, 1.5)); }, false); seekOut(outPos, false); if (sheetItem === it) paintItem();
+}, {passive:false});
+
 // Titel (freie Texte) in der Vorschau
 const titleEls = new Map();
 function updateTitles(o){
@@ -856,7 +946,7 @@ $('#titleOv').addEventListener('pointerup', endTitleDrag);
 $('#titleOv').addEventListener('pointercancel', endTitleDrag);
 $('#titleOv').addEventListener('click', e => e.stopPropagation());
 $('#titleOv').addEventListener('dblclick', e => { const el = e.target.closest('.titlebox'); if (el && window.editTitle) editTitle(el.dataset.id); });
-function hideOverlay(){ if (!OV.classList.contains('hidden')){ OV.pause(); OV.classList.add('hidden'); } OI.classList.add('hidden'); }
+function hideOverlay(){ curPip = null; $('#pipBox').classList.add('hidden'); if (!OV.classList.contains('hidden')){ OV.pause(); OV.classList.add('hidden'); } OI.classList.add('hidden'); }
 const cssFilter = fx => !fx ? '' : [fx.bright ? `brightness(${(1 + fx.bright).toFixed(3)})` : '', fx.contrast ? `contrast(${(1 + fx.contrast).toFixed(3)})` : '', fx.sat ? `saturate(${(1 + fx.sat / 100).toFixed(3)})` : '', fx.gray ? 'grayscale(1)' : ''].filter(Boolean).join(' ');
 function applySegFx(g){
   const fx = g && g.kind === 'main' ? g.fx : null;
@@ -1668,7 +1758,7 @@ $('#cueList').addEventListener('click', e => {
 });
 
 // ───────── Elemente (Clips, Zoom) ─────────
-const TYPE_LBL = {broll:'B-Roll', insert:'Einschub', pip:'Bild-im-Bild', zoom:'Zoom', fx:'Anpassung', title:'Titel'};
+const TYPE_LBL = {broll:'B-Roll', insert:'Einschub', pip:'Einblendung', zoom:'Zoom', fx:'Anpassung', title:'Titel'};
 let sheetItem = null, pinMode = false;
 function openSheet(passive){ $('#sheet').classList.remove('hidden'); $('#sheet').classList.toggle('passive', !!passive); $('#sheetBack').classList.toggle('hidden', !!passive); }
 function openItem(id){
@@ -1685,7 +1775,7 @@ function openItem(id){
       <p class="muted small">Mittelpunkt: ${FINE ? 'einfach ins Bild klicken' : 'einfach oben ins Bild tippen'}.</p>`);
   } else {
     body.insertAdjacentHTML('beforeend', `
-      <div class="field"><span>Art</span><div class="seg-ctl" id="cMode"><button data-v="broll">B-Roll</button><button data-v="insert">Einschub</button><button data-v="pip">Bild-im-Bild</button></div></div>
+      <div class="field"><span>Art</span><div class="seg-ctl" id="cMode"><button data-v="broll">B-Roll</button><button data-v="insert">Einschub</button><button data-v="pip">Einblendung</button></div></div>
       <div class="muted small" id="cName"></div>
       <video id="cPrev" playsinline controls preload="auto"></video>
       <div class="field"><span>Ausschnitt aus dem Clip</span>
@@ -1693,12 +1783,17 @@ function openItem(id){
         <div class="nudge"><span style="min-width:56px">Ende</span><button data-cout="-0.5">−0,5</button><button data-cout="-0.04">−F</button><span class="val" id="cOut"></span><button data-cout="0.04">+F</button><button data-cout="0.5">+0,5</button><button class="btn" id="cOutHere">= hier</button></div>
       </div>
       <div class="field"><span>Position im Video</span><div class="nudge"><button data-at="-0.5">−0,5</button><button data-at="-0.1">−0,1</button><span class="val" id="cAt"></span><button data-at="0.1">+0,1</button><button data-at="0.5">+0,5</button></div></div>
-      <div class="field pipopt"><span>Ecke</span><div class="seg-ctl" id="cCorner"><button data-v="ol">↖</button><button data-v="or">↗</button><button data-v="ul">↙</button><button data-v="ur">↘</button></div></div>
-      <div class="field pipopt"><span>Größe</span><div class="seg-ctl" id="cSize"><button data-v="0.25">klein</button><button data-v="0.33">mittel</button><button data-v="0.45">groß</button></div></div>`);
+      <div class="field pipopt"><span>Größe <b id="cSizeV"></b></span><input type="range" id="cSize" min="5" max="150" step="1"></div>
+      <div class="field pipopt"><span>Platzieren</span><div class="seg-ctl" id="cCorner"><button data-v="ol">↖</button><button data-v="or">↗</button><button data-v="mm">Mitte</button><button data-v="ul">↙</button><button data-v="ur">↘</button></div></div>
+      <p class="muted small pipopt">Im Bild ziehen verschiebt, die Ecke unten rechts ändert die Größe${FINE ? ' (auch mit dem Mausrad)' : ''}.</p>`);
   }
   body.insertAdjacentHTML('beforeend', `<div class="row" style="margin-top:12px"><button class="btn" id="itPlay">▶ Ansehen</button><button class="btn danger" id="itDel">Entfernen</button><button class="btn primary" id="itOk" style="margin-left:auto">Fertig</button></div>`);
   pinMode = it.type === 'zoom'; $('#stageHint').classList.toggle('hidden', !pinMode);
-  openSheet(pinMode);
+  openSheet(pinMode || it.type === 'pip');
+  const cs = $('#cSize');
+  if (cs){ cs.onpointerdown = () => { cs._b = snapshot(); };
+    cs.oninput = () => { pipFree(it); it.w = +cs.value / 100; seekOut(outPos, false); paintItem(); };
+    cs.onchange = () => { if (cs._b){ undo.push(cs._b); redo = []; cs._b = null; } changed(false); }; }
   if (it.type !== 'zoom'){ const pv = $('#cPrev'); if (isImg(it.clip)){ pv.outerHTML = `<img id="cPrev" src="${MEDIA(it.clip.uri)}" style="width:100%;max-height:22vh;object-fit:contain;background:#000;border-radius:8px">`; } else { pv.src = MEDIA(it.clip.uri); pv.addEventListener('loadedmetadata', () => pv.currentTime = it.in, {once:true}); } }
   paintItem();
   body.onclick = e => {
@@ -1706,7 +1801,8 @@ function openItem(id){
     const seg = b.closest('.seg-ctl');
     if (seg){ const v = b.dataset.v;
       commit(() => { if (seg.id === 'zKind') it.kind = v; if (seg.id === 'cMode'){ it.type = v; if (v === 'insert') it.out = Math.max(it.out, Math.min(it.clip.duration, it.in + 1)); }
-        if (seg.id === 'cCorner') it.corner = v; if (seg.id === 'cSize') it.size = +v; }, false); h.textContent = TYPE_LBL[it.type]; paintItem(); return; }
+        if (seg.id === 'cMode' && v === 'pip') pipFree(it);
+        if (seg.id === 'cCorner'){ if (v === 'mm'){ pipFree(it); it.x = 0.5; it.y = 0.5; } else pipCorner(it, v); } }, false); if (seg.id !== 'zKind') seekOut(outPos, false); h.textContent = TYPE_LBL[it.type]; paintItem(); return; }
     if (b.dataset.z){ commit(() => it.dur = clamp(+(it.dur + +b.dataset.z).toFixed(2), 0.2, 60), false); }
     else if (b.dataset.at){ commit(() => it.at = clamp(r3(it.at + +b.dataset.at), 0, srcTotal), false); seekOut(srcToOut(snapSrc(it.at)), false); }
     else if (b.dataset.cin){ commit(() => it.in = clamp(r3(it.in + +b.dataset.cin), 0, it.out - 0.1), false); $('#cPrev').currentTime = it.in; }
@@ -1726,11 +1822,12 @@ function openItem(id){
 function paintItem(){
   const it = sheetItem; if (!it) return;
   $$('#sheet .seg-ctl button').forEach(b => { const id = b.parentElement.id; const v = b.dataset.v;
-    b.classList.toggle('on', (id === 'zKind' && it.kind === v) || (id === 'cMode' && it.type === v) || (id === 'cCorner' && it.corner === v) || (id === 'cSize' && Math.abs(it.size - v) < 0.001)); });
+    b.classList.toggle('on', (id === 'zKind' && it.kind === v) || (id === 'cMode' && it.type === v) || (id === 'cCorner' && it.w == null && it.corner === v)); });
   if (it.type === 'zoom'){ $('#zStr').value = it.strength; $('#zStrV').textContent = it.strength.toFixed(2).replace('.', ',') + '×'; $('#zDur').textContent = it.dur.toFixed(1).replace('.', ',') + ' s'; $('#zAt').textContent = fmtS(srcToOut(snapSrc(it.at)));
     const pin = $('#pin'); pin.classList.remove('hidden'); pin.style.left = it.cx * 100 + '%'; pin.style.top = it.cy * 100 + '%'; }
   else { $('#cName').textContent = isImg(it.clip) ? `${it.clip.name} · Foto, Länge frei wählbar` : `${it.clip.name} · ${fmtS(it.clip.duration)}`; $('#cIn').textContent = fmtS(it.in); $('#cOut').textContent = fmtS(it.out); $('#cAt').textContent = fmtS(srcToOut(snapSrc(it.at)));
-    $$('.pipopt').forEach(x => x.classList.toggle('hidden', it.type !== 'pip')); $('#cInHere').classList.toggle('hidden', isImg(it.clip)); $('#cOutHere').classList.toggle('hidden', isImg(it.clip)); }
+    $$('.pipopt').forEach(x => x.classList.toggle('hidden', it.type !== 'pip'));
+    if (it.type === 'pip'){ const w = it.w != null ? it.w : (it.size || 0.33); $('#cSize').value = Math.round(w * 100); $('#cSizeV').textContent = Math.round(w * 100) + ' %'; } $('#cInHere').classList.toggle('hidden', isImg(it.clip)); $('#cOutHere').classList.toggle('hidden', isImg(it.clip)); }
   updateZoomPreview();
 }
 function updateZoomPreview(){ if (sheetItem && sheetItem.type === 'zoom' && !playing){ const z = sheetItem; V.style.transformOrigin = `${z.cx * 100}% ${z.cy * 100}%`; V.style.transform = `scale(${z.kind === 'in' ? 1 : z.strength})`; } }
@@ -1786,6 +1883,7 @@ function buildPlan(){
       speed:+(fx.speed || 1), vol:+(fx.vol ?? 1), bright:+(fx.bright || 0), contrast:+(fx.contrast || 0), sat:+(fx.sat || 0), gray:!!fx.gray};
   });
   const ovs = overlays.map(o => ({mode:o.x.type, image: isImg(o.x.clip), uri:o.x.clip.uri, in:o.x.in, out:r3(o.x.in + (o.end - o.at)), at:r3(o.at), corner:o.x.corner || 'or', size:o.x.size || 0.33,
+    ...(o.x.w != null ? {x:o.x.x, y:o.x.y, w:o.x.w, aspect:+clipAspect(o.x.clip).toFixed(5)} : {}),
     width:o.x.clip.width, height:o.x.clip.height, rotation:o.x.clip.rotation || 0}));
   const cues = S().enabled !== false && tokens.length ? computedCues().map(x => { const [cx, cy] = cueXY(x.c); return {start:r3(x.s), end:r3(x.e), text:wrapText(x.text), x:cx, y:cy}; }) : [];
   for (const t of P.items.filter(x => x.type === 'title' && (x.text || '').trim())){ const a = srcToOut(snapSrc(t.at)); if (a >= total) continue;
@@ -1799,7 +1897,7 @@ function buildPlan(){
 function renderExport(){
   const [W, H] = outSize(), n = P.items.reduce((m, x) => (m[x.type] = (m[x.type] || 0) + 1, m), {});
   $('#exSummary').textContent = `${fmtT(total)}${exFmt === 'audio' ? '' : ` · ${W}×${H}`} · ${timeline.filter(g => g.kind === 'main').length} Abschnitte` + (P.sources.length > 1 ? ` aus ${P.sources.length} Videos` : '') +
-    (n.insert ? ` · ${n.insert} Einschub` : '') + (n.broll ? ` · ${n.broll} B-Roll` : '') + (n.pip ? ` · ${n.pip} Bild-im-Bild` : '') + (n.zoom ? ` · ${n.zoom} Zoom` : '') + (n.fx ? ` · ${n.fx} Anpassungen` : '') + (n.title ? ` · ${n.title} Titel` : '') +
+    (n.insert ? ` · ${n.insert} Einschub` : '') + (n.broll ? ` · ${n.broll} B-Roll` : '') + (n.pip ? ` · ${n.pip} Einblendung${n.pip > 1 ? 'en' : ''}` : '') + (n.zoom ? ` · ${n.zoom} Zoom` : '') + (n.fx ? ` · ${n.fx} Anpassungen` : '') + (n.title ? ` · ${n.title} Titel` : '') +
     (S().enabled !== false && tokens.length ? ` · ${computedCues().length} Untertitel` : '');
 }
 $('#exRes').onchange = renderExport;
