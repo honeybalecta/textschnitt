@@ -255,6 +255,7 @@ function showHome(){
     : CAP.platform === 'desktop' ? 'Wähle ein oder mehrere Videos (Strg/Umschalt für mehrere). Sie werden hintereinandergehängt und gemeinsam transkribiert.'
     : 'Wähle ein oder mehrere Videos aus deiner Galerie. Sie werden hintereinandergehängt und auf dem Gerät transkribiert – du schneidest dann über den Text.';
 }
+if (CAP.version && CAP.platform !== 'web'){ const v = document.createElement('p'); v.className = 'muted small'; v.style.cssText = 'text-align:center;margin:24px 0 90px'; v.textContent = 'Textschnitt ' + CAP.version; $('#home .home-body').append(v); }
 $('#newProj').onclick = async () => { const list = asList(await pickMedia('videos')); if (list.length) createProject(list); };
 function createProject(list){
   list = list.filter(Boolean); if (!list.length) return;
@@ -907,6 +908,7 @@ $('#transBtn').onclick = () => {
     try { transJob = TS.transcribe(s.uri, model, lang, fillers); } catch(e){ end(); $('#transMsg').textContent = 'Fehler: ' + e.message; return; }
     watchJob(transJob, j => { $('#transProg i').style.width = ((n + j.progress) / todo.length * 100).toFixed(1) + '%'; $('#transMsg').textContent = label + (j.message || ''); },
       j => { const r = j.result || {}; if (r.env) s.env = r.env; if (r.lang && !P.language) P.language = r.lang;
+             s.asr = {v: CAP.version || '', timing: r.timing || '', chunks: r.chunks || 0, model, at: Date.now()};   // zur Fehlersuche: womit transkribiert wurde
              appendSourceTokens(k, r.words || []); words += (r.words || []).length; n++; saveNow(); next(); },
       j => { if (n) { transCancelled = true; finish(); $('#transMsg').textContent = 'Teilweise transkribiert.'; return; }
              end(); $('#transMsg').textContent = j.status === 'cancelled' ? 'Abgebrochen.' : ('Fehler: ' + (j.error || 'unbekannt')); });
