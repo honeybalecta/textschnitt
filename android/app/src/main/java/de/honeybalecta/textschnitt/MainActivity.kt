@@ -45,7 +45,7 @@ class MainActivity : ComponentActivity() {
             notifPerm.launch(Manifest.permission.POST_NOTIFICATIONS)
     }
 
-    fun setImmersive(on: Boolean) {
+    fun setFullscreenUi(on: Boolean) {
         val c = WindowCompat.getInsetsController(window, window.decorView)
         if (on) { c.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE; c.hide(WindowInsetsCompat.Type.systemBars()) }
         else c.show(WindowInsetsCompat.Type.systemBars())

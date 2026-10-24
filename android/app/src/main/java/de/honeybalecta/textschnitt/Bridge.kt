@@ -204,7 +204,7 @@ class Bridge(private val act: MainActivity) {
 
     /** Vollbild-Vorschau: Status- und Navigationsleiste ausblenden. */
     @JavascriptInterface
-    fun immersive(on: Boolean): Boolean { main.post { act.setImmersive(on) }; return true }
+    fun immersive(on: Boolean): Boolean { main.post { act.setFullscreenUi(on) }; return true }
 
     @JavascriptInterface
     fun info(): String = JSONObject().apply {
