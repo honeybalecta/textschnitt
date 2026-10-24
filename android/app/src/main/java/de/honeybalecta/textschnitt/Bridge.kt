@@ -28,13 +28,58 @@ class Bridge(private val act: MainActivity) {
     @JavascriptInterface
     fun pick(id: String, kind: String) {
         pickId = id; pickKind = kind
-        main.post { act.launchPicker(if (kind == "clip") arrayOf("video/*", "image/*") else arrayOf("video/*"), kind == "videos") }
+        val mimes = when (kind) {
+            "clip" -> arrayOf("video/*", "image/*")
+            "font" -> arrayOf("font/*", "application/x-font-ttf", "application/x-font-otf", "application/font-sfnt", "application/vnd.ms-opentype", "application/octet-stream")
+            else -> arrayOf("video/*")
+        }
+        main.post { act.launchPicker(mimes, kind == "videos" || kind == "font") }
     }
+
+    // ── Eigene Schriften (für alle Projekte) ──
+    private val fontDir get() = File(ctx.filesDir, "fonts").apply { mkdirs() }
+
+    @JavascriptInterface
+    fun fonts(): String {
+        val arr = JSONArray()
+        fontDir.listFiles()?.filter { it.isFile && it.extension.lowercase() in setOf("ttf", "otf") }?.sortedBy { it.name }?.forEach {
+            arr.put(JSONObject().put("uri", it.path).put("name", it.name))
+        }
+        return arr.toString()
+    }
+
+    @JavascriptInterface
+    fun deleteFont(uri: String) {
+        val f = File(uri)
+        if (f.parentFile?.canonicalPath == fontDir.canonicalPath) f.delete()
+    }
+
+    /** Schriftdatei ins App-Verzeichnis kopieren; null, wenn es keine TTF/OTF ist. */
+    private fun importFont(u: Uri): JSONObject? = runCatching {
+        val bytes = ctx.contentResolver.openInputStream(u)?.use { it.readBytes() } ?: return null
+        if (bytes.size < 12) return null
+        val sig = String(bytes, 0, 4, Charsets.ISO_8859_1)
+        val ext = when { sig == "OTTO" -> "otf"; sig == "\u0000\u0001\u0000\u0000" || sig == "true" -> "ttf"; else -> return null }
+        var name = ctx.contentResolver.query(u, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+            if (c.moveToFirst()) c.getString(0) else null } ?: "Schrift.$ext"
+        name = name.substringBeforeLast('.').replace(Regex("[^\\w\\- ]"), "_").ifBlank { "Schrift" }
+        var f = File(fontDir, "$name.$ext"); var k = 2
+        while (f.exists() && !f.readBytes().contentEquals(bytes)) f = File(fontDir, "${name}_${k++}.$ext")
+        if (!f.exists()) f.writeBytes(bytes)
+        JSONObject().put("uri", f.path).put("name", f.name)
+    }.getOrNull()
 
     fun onPicked(uris: List<Uri>) {
         val id = pickId ?: return
         pickId = null
         if (uris.isEmpty()) { js("TSApp.onPicked(${q(id)}, null)"); return }
+        if (pickKind == "font") {
+            Thread {
+                val res = uris.mapNotNull { importFont(it) }.lastOrNull()
+                js("TSApp.onPicked(${q(id)}, ${if (res == null) "null" else q(res.toString())})")
+            }.start()
+            return
+        }
         uris.forEach { runCatching { ctx.contentResolver.takePersistableUriPermission(it, Intent.FLAG_GRANT_READ_URI_PERMISSION) } }
         val multi = pickKind == "videos"
         Thread {

@@ -15,8 +15,9 @@ VERSION = (WEB / "version.txt").read_text().strip()
 shutil.rmtree(OUT, ignore_errors=True)
 (OUT / "vendor" / "ort").mkdir(parents=True)
 
-for f in ("app.js", "studio.js", "app.css"):
+for f in ("app.js", "studio.js", "app.css", "icons.js"):
     shutil.copy(CORE / f, OUT / f)
+shutil.copytree(CORE / "fonts", OUT / "fonts")
 for f in ("engine.js", "asr-worker.js", "web.css", "manifest.webmanifest", "icon.svg", "icon-192.png", "icon-512.png"):
     shutil.copy(WEB / f, OUT / f)
 (OUT / "bridge-browser.js").write_text((WEB / "bridge-browser.js").read_text().replace("__VERSION__", VERSION))
@@ -27,7 +28,7 @@ html, n = re.subn(r'<script src="bridge-http\.js"></script>\s*<script src="app\.
                   '<script src="bridge-browser.js"></script>', html)
 assert n == 1, "Skript-Einbindung in index.html nicht gefunden"
 head = ('<meta name="description" content="Gesprochene Videos über das Transkript schneiden – direkt im Browser, ohne Upload.">\n'
-        '<meta name="theme-color" content="#E89B0C">\n<link rel="manifest" href="manifest.webmanifest">\n'
+        '<meta name="theme-color" content="#131312">\n<link rel="manifest" href="manifest.webmanifest">\n'
         '<link rel="icon" href="icon.svg" type="image/svg+xml">\n<link rel="apple-touch-icon" href="icon-192.png">\n'
         '<link rel="stylesheet" href="web.css">\n</head>')
 html = html.replace("</head>", head, 1)
@@ -51,8 +52,9 @@ for p in ort:
 (OUT / "vendor" / "ort" / "files.json").write_text(json.dumps(names))
 print("ONNX-Runtime:", ", ".join(names) or "– (wird vom CDN geladen)")
 
-shell = ["./", "index.html", "app.js", "studio.js", "app.css", "web.css", "bridge-browser.js", "engine.js", "asr-worker.js",
-         "manifest.webmanifest", "icon.svg", "icon-192.png", "icon-512.png", "vendor/media.js", "vendor/asr.js"]
+fonts = sorted("fonts/" + p.name for p in (CORE / "fonts").iterdir() if p.suffix == ".ttf")
+shell = ["./", "index.html", "app.js", "studio.js", "app.css", "icons.js", "web.css", "bridge-browser.js", "engine.js", "asr-worker.js",
+         "manifest.webmanifest", "icon.svg", "icon-192.png", "icon-512.png", "vendor/media.js", "vendor/asr.js"] + fonts
 sw = (WEB / "sw.js").read_text().replace("__VERSION__", VERSION + "-" + subprocess.run(
     ["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, capture_output=True, text=True).stdout.strip()).replace("__SHELL__", json.dumps(shell))
 (OUT / "sw.js").write_text(sw)

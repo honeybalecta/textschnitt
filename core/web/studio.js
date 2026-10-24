@@ -134,7 +134,7 @@ function renderTxt(pad){
   const frag = document.createDocumentFragment();
   for (const c of P.cues){
     const t = cueTimes(c); if (!t) continue;
-    const b = blk('cue' + (c.off ? ' off' : ''), t.s, Math.max(0.1, t.e - t.s), pad, {cid: c.id});
+    const b = blk('cue' + (c.off ? ' off' : '') + (isFree(c) ? ' free' : ''), t.s, Math.max(0.1, t.e - t.s), pad, {cid: c.id});
     const sp = document.createElement('span'); sp.className = 'txt'; sp.textContent = cueText(c); b.append(sp);
     frag.append(b);
   }
@@ -329,6 +329,8 @@ function clampDrag(side, d){
     return clamp(d, -a, total - a - 0.1); }
   if (s.kind === 'zoom' || s.kind === 'fx' || s.kind === 'title'){ const it = selItem(), [a, e] = itemOutRange(it);
     if (side === 'l') return clamp(d, -a, e - a - 0.15); if (side === 'r') return clamp(d, -(e - a - 0.15), total - e); return clamp(d, -a, total - e); }
+  if (s.kind === 'cue'){ const t = cueTimes(selCue()); if (!t) return 0;
+    if (side === 'l') return clamp(d, -t.s, t.e - t.s - 0.2); if (side === 'r') return clamp(d, -(t.e - t.s - 0.2), total - t.e); return clamp(d, -t.s, total - t.e); }
   return d;
 }
 // Wie weit eine Hauptspur-Kante nach außen darf
@@ -403,8 +405,9 @@ function applyDrag(side, d){
       else if (side === 'r') it.dur = +Math.max(0.3, it.dur + d).toFixed(2);
       else it.at = +outToSrc(a + d).toFixed(3);
     } else if (s.kind === 'cue'){
-      const c = selCue(); if (side === 'l') c.ds = +((c.ds || 0) + d).toFixed(2); else if (side === 'r') c.de = +((c.de || 0) + d).toFixed(2);
-      else { c.ds = +((c.ds || 0) + d).toFixed(2); c.de = +((c.de || 0) + d).toFixed(2); }
+      const c = selCue(), t = cueTimes(c); if (!t) return;
+      if (side === 'l') setCueFree(c, Math.min(t.s + d, t.e - 0.2), t.e); else if (side === 'r') setCueFree(c, t.s, t.e + d);
+      else { const len = t.e - t.s, ns = clamp(t.s + d, 0, Math.max(0, total - len)); setCueFree(c, ns, ns + len); }
     }
   }, false);
   tokens.forEach(t => paint(t.i));
@@ -427,7 +430,8 @@ function toolList(){
   if (s.kind === 'fx'){ const it = selItem(); return [T('⚙', 'Anpassen', () => openFxItem(it)), T('🗑', 'Löschen', delSel, 'danger')]; }
   if (s.kind === 'title'){ const it = selItem(); return [T('✎', 'Text & Stil', () => editTitle(it.id)), T('🗑', 'Löschen', delSel, 'danger')]; }
   if (s.kind === 'cue'){ const c = selCue(); return [T('✎', 'Text', editCue), T('✂', 'Teilen', splitCue), T(c && c.off ? '👁' : '⦸', c && c.off ? 'Einblenden' : 'Ausblenden', () => { commit(() => c.off = !c.off, false); }),
-    ...(c && c.x != null ? [T('⌖', 'Position ↺', () => { commit(() => { delete c.x; delete c.y; }, false); placeOverlay(); })] : [])]; }
+    ...(c && c.x != null ? [T('⌖', 'Position ↺', () => { commit(() => { delete c.x; delete c.y; }, false); placeOverlay(); })] : []),
+    ...(c && (isFree(c) || c.ds || c.de) ? [T('↺', 'Zeit ↺', () => { commit(() => { delete c.fa; delete c.fd; c.ds = 0; c.de = 0; }, false); })] : [])]; }
   return [];
 }
 function updateTools(){
@@ -438,7 +442,7 @@ function updateTools(){
   const info = $('#tlInfo');
   if (!s) info.textContent = FINE ? 'Klick in die Spur setzt den Zeiger · Clip anklicken oder ziehen · Rechtsklick für Werkzeuge · ⌨ zeigt alle Tastenkürzel' : 'Wische zum Spulen · zwei Finger zoomen · Clip antippen zum Bearbeiten';
   else if (g) info.textContent = `${fmtS(g.o)} – ${fmtS(g.o + segDur(g))} (${fmtD(segDur(g))} s)${g.fx && fxBadges(g.fx) ? ' · ' + fxBadges(g.fx) : ''} · Griffe ziehen zum Trimmen · Clip ziehen zum Umsortieren`;
-  else if (s.kind === 'cue'){ const c = selCue(), t = c && cueTimes(c); info.textContent = t ? `${fmtS(t.s)} – ${fmtS(t.e)} · Griffe verschieben Anfang/Ende · im Bild ziehen setzt die Position nur für diesen` : 'Untertitel'; }
+  else if (s.kind === 'cue'){ const c = selCue(), t = c && cueTimes(c); info.textContent = t ? `${fmtS(t.s)} – ${fmtS(t.e)}${isFree(c) ? ' · Zeit frei gesetzt' : ''} · ziehen verschiebt, Griffe ändern Anfang/Ende – der Schnitt bleibt gleich · im Bild ziehen setzt die Position nur für diesen` : 'Untertitel'; }
   else { const it = selItem(); if (it){ const [a, e] = itemOutRange(it); info.textContent = `${fmtS(a)} – ${fmtS(e)} · ziehen zum Verschieben, Griffe zum Trimmen${it.type === 'title' ? ' · im Bild ziehen zum Platzieren, Doppelklick zum Bearbeiten' : ''}`; } }
 }
 function paintBar(){
@@ -527,6 +531,7 @@ function editTitle(id){
       <label>Größe <select id="ttSize"><option value="klein">klein</option><option value="mittel">mittel</option><option value="groß">groß</option></select></label>
       <label>Skalierung <input type="range" id="ttScale" min="0.5" max="3" step="0.1"></label>
       <label>Farbe <input type="color" id="ttColor"></label>
+      <label>Schrift <select id="ttFont" class="font-sel"></select></label>
       <label>Dauer (s) <input type="number" id="ttDur" min="0.3" max="600" step="0.5"></label>
       <label class="row"><input type="checkbox" id="ttOutline"> Umrandung</label>
       <label class="row"><input type="checkbox" id="ttBg"> dunkler Hintergrund</label>
@@ -534,10 +539,12 @@ function editTitle(id){
     <p class="muted small">Position: den Titel direkt im Bild ziehen.</p>
     <div class="row" style="margin-top:10px"><button class="btn danger" id="ttDel">Entfernen</button><button class="btn primary" id="ttOk" style="margin-left:auto">Fertig</button></div>`;
   $('#ttText').value = it.text || ''; $('#ttSize').value = it.size || 'groß'; $('#ttScale').value = it.scale || 1; $('#ttColor').value = (it.color || '#FFFFFF').toLowerCase(); $('#ttDur').value = it.dur; $('#ttOutline').checked = it.outline !== false; $('#ttBg').checked = !!it.bg;
+  fillFontSelects(); $('#ttFont').value = it.font && fontOf(it.font).key ? it.font : '';
+  $('#ttFont').addEventListener('change', async () => { if ($('#ttFont').value !== '__import') return; const f = await importFont(); fillFontSelects(); $('#ttFont').value = f ? f.key : (it.font || ''); upd(); });
   openSheet(true);
   const before = snapshot();
-  const upd = () => { it.text = $('#ttText').value; it.size = $('#ttSize').value; it.scale = +$('#ttScale').value; it.color = $('#ttColor').value.toUpperCase(); it.dur = clamp(+$('#ttDur').value || 3, 0.3, 600); it.outline = $('#ttOutline').checked; it.bg = $('#ttBg').checked; changed(true); updateTitles(outPos); };
-  ['ttText', 'ttSize', 'ttScale', 'ttColor', 'ttDur', 'ttOutline', 'ttBg'].forEach(i => { $('#' + i).addEventListener('input', upd); $('#' + i).addEventListener('change', upd); });
+  const upd = () => { it.text = $('#ttText').value; it.size = $('#ttSize').value; it.scale = +$('#ttScale').value; it.color = $('#ttColor').value.toUpperCase(); it.dur = clamp(+$('#ttDur').value || 3, 0.3, 600); it.outline = $('#ttOutline').checked; it.bg = $('#ttBg').checked; if ($('#ttFont').value !== '__import') it.font = $('#ttFont').value; changed(true); updateTitles(outPos); };
+  ['ttText', 'ttSize', 'ttScale', 'ttColor', 'ttFont', 'ttDur', 'ttOutline', 'ttBg'].forEach(i => { $('#' + i).addEventListener('input', upd); $('#' + i).addEventListener('change', upd); });
   $('#ttOk').onclick = () => { undo.push(before); redo = []; closeSheet(); };
   $('#ttDel').onclick = () => { closeSheet(); commit(() => P.items = P.items.filter(x => x !== it)); updateTitles(outPos); };
   body.onclick = null; setTimeout(() => { $('#ttText').focus(); $('#ttText').select(); }, 30);
@@ -592,7 +599,7 @@ function splitCue(){
   const c = selCue(); if (!c) return; const ids = cueWords(c); if (ids.length < 2) return toast('Zu wenige Wörter');
   const x = curSrc(); let k = ids.findIndex(i => tokens[i].ws >= x); if (k <= 0) k = Math.ceil(ids.length / 2);
   const idx = P.cues.indexOf(c);
-  commit(() => { const c2 = {id:newId(), a: ids[k-1] + 1, b: c.b, text:null, ds:0, de:c.de || 0, off:c.off}; c.b = ids[k-1]; c.text = null; c.de = 0; P.cues.splice(idx + 1, 0, c2); }, false);
+  commit(() => { const c2 = {id:newId(), a: ids[k-1] + 1, b: c.b, text:null, ds:0, de:c.de || 0, off:c.off}; c.b = ids[k-1]; c.text = null; c.de = 0; delete c.fa; delete c.fd; P.cues.splice(idx + 1, 0, c2); }, false);
 }
 
 // ───────── Tastatur (wie CapCut) und Maus ─────────

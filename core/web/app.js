@@ -326,13 +326,19 @@ function openProjectNow(id, keep){
 function closeProject(){ pausePlay(); saveNow(); busPid = null; P = null; V.removeAttribute('src'); V.load(); vSi = -1; hideOverlay(); showHome(); }
 $('#backBtn').onclick = closeProject;
 const fillsWrap = () => isWide() || matchMedia('(orientation: landscape) and (max-height: 599px)').matches;
+// Bühne: ein 16:9-Feld. Hochformat-Videos lassen links und rechts Platz – dort sitzt zusätzliche Steuerung.
 function fitStage(){
   if (!P) return;
   const [w, h] = dispSize(primary()), wrap = $('.stage-wrap'), st = $('#stage');
-  const maxW = wrap.clientWidth || innerWidth;
-  const maxH = fillsWrap() ? (wrap.clientHeight || innerHeight * 0.6) : Math.max(160, Math.min(innerHeight * 0.42, innerHeight - 420));
-  let W = maxW, H = W * h / w; if (H > maxH){ H = maxH; W = H * w / h; }
+  const fill = fillsWrap(), availW = wrap.clientWidth || innerWidth;
+  let boxH;
+  if (fill){ wrap.style.height = ''; boxH = wrap.clientHeight || innerHeight * 0.6; }
+  else { boxH = Math.round(Math.min(availW * 9 / 16, Math.max(150, innerHeight * 0.36))); wrap.style.height = boxH + 'px'; }
+  const boxW = fill ? availW : Math.min(availW, boxH * 16 / 9);
+  let W = boxW, H = W * h / w; if (H > boxH){ H = boxH; W = H * w / h; }
   st.style.width = Math.floor(W) + 'px'; st.style.height = Math.floor(H) + 'px';
+  const side = Math.floor((availW - W) / 2), show = side >= 64;
+  for (const el of [$('#sideL'), $('#sideR')]){ el.classList.toggle('hidden', !show); el.style.width = show ? Math.min(side, 170) + 'px' : ''; el.style.height = Math.floor(fill ? H : boxH) + 'px'; }
   styleOverlay();
 }
 addEventListener('resize', () => { fitStage(); if (P && studioOn() && window.renderTimeline) renderTimeline(); });
@@ -687,7 +693,7 @@ function zoomAt(src){
 function recompute(){
   computeRanges(); computePieces(); computeOrder(); buildTimeline(); computeOverlays(); drawScrub();
   if (studioOn() && window.renderTimeline) renderTimeline();
-  $('#tTot').textContent = fmtT(total);
+  $('#tTot').textContent = fmtT(total); $('#sideTot').textContent = fmtT(total);
 }
 function drawScrub(){
   const box = $('#segs'); box.innerHTML = ''; if (!total) return;
@@ -760,16 +766,30 @@ function advanceSeg(){
   if (g.kind === 'main' && n.kind === 'main' && n.si === g.si && Math.abs(n.in - g.out) < 0.02){ curSeg++; return; }
   seekOut(n.o, true);
 }
+function setPlayIcons(on){ for (const b of [$('#playBtn'), $('#sidePlay')]) if (b) b.innerHTML = icon(on ? '❚❚' : '▶'); }
 function togglePlay(){ if (V.dataset.err){ toast('Vorschau nicht abspielbar – siehe Hinweis im Bild'); return; } playing ? pausePlay() : startPlay(); }
 function startPlay(){
   if (!timeline.length) return; if (outPos >= total - 0.05) seekOut(0, false);
-  playing = true; $('#playBtn').textContent = '❚❚'; seekOut(outPos, true); TS.keepAwake(true);
+  playing = true; setPlayIcons(true); seekOut(outPos, true); TS.keepAwake(true);
 }
 function pausePlay(){
   const g0 = timeline[curSeg]; if (playing && g0 && g0.kind === 'insert' && isImg(g0.item.clip)) imgClock = {local: segLocal(g0), t0: performance.now()};
-  playing = false; stopAt = null; vWantPlay = false; V.pause(); IV.pause(); OV.pause(); $('#playBtn').textContent = '▶'; TS.keepAwake(false);
+  playing = false; stopAt = null; vWantPlay = false; V.pause(); IV.pause(); OV.pause(); setPlayIcons(false); TS.keepAwake(false);
 }
 $('#playBtn').onclick = togglePlay;
+// Seitensteuerung neben der Bühne
+$('#sidePlay').onclick = togglePlay;
+$('#sideBack').onclick = () => window.stepFrames && stepFrames(-1);
+$('#sideFwd').onclick = () => window.stepFrames && stepFrames(1);
+const cutEdges = () => [...new Set(timeline.map(g => r3(g.o)).concat([0, r3(total)]))].sort((a, b) => a - b);
+$('#sidePrevCut').onclick = () => { if (playing) pausePlay(); const e = cutEdges().filter(x => x < outPos - 0.05); seekOut(e.length ? e[e.length-1] : 0, false); if (window.syncScroll) syncScroll(outPos, true); };
+$('#sideNextCut').onclick = () => { if (playing) pausePlay(); const e = cutEdges().find(x => x > outPos + 0.05); seekOut(e != null ? e : total, false); if (window.syncScroll) syncScroll(outPos, true); };
+$('#sideUndo').onclick = () => $('#undoBtn').click();
+$('#sideRedo').onclick = () => $('#redoBtn').click();
+$('#sideSplit').onclick = () => { if (window.splitHere) splitHere(); };
+$('#sideCutPlay').onclick = () => $('#cutPlayBtn').click();
+$('#sideSubs').onclick = () => { if (!P) return; const on = S().enabled === false; S().enabled = on; syncStyleInputs(); changed(false); toast(on ? 'Untertitel an' : 'Untertitel aus'); };
+$('#sideFont').onclick = () => { if (P) openFontSheet(); };
 function loop(){
   if (P && timeline.length && playing){
     const g = timeline[curSeg], el = g.kind === 'main' ? V : (isImg(g.item.clip) ? null : IV);
@@ -784,7 +804,7 @@ function loop(){
   requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);
-function updateHead(o){ $('#head').style.left = (total ? o / total * 100 : 0) + '%'; $('#tNow').textContent = fmtT(o); }
+function updateHead(o){ $('#head').style.left = (total ? o / total * 100 : 0) + '%'; $('#tNow').textContent = fmtT(o); $('#sideNow').textContent = fmtS(o); }
 function updateOverlay(o){
   const a = overlays.find(x => o >= x.at && o < x.end);
   if (!a){ hideOverlay(); return; }
@@ -813,7 +833,7 @@ function updateTitles(o){
     if (!el){ el = document.createElement('div'); el.className = 'titlebox'; el.dataset.id = x.id; box.append(el); titleEls.set(x.id, el); }
     if (!(TitleDrag.on && TitleDrag.id === x.id)){ el.textContent = x.text || 'Titel'; el.style.left = (x.x * W) + 'px'; el.style.top = (x.y * H) + 'px'; }
     const px = (SIZE_F[x.size] || 0.058) * Math.min(W, H) * (H > W ? 1.25 : 1) * (x.scale || 1), ol = Math.max(1, px / 14);
-    el.style.fontSize = px.toFixed(1) + 'px'; el.style.color = x.color || '#FFFFFF';
+    el.style.fontSize = px.toFixed(1) + 'px'; el.style.color = x.color || '#FFFFFF'; el.style.fontFamily = fontCss(x.font); el.style.fontWeight = fontWeight(x.font, 800);
     el.style.textShadow = x.outline !== false ? [[-1,-1],[1,-1],[-1,1],[1,1],[0,-1.4],[0,1.4],[-1.4,0],[1.4,0]].map(([a, b]) => `${(a*ol).toFixed(1)}px ${(b*ol).toFixed(1)}px 0 #000`).join(',') : 'none';
     el.style.background = x.bg ? 'rgba(0,0,0,.55)' : ''; el.classList.toggle('sel', !!(window.TL && TL.sel && TL.sel.id === x.id));
   }
@@ -893,7 +913,9 @@ function renderSources(){
     box.append(el);
   });
   const todo = P.sources.filter(s => !s.tr).length;
-  $('#transBtn').textContent = todo > 1 ? `${todo} Videos transkribieren` : 'Transkription starten';
+  const sub = !tokens.length && studioCut(); $('#subsOnlyBox').classList.toggle('hidden', !sub);
+  if (!sub) $('#subsOnly').checked = false; $('#transBtn').closest('.card').querySelector('.auto-opts').classList.toggle('hidden', sub && $('#subsOnly').checked);
+  $('#transBtn').textContent = sub && $('#subsOnly').checked ? 'Untertitel erzeugen' : todo > 1 ? `${todo} Videos transkribieren` : 'Transkription starten';
   $('#transBtn').disabled = !todo;
 }
 async function addSources(){
@@ -903,6 +925,17 @@ async function addSources(){
   if (tokens.length) setTab('trans');
 }
 $('#addSrcBtn').onclick = addSources;
+// Wurde schon im Studio geschnitten (ohne Transkript)?
+const studioCut = () => !!(P.dels.length || P.splits.length || P.moves.length || P.items.length || Object.keys(P.adj).length);
+$('#subsOnly').addEventListener('change', renderSources);
+// Kanten-Feinschnitt ohne Transkript (Schlüssel su/eu) in feste Schnitte umwandeln, damit er das Transkript übersteht
+function freezeStudioCut(){
+  P.sources.forEach((s, k) => {
+    const a = P.adj['su' + k] || 0, b = P.adj['eu' + k] || 0;
+    if (a > 0) addDel(s.off, s.off + a); if (b < 0) addDel(s.off + s.duration + b, s.off + s.duration);
+    delete P.adj['su' + k]; delete P.adj['eu' + k];
+  });
+}
 let transJob = null, transCancelled = false;
 $('#transBtn').onclick = () => {
   const todo = P.sources.map((s, k) => k).filter(k => !P.sources[k].tr);
@@ -910,15 +943,17 @@ $('#transBtn').onclick = () => {
   $('#transBtn').disabled = true; $('#transCancel').classList.remove('hidden'); $('#transProg').classList.remove('hidden'); TS.keepAwake(true);
   transCancelled = false;
   const model = $('#model').value, lang = $('#lang').value, fillers = $('#fillers').checked;
-  const startTok = tokens.length, firstTime = !tokens.length;
+  const startTok = tokens.length, firstTime = !tokens.length, subsOnly = firstTime && studioCut() && $('#subsOnly').checked;
+  if (subsOnly) freezeStudioCut();
   let n = 0, words = 0;
   const end = () => { $('#transBtn').disabled = false; $('#transCancel').classList.add('hidden'); TS.keepAwake(false); transJob = null; renderSources(); };
   const finish = () => {
     end(); P.language ||= lang;
-    if (firstTime){ deleted = new Set(); P.trims = {}; P.adj = {}; }
-    const cleaned = autoClean(startTok);
+    if (firstTime && !subsOnly){ deleted = new Set(); P.trims = {}; P.adj = {}; }
+    const cleaned = subsOnly ? [] : autoClean(startTok);
     if (firstTime) genCues(); else genCues(startTok);
-    renderTranscript(); changed(); saveNow(); busSend({t:'reload'}); setTab('text');
+    renderTranscript(); changed(); saveNow(); busSend({t:'reload'}); setTab(subsOnly ? 'subs' : 'text');
+    if (subsOnly){ toast(`${computedCues().length} Untertitel aus dem Schnitt erzeugt – Text, Zeiten und Position lassen sich jetzt anpassen`); return; }
     const unk = tokens.filter(t => t.i >= startTok && t.type === 'unk' && !deleted.has(t.i)).length;
     toast(`${words} Wörter erkannt` + (cleaned.length ? ` · entfernt: ${cleaned.join(', ')}` : '') + (unk ? ` · ${unk}× 🗣 nicht erkannte Sprache` : ''));
   };
@@ -970,9 +1005,9 @@ function paint(i){
   const t = tokens[i], sp = spans[i]; if (!sp) return;
   if (t.type === 'word'){ const tx = tokText(t); if (sp.textContent !== tx) sp.textContent = tx; sp.classList.toggle('empty', !tx); sp.classList.toggle('edited', P.edits[t.i] != null); }
   sp.classList.toggle('del', deleted.has(i) || (t.type === 'word' && isSrcDeleted((t.ws + t.we) / 2)));
-  if (t.type === 'unk') sp.textContent = `🗣 ${t.att ? 'Anlauf ' : ''}${(t.we - t.ws).toFixed(1).replace('.', ',')} s`;
+  if (t.type === 'unk') sp.innerHTML = `${icon('🗣')}${t.att ? 'Anlauf ' : ''}${(t.we - t.ws).toFixed(1).replace('.', ',')} s`;
   if (t.type === 'pause'){ const d = (t.e - t.s).toFixed(1).replace('.', ','), tr = P.trims[i];
-    sp.classList.toggle('trim', tr != null && !deleted.has(i)); sp.textContent = tr != null ? `⏸ ${d}→${String(tr).replace('.', ',')}` : `⏸ ${d}`; }
+    sp.classList.toggle('trim', tr != null && !deleted.has(i)); sp.innerHTML = icon('⏸') + (tr != null ? `${d}→${String(tr).replace('.', ',')}` : d); }
 }
 // Antippen/Klicken: erstes Wort, zweites Wort = Bereich; Umschalt+Klick erweitert.
 // Ziehen: Maus mit gedrückter Taste, Finger nach kurzem Gedrückthalten.
@@ -1281,6 +1316,115 @@ $('#transcript').addEventListener('dblclick', e => {
   body.onclick = null;
 });
 
+// ───────── Schriften ─────────
+// Mitgelieferte Untertitel-Schriften (feste fette Schnitte, core/web/fonts) und eigene, importierte Schriften
+const FONTS = [
+  {key:'', label:'Standard (Systemschrift)'},
+  {key:'inter', label:'Inter', file:'Inter-Bold.ttf', family:'TS Inter'},
+  {key:'montserrat', label:'Montserrat', file:'Montserrat-ExtraBold.ttf', family:'TS Montserrat'},
+  {key:'poppins', label:'Poppins', file:'Poppins-Bold.ttf', family:'TS Poppins'},
+  {key:'robotocondensed', label:'Roboto Condensed', file:'RobotoCondensed-Bold.ttf', family:'TS Roboto Condensed'},
+  {key:'oswald', label:'Oswald', file:'Oswald-SemiBold.ttf', family:'TS Oswald'},
+  {key:'bebas', label:'Bebas Neue', file:'BebasNeue-Regular.ttf', family:'TS Bebas Neue'},
+  {key:'anton', label:'Anton', file:'Anton-Regular.ttf', family:'TS Anton'},
+  {key:'archivo', label:'Archivo Black', file:'ArchivoBlack-Regular.ttf', family:'TS Archivo Black'},
+  {key:'lora', label:'Lora (Serifen)', file:'Lora-Bold.ttf', family:'TS Lora'},
+  {key:'playfair', label:'Playfair Display (Serifen)', file:'PlayfairDisplay-ExtraBold.ttf', family:'TS Playfair'},
+];
+let userFonts = [];   // {key, label, family, uri, user:true}
+const fontOf = key => (key && (FONTS.find(f => f.key === key) || userFonts.find(f => f.key === key))) || FONTS[0];
+const fontCss = key => fontOf(key).key ? `"TSF-${fontOf(key).key}", var(--ui)` : 'var(--ui)';
+const fontWeight = (key, def = 700) => fontOf(key).key ? 400 : def;
+const fontUrl = uri => TS.mediaUrl ? MEDIA(uri) : 'media?f=' + encodeURIComponent(uri);
+const hashStr = s => { let h = 2166136261; for (let i = 0; i < s.length; i++){ h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return (h >>> 0).toString(36); };
+// Familienname (name-Tabelle) und Strichstärke (OS/2) einer TTF/OTF-Datei
+function ttfTable(v, tag){ const n = v.getUint16(4);
+  for (let i = 0; i < n; i++){ const r = 12 + i * 16; if (String.fromCharCode(v.getUint8(r), v.getUint8(r+1), v.getUint8(r+2), v.getUint8(r+3)) === tag) return v.getUint32(r + 8); }
+  return -1; }
+function ttfWeight(buf){ try { const v = new DataView(buf), o = ttfTable(v, 'OS/2'); return o < 0 ? 400 : v.getUint16(o + 4); } catch(_){ return 400; } }
+function ttfFamily(buf){
+  try {
+    const v = new DataView(buf), off = ttfTable(v, 'name');
+    if (off < 0) return '';
+    const cnt = v.getUint16(off + 2), str = off + v.getUint16(off + 4); const found = {};
+    for (let i = 0; i < cnt; i++){
+      const r = off + 6 + i * 12, pid = v.getUint16(r), id = v.getUint16(r + 6), len = v.getUint16(r + 8), o = str + v.getUint16(r + 10);
+      if (id !== 1 && id !== 16) continue;
+      let t = '';
+      if (pid === 3 || pid === 0){ for (let k = 0; k < len; k += 2) t += String.fromCharCode(v.getUint16(o + k)); }
+      else if (pid === 1){ for (let k = 0; k < len; k++) t += String.fromCharCode(v.getUint8(o + k)); }
+      if (t && (!found[id] || pid === 3)) found[id] = t;
+    }
+    return found[1] || found[16] || '';
+  } catch(_){ return ''; }
+}
+let fontsLoading = null;
+function loadUserFonts(){
+  if (!TS.fonts) return Promise.resolve();
+  return fontsLoading = (async () => {
+    const list = J(TS.fonts()) || [];
+    userFonts = userFonts.filter(f => list.some(x => x.uri === f.uri));
+    for (const f of list){
+      const key = 'u' + hashStr(f.uri); if (userFonts.some(x => x.key === key)) continue;
+      try {
+        const buf = await (await fetch(fontUrl(f.uri))).arrayBuffer();
+        const family = ttfFamily(buf) || f.name.replace(/\.[^.]+$/, '');
+        const ff = new FontFace('TSF-' + key, buf); await ff.load(); document.fonts.add(ff);
+        userFonts.push({key, label: family, family, uri: f.uri, user: true, bold: ttfWeight(buf) >= 600});
+      } catch(e){ console.warn('Schrift nicht lesbar', f.name, e); }
+    }
+    fillFontSelects(); if (P) styleOverlay();
+  })();
+}
+function fillFontSelects(){
+  for (const sel of $$('select.font-sel, #stFont')){
+    const keep = sel.value; sel.innerHTML = '';
+    for (const f of FONTS.concat(userFonts)){ const o = document.createElement('option'); o.value = f.key; o.textContent = f.label + (f.user ? ' (eigene)' : ''); sel.append(o); }
+    const o = document.createElement('option'); o.value = '__import'; o.textContent = '＋ Eigene Schrift importieren …'; sel.append(o);
+    sel.value = keep && [...sel.options].some(x => x.value === keep) ? keep : '';
+  }
+  if (P) $('#stFont').value = S().font && fontOf(S().font).key ? S().font : '';
+}
+async function importFont(){
+  if (!TS.fonts) return toast('Eigene Schriften gibt es in dieser Version noch nicht'), null;
+  const r = await pickMedia('font'); if (!r) return null;
+  await loadUserFonts();
+  const f = userFonts.find(x => x.uri === r.uri);
+  if (!f){ toast('Diese Datei konnte nicht als Schrift gelesen werden'); return null; }
+  toast(`Schrift „${f.label}“ importiert`); return f;
+}
+function setSubFont(key){ commit(() => { S().font = key; }, false); styleOverlay(); fillFontSelects(); }
+$('#stFont').addEventListener('change', async e => {
+  if (e.target.value === '__import'){ const f = await importFont(); if (f) setSubFont(f.key); else fillFontSelects(); return; }
+  setSubFont(e.target.value);
+});
+// Übersicht mit Vorschau: antippen wählt die Schrift für die Untertitel
+function openFontSheet(){
+  const body = $('#sheetBody'); body.innerHTML = '<h3>Schrift der Untertitel</h3><div class="font-list"></div><div class="row" style="margin-top:12px"><button class="btn" id="fontImp">＋ Eigene Schrift importieren …</button><span class="muted small">TTF oder OTF, bleibt für alle Projekte verfügbar</span></div>';
+  const list = body.querySelector('.font-list'), cur = S().font || '';
+  for (const f of FONTS.concat(userFonts)){
+    const row = document.createElement('div'); row.className = 'font-row' + (f.key === cur ? ' on' : '');
+    row.innerHTML = `<span class="fprev"></span><span class="fname"></span>${f.user ? '<button class="mini fdel" title="Schrift entfernen">✕</button>' : ''}`;
+    row.querySelector('.fprev').textContent = 'Untertitel 123 – Äöü'; row.querySelector('.fprev').style.fontFamily = fontCss(f.key); row.querySelector('.fprev').style.fontWeight = fontWeight(f.key);
+    row.querySelector('.fname').textContent = f.label;
+    row.onclick = e => {
+      if (e.target.closest('.fdel')){ if (!confirm(`Schrift „${f.label}“ entfernen?`)) return; TS.deleteFont && TS.deleteFont(f.uri); userFonts = userFonts.filter(x => x !== f); if (S().font === f.key) setSubFont(''); fillFontSelects(); openFontSheet(); return; }
+      setSubFont(f.key); openFontSheet();
+    };
+    list.append(row);
+  }
+  $('#fontImp').onclick = async () => { const f = await importFont(); if (f){ setSubFont(f.key); openFontSheet(); } };
+  sheetItem = null; openSheet();
+}
+$('#fontBtn').onclick = () => openFontSheet();
+// Für den Export: welche Schriften gebraucht werden und wo die Dateien liegen
+function planFonts(keys){
+  const out = {};
+  for (const k of new Set(keys.filter(Boolean))){ const f = fontOf(k); if (!f.key) continue;
+    out[k] = f.user ? {family: f.family, uri: f.uri, bold: !!f.bold} : {family: f.family, file: f.file}; }
+  return out;
+}
+
 // ───────── Untertitel ─────────
 const S = () => P.sub_style;
 const isWord = i => tokens[i] && tokens[i].type === 'word';
@@ -1329,13 +1473,26 @@ function wrapText(text){
   for (let i = 0; i < text.length; i++) if (text[i] === ' ' && (best < 0 || Math.abs(i - mid) < Math.abs(best - mid))) best = i;
   return best < 0 ? text : text.slice(0, best) + '\n' + text.slice(best + 1);
 }
+// Frei gesetzte Zeit (fa = Anker in der Quelle, fd = Dauer im Ergebnis): unabhängig von den Wortzeiten, ändert nichts am Schnitt
+const isFree = c => c && c.fa != null;
 function cueTimes(c){
   const ids = cueWords(c); if (!ids.length) return null;
+  if (isFree(c)){ const s = srcToOut(snapSrc(c.fa)); return {s, e: Math.min(total, s + Math.max(0.2, c.fd || 1)), src: c.fa, free:true}; }
   const w0 = tokens[ids[0]], w1 = tokens[ids[ids.length-1]];
   let s = srcToOut(w0.ws) + (c.ds || 0), e = srcToOut(w1.we) + (c.de || 0);
   if (e < s || e - s > (w1.we - w0.ws) + 0.5){ const g = timeline[segAtOut(s - (c.ds || 0))]; e = (g ? g.o + segDur(g) : s + 1) + (c.de || 0); }
   for (const g of timeline) if (g.kind === 'insert' && s < g.o && e > g.o) e = g.o;   // nicht in einen Einschub hineinlaufen
   return {s: Math.max(0, s), e: Math.max(s + 0.2, e), src: tokens[ids[0]].ws};
+}
+// Untertitel auf feste Zeiten stellen (Ausgabezeit s … e)
+function setCueFree(c, s, e){
+  s = clamp(s, 0, Math.max(0, total - 0.2)); e = clamp(e, s + 0.2, total);
+  c.fa = r3(outToSrcT(s)); c.fd = +(e - s).toFixed(2); c.ds = 0; c.de = 0;
+}
+function outToSrcT(o){
+  const g = timeline[segAtOut(o)];
+  if (!g || g.kind !== 'main'){ for (let k = segAtOut(o); k < timeline.length; k++) if (timeline[k].kind === 'main') return timeline[k].in; return srcTotal; }
+  return g.in + clamp(o - g.o, 0, segDur(g)) * (g.speed || 1);
 }
 const cueXY = c => c && c.x != null ? [c.x, c.y] : [S().x ?? 0.5, S().y ?? 0.88];
 function computedCues(){
@@ -1343,7 +1500,7 @@ function computedCues(){
   for (const c of P.cues){
     if (c.off) continue;
     // Automatischer Text: an Stellen teilen, an denen die Wörter im Ergebnis nicht mehr aufeinanderfolgen (verschobene Abschnitte)
-    if (c.text == null && P.moves.length){
+    if (c.text == null && P.moves.length && !isFree(c)){
       const ids = cueWords(c); let run = [];
       const flush = () => { if (!run.length) return; const w0 = tokens[run[0]], w1 = tokens[run[run.length-1]];
         const s = srcToOut(w0.ws) + (c.ds || 0), e = Math.max(s + 0.2, srcToOut(w1.we) + (c.de || 0));
@@ -1354,10 +1511,19 @@ function computedCues(){
     }
     const t = cueTimes(c), text = cueText(c).trim(); if (!t || !text) continue; list.push({c, s:t.s, e:t.e, text}); }
   list.sort((x, y) => x.s - y.s);
+  // Frei gesetzte Untertitel behalten ihre Zeit; ein folgender automatischer beginnt erst danach
+  for (let k = 0; k < list.length - 1; k++){ const x = list[k];
+    if (!isFree(x.c)) continue;
+    for (let j = k + 1; j < list.length && list[j].s < x.e + 0.02; j++){ const n = list[j]; if (isFree(n.c)) continue;
+      n.s = x.e + 0.02; if (n.e - n.s < 0.2) n.drop = true; }
+  }
+  for (let k = list.length - 1; k >= 0; k--) if (list[k].drop) list.splice(k, 1);
+  list.sort((x, y) => x.s - y.s);
   for (let k = 0; k < list.length; k++){ const n = list[k+1];
+    if (n && isFree(list[k].c) && !isFree(n.c)){ list[k].e = Math.min(list[k].e, total); continue; }
     if (n){ if (list[k].e > n.s - 0.02) list[k].e = Math.max(list[k].s + 0.2, n.s - 0.02); else if (n.s - list[k].e < 0.3) list[k].e = n.s - 0.02; }
     list[k].e = Math.min(list[k].e, total); }
-  return list;
+  return list.filter(x => x.e - x.s > 0.05);
 }
 let cueCache = {at:-1, list:[]}, cueEls = new Map(), lastCue = null, shownCue = null;
 function updateSubs(o){
@@ -1380,7 +1546,7 @@ function styleOverlay(){
   if (!P) return;
   const ov = $('#subOv'), st = S(), stage = $('#stage');
   const px = subPx(stage.clientWidth || 1, stage.clientHeight || 1), o = Math.max(1, px / 14);
-  ov.style.color = st.color; ov.style.fontSize = px.toFixed(1) + 'px';
+  ov.style.color = st.color; ov.style.fontSize = px.toFixed(1) + 'px'; ov.style.fontFamily = fontCss(st.font); ov.style.fontWeight = fontWeight(st.font);
   ov.style.textShadow = st.outline ? [[-1,-1],[1,-1],[-1,1],[1,1],[0,-1.4],[0,1.4],[-1.4,0],[1.4,0]].map(([x, y]) => `${(x*o).toFixed(1)}px ${(y*o).toFixed(1)}px 0 #000`).join(',') : `0 ${(px/20).toFixed(1)}px ${(px/10).toFixed(1)}px rgba(0,0,0,.8)`;
   placeOverlay();
 }
@@ -1427,6 +1593,7 @@ function syncStyleInputs(){
   const st = S(); $('#stChars').value = st.chars; $('#stLines').value = String(st.lines); $('#stDur').value = st.dur; $('#stSize').value = st.size;
   $('#stPos').value = POS_Y[st.pos] != null && st.x === 0.5 && st.y === POS_Y[st.pos] ? st.pos : 'frei';
   $('#stColor').value = st.color.toLowerCase(); $('#stOutline').checked = !!st.outline; $('#stMode').value = st.mode;
+  $('#sideSubs').classList.toggle('on', st.enabled !== false); fillFontSelects();
   $('#subsMaster').checked = st.enabled !== false; $('#subsMasterLbl').textContent = st.enabled !== false ? 'Untertitel an' : 'Untertitel aus';
   $('#paneSubs').classList.toggle('subs-off', st.enabled === false); $('#paneSubs').classList.toggle('word-mode', st.mode === 'word');
   styleOverlay();
@@ -1438,7 +1605,7 @@ $('#stPos').addEventListener('change', e => { const v = e.target.value; if (POS_
   commit(() => { S().pos = v; S().x = 0.5; S().y = POS_Y[v]; if (n && confirm(`${n} Untertitel haben eine eigene Position. Auch diese zurücksetzen?`)) P.cues.forEach(c => { delete c.x; delete c.y; }); }, false); styleOverlay(); });
 $('#stOutline').onchange = e => { S().outline = e.target.checked; styleOverlay(); changed(false); };
 $('#subsMaster').onchange = e => { S().enabled = e.target.checked; syncStyleInputs(); changed(false); toast(e.target.checked ? 'Untertitel an' : 'Untertitel aus'); };
-function manualCount(){ return P.cues.filter(c => c.text != null || c.ds || c.de || c.off || c.x != null).length; }
+function manualCount(){ return P.cues.filter(c => c.text != null || c.ds || c.de || c.off || c.x != null || isFree(c)).length; }
 $('#stMode').onchange = e => {
   const n = manualCount(); if (n && !confirm(`${n} Untertitel wurden von Hand bearbeitet. Beim Umstellen gehen diese Änderungen verloren. Fortfahren?`)){ e.target.value = S().mode; return; }
   S().mode = e.target.value; syncStyleInputs(); commit(() => genCues()); toast(P.cues.length + ' Untertitel');
@@ -1451,7 +1618,7 @@ function renderSubs(){
     const el = document.createElement('div'); el.className = 'cue'; el.dataset.id = c.id;
     el.innerHTML = `<div class="tm"><span class="t"></span><span class="w"></span></div><textarea rows="2"></textarea>
       <div class="acts"><button data-a="split">✂ teilen</button><button data-a="merge">⤓ zusammen</button><button data-a="off"></button>
-      <button data-a="auto" class="hidden">↺ auto</button><button data-a="pos" class="hidden">↺ Position</button><button data-a="s-">Start −</button><button data-a="s+">Start +</button><button data-a="e-">Ende −</button><button data-a="e+">Ende +</button></div>`;
+      <button data-a="auto" class="hidden">↺ auto</button><button data-a="pos" class="hidden">↺ Position</button><button data-a="time" class="hidden">↺ Zeit</button><button data-a="s-">Start −</button><button data-a="s+">Start +</button><button data-a="e-">Ende −</button><button data-a="e+">Ende +</button></div>`;
     if (idx === P.cues.length - 1) el.querySelector('[data-a=merge]').disabled = true;
     const ta = el.querySelector('textarea'); ta.value = cueText(c);
     ta.addEventListener('focus', () => ta._b = snapshot());
@@ -1466,10 +1633,11 @@ function paintCue(c, keepText){
   if (!keepText && document.activeElement !== ta) ta.value = cueText(c);
   el.classList.toggle('manual', c.text != null); el.classList.toggle('off', !!c.off); el.classList.toggle('empty', !t);
   el.querySelector('.t').textContent = t ? `${fmtS(t.s)} – ${fmtS(t.e)}` : 'Wörter gelöscht';
-  el.querySelector('.w').textContent = [(c.ds || c.de) ? `Start ${c.ds >= 0 ? '+' : ''}${(c.ds||0).toFixed(1)} · Ende ${c.de >= 0 ? '+' : ''}${(c.de||0).toFixed(1)}` : '', c.x != null ? 'eigene Position' : ''].filter(Boolean).join(' · ');
+  el.querySelector('.w').textContent = [isFree(c) ? 'Zeit frei gesetzt' : '', (c.ds || c.de) ? `Start ${c.ds >= 0 ? '+' : ''}${(c.ds||0).toFixed(1)} · Ende ${c.de >= 0 ? '+' : ''}${(c.de||0).toFixed(1)}` : '', c.x != null ? 'eigene Position' : ''].filter(Boolean).join(' · ');
   el.querySelector('[data-a=off]').textContent = c.off ? 'einblenden' : 'ausblenden';
   el.querySelector('[data-a=auto]').classList.toggle('hidden', c.text == null);
   el.querySelector('[data-a=pos]').classList.toggle('hidden', c.x == null);
+  el.querySelector('[data-a=time]').classList.toggle('hidden', !isFree(c) && !c.ds && !c.de);
 }
 function updateSubs2(){ P.cues.forEach(c => paintCue(c)); updateCount(); }
 function updateCount(){ $('#subCount').textContent = computedCues().length + ' Untertitel'; }
@@ -1485,15 +1653,17 @@ $('#cueList').addEventListener('click', e => {
     const text = ta.value, pos = ta.selectionStart ?? 0, left = text.slice(0, pos).trim(), right = text.slice(pos).trim();
     if (!left || !right) return toast('Erst den Cursor an die Teilungsstelle setzen');
     const k = Math.min(ids.length - 1, Math.max(1, left.split(/\s+/).length)), manual = c.text != null;
-    commit(() => { const c2 = {id:newId(), a:ids[k-1] + 1, b:c.b, text: manual ? right : null, ds:0, de:c.de || 0, off:c.off, ...(c.x != null ? {x:c.x, y:c.y} : {})};
-      c.b = ids[k-1]; c.text = manual ? left : null; c.de = 0; P.cues.splice(idx + 1, 0, c2); });
+    commit(() => { const c2 = {id:newId(), a:ids[k-1] + 1, b:c.b, text: manual ? right : null, ds:0, de:isFree(c) ? 0 : c.de || 0, off:c.off, ...(c.x != null ? {x:c.x, y:c.y} : {})};
+      c.b = ids[k-1]; c.text = manual ? left : null; c.de = 0; delete c.fa; delete c.fd; P.cues.splice(idx + 1, 0, c2); });
   } else if (a === 'merge'){
     const n = P.cues[idx+1]; if (!n) return;
-    commit(() => { const manual = c.text != null || n.text != null; c.text = manual ? (cueText(c) + ' ' + cueText(n)).trim() : null; c.b = n.b; c.de = n.de || 0; c.off = c.off && n.off; P.cues.splice(idx + 1, 1); });
+    commit(() => { const manual = c.text != null || n.text != null; c.text = manual ? (cueText(c) + ' ' + cueText(n)).trim() : null; c.b = n.b; c.de = n.de || 0; c.off = c.off && n.off; delete c.fa; delete c.fd; P.cues.splice(idx + 1, 1); });
   } else if (a === 'off'){ commit(() => c.off = !c.off, false); paintCue(c); }
   else if (a === 'auto'){ commit(() => c.text = null, false); paintCue(c); }
   else if (a === 'pos'){ commit(() => { delete c.x; delete c.y; }, false); paintCue(c); placeOverlay(); }
-  else { const key = a[0] === 's' ? 'ds' : 'de', d = a[1] === '+' ? 0.1 : -0.1; commit(() => c[key] = Math.round(((c[key] || 0) + d) * 10) / 10, false); paintCue(c); }
+  else if (a === 'time'){ commit(() => { delete c.fa; delete c.fd; c.ds = 0; c.de = 0; }, false); cueCache.at = -1; updateSubs2(); }
+  else { const t = cueTimes(c); if (!t) return; const d = a[1] === '+' ? 0.1 : -0.1;
+    commit(() => a[0] === 's' ? setCueFree(c, t.s + d, t.e) : setCueFree(c, t.s, t.e + d), false); cueCache.at = -1; updateSubs2(); }
   cueCache.at = -1;
 });
 
@@ -1619,8 +1789,8 @@ function buildPlan(){
     width:o.x.clip.width, height:o.x.clip.height, rotation:o.x.clip.rotation || 0}));
   const cues = S().enabled !== false && tokens.length ? computedCues().map(x => { const [cx, cy] = cueXY(x.c); return {start:r3(x.s), end:r3(x.e), text:wrapText(x.text), x:cx, y:cy}; }) : [];
   for (const t of P.items.filter(x => x.type === 'title' && (x.text || '').trim())){ const a = srcToOut(snapSrc(t.at)); if (a >= total) continue;
-    cues.push({start:r3(a), end:r3(Math.min(total, a + t.dur)), text:t.text.trim(), x:t.x, y:t.y, size:+((SIZE_F[t.size] || 0.058) * (t.scale || 1)).toFixed(4), color:t.color || '#FFFFFF', outline:t.outline !== false, bg:!!t.bg, title:true}); }
-  const subs = cues.length ? {cues, style:S()} : null;
+    cues.push({start:r3(a), end:r3(Math.min(total, a + t.dur)), text:t.text.trim(), x:t.x, y:t.y, size:+((SIZE_F[t.size] || 0.058) * (t.scale || 1)).toFixed(4), color:t.color || '#FFFFFF', outline:t.outline !== false, bg:!!t.bg, title:true, font:t.font || ''}); }
+  const subs = cues.length ? {cues, style:S(), fonts: planFonts([S().font, ...cues.map(c => c.font)])} : null;
   const media = P.sources.map(s => ({uri:s.uri, name:s.name, duration:s.duration, width:s.width, height:s.height, fps:s.fps, hasAudio:s.hasAudio !== false, hasVideo:hasVid(s), kind:s.kind || 'video'}));
   return {format:exFmt, name: ($('#exName').value || P.name).replace(/[\\/:*?"<>|]/g, '_'), width:W, height:H, fps:primary().fps || 30, total:r3(total),
     segments:segs, overlays:ovs, subs, burn: P.settings.burn !== false, quality: $('#exQuality').value, audioFormat: $('#exAudioFmt').value,
@@ -1673,7 +1843,12 @@ $('#detachBtn').onclick = () => {
   setTab(view === 'studio' ? 'text' : 'studio'); toast(`${TAB_LBL[view]} läuft jetzt in einem eigenen Fenster`);
 };
 $('#tabs').addEventListener('click', e => { const b = e.target.closest('button'); if (!b || !P) return;
-  const t = b.dataset.tab; if (!tokens.length && t !== 'studio' && t !== 'export') return setTab('trans'); setTab(t); });
+  const t = b.dataset.tab;
+  if (!tokens.length && t !== 'studio' && t !== 'export'){
+    setTab('trans');
+    if (t === 'subs'){ if (studioCut()){ $('#subsOnly').checked = true; renderSources(); toast('Untertitel brauchen ein Transkript – „Nur für Untertitel“ lässt deinen Schnitt unverändert'); } else toast('Für Untertitel zuerst transkribieren'); }
+    return; }
+  setTab(t); });
 matchMedia('(min-width: 1000px) and (min-height: 600px)').addEventListener('change', () => { fitStage(); });
 
 // ───────── Modelle ─────────
@@ -1694,6 +1869,7 @@ function renderModels(){
   }
 }
 
+fillFontSelects(); loadUserFonts();
 showHome();
 (() => { const h = new URLSearchParams(location.hash.slice(1)); const p = h.get('p');
   if (p){ document.body.classList.add('solo'); Promise.resolve(openProject(p)).then(() => { if (P && h.get('view')) setTab(h.get('view')); }); } })();

@@ -37,7 +37,7 @@ os.environ.setdefault("HF_HUB_DISABLE_IMPLICIT_TOKEN", "1")
 import warnings  # noqa: E402
 warnings.filterwarnings("ignore", module="huggingface_hub")
 
-VERSION = "2.3.1"
+VERSION = "2.4.0"
 APP_DIR = Path(__file__).resolve().parent
 FROZEN = bool(getattr(sys, "frozen", False))          # als installierte .exe gebaut
 RES_DIR = Path(getattr(sys, "_MEIPASS", APP_DIR))      # mitgelieferte Dateien (Oberfläche, ffmpeg, Modelle)
@@ -47,6 +47,8 @@ if FROZEN or os.environ.get("TEXTSCHNITT_DATA"):
 else:
     DATA_DIR = APP_DIR / "daten"
 PROJ_DIR = DATA_DIR / "projects"
+FONT_DIR = DATA_DIR / "fonts"          # importierte Untertitel-Schriften
+FONT_EXT = (".ttf", ".otf")
 CACHE_DIR = DATA_DIR / "cache"
 for _d in (PROJ_DIR, CACHE_DIR / "thumbs", CACHE_DIR / "proxies"):
     _d.mkdir(parents=True, exist_ok=True)
@@ -578,7 +580,8 @@ def clean_cues(raw) -> list[dict]:
                          "x": float(c.get("x", 0.5) if c.get("x") is not None else 0.5),
                          "y": float(c.get("y", 0.88) if c.get("y") is not None else 0.88),
                          "size": float(c["size"]) if c.get("size") else None, "color": c.get("color"),
-                         "outline": c.get("outline"), "bg": bool(c.get("bg")), "title": bool(c.get("title"))})
+                         "outline": c.get("outline"), "bg": bool(c.get("bg")), "title": bool(c.get("title")),
+                         "font": str(c.get("font") or "")})
     cues.sort(key=lambda c: c["start"])
     return cues
 
@@ -594,9 +597,28 @@ def sub_px(style: dict, w: int, h: int) -> float:
     return SUB_SIZES.get(style.get("size", "mittel"), 0.058) * min(w, h) * (1.25 if h > w else 1.0)
 
 
-def write_ass(cues: list[dict], style: dict, out: Path, w: int, h: int):
+def collect_fonts(fonts: dict, dest: Path) -> dict:
+    """Benötigte Schriftdateien in den Export-Ordner kopieren; liefert {Schlüssel: Familienname}."""
+    names = {}
+    dest.mkdir(parents=True, exist_ok=True)
+    for key, f in (fonts or {}).items():
+        try:
+            src = WEB_DIR / "fonts" / Path(f["file"]).name if f.get("file") else Path(norm_path(f.get("uri", "")))
+            if not src.is_file():
+                continue
+            dest.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(src, dest / f"{key}{src.suffix.lower()}")
+            names[key] = (str(f.get("family") or "").replace(",", " "), bool(f.get("bold")))
+        except Exception as e:  # noqa: BLE001
+            log(f"Schrift {key}: {e}")
+    return names
+
+
+def write_ass(cues: list[dict], style: dict, out: Path, w: int, h: int, fonts: dict | None = None):
     """ASS-Untertitel mit fester Position je Zeile (\\an5\\pos = Mittelpunkt), wie in der Vorschau."""
+    fonts = fonts or {}
     size = sub_px(style, w, h)
+    fam, fbold = fonts.get(style.get("font") or "") or ("", False)
     r, g, b = hex_rgb(style.get("color", "#FFFFFF"))
     outline = max(1.0, size / 14) if style.get("outline", True) else 0
     shadow = 0 if style.get("outline", True) else max(1.0, size / 20)
@@ -612,8 +634,8 @@ def write_ass(cues: list[dict], style: dict, out: Path, w: int, h: int):
              "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, "
              "Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, "
              "Alignment, MarginL, MarginR, MarginV, Encoding",
-             f"Style: Default,Arial,{size:.0f},&H00{b:02X}{g:02X}{r:02X},&H00FFFFFF,&H00000000,&H96000000,"
-             f"-1,0,0,0,100,100,0,0,1,{outline:.1f},{shadow:.1f},5,0,0,0,1",
+             f"Style: Default,{fam or 'Arial'},{size:.0f},&H00{b:02X}{g:02X}{r:02X},&H00FFFFFF,&H00000000,&H96000000,"
+             f"{-1 if fbold or not fam else 0},0,0,0,100,100,0,0,1,{outline:.1f},{shadow:.1f},5,0,0,0,1",
              "", "[Events]", "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"]
     for c in cues:
         rows = c["text"].split("\n")
@@ -627,6 +649,9 @@ def write_ass(cues: list[dict], style: dict, out: Path, w: int, h: int):
         ov = f"\\an5\\pos({cx:.0f},{cy:.0f})"
         if c.get("size"):
             ov += f"\\fs{csize:.0f}"
+        if c.get("title"):
+            tf, tb = fonts.get(c.get("font") or "") or ("", True)
+            ov += f"\\fn{tf}\\b{1 if tb else 0}" if tf else "\\fnArial\\b1"
         if c.get("color"):
             cr, cg, cb = hex_rgb(c["color"])
             ov += f"\\1c&H{cb:02X}{cg:02X}{cr:02X}&"
@@ -779,7 +804,7 @@ def build_graph(plan: dict, with_video: bool, ass_name: str | None):
             parts.append(f"{cur}[o{k}]overlay=x={x}:y={y}:eof_action=pass:enable='between(t,{at:.4f},{at + d:.4f})'[c{k}]")
             cur = f"[c{k}]"
         if ass_name:
-            parts.append(f"{cur}subtitles=filename={ass_name}[vout]")
+            parts.append(f"{cur}subtitles=filename={ass_name}:fontsdir=fonts[vout]")
         else:
             parts.append(f"{cur}null[vout]")
     flat = [x for a in inputs for x in a]
@@ -797,7 +822,9 @@ def render_plan(job: dict, plan: dict, out: Path, with_video: bool, cues: list[d
         ass = None
         if with_video and cues and plan.get("burn", True):
             ass = "untertitel.ass"
-            write_ass(cues, (plan.get("subs") or {}).get("style") or {}, tmp / ass, int(plan["width"]) // 2 * 2, int(plan["height"]) // 2 * 2)
+            subs = plan.get("subs") or {}
+            fonts = collect_fonts(subs.get("fonts") or {}, tmp / "fonts")
+            write_ass(cues, subs.get("style") or {}, tmp / ass, int(plan["width"]) // 2 * 2, int(plan["height"]) // 2 * 2, fonts)
         inputs, graph = build_graph(plan, with_video, ass)
         script = tmp / "filter.txt"
         script.write_text(graph, encoding="utf-8")
@@ -1303,7 +1330,7 @@ def pick_files(kind: str) -> list[str]:
     multi = kind == "videos"
     if APP_HOOKS.get("pick"):
         return APP_HOOKS["pick"](kind) or []
-    types = (f"Video und Audio|{VIDEO_EXT} {AUDIO_EXT}" if kind != "clip" else f"Videos und Bilder|{VIDEO_EXT} {IMAGE_EXT}")
+    types = ("Schriften|*.ttf *.otf" if kind == "font" else f"Video und Audio|{VIDEO_EXT} {AUDIO_EXT}" if kind != "clip" else f"Videos und Bilder|{VIDEO_EXT} {IMAGE_EXT}")
     label, pattern = types.split("|")
     code = ("import tkinter as tk, json\nfrom tkinter import filedialog\nr=tk.Tk();r.withdraw()\nr.attributes('-topmost',True)\n"
             f"f=filedialog.{'askopenfilenames' if multi else 'askopenfilename'}(title='Datei wählen',filetypes=[({label!r},{pattern!r}),('Alle','*.*')])\n"
@@ -1314,8 +1341,50 @@ def pick_files(kind: str) -> list[str]:
     return json.loads(res.stdout.strip() or "[]")
 
 
+def fonts_list() -> list[dict]:
+    """Importierte Schriften (bleiben für alle Projekte verfügbar)."""
+    out = []
+    if FONT_DIR.is_dir():
+        for f in sorted(FONT_DIR.iterdir()):
+            if f.is_file() and f.suffix.lower() in FONT_EXT:
+                p = norm_path(str(f))
+                ALLOWED.add(p)
+                out.append({"uri": p, "name": f.name})
+    return out
+
+
+def font_import(paths: list[str]):
+    FONT_DIR.mkdir(parents=True, exist_ok=True)
+    res = None
+    for src in paths:
+        sp = Path(src)
+        if sp.suffix.lower() not in FONT_EXT or not sp.is_file():
+            continue
+        dest = FONT_DIR / re.sub(r"[^\w.\- ]", "_", sp.name)
+        if not dest.exists() or dest.read_bytes() != sp.read_bytes():
+            k = 2
+            while dest.exists():
+                dest = FONT_DIR / f"{sp.stem}_{k}{sp.suffix}"
+                k += 1
+            shutil.copyfile(sp, dest)
+        p = norm_path(str(dest))
+        ALLOWED.add(p)
+        res = {"uri": p, "name": dest.name}
+    return res
+
+
+def font_delete(uri: str) -> bool:
+    f = Path(norm_path(uri))
+    if f.parent != Path(norm_path(str(FONT_DIR))) or not f.is_file():
+        return False
+    f.unlink()
+    return True
+
+
 def picked_media(kind: str):
     paths = pick_files(kind)
+    if kind == "font":
+        return font_import(paths)
     out = []
     for p in paths:
         try:
@@ -1486,7 +1555,14 @@ class Handler(BaseHTTPRequestHandler):
                     self.end_headers()
                     return
                 return self._json({"error": "Nicht gefunden"}, 404)
-            if rest in ("", "index.html", "app.js", "studio.js", "app.css", "bridge-http.js"):
+            if rest.startswith("fonts/") and "/" not in rest[6:] and rest.lower().endswith(FONT_EXT + (".txt", ".md")):
+                f = WEB_DIR / "fonts" / rest[6:]
+                if not f.is_file():
+                    return self._json({"error": "Nicht gefunden"}, 404)
+                return self._file(f, "font/ttf" if f.suffix.lower() == ".ttf" else "font/otf" if f.suffix.lower() == ".otf" else "text/plain; charset=utf-8", cache=True)
+            if rest == "api/fonts":
+                return self._json(fonts_list())
+            if rest in ("", "index.html", "app.js", "studio.js", "app.css", "bridge-http.js", "icons.js"):
                 f = WEB_DIR / (rest or "index.html")
                 ctype = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
                          ".css": "text/css; charset=utf-8"}[f.suffix]
@@ -1559,6 +1635,8 @@ class Handler(BaseHTTPRequestHandler):
                 proj_path(q.get("id", "")).unlink(missing_ok=True)
                 return self._json({"ok": True})
             data = json.loads(raw or b"{}")
+            if rest == "api/fonts/delete":
+                return self._json({"ok": font_delete(data.get("uri", ""))})
             if rest == "api/pick":
                 return self._json(picked_media(data.get("kind", "videos")))
             if rest == "api/transcribe":

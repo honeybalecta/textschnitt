@@ -244,6 +244,7 @@ export async function render(plan, fileOf, job){
     job.message = `Exportiere ${fmt(done * total)} von ${fmt(total)}` + (rest > 2 ? ` · noch ca. ${fmt(rest)}` : '');
   };
   const R = video ? new Renderer(ctx, W, H, fps, plan, fileOf) : null;
+  if (R) await R.loadFonts();
   try {
     for (const s of segs){
       if (job.cancel) throw new Error('Abgebrochen');
@@ -404,8 +405,14 @@ class Renderer {
     this.style = style;
     this.cues = (subs.cues || []).filter(c => c.title || plan.burn !== false).map(c => ({...c, start:+c.start, end:+c.end})).filter(c => (c.text || '').trim() && c.end - c.start > 0.05);
     this.font = (getComputedStyle(document.body).getPropertyValue('--ui') || '').trim() || 'system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif';
+    this.fonts = subs.fonts || {};
     this.canFilter = 'filter' in ctx;
   }
+  // Schriften der Untertitel/Titel (im Kern als TSF-<Schlüssel> angemeldet) vor dem ersten Bild laden
+  async loadFonts(){
+    try { await Promise.all(Object.keys(this.fonts).map(k => document.fonts.load(`400 48px "TSF-${k}"`, 'Aä1'))); } catch(_){}
+  }
+  fontOf(key, def){ return key && this.fonts[key] ? `400 %spx "TSF-${key}", ${this.font}` : `${def} %spx ${this.font}`; }
   sink(file, track, w, h, fit){
     const k = w + 'x' + h + fit; let m = this.sinks.get(file); if (!m){ m = new Map(); this.sinks.set(file, m); }
     if (!m.has(k)) m.set(k, new CanvasSink(track, {width:w, height:h, fit, poolSize:3}));
@@ -480,7 +487,7 @@ class Renderer {
     const {ctx, W, H} = this, st = this.style, port = H > W ? 1.25 : 1;
     for (const c of act){
       const size = (c.size ? c.size : (SIZE_F[st.size] || 0.058)) * Math.min(W, H) * port;
-      ctx.font = `${c.title ? 800 : 700} ${size.toFixed(1)}px ${this.font}`;
+      ctx.font = this.fontOf(c.title ? c.font : st.font, c.title ? 800 : 700).replace('%s', size.toFixed(1));
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       const rows = wrapRows(ctx, String(c.text), W * (c.title ? 0.92 : 0.88));
       const lh = size * 1.12, bw = Math.max(...rows.map(r => ctx.measureText(r).width)), bh = rows.length * lh, m = 0.02;

@@ -11,8 +11,8 @@
 <!-- ───────────── Projektliste ───────────── -->
 <section id="home" class="screen">
   <header class="bar">
-    <div class="brand"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 2 28 9v14l-12 7L4 23V9z" fill="#E89B0C"/><path d="M10 12h12M10 16h6M18.5 15.2l4 1.6M10 20h12" stroke="#1C1A22" stroke-width="2.2" stroke-linecap="round"/></svg>Textschnitt</div>
-    <button class="icon-btn" id="modelsBtn" title="Whisper-Modelle">⚙</button>
+    <div class="brand"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 2 28 9v14l-12 7L4 23V9z" fill="#E5402A"/><path d="M10 12h12M10 16h6M18.5 15.2l4 1.6M10 20h12" stroke="#131312" stroke-width="2.2" stroke-linecap="round"/></svg>Textschnitt</div>
+    <button class="icon-btn" id="modelsBtn" title="Einstellungen: Whisper-Modelle und Schriften" data-ico="gear"></button>
   </header>
   <div class="home-body">
     <div id="projList"></div>
@@ -36,6 +36,12 @@
   </header>
 
   <div class="stage-wrap">
+    <div class="side l hidden" id="sideL">
+      <button class="sbtn big" id="sidePlay" title="Abspielen / Pause (Leertaste)" data-ico="▶"></button>
+      <div class="stime"><b id="sideNow">0:00,0</b><br><span id="sideTot">0:00</span></div>
+      <div class="srow"><button class="sbtn" id="sideBack" data-tip="1 Bild zurück (←)" data-ico="step-"></button><button class="sbtn" id="sideFwd" data-tip="1 Bild vor (→)" data-ico="step+"></button></div>
+      <div class="srow"><button class="sbtn" id="sidePrevCut" data-tip="Zum vorigen Schnitt" data-ico="cutprev"></button><button class="sbtn" id="sideNextCut" data-tip="Zum nächsten Schnitt" data-ico="cutnext"></button></div>
+    </div>
     <div class="stage" id="stage">
       <video id="v" playsinline preload="auto"></video>
       <video id="ov" playsinline muted preload="auto" class="hidden"></video>
@@ -50,6 +56,11 @@
       <div class="proxy-bar hidden" id="proxyBar"><span id="proxyMsg"></span>
         <button class="btn primary" id="proxyBtn">Vorschau-Datei erstellen</button><div class="progress hidden" id="proxyProg"><i></i></div></div>
       <div class="stage-hint hidden" id="stageHint">Ins Bild tippen oder klicken, um den Zoom-Mittelpunkt zu setzen</div>
+    </div>
+    <div class="side r hidden" id="sideR">
+      <div class="srow"><button class="sbtn" id="sideUndo" data-tip="Rückgängig (Strg+Z)" data-ico="↶"></button><button class="sbtn" id="sideRedo" data-tip="Wiederholen" data-ico="↷"></button></div>
+      <div class="srow"><button class="sbtn" id="sideSplit" data-tip="Hier teilen (Strg+B)" data-ico="✂"></button><button class="sbtn" id="sideCutPlay" data-tip="Letzten Schnitt anhören" data-ico="▶"></button></div>
+      <div class="srow"><button class="sbtn" id="sideSubs" data-tip="Untertitel an/aus" data-ico="cc"></button><button class="sbtn" id="sideFont" data-tip="Schrift der Untertitel" data-ico="Aa"></button></div>
     </div>
   </div>
   <div class="transport">
@@ -81,6 +92,10 @@
         <label class="row">Modell <select id="model"></select></label>
         <label class="row">Sprache <select id="lang"><option value="de" selected>Deutsch</option><option value="en">Englisch</option><option value="">automatisch</option></select></label>
         <label class="row"><input type="checkbox" id="fillers" checked> Füllwörter (äh, ähm) mit erkennen</label>
+        <div class="subs-only hidden" id="subsOnlyBox">
+          <label class="row"><input type="checkbox" id="subsOnly"> <b>Nur für Untertitel</b> – den Schnitt aus dem Studio unverändert lassen</label>
+          <span class="muted small">Es wird nichts automatisch entfernt; danach geht es direkt zu den Untertiteln.</span>
+        </div>
         <div class="auto-opts">
           <span class="muted small">Direkt danach automatisch:</span>
           <label class="row"><input type="checkbox" id="autoFillers"> Füllwörter entfernen</label>
@@ -121,11 +136,12 @@
           <label class="lineopt">max. Dauer (s) <input type="number" id="stDur" min="1" max="10" step="0.5" value="4"></label>
           <label>Größe <select id="stSize"><option>klein</option><option selected>mittel</option><option>groß</option></select></label>
           <label>Position <select id="stPos"><option>unten</option><option>mitte</option><option>oben</option><option value="frei" disabled>frei (im Bild gezogen)</option></select></label>
+          <label>Schrift <select id="stFont"></select></label>
           <label>Farbe <input type="color" id="stColor" value="#ffffff"></label>
           <label class="row"><input type="checkbox" id="stOutline" checked> Umrandung</label>
         </div>
         <p class="muted small">Tipp: Untertitel lassen sich direkt im Bild an jede Stelle ziehen. Ein einzelner Untertitel bekommt eine eigene Position, wenn er im Studio ausgewählt ist.</p>
-        <div class="row"><button class="btn" id="regenBtn">Neu aufteilen</button><span class="muted small" id="subCount"></span></div>
+        <div class="row"><button class="btn" id="fontBtn">Aa Schriften …</button><button class="btn" id="regenBtn">Neu aufteilen</button><span class="muted small" id="subCount"></span></div>
       </div>
       <div id="cueList"></div>
     </div>
@@ -241,6 +257,7 @@
 </div>
 
 <div class="toast" id="toast"></div>
+<script src="icons.js"></script>
 <script src="bridge-http.js"></script>
 <script src="app.js"></script>
 <script src="studio.js"></script>

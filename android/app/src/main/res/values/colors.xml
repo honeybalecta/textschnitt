@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="papier">#FAF6EE</color>
-    <color name="honig">#E89B0C</color>
-    <color name="tinte">#1C1A22</color>
+    <color name="papier">#131312</color>
+    <color name="honig">#E5402A</color>
+    <color name="tinte">#131312</color>
 </resources>

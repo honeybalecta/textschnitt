@@ -131,7 +131,8 @@ class LocalServer(private val ctx: Context) {
         if (path.contains("..")) { send(out, 404, "Not Found", "text/plain", ByteArray(0)); return }
         val type = when (path.substringAfterLast('.')) {
             "html" -> "text/html; charset=utf-8"; "js" -> "application/javascript; charset=utf-8"; "css" -> "text/css; charset=utf-8"
-            "svg" -> "image/svg+xml"; "png" -> "image/png"; else -> "application/octet-stream"
+            "svg" -> "image/svg+xml"; "png" -> "image/png"; "ttf" -> "font/ttf"; "otf" -> "font/otf"
+            "txt", "md" -> "text/plain; charset=utf-8"; else -> "application/octet-stream"
         }
         val bytes = try { ctx.assets.open("web/$path").use { it.readBytes() } } catch (e: Exception) { send(out, 404, "Not Found", "text/plain", ByteArray(0)); return }
         send(out, 200, "OK", type, bytes)
@@ -139,10 +140,11 @@ class LocalServer(private val ctx: Context) {
 
     // ───────── Video mit Byte-Bereichen ─────────
     private fun media(out: OutputStream, r: Req) {
-        val file = r.query["f"]?.let { File(it) }?.takeIf { it.exists() && it.canonicalPath.startsWith(ctx.cacheDir.canonicalPath) }
+        val fontDir = File(ctx.filesDir, "fonts").canonicalPath + File.separator
+        val file = r.query["f"]?.let { File(it) }?.takeIf { it.exists() && (it.canonicalPath.startsWith(ctx.cacheDir.canonicalPath) || it.canonicalPath.startsWith(fontDir)) }
         val uri = r.query["u"]?.let { Uri.parse(it) }
         val (size, type, open) = when {
-            file != null -> Triple(file.length(), "video/mp4") { FileInputStream(file) as InputStream }
+            file != null -> Triple(file.length(), when (file.extension.lowercase()) { "ttf" -> "font/ttf"; "otf" -> "font/otf"; else -> "video/mp4" }) { FileInputStream(file) as InputStream }
             uri != null -> {
                 val afd = ctx.contentResolver.openAssetFileDescriptor(uri, "r") ?: run { send(out, 404, "Not Found", "text/plain", ByteArray(0)); return }
                 var len = afd.length

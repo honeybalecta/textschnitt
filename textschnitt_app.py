@@ -31,6 +31,7 @@ FIRST_PORT = 8765
 TITLE = "Textschnitt"
 VIDEO_TYPES = ("Video und Audio (*.mp4;*.mov;*.mkv;*.m4v;*.webm;*.avi;*.mts;*.m2ts;*.wmv;*.mp3;*.wav;*.m4a;*.flac;*.aac;*.ogg)",
                "Alle Dateien (*.*)")
+FONT_TYPES = ("Schriften (*.ttf;*.otf)", "Alle Dateien (*.*)")
 CLIP_TYPES = ("Videos und Bilder (*.mp4;*.mov;*.mkv;*.m4v;*.webm;*.avi;*.jpg;*.jpeg;*.png;*.webp;*.bmp;*.gif)",
               "Alle Dateien (*.*)")
 
@@ -141,11 +142,12 @@ def main():
         pass
 
     window = webview.create_window(TITLE, T.app_url(port), width=1480, height=940,
-                                   min_size=(1000, 640), background_color="#FAF6EE", text_select=False)
+                                   min_size=(1000, 640), background_color="#131312", text_select=False)
 
     def pick(kind: str):
         multi = kind == "videos"
-        types = CLIP_TYPES if kind == "clip" else VIDEO_TYPES
+        types = FONT_TYPES if kind == "font" else CLIP_TYPES if kind == "clip" else VIDEO_TYPES
+        multi = multi or kind == "font"
         try:
             res = window.create_file_dialog(webview.OPEN_DIALOG, allow_multiple=multi, file_types=types)
         except Exception:
@@ -172,7 +174,7 @@ def main():
     def open_window(url: str, label: str):
         try:
             webview.create_window(f"{TITLE} – {label}", url, width=1280, height=860, min_size=(820, 560),
-                                  background_color="#FAF6EE", text_select=False)
+                                  background_color="#131312", text_select=False)
         except Exception as e:  # noqa: BLE001
             T.log(f"Fenster nicht geöffnet: {e!r}")
 

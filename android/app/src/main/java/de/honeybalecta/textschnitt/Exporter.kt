@@ -150,7 +150,7 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
         // Untertitel
         val subs = plan.optJSONObject("subs")
         if (subs != null && subs.getJSONArray("cues").length() > 0) {
-            val overlay: TextureOverlay = SubtitleOverlay(w, h, subs.getJSONArray("cues"), subs.getJSONObject("style"))
+            val overlay: TextureOverlay = SubtitleOverlay(ctx, w, h, subs.getJSONArray("cues"), subs.getJSONObject("style"), subs.optJSONObject("fonts"))
             composition.setEffects(Effects(listOf(), listOf(OverlayEffect(listOf(overlay)))))
         }
 
@@ -275,8 +275,22 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
     }
 
     // ── Untertitel als Bild-Overlay in Ausgabegröße, an freier Position (x/y = Mittelpunkt, 0…1) ──
-    class SubtitleOverlay(private val w: Int, private val h: Int, cues: JSONArray, style: JSONObject) : BitmapOverlay() {
-        private data class Cue(val s: Double, val e: Double, val text: String, val x: Float, val y: Float, val size: Float, val color: Int, val outline: Boolean, val bg: Boolean)
+    class SubtitleOverlay(ctx: Context, private val w: Int, private val h: Int, cues: JSONArray, style: JSONObject, fonts: JSONObject?) : BitmapOverlay() {
+        private data class Cue(val s: Double, val e: Double, val text: String, val x: Float, val y: Float, val size: Float, val color: Int, val outline: Boolean, val bg: Boolean, val face: Typeface)
+        private val faces = HashMap<String, Typeface>()
+        private val bold = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+        // Mitgelieferte Schriften liegen in den Assets (web/fonts), eigene im App-Verzeichnis
+        private val faceOf: (String) -> Typeface = { key ->
+            if (key.isEmpty() || fonts?.optJSONObject(key) == null) bold
+            else faces.getOrPut(key) {
+                val f = fonts.getJSONObject(key)
+                runCatching {
+                    if (f.has("file")) Typeface.createFromAsset(ctx.assets, "web/fonts/" + File(f.getString("file")).name)
+                    else Typeface.createFromFile(f.getString("uri"))
+                }.getOrDefault(bold)
+            }
+        }
+        private val baseFace = faceOf(style.optString("font", ""))
         private val defX = style.optDouble("x", 0.5).toFloat()
         private val defY = style.optDouble("y", when (style.optString("pos", "unten")) { "oben" -> 0.12; "mitte" -> 0.5; else -> 0.88 }).toFloat()
         private val baseSize = (when (style.optString("size", "mittel")) { "klein" -> 0.045; "groß" -> 0.075; else -> 0.058 } * minOf(w, h) * (if (h > w) 1.25 else 1.0)).toFloat()
@@ -290,7 +304,8 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
                 if (it.isNull("size")) baseSize else (it.getDouble("size") * minOf(w, h) * (if (h > w) 1.25 else 1.0)).toFloat(),
                 if (it.isNull("color")) baseColor else runCatching { Color.parseColor(it.getString("color")) }.getOrDefault(baseColor),
                 if (isTitle && it.has("outline")) it.optBoolean("outline", true) else baseOutline,
-                it.optBoolean("bg"))
+                it.optBoolean("bg"),
+                if (isTitle) faceOf(it.optString("font", "")) else baseFace)
         }
         // Ein einziges Bild, das bei jedem Wechsel neu bemalt wird (spart bei 4K viel Speicher)
         private val bmp: Bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
@@ -313,7 +328,7 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
             val c = Canvas(bmp)
             val text = cue.text
             val size = cue.size
-            val paint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { textSize = size; typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD) }
+            val paint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { textSize = size; typeface = cue.face }
             val width = (w * 0.88).toInt()
             fun layout(p: TextPaint) = StaticLayout.Builder.obtain(text, 0, text.length, p, width)
                 .setAlignment(Layout.Alignment.ALIGN_CENTER).setLineSpacing(0f, 1.08f).build()

@@ -26,6 +26,8 @@
         .then(r => r.text()).then(t => TSApp.onPicked(id, t && t !== 'null' ? t : null))
         .catch(() => TSApp.onPicked(id, null));
     },
+    fonts: () => call('GET', 'fonts'),
+    deleteFont: uri => { call('POST', 'fonts/delete', {uri}); },
     listProjects: () => call('GET', 'projects'),
     loadProject: id => call('GET', 'project?id=' + q(id)),
     saveProject: (id, json) => call('POST', 'project?id=' + q(id), json),

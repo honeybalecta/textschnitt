@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.Textschnitt" parent="android:Theme.Material.Light.NoActionBar">
+    <style name="Theme.Textschnitt" parent="android:Theme.Material.NoActionBar">
         <item name="android:windowBackground">@color/papier</item>
         <item name="android:statusBarColor">@color/papier</item>
         <item name="android:navigationBarColor">@color/papier</item>
-        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightStatusBar">false</item>
     </style>
 </resources>

@@ -13,8 +13,8 @@
   // ───────── Browser-Datenbank ─────────
   let db = null;
   const idbOpen = () => new Promise((res) => {
-    let r; try { r = indexedDB.open('textschnitt', 1); } catch(_){ return res(null); }
-    r.onupgradeneeded = () => { const d = r.result; d.createObjectStore('projects'); d.createObjectStore('files'); };
+    let r; try { r = indexedDB.open('textschnitt', 2); } catch(_){ return res(null); }
+    r.onupgradeneeded = () => { const d = r.result; for (const n of ['projects', 'files', 'fonts']) if (!d.objectStoreNames.contains(n)) d.createObjectStore(n); };
     r.onsuccess = () => res(r.result); r.onerror = () => res(null); r.onblocked = () => res(null);
   });
   function idb(store, mode, fn){
@@ -88,7 +88,24 @@
     videos: {'video/*':['.mp4','.mov','.m4v','.webm','.mkv','.avi','.3gp'], 'audio/*':['.mp3','.m4a','.wav','.aac','.ogg','.opus','.flac']},
     clip:   {'video/*':['.mp4','.mov','.m4v','.webm','.mkv'], 'image/*':['.jpg','.jpeg','.png','.webp','.gif','.avif']},
     video:  {'video/*':['.mp4','.mov','.m4v','.webm','.mkv']},
+    font:   {'font/ttf':['.ttf'], 'font/otf':['.otf']},
   };
+  // Eigene Schriften: im Browser gespeichert, für alle Projekte
+  const fontStore = new Map();   // id → {id, name, blob}
+  async function pickFont(reqId){
+    let res = null;
+    try {
+      for (const {file} of await pickFiles('font', true)){
+        const buf = await file.arrayBuffer(), sig = new TextDecoder('latin1').decode(new Uint8Array(buf, 0, 4));
+        if (!['OTTO', 'true', '\0\x01\0\0'].includes(sig)) continue;
+        let rec = [...fontStore.values()].find(f => f.name === file.name && f.blob.size === file.size);
+        if (!rec){ rec = {id: newId(), name: file.name, blob: new Blob([buf], {type: sig === 'OTTO' ? 'font/otf' : 'font/ttf'})}; fontStore.set(rec.id, rec);
+          idb('fonts', 'readwrite', s => s.put(rec, rec.id)).catch(() => {}); }
+        res = {uri: 'font:' + rec.id, name: rec.name};
+      }
+    } catch(e){ console.error(e); }
+    TSApp.onPicked(reqId, res ? JSON.stringify(res) : null);
+  }
   async function pickFiles(kind, multiple){
     const acc = ACCEPT[kind] || ACCEPT.videos;
     if (window.showOpenFilePicker){
@@ -355,7 +372,9 @@
   let wake = null;
   window.TS = {
     info: () => JSON.stringify({platform:'web', version:VERSION, exportFormats:['video', 'audio'], bus: typeof BroadcastChannel !== 'undefined', gpu: hasGpu}),
-    pick: (id, kind) => { pick(id, kind); },
+    pick: (id, kind) => { if (kind === 'font') pickFont(id); else pick(id, kind); },
+    fonts: () => JSON.stringify([...fontStore.values()].map(f => ({uri: 'font:' + f.id, name: f.name}))),
+    deleteFont: uri => { const id = uri.slice(5); fontStore.delete(id); idb('fonts', 'readwrite', s => s.delete(id)).catch(() => {}); },
     listProjects: () => JSON.stringify([...summaries.values()]),
     loadProject: id => projects.get(id) || '',
     saveProject: (id, json) => { projects.set(id, json); summarize(id, json); idb('projects', 'readwrite', s => s.put(json, id)).catch(e => { console.error(e); toast('Speichern im Browser fehlgeschlagen – ist der Speicher voll?'); }); },
@@ -380,6 +399,7 @@
     openWindow: (project, view) => location.origin + location.pathname + `#p=${encodeURIComponent(project)}&view=${encodeURIComponent(view)}`,
     mediaUrl: uri => {
       if (urls.has(uri)) return urls.get(uri);
+      if (uri.startsWith('font:')){ const f = fontStore.get(uri.slice(5)); if (!f) return ''; const u = URL.createObjectURL(f.blob); urls.set(uri, u); return u; }
       const f = fileOf(uri); if (!f) return '';
       const u = URL.createObjectURL(f); urls.set(uri, u); return u;
     },
@@ -428,6 +448,7 @@
     try {
       for (const [k, v] of await idbAll('projects')){ projects.set(k, v); summarize(k, v); }
       for (const [k, v] of await idbAll('files')) fileRecs.set(k, v);
+      for (const [k, v] of await idbAll('fonts')) if (v && v.blob) fontStore.set(k, v);
     } catch(e){ console.error(e); }
     try { hasGpu = !!(navigator.gpu && await Promise.race([navigator.gpu.requestAdapter(), new Promise(r => setTimeout(() => r(null), 1500))])); } catch(_){}
     await loadScript('app.js'); await loadScript('studio.js');
