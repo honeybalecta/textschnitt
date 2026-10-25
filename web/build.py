@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Baut die Browser-Version von Textschnitt nach site/ (für GitHub Pages).
+"""Baut die Browser-Version von HoneyCut nach site/ (für GitHub Pages).
 
 Voraussetzung: `npm install` in web/ (mediabunny, transformers.js, esbuild).
 Aufruf: python3 web/build.py [Zielordner]
@@ -32,7 +32,7 @@ head = ('<meta name="description" content="Gesprochene Videos über das Transkri
         '<link rel="icon" href="icon.svg" type="image/svg+xml">\n<link rel="apple-touch-icon" href="icon-192.png">\n'
         '<link rel="stylesheet" href="web.css">\n</head>')
 html = html.replace("</head>", head, 1)
-html = html.replace("<body>", '<body>\n<div class="web-boot">Textschnitt wird geladen …</div>', 1)
+html = html.replace("<body>", '<body>\n<div class="web-boot">HoneyCut wird geladen …</div>', 1)
 (OUT / "index.html").write_text(html)
 
 # Bibliotheken bündeln
@@ -59,4 +59,4 @@ sw = (WEB / "sw.js").read_text().replace("__VERSION__", VERSION + "-" + subproce
     ["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, capture_output=True, text=True).stdout.strip()).replace("__SHELL__", json.dumps(shell))
 (OUT / "sw.js").write_text(sw)
 (OUT / ".nojekyll").write_text("")
-print(f"Textschnitt Web {VERSION} → {OUT}")
+print(f"HoneyCut Web {VERSION} → {OUT}")

@@ -70,12 +70,12 @@ jobs:
         shell: pwsh
         run: |
           pyinstaller --noconfirm --clean packaging/textschnitt.spec 2>&1 | Tee-Object -FilePath build.log
-          if (-not (Test-Path dist\Textschnitt\Textschnitt.exe)) { throw "PyInstaller hat keine EXE erzeugt" }
+          if (-not (Test-Path dist\HoneyCut\HoneyCut.exe)) { throw "PyInstaller hat keine EXE erzeugt" }
 
       - name: Selbsttest der gebauten App
         shell: pwsh
         run: |
-          $p = Start-Process dist\Textschnitt\Textschnitt.exe -ArgumentList "--selftest", "$pwd\selftest.json" -Wait -PassThru
+          $p = Start-Process dist\HoneyCut\HoneyCut.exe -ArgumentList "--selftest", "$pwd\selftest.json" -Wait -PassThru
           Get-Content selftest.json
           if ($p.ExitCode -ne 0) { throw "Selbsttest fehlgeschlagen" }
 
@@ -92,10 +92,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $tag = if ($env:TS_VERSION.StartsWith("v")) { $env:TS_VERSION } else { "v$env:TS_VERSION" }
-          $file = (Get-ChildItem dist\Textschnitt-Setup-*.exe | Select-Object -First 1).FullName
+          $file = (Get-ChildItem dist\HoneyCut-Setup-*.exe | Select-Object -First 1).FullName
           gh release view $tag 2>$null
           if ($LASTEXITCODE -eq 0) { gh release upload $tag $file --clobber }
-          else { gh release create $tag $file --title "Textschnitt $tag" --notes "Windows-Installer. Mitgelieferte Modelle: $env:TS_MODELS" }
+          else { gh release create $tag $file --title "HoneyCut $tag" --notes "Windows-Installer. Mitgelieferte Modelle: $env:TS_MODELS" }
 
       - name: Fehlerbericht als Commit-Kommentar
         if: failure()

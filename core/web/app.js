@@ -1,5 +1,5 @@
 'use strict';
-/* Textschnitt-Studio – gemeinsame Oberfläche für Windows, Android und Web.
+/* HoneyCut-Studio – gemeinsame Oberfläche für Windows, Android und Web.
    Die Plattform stellt window.TS bereit: Android nativ, Desktop über bridge-http.js. */
 const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
@@ -278,7 +278,7 @@ function showHome(){
     : CAP.platform === 'desktop' ? 'Wähle ein oder mehrere Videos (Strg/Umschalt für mehrere). Sie werden hintereinandergehängt und gemeinsam transkribiert.'
     : 'Wähle ein oder mehrere Videos aus deiner Galerie. Sie werden hintereinandergehängt und auf dem Gerät transkribiert – du schneidest dann über den Text.';
 }
-if (CAP.version && CAP.platform !== 'web'){ const v = document.createElement('p'); v.className = 'muted small'; v.style.cssText = 'text-align:center;margin:24px 0 90px'; v.textContent = 'Textschnitt ' + CAP.version; $('#home .home-body').append(v); }
+if (CAP.version && CAP.platform !== 'web'){ const v = document.createElement('p'); v.className = 'muted small'; v.style.cssText = 'text-align:center;margin:24px 0 90px'; v.textContent = 'HoneyCut ' + CAP.version; $('#home .home-body').append(v); }
 $('#newProj').onclick = async () => { const list = asList(await pickMedia('videos')); if (list.length) createProject(list); };
 function createProject(list){
   list = list.filter(Boolean); if (!list.length) return;
@@ -722,10 +722,47 @@ function zoomAt(src){
   return {s, cx, cy};
 }
 function recompute(){
-  computeRanges(); computePieces(); computeOrder(); buildTimeline(); computeOverlays(); drawScrub();
+  computeRanges(); computePieces(); computeOrder(); buildTimeline(); syncLinks(); computeOverlays(); drawScrub();
   if (studioOn() && window.renderTimeline) renderTimeline();
   $('#tTot').textContent = fmtT(total); $('#sideTot').textContent = fmtT(total);
 }
+// ───────── Verbundene Objekte ─────────
+// Einblendungen, Titel, Zooms, Anpassungen und Untertitel lassen sich verbinden (lk = Gruppe). Ein Mitglied führt (lead),
+// die anderen halten ihren Abstand lo (Sekunden im Ergebnis) dazu – egal, was davor geschnitten oder verschoben wird.
+const isCueObj = o => !o.type;
+function objStart(o){ if (!isCueObj(o)) return srcToOut(snapSrc(o.at)); const t = cueTimes(o); return t ? t.s : null; }
+function objSetStart(o, s){
+  s = Math.max(0, s);
+  if (!isCueObj(o)){ o.at = r3(outToSrcT(s)); return; }
+  const t = cueTimes(o); if (t) setCueFree(o, s, s + (t.e - t.s));
+}
+function groupOf(o){ return !o || !o.lk ? [] : [...P.items.filter(x => x.lk === o.lk), ...P.cues.filter(c => c.lk === o.lk)]; }
+function refreshLo(o){
+  const ms = groupOf(o); if (ms.length < 2) return; const lead = ms.find(x => x.lead) || ms[0], L = objStart(lead); if (L == null) return;
+  ms.forEach(x => { if (x === lead){ x.lead = true; delete x.lo; } else { delete x.lead; const p = objStart(x); if (p != null) x.lo = +(p - L).toFixed(3); } });
+}
+function relinkGroup(ms){
+  const pos = ms.map(objStart); let k = -1; pos.forEach((p, i) => { if (p != null && (k < 0 || p < pos[k])) k = i; }); if (k < 0) return;
+  ms.forEach((x, i) => { if (i === k){ x.lead = true; delete x.lo; } else { delete x.lead; if (pos[i] != null) x.lo = +(pos[i] - pos[k]).toFixed(3); } });
+}
+function groupShift(o, d){ if (!o || !o.lk || Math.abs(d) < 1e-6) return; for (const x of groupOf(o)) if (x !== o){ const p = objStart(x); if (p != null) objSetStart(x, p + d); } }
+function syncLinks(){
+  const groups = new Map();
+  for (const o of [...P.items, ...P.cues]) if (o.lk){ if (!groups.has(o.lk)) groups.set(o.lk, []); groups.get(o.lk).push(o); }
+  for (const ms of groups.values()){
+    if (ms.length < 2){ ms.forEach(x => { delete x.lk; delete x.lo; delete x.lead; }); continue; }
+    const lead = ms.find(x => x.lead); if (!lead){ relinkGroup(ms); continue; }
+    const L = objStart(lead); if (L == null) continue;
+    for (const x of ms) if (x !== lead && x.lo != null){ const cur = objStart(x), want = L + x.lo; if (cur == null || Math.abs(cur - want) > 0.004) objSetStart(x, want); }
+  }
+}
+function linkObjects(list){
+  const all = new Set(); list.forEach(o => { all.add(o); groupOf(o).forEach(x => all.add(x)); });
+  const ms = [...all], gid = newId();
+  for (const o of ms){ if (isCueObj(o) && !isFree(o)){ const t = cueTimes(o); if (t) setCueFree(o, t.s, t.e); } o.lk = gid; delete o.lead; delete o.lo; }
+  relinkGroup(ms); return ms.length;
+}
+function unlinkObject(o){ const ms = groupOf(o); delete o.lk; delete o.lo; delete o.lead; const rest = ms.filter(x => x !== o); if (rest.length >= 2 && !rest.some(x => x.lead)) relinkGroup(rest); }
 function drawScrub(){
   const box = $('#segs'); box.innerHTML = ''; if (!total) return;
   const pct = x => (x / total * 100) + '%';
@@ -1095,6 +1132,9 @@ function paint(i){
   const t = tokens[i], sp = spans[i]; if (!sp) return;
   if (t.type === 'word'){ const tx = tokText(t); if (sp.textContent !== tx) sp.textContent = tx; sp.classList.toggle('empty', !tx); sp.classList.toggle('edited', P.edits[t.i] != null); }
   sp.classList.toggle('del', deleted.has(i) || (t.type === 'word' && isSrcDeleted((t.ws + t.we) / 2)));
+  const added = t.type !== 'word' && P.edits[i];
+  sp.classList.toggle('added', !!added);
+  if (added){ sp.textContent = P.edits[i]; return; }
   if (t.type === 'unk') sp.innerHTML = `${icon('🗣')}${t.att ? 'Anlauf ' : ''}${(t.we - t.ws).toFixed(1).replace('.', ',')} s`;
   if (t.type === 'pause'){ const d = (t.e - t.s).toFixed(1).replace('.', ','), tr = P.trims[i];
     sp.classList.toggle('trim', tr != null && !deleted.has(i)); sp.innerHTML = icon('⏸') + (tr != null ? `${d}→${String(tr).replace('.', ',')}` : d); }
@@ -1210,6 +1250,56 @@ function showSel(){
     $('#selInfo').textContent = ids.length === 1 ? (FINE ? 'Zweites Wort anklicken – oder mit gedrückter Maustaste ziehen' : 'Zweites Wort antippen – oder gedrückt halten und ziehen') : `${ids.filter(i => tokens[i].type === 'word').length} Wörter · ${FINE ? 'Markierung ziehen' : 'gedrückt halten und ziehen'} = verschieben`; }
 }
 function clearSel(){ selA = selB = null; showSel(); }
+// ── Text eines Bereichs korrigieren ──
+// Der neue Text wird auf die Zeit der markierten Stellen verteilt: gleiche Wortzahl → Wort für Wort,
+// sonst nach Länge auf Wörter und nicht erkannte Stellen (🗣); fehlende Wörter lassen sich so ergänzen.
+function rangeSlots(ids){
+  let slots = ids.filter(i => tokens[i].type === 'word' || tokens[i].type === 'unk' || P.edits[i]);
+  if (!slots.length) slots = ids.filter(i => tokens[i].type === 'pause');
+  return slots;
+}
+function rangeText(ids){ return rangeSlots(ids).map(i => tokText(tokens[i])).filter(Boolean).join(' '); }
+function applyRangeText(ids, text){
+  const slots = rangeSlots(ids); if (!slots.length) return 0;
+  const words = text.trim().split(/\s+/).filter(Boolean);
+  const wordSlots = slots.filter(i => tokens[i].type === 'word');
+  const set = (i, v) => { if (tokens[i].type === 'word' && v === tokens[i].text) delete P.edits[i]; else if (tokens[i].type !== 'word' && !v) delete P.edits[i]; else P.edits[i] = v; };
+  if (words.length === wordSlots.length && wordSlots.length){
+    wordSlots.forEach((i, k) => set(i, words[k])); slots.filter(i => tokens[i].type !== 'word').forEach(i => set(i, ''));
+    return words.length; }
+  // Verteilung nach Zeit: jedes Wort an die Stelle, in deren Zeitanteil seine Mitte (nach Zeichen) fällt
+  const dur = slots.map(i => Math.max(0.05, wE(tokens[i]) - wS(tokens[i]))), T = dur.reduce((a, b) => a + b, 0);
+  const total = words.reduce((n, w) => n + w.length + 1, 0), groups = slots.map(() => []);
+  let pos = 0;
+  for (const w of words){
+    const mid = (pos + (w.length + 1) / 2) / total * T; pos += w.length + 1;
+    let acc = 0, k = 0; while (k < slots.length - 1 && acc + dur[k] < mid){ acc += dur[k]; k++; }
+    groups[k].push(w);
+  }
+  slots.forEach((i, k) => set(i, groups[k].join(' ')));
+  return words.length;
+}
+function openRangeEdit(ids){
+  ids = ids.filter(i => !deleted.has(i)); if (!ids.length) return toast('Nur gelöschte Wörter markiert');
+  const body = $('#sheetBody'), cur = rangeText(ids);
+  body.innerHTML = `<h3>Text korrigieren</h3><textarea id="rangeEdit" rows="3" style="width:100%;font:18px/1.4 var(--read)"></textarea>
+    <p class="muted small">Am Schnitt ändert sich nichts. Gleiche Wortzahl: Wort für Wort ersetzt. Sonst wird der Text auf die Zeit der markierten Stellen verteilt –
+    so lassen sich Wörter zusammenschreiben oder fehlende Wörter ergänzen (am besten die 🗣-Stelle mit markieren). Erscheint so auch in den Untertiteln.</p>
+    <div class="row"><button class="btn" id="rangeReset">↺ Original</button><button class="btn primary" id="rangeOk" style="margin-left:auto">Fertig</button></div>`;
+  $('#rangeEdit').value = cur; openSheet(false); setTimeout(() => { $('#rangeEdit').focus(); $('#rangeEdit').select(); }, 30);
+  const done = reset => { const v = $('#rangeEdit').value; closeSheet();
+    commit(() => { if (reset) ids.forEach(i => delete P.edits[i]); else applyRangeText(ids, v); regenCuesFor(ids); }, false);
+    afterTextEdit(reset ? 'Originaltext' : 'Text übernommen'); clearSel(); };
+  $('#rangeOk').onclick = () => done(false); $('#rangeReset').onclick = () => done(true);
+  $('#rangeEdit').onkeydown = ev => { if (ev.key === 'Enter' && !ev.shiftKey){ ev.preventDefault(); done(false); } };
+  body.onclick = null;
+}
+// Stellen, die vorher keinen Untertitel hatten (🗣/⏸ mit neuem Text), dem passenden Untertitel zuordnen
+function regenCuesFor(ids){
+  for (const i of ids){ if (!isTextTok(i) || P.cues.some(c => !c.own && i >= c.a && i <= c.b)) continue;
+    const c = P.cues.filter(c => !c.own && c.b < i).pop(); if (c) c.b = i; }
+}
+$('#selEdit').onclick = () => openRangeEdit(selIds());
 $('#selClose').onclick = clearSel;
 $('#selDel').onclick = () => {
   const ids = selIds(); if (!ids.length) return;
@@ -1317,8 +1407,8 @@ $('#repeatBtn').onclick = () => {
 };
 // Einstellungen „direkt nach der Transkription“ merken (nur für diesen Browser)
 const AUTO_KEYS = ['autoFillers', 'autoRepeats', 'autoPauses', 'autoPauseLen'];
-try { const a = J(localStorage.getItem('ts-auto')); if (a) AUTO_KEYS.forEach(k => { const el = $('#' + k); if (el && a[k] != null){ if (el.type === 'checkbox') el.checked = a[k]; else el.value = a[k]; } }); } catch(_){}
-AUTO_KEYS.forEach(k => $('#' + k).addEventListener('change', () => { try { localStorage.setItem('ts-auto', JSON.stringify(Object.fromEntries(AUTO_KEYS.map(x => [x, $('#' + x).type === 'checkbox' ? $('#' + x).checked : $('#' + x).value])))); } catch(_){} }));
+try { const a = J(localStorage.getItem('ts-auto2')); if (a) AUTO_KEYS.forEach(k => { const el = $('#' + k); if (el && a[k] != null){ if (el.type === 'checkbox') el.checked = a[k]; else el.value = a[k]; } }); } catch(_){}
+AUTO_KEYS.forEach(k => $('#' + k).addEventListener('change', () => { try { localStorage.setItem('ts-auto2', JSON.stringify(Object.fromEntries(AUTO_KEYS.map(x => [x, $('#' + x).type === 'checkbox' ? $('#' + x).checked : $('#' + x).value])))); } catch(_){} }));
 function autoClean(minTok){
   const msg = [];
   if ($('#autoFillers').checked){ const ids = fillerIds(minTok); bulkDelete(ids); if (ids.length) msg.push(`${ids.length} Füllwörter`); }
@@ -1393,6 +1483,7 @@ $('#findDelAll').onclick = () => {
 $('#replIn').addEventListener('keydown', e => { if (e.key === 'Enter'){ e.preventDefault(); (e.ctrlKey || e.metaKey ? $('#replAll') : $('#replOne')).click(); } if (e.key === 'Escape') $('#replIn').blur(); });
 // Einzelnes Wort korrigieren: Doppelklick (bzw. Doppeltippen)
 $('#transcript').addEventListener('dblclick', e => {
+  const any = e.target.closest('.tk'); if (any && !any.classList.contains('word')){ const i = +any.dataset.i; selA = selB = i; showSel(); openRangeEdit([i]); return; }
   const sp = e.target.closest('.tk.word'); if (!sp) return; const i = +sp.dataset.i;
   const body = $('#sheetBody');
   body.innerHTML = `<h3>Wort korrigieren</h3><input type="text" id="wordEdit" style="width:100%;font:18px var(--read)"><p class="muted small">Die Zeit im Video bleibt gleich – nur der Text (auch in den Untertiteln) ändert sich. Leer lassen löscht das Wort.</p>
@@ -1518,13 +1609,16 @@ function planFonts(keys){
 // ───────── Untertitel ─────────
 const S = () => P.sub_style;
 const isWord = i => tokens[i] && tokens[i].type === 'word';
-function cueWords(c){ const ids = []; for (let i = c.a; i <= c.b && i < tokens.length; i++) if (isWord(i) && tokText(tokens[i]) && !deleted.has(i) && !isSrcDeleted((tokens[i].ws + tokens[i].we) / 2)) ids.push(i); return ids; }
+// Wort für die Untertitel: erkannte Wörter und Stellen (🗣/⏸), in die von Hand Text eingetragen wurde
+const isTextTok = i => tokens[i] && (tokens[i].type === 'word' || !!(P.edits && P.edits[i]));
+const wS = t => t.ws ?? t.s, wE = t => t.we ?? t.e;
+function cueWords(c){ const ids = []; for (let i = c.a; i <= c.b && i < tokens.length; i++) if (isTextTok(i) && tokText(tokens[i]) && !deleted.has(i) && !isSrcDeleted((wS(tokens[i]) + wE(tokens[i])) / 2)) ids.push(i); return ids; }
 function autoText(c){ return cueWords(c).map(i => tokText(tokens[i])).join(' '); }
-function cueText(c){ return c.text != null ? c.text : autoText(c); }
+function cueText(c){ return c.own ? (c.text || '') : c.text != null ? c.text : autoText(c); }
 // Untertitel erzeugen – ab Token startTok (beim Anhängen weiterer Videos), sonst alle neu
 function genCues(startTok = 0){
-  const st = S(), keep = startTok ? P.cues.filter(c => c.a < startTok) : [];
-  const ws = tokens.filter(t => t.i >= startTok && t.type === 'word' && !deleted.has(t.i));
+  const st = S(), keep = startTok ? P.cues.filter(c => !c.own && c.a < startTok) : [], own = P.cues.filter(c => c.own);
+  const ws = tokens.filter(t => t.i >= startTok && isTextTok(t.i) && tokText(t) && !deleted.has(t.i)).map(t => t.type === 'word' ? t : {...t, ws: wS(t), we: wE(t)});
   let out = [];
   if (st.mode === 'word'){
     out = ws.map((w, k) => ({id:newId(), a: k ? ws[k-1].i + 1 : startTok, b: k === ws.length - 1 ? tokens.length - 1 : w.i, text:null, ds:0, de:0, off:false}));
@@ -1553,7 +1647,7 @@ function genCues(startTok = 0){
     out.forEach(c => delete c.t0);
   }
   if (keep.length && out.length){ const last = keep[keep.length-1]; if (last.b >= startTok) last.b = startTok - 1; }
-  P.cues = keep.concat(out);
+  P.cues = keep.concat(out, own);
 }
 function wrapText(text){
   const st = S(), max = +st.chars || 32, lines = +st.lines || 2;
@@ -1565,14 +1659,27 @@ function wrapText(text){
 }
 // Frei gesetzte Zeit (fa = Anker in der Quelle, fd = Dauer im Ergebnis): unabhängig von den Wortzeiten, ändert nichts am Schnitt
 const isFree = c => c && c.fa != null;
+// Eigene Untertitel (own): im Studio angelegt oder vom Text gelöst – eigener Text, eigene Zeit, unabhängig vom Transkript
+// in zeitlicher Reihenfolge einsortieren (für die Liste im Untertitel-Reiter)
+function insertCue(c){ const t = cueTimes(c), k = t ? P.cues.findIndex(x => { const u = cueTimes(x); return u && u.s > t.s; }) : -1; if (k < 0) P.cues.push(c); else P.cues.splice(k, 0, c); }
+function newOwnCue(s, e, text){ const c = {id:newId(), own:true, text: text || '', ds:0, de:0, off:false}; setCueFree(c, s, e); return c; }
+function detachCue(c){ if (c.own) return true; const t = cueTimes(c); if (!t) return false; c.text = cueText(c); setCueFree(c, t.s, t.e); c.own = true; delete c.a; delete c.b; return true; }
+// Eigenen Untertitel am Textanteil pos (0…1) in zwei teilen
+function splitOwnCue(c, left, right){
+  const t = cueTimes(c); if (!t || !left || !right) return null;
+  const m = t.s + (t.e - t.s) * clamp(left.length / (left.length + right.length), 0.15, 0.85);
+  const c2 = newOwnCue(m, t.e, right); if (c.x != null){ c2.x = c.x; c2.y = c.y; } c.text = left; setCueFree(c, t.s, m); return c2;
+}
 function cueTimes(c){
+  if (c.own){ if (c.fa == null) return null; const s = srcToOut(snapSrc(c.fa)); if (s >= total) return null;
+    return {s, e: Math.min(total, s + Math.max(0.2, c.fd || 1)), src: c.fa, free:true}; }
   const ids = cueWords(c); if (!ids.length) return null;
   if (isFree(c)){ const s = srcToOut(snapSrc(c.fa)); return {s, e: Math.min(total, s + Math.max(0.2, c.fd || 1)), src: c.fa, free:true}; }
   const w0 = tokens[ids[0]], w1 = tokens[ids[ids.length-1]];
-  let s = srcToOut(w0.ws) + (c.ds || 0), e = srcToOut(w1.we) + (c.de || 0);
-  if (e < s || e - s > (w1.we - w0.ws) + 0.5){ const g = timeline[segAtOut(s - (c.ds || 0))]; e = (g ? g.o + segDur(g) : s + 1) + (c.de || 0); }
+  let s = srcToOut(wS(w0)) + (c.ds || 0), e = srcToOut(wE(w1)) + (c.de || 0);
+  if (e < s || e - s > (wE(w1) - wS(w0)) + 0.5){ const g = timeline[segAtOut(s - (c.ds || 0))]; e = (g ? g.o + segDur(g) : s + 1) + (c.de || 0); }
   for (const g of timeline) if (g.kind === 'insert' && s < g.o && e > g.o) e = g.o;   // nicht in einen Einschub hineinlaufen
-  return {s: Math.max(0, s), e: Math.max(s + 0.2, e), src: tokens[ids[0]].ws};
+  return {s: Math.max(0, s), e: Math.max(s + 0.2, e), src: wS(tokens[ids[0]])};
 }
 // Untertitel auf feste Zeiten stellen (Ausgabezeit s … e)
 function setCueFree(c, s, e){
@@ -1593,10 +1700,10 @@ function computedCues(){
     if (c.text == null && P.moves.length && !isFree(c)){
       const ids = cueWords(c); let run = [];
       const flush = () => { if (!run.length) return; const w0 = tokens[run[0]], w1 = tokens[run[run.length-1]];
-        const s = srcToOut(w0.ws) + (c.ds || 0), e = Math.max(s + 0.2, srcToOut(w1.we) + (c.de || 0));
+        const s = srcToOut(wS(w0)) + (c.ds || 0), e = Math.max(s + 0.2, srcToOut(wE(w1)) + (c.de || 0));
         list.push({c, s: Math.max(0, s), e, text: run.map(i => tokText(tokens[i])).join(' ')}); run = []; };
       ids.forEach((i, k) => { if (k){ const p = tokens[ids[k-1]], w = tokens[i];
-        if (Math.abs((srcToOut(w.ws) - srcToOut(p.we)) - (w.ws - p.we)) > 0.3) flush(); } run.push(i); });
+        if (Math.abs((srcToOut(wS(w)) - srcToOut(wE(p))) - (wS(w) - wE(p))) > 0.3) flush(); } run.push(i); });
       flush(); continue;
     }
     const t = cueTimes(c), text = cueText(c).trim(); if (!t || !text) continue; list.push({c, s:t.s, e:t.e, text}); }
@@ -1618,7 +1725,7 @@ function computedCues(){
 let cueCache = {at:-1, list:[]}, cueEls = new Map(), lastCue = null, shownCue = null;
 function updateSubs(o){
   const ov = $('#subOv');
-  if (!P || !tokens.length || S().enabled === false){ ov.textContent = ''; shownCue = null; return; }
+  if (!P || !P.cues.length || S().enabled === false){ ov.textContent = ''; shownCue = null; return; }
   const now = performance.now(); if (now - cueCache.at > 400) cueCache = {at:now, list:computedCues()};
   const cur = cueCache.list.find(x => o >= x.s && o < x.e);
   if (!SubDrag.on){ ov.textContent = cur ? wrapText(cur.text) : ''; shownCue = cur ? cur.c : null; placeOverlay(); }
@@ -1695,7 +1802,7 @@ $('#stPos').addEventListener('change', e => { const v = e.target.value; if (POS_
   commit(() => { S().pos = v; S().x = 0.5; S().y = POS_Y[v]; if (n && confirm(`${n} Untertitel haben eine eigene Position. Auch diese zurücksetzen?`)) P.cues.forEach(c => { delete c.x; delete c.y; }); }, false); styleOverlay(); });
 $('#stOutline').onchange = e => { S().outline = e.target.checked; styleOverlay(); changed(false); };
 $('#subsMaster').onchange = e => { S().enabled = e.target.checked; syncStyleInputs(); changed(false); toast(e.target.checked ? 'Untertitel an' : 'Untertitel aus'); };
-function manualCount(){ return P.cues.filter(c => c.text != null || c.ds || c.de || c.off || c.x != null || isFree(c)).length; }
+function manualCount(){ return P.cues.filter(c => !c.own && ( c.text != null || c.ds || c.de || c.off || c.x != null || isFree(c))).length; }
 $('#stMode').onchange = e => {
   const n = manualCount(); if (n && !confirm(`${n} Untertitel wurden von Hand bearbeitet. Beim Umstellen gehen diese Änderungen verloren. Fortfahren?`)){ e.target.value = S().mode; return; }
   S().mode = e.target.value; syncStyleInputs(); commit(() => genCues()); toast(P.cues.length + ' Untertitel');
@@ -1712,7 +1819,7 @@ function renderSubs(){
     if (idx === P.cues.length - 1) el.querySelector('[data-a=merge]').disabled = true;
     const ta = el.querySelector('textarea'); ta.value = cueText(c);
     ta.addEventListener('focus', () => ta._b = snapshot());
-    ta.addEventListener('input', () => { c.text = ta.value.trim() === autoText(c) ? null : ta.value; paintCue(c, true); cueCache.at = -1; clearTimeout(saveT); saveT = setTimeout(saveNow, 800); });
+    ta.addEventListener('input', () => { c.text = c.own ? ta.value : ta.value.trim() === autoText(c) ? null : ta.value; paintCue(c, true); cueCache.at = -1; clearTimeout(saveT); saveT = setTimeout(saveNow, 800); });
     ta.addEventListener('blur', () => { if (ta._b && ta._b !== snapshot()){ undo.push(ta._b); redo = []; } ta._b = null; });
     frag.append(el); cueEls.set(c.id, el);
   });
@@ -1723,11 +1830,11 @@ function paintCue(c, keepText){
   if (!keepText && document.activeElement !== ta) ta.value = cueText(c);
   el.classList.toggle('manual', c.text != null); el.classList.toggle('off', !!c.off); el.classList.toggle('empty', !t);
   el.querySelector('.t').textContent = t ? `${fmtS(t.s)} – ${fmtS(t.e)}` : 'Wörter gelöscht';
-  el.querySelector('.w').textContent = [isFree(c) ? 'Zeit frei gesetzt' : '', (c.ds || c.de) ? `Start ${c.ds >= 0 ? '+' : ''}${(c.ds||0).toFixed(1)} · Ende ${c.de >= 0 ? '+' : ''}${(c.de||0).toFixed(1)}` : '', c.x != null ? 'eigene Position' : ''].filter(Boolean).join(' · ');
+  el.querySelector('.w').textContent = [c.own ? 'eigener Untertitel' : isFree(c) ? 'Zeit frei gesetzt' : '', (c.ds || c.de) ? `Start ${c.ds >= 0 ? '+' : ''}${(c.ds||0).toFixed(1)} · Ende ${c.de >= 0 ? '+' : ''}${(c.de||0).toFixed(1)}` : '', c.x != null ? 'eigene Position' : ''].filter(Boolean).join(' · ');
   el.querySelector('[data-a=off]').textContent = c.off ? 'einblenden' : 'ausblenden';
-  el.querySelector('[data-a=auto]').classList.toggle('hidden', c.text == null);
+  el.querySelector('[data-a=auto]').classList.toggle('hidden', c.text == null || !!c.own);
   el.querySelector('[data-a=pos]').classList.toggle('hidden', c.x == null);
-  el.querySelector('[data-a=time]').classList.toggle('hidden', !isFree(c) && !c.ds && !c.de);
+  el.querySelector('[data-a=time]').classList.toggle('hidden', !!c.own || (!isFree(c) && !c.ds && !c.de));
 }
 function updateSubs2(){ P.cues.forEach(c => paintCue(c)); updateCount(); }
 function updateCount(){ $('#subCount').textContent = computedCues().length + ' Untertitel'; }
@@ -1738,7 +1845,14 @@ $('#cueList').addEventListener('click', e => {
   const btn = e.target.closest('[data-a]');
   if (!btn){ if (e.target.closest('.tm')){ const t = cueTimes(c); if (t) seekOut(t.s + 0.01, false); } return; }
   const a = btn.dataset.a, ta = el.querySelector('textarea');
-  if (a === 'split'){
+  if (c.own && a === 'split'){
+    const text = ta.value, pos = ta.selectionStart ?? 0, left = text.slice(0, pos).trim(), right = text.slice(pos).trim();
+    if (!left || !right) return toast('Erst den Cursor an die Teilungsstelle setzen');
+    commit(() => { const c2 = splitOwnCue(c, left, right); if (c2) P.cues.splice(idx + 1, 0, c2); });
+  } else if (a === 'merge' && (c.own || (P.cues[idx+1] || {}).own)){
+    const n = P.cues[idx+1]; if (!n) return; const t1 = cueTimes(c), t2 = cueTimes(n); if (!t1 || !t2) return;
+    commit(() => { const txt = (cueText(c) + ' ' + cueText(n)).trim(); detachCue(c); c.text = txt; setCueFree(c, Math.min(t1.s, t2.s), Math.max(t1.e, t2.e)); P.cues.splice(idx + 1, 1); });
+  } else if (a === 'split'){
     const ids = cueWords(c); if (ids.length < 2) return toast('Zu wenige Wörter');
     const text = ta.value, pos = ta.selectionStart ?? 0, left = text.slice(0, pos).trim(), right = text.slice(pos).trim();
     if (!left || !right) return toast('Erst den Cursor an die Teilungsstelle setzen');
@@ -1751,9 +1865,9 @@ $('#cueList').addEventListener('click', e => {
   } else if (a === 'off'){ commit(() => c.off = !c.off, false); paintCue(c); }
   else if (a === 'auto'){ commit(() => c.text = null, false); paintCue(c); }
   else if (a === 'pos'){ commit(() => { delete c.x; delete c.y; }, false); paintCue(c); placeOverlay(); }
-  else if (a === 'time'){ commit(() => { delete c.fa; delete c.fd; c.ds = 0; c.de = 0; }, false); cueCache.at = -1; updateSubs2(); }
+  else if (a === 'time' && !c.own){ commit(() => { delete c.fa; delete c.fd; c.ds = 0; c.de = 0; }, false); cueCache.at = -1; updateSubs2(); }
   else { const t = cueTimes(c); if (!t) return; const d = a[1] === '+' ? 0.1 : -0.1;
-    commit(() => a[0] === 's' ? setCueFree(c, t.s + d, t.e) : setCueFree(c, t.s, t.e + d), false); cueCache.at = -1; updateSubs2(); }
+    commit(() => { if (a[0] === 's') setCueFree(c, t.s + d, t.e); else setCueFree(c, t.s, t.e + d); if (c.lk) refreshLo(c); }, false); cueCache.at = -1; updateSubs2(); }
   cueCache.at = -1;
 });
 
@@ -1804,7 +1918,7 @@ function openItem(id){
         if (seg.id === 'cMode' && v === 'pip') pipFree(it);
         if (seg.id === 'cCorner'){ if (v === 'mm'){ pipFree(it); it.x = 0.5; it.y = 0.5; } else pipCorner(it, v); } }, false); if (seg.id !== 'zKind') seekOut(outPos, false); h.textContent = TYPE_LBL[it.type]; paintItem(); return; }
     if (b.dataset.z){ commit(() => it.dur = clamp(+(it.dur + +b.dataset.z).toFixed(2), 0.2, 60), false); }
-    else if (b.dataset.at){ commit(() => it.at = clamp(r3(it.at + +b.dataset.at), 0, srcTotal), false); seekOut(srcToOut(snapSrc(it.at)), false); }
+    else if (b.dataset.at){ commit(() => { const p0 = objStart(it); it.at = clamp(r3(it.at + +b.dataset.at), 0, srcTotal); groupShift(it, objStart(it) - p0); }, false); seekOut(srcToOut(snapSrc(it.at)), false); }
     else if (b.dataset.cin){ commit(() => it.in = clamp(r3(it.in + +b.dataset.cin), 0, it.out - 0.1), false); $('#cPrev').currentTime = it.in; }
     else if (b.dataset.cout){ commit(() => it.out = clamp(r3(it.out + +b.dataset.cout), it.in + 0.1, it.clip.duration), false); $('#cPrev').currentTime = it.out; }
     else if (b.id === 'cInHere'){ const t = $('#cPrev').currentTime; commit(() => it.in = clamp(t, 0, it.out - 0.1), false); }
@@ -1853,8 +1967,8 @@ function renderExportForm(){
   $('#exConcatDir').textContent = CAP.concatDir ? `Wird gespeichert in: ${CAP.concatDir}` : '';
   $('#exQualityRow').dataset.fmt = CAP.platform === 'android' ? 'keins' : 'video';
   $('#exNote').textContent = CAP.platform === 'web' ? 'Das Video wird in deinem Browser berechnet und danach heruntergeladen – nichts verlässt dein Gerät. Lass diesen Tab während des Exports geöffnet. Untertitel kommen zusätzlich als SRT-Datei mit.'
-    : CAP.platform === 'android' ? 'Das Video landet direkt in deiner Galerie (Ordner „Textschnitt“). Bitte die App während des Exports geöffnet lassen.'
-    : 'Die Dateien landen im Ordner „…_textschnitt“ neben deinem ersten Video. Untertitel kommen zusätzlich als SRT-Datei mit.';
+    : CAP.platform === 'android' ? 'Das Video landet direkt in deiner Galerie (Ordner „HoneyCut“). Bitte die App während des Exports geöffnet lassen.'
+    : 'Die Dateien landen im Ordner „…_honeycut“ neben deinem ersten Video. Untertitel kommen zusätzlich als SRT-Datei mit.';
   paintExportForm();
 }
 function paintExportForm(){
@@ -1885,7 +1999,7 @@ function buildPlan(){
   const ovs = overlays.map(o => ({mode:o.x.type, image: isImg(o.x.clip), uri:o.x.clip.uri, in:o.x.in, out:r3(o.x.in + (o.end - o.at)), at:r3(o.at), corner:o.x.corner || 'or', size:o.x.size || 0.33,
     ...(o.x.w != null ? {x:o.x.x, y:o.x.y, w:o.x.w, aspect:+clipAspect(o.x.clip).toFixed(5)} : {}),
     width:o.x.clip.width, height:o.x.clip.height, rotation:o.x.clip.rotation || 0}));
-  const cues = S().enabled !== false && tokens.length ? computedCues().map(x => { const [cx, cy] = cueXY(x.c); return {start:r3(x.s), end:r3(x.e), text:wrapText(x.text), x:cx, y:cy}; }) : [];
+  const cues = S().enabled !== false && P.cues.length ? computedCues().map(x => { const [cx, cy] = cueXY(x.c); return {start:r3(x.s), end:r3(x.e), text:wrapText(x.text), x:cx, y:cy}; }) : [];
   for (const t of P.items.filter(x => x.type === 'title' && (x.text || '').trim())){ const a = srcToOut(snapSrc(t.at)); if (a >= total) continue;
     cues.push({start:r3(a), end:r3(Math.min(total, a + t.dur)), text:t.text.trim(), x:t.x, y:t.y, size:+((SIZE_F[t.size] || 0.058) * (t.scale || 1)).toFixed(4), color:t.color || '#FFFFFF', outline:t.outline !== false, bg:!!t.bg, title:true, font:t.font || ''}); }
   const subs = cues.length ? {cues, style:S(), fonts: planFonts([S().font, ...cues.map(c => c.font)])} : null;
@@ -1898,7 +2012,7 @@ function renderExport(){
   const [W, H] = outSize(), n = P.items.reduce((m, x) => (m[x.type] = (m[x.type] || 0) + 1, m), {});
   $('#exSummary').textContent = `${fmtT(total)}${exFmt === 'audio' ? '' : ` · ${W}×${H}`} · ${timeline.filter(g => g.kind === 'main').length} Abschnitte` + (P.sources.length > 1 ? ` aus ${P.sources.length} Videos` : '') +
     (n.insert ? ` · ${n.insert} Einschub` : '') + (n.broll ? ` · ${n.broll} B-Roll` : '') + (n.pip ? ` · ${n.pip} Einblendung${n.pip > 1 ? 'en' : ''}` : '') + (n.zoom ? ` · ${n.zoom} Zoom` : '') + (n.fx ? ` · ${n.fx} Anpassungen` : '') + (n.title ? ` · ${n.title} Titel` : '') +
-    (S().enabled !== false && tokens.length ? ` · ${computedCues().length} Untertitel` : '');
+    (S().enabled !== false && P.cues.length ? ` · ${computedCues().length} Untertitel` : '');
 }
 $('#exRes').onchange = renderExport;
 let exJob = null, exResult = null;
@@ -1910,7 +2024,7 @@ $('#exBtn').onclick = () => {
   const end = () => { $('#exBtn').disabled = false; $('#exCancel').classList.add('hidden'); TS.keepAwake(false); };
   watchJob(exJob, j => { $('#exProg i').style.width = (j.progress * 100).toFixed(1) + '%'; $('#exMsg').textContent = j.message || ''; },
     j => { end(); exResult = j.result || {}; $('#exDone').classList.remove('hidden');
-      if (CAP.platform === 'android'){ $('#exMsg').textContent = 'Fertig – das Video ist in deiner Galerie (Ordner „Textschnitt“).'; }
+      if (CAP.platform === 'android'){ $('#exMsg').textContent = 'Fertig – das Video ist in deiner Galerie (Ordner „HoneyCut“).'; }
       else { $('#exMsg').textContent = exResult.note || 'Fertig.'; $('#exFiles').textContent = (exResult.files || []).join('\n'); }
       $('#exOpen').classList.toggle('hidden', CAP.platform !== 'android' && !exResult.playable); },
     j => { end(); $('#exMsg').textContent = j.status === 'cancelled' ? 'Abgebrochen.' : ('Fehler: ' + (j.error || 'unbekannt')); });
@@ -1942,7 +2056,7 @@ $('#detachBtn').onclick = () => {
 };
 $('#tabs').addEventListener('click', e => { const b = e.target.closest('button'); if (!b || !P) return;
   const t = b.dataset.tab;
-  if (!tokens.length && t !== 'studio' && t !== 'export'){
+  if (!tokens.length && t !== 'studio' && t !== 'export' && !(t === 'subs' && P.cues.length)){
     setTab('trans');
     if (t === 'subs'){ if (studioCut()){ $('#subsOnly').checked = true; renderSources(); toast('Untertitel brauchen ein Transkript – „Nur für Untertitel“ lässt deinen Schnitt unverändert'); } else toast('Für Untertitel zuerst transkribieren'); }
     return; }

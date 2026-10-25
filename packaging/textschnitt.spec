@@ -1,4 +1,4 @@
-# PyInstaller-Bauplan für Textschnitt (Windows, Ordner-Build)
+# PyInstaller-Bauplan für HoneyCut (Windows, Ordner-Build)
 # Aufruf aus dem Projektordner:  pyinstaller packaging/textschnitt.spec
 from pathlib import Path
 from PyInstaller.utils.hooks import collect_all
@@ -18,6 +18,6 @@ a = Analysis([str(ROOT / "packaging" / "app_entry.py")], pathex=[str(ROOT)], bin
              hiddenimports=hiddenimports, excludes=["matplotlib", "PyQt5", "PySide6", "IPython", "pytest"],
              noarchive=False)
 pyz = PYZ(a.pure)
-exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name="Textschnitt", console=False,
+exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name="HoneyCut", console=False,
           icon=str(ROOT / "textschnitt.ico"), version=str(ROOT / "packaging" / "version.txt"))
-coll = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name="Textschnitt")
+coll = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name="HoneyCut")

@@ -1,4 +1,4 @@
-// Service Worker: Textschnitt auch ohne Netz öffnen und die Seite „isoliert“ ausliefern
+// Service Worker: HoneyCut auch ohne Netz öffnen und die Seite „isoliert“ ausliefern
 // (Cross-Origin-Isolation erlaubt mehrere Rechenkerne für die Spracherkennung).
 const V = 'ts-__VERSION__';
 const SHELL = __SHELL__;

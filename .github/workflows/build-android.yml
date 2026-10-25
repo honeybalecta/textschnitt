@@ -98,12 +98,12 @@ jobs:
       - name: APK bereitstellen
         run: |
           mkdir -p out
-          cp android/app/build/outputs/apk/release/*.apk "out/Textschnitt-Android-$TS_VERSION.apk"
+          cp android/app/build/outputs/apk/release/*.apk "out/HoneyCut-Android-$TS_VERSION.apk"
           ls -la out
 
       - uses: actions/upload-artifact@v4
         with:
-          name: Textschnitt-Android
+          name: HoneyCut-Android
           path: out/*.apk
 
       - name: Als Release veröffentlichen
@@ -113,4 +113,4 @@ jobs:
         run: |
           TAG="android-v$TS_VERSION"
           if gh release view "$TAG" >/dev/null 2>&1; then gh release upload "$TAG" out/*.apk --clobber
-          else gh release create "$TAG" out/*.apk --title "Textschnitt für Android $TS_VERSION" --notes "APK für Android 10 und neuer (ARM64). Mit eingebautem Whisper-Modell „small“."; fi
+          else gh release create "$TAG" out/*.apk --title "HoneyCut für Android $TS_VERSION" --notes "APK für Android 10 und neuer (ARM64). Mit eingebautem Whisper-Modell „small“."; fi

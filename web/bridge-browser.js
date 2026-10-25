@@ -457,9 +457,9 @@
     if (home){
       const n = document.createElement('div'); n.className = 'web-note';
       const miss = supportNote();
-      n.innerHTML = (miss.length ? `<p class="web-warn">Dieser Browser kann nicht alles, was Textschnitt braucht (${miss.join(', ')}). Am besten funktioniert ein aktueller Chrome oder Edge am Computer.</p>` : '') +
+      n.innerHTML = (miss.length ? `<p class="web-warn">Dieser Browser kann nicht alles, was HoneyCut braucht (${miss.join(', ')}). Am besten funktioniert ein aktueller Chrome oder Edge am Computer.</p>` : '') +
         `<p>🔒 Deine Videos bleiben auf deinem Gerät: Transkription, Schnitt und Export laufen vollständig in diesem Browser. Die Whisper-Modelle tiny und base kommen beim ersten Mal von dieser Seite und werden im Browser gespeichert; nur das größere Modell small wird von Hugging Face geladen.</p>` +
-        `<p class="muted">Textschnitt ${VERSION} · Projekte werden in diesem Browser gespeichert · <a href="https://github.com/honeybalecta/textschnitt" target="_blank" rel="noopener">Windows- und Android-App</a></p>`;
+        `<p class="muted">HoneyCut ${VERSION} · Projekte werden in diesem Browser gespeichert · <a href="https://github.com/honeybalecta/textschnitt" target="_blank" rel="noopener">Windows- und Android-App</a></p>`;
       home.append(n);
     }
     window.addEventListener('beforeunload', e => { for (const j of jobs.values()) if (j.status === 'running'){ e.preventDefault(); e.returnValue = ''; return; } });

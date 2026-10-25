@@ -1,6 +1,6 @@
 {
-  "name": "Textschnitt",
-  "short_name": "Textschnitt",
+  "name": "HoneyCut",
+  "short_name": "HoneyCut",
   "description": "Gesprochene Videos über das Transkript schneiden – direkt im Browser, ohne Upload.",
   "lang": "de",
   "start_url": "./",

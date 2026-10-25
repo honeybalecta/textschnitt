@@ -51,7 +51,7 @@ class WorkService : Service() {
         nm.createNotificationChannel(NotificationChannel(CH_DONE, "Fertig", NotificationManager.IMPORTANCE_DEFAULT).apply {
             description = "Meldung, wenn eine Transkription oder ein Export fertig ist" })
         wake = (getSystemService(Context.POWER_SERVICE) as PowerManager)
-            .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Textschnitt:arbeit").apply { setReferenceCounted(false); acquire(6 * 3600_000L) }
+            .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "HoneyCut:arbeit").apply { setReferenceCounted(false); acquire(6 * 3600_000L) }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -84,7 +84,7 @@ class WorkService : Service() {
     private fun build(cur: Pair<Job, String>?): Notification {
         val b = Notification.Builder(this, CH_RUN).setSmallIcon(R.drawable.ic_stat).setOngoing(true)
             .setOnlyAlertOnce(true).setContentIntent(openApp()).setCategory(Notification.CATEGORY_PROGRESS)
-        if (cur == null) return b.setContentTitle("Textschnitt arbeitet …").build()
+        if (cur == null) return b.setContentTitle("HoneyCut arbeitet …").build()
         val (job, what) = cur
         val pct = (job.progress * 100).toInt().coerceIn(0, 100)
         val more = tracked.size - 1

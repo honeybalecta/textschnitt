@@ -204,7 +204,7 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
         Thread {
             var uri: Uri? = null
             try {
-                val base = plan.optString("name", "Textschnitt").ifBlank { "Textschnitt" }
+                val base = plan.optString("name", "HoneyCut").ifBlank { "HoneyCut" }
                     .replace(Regex("[\\\\/:*?\"<>|]"), "_").take(80)
                 val stamp = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.GERMANY).format(java.util.Date())
                 val name = "${base}_$stamp.mp4"
@@ -213,7 +213,7 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
                     put(MediaStore.Video.Media.DISPLAY_NAME, name)
                     put(MediaStore.Video.Media.TITLE, base)
                     put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
-                    put(MediaStore.Video.Media.RELATIVE_PATH, "DCIM/Textschnitt")
+                    put(MediaStore.Video.Media.RELATIVE_PATH, "DCIM/HoneyCut")
                     put(MediaStore.Video.Media.DATE_TAKEN, now)
                     put(MediaStore.Video.Media.DATE_ADDED, now / 1000)
                     put(MediaStore.Video.Media.DATE_MODIFIED, now / 1000)
@@ -225,7 +225,7 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
                 values.clear(); values.put(MediaStore.Video.Media.IS_PENDING, 0)
                 ctx.contentResolver.update(uri, values, null, null)
                 outFile.delete()
-                job.done(JSONObject().put("uri", uri.toString()).put("name", name).put("folder", "DCIM/Textschnitt"))
+                job.done(JSONObject().put("uri", uri.toString()).put("name", name).put("folder", "DCIM/HoneyCut"))
             } catch (e: Throwable) {
                 uri?.let { runCatching { ctx.contentResolver.delete(it, null, null) } }
                 job.fail(e)

@@ -184,7 +184,7 @@ class Bridge(private val act: MainActivity) {
             src.copyTo(f, overwrite = true)
             val uri = androidx.core.content.FileProvider.getUriForFile(act, act.packageName + ".files", f)
             val i = Intent(Intent.ACTION_SEND).setType("application/json").putExtra(Intent.EXTRA_STREAM, uri)
-                .putExtra(Intent.EXTRA_SUBJECT, "Textschnitt-Projekt: $name").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                .putExtra(Intent.EXTRA_SUBJECT, "HoneyCut-Projekt: $name").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             act.startActivity(Intent.createChooser(i, "Projektdatei teilen"))
         }
     }.let { }

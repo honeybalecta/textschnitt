@@ -1,4 +1,4 @@
-; Inno-Setup-Skript für Textschnitt (Installation ohne Adminrechte, pro Benutzer:in)
+; Inno-Setup-Skript für HoneyCut (Installation ohne Adminrechte, pro Benutzer:in)
 #define AppVersion GetEnv("TS_VERSION")
 #if AppVersion == ""
   #define AppVersion "1.0.0"
@@ -6,17 +6,17 @@
 
 [Setup]
 AppId={{6C7E1A52-6E3B-4D1A-9B3E-2B7F4C1D9A10}
-AppName=Textschnitt
+AppName=HoneyCut
 AppVersion={#AppVersion}
 AppPublisher=Honey Balecta
-DefaultDirName={localappdata}\Programs\Textschnitt
-DefaultGroupName=Textschnitt
+DefaultDirName={localappdata}\Programs\HoneyCut
+DefaultGroupName=HoneyCut
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 OutputDir=..\dist
-OutputBaseFilename=Textschnitt-Setup-{#AppVersion}
+OutputBaseFilename=HoneyCut-Setup-{#AppVersion}
 SetupIconFile=..\textschnitt.ico
-UninstallDisplayIcon={app}\Textschnitt.exe
+UninstallDisplayIcon={app}\HoneyCut.exe
 Compression=lzma2/normal
 SolidCompression=no
 WizardStyle=modern
@@ -30,11 +30,17 @@ Name: "de"; MessagesFile: "compiler:Languages\German.isl"
 Name: "desktopicon"; Description: "Symbol auf dem Desktop anlegen"; GroupDescription: "Zusätzlich:"
 
 [Files]
-Source: "..\dist\Textschnitt\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\dist\HoneyCut\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{autoprograms}\Textschnitt"; Filename: "{app}\Textschnitt.exe"
-Name: "{autodesktop}\Textschnitt"; Filename: "{app}\Textschnitt.exe"; Tasks: desktopicon
+Name: "{autoprograms}\HoneyCut"; Filename: "{app}\HoneyCut.exe"
+Name: "{autodesktop}\HoneyCut"; Filename: "{app}\HoneyCut.exe"; Tasks: desktopicon
+
+[InstallDelete]
+; frühere Versionen hießen „Textschnitt“
+Type: files; Name: "{app}\Textschnitt.exe"
+Type: files; Name: "{autoprograms}\Textschnitt.lnk"
+Type: files; Name: "{autodesktop}\Textschnitt.lnk"
 
 [Run]
-Filename: "{app}\Textschnitt.exe"; Description: "Textschnitt jetzt starten"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\HoneyCut.exe"; Description: "HoneyCut jetzt starten"; Flags: nowait postinstall skipifsilent

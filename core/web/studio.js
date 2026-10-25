@@ -30,7 +30,7 @@ function renderTimeline(){
   tlInner.style.width = Math.ceil(total * TL.pps + pad + half() + 40) + 'px';
   $('#tlTotal').textContent = '/ ' + fmtS(total);
   renderRuler(pad); renderMain(pad); renderOvl(pad); renderFx(pad); renderTitles(pad); renderTxt(pad);
-  restoreSel(); updateTools(); paintBar();
+  paintLinks(); restoreSel(); updateTools(); paintBar();
   if (TL.mode === 'center') syncScroll(outPos, true); else placeHead(outPos);
 }
 function renderRuler(pad){
@@ -130,11 +130,12 @@ function renderTitles(pad){
 }
 function renderTxt(pad){
   const tr = $('#trTxt'); tr.innerHTML = '';
-  if (!tokens.length || S().enabled === false){ tr.innerHTML = '<span class="track-ph">Untertitel aus</span>'; return; }
+  if (S().enabled === false){ tr.innerHTML = '<span class="track-ph">Untertitel aus</span>'; return; }
+  if (!P.cues.length){ tr.innerHTML = '<span class="track-ph">Untertitel: ＋ Untertitel legt einen an der Abspiellinie an</span>'; return; }
   const frag = document.createDocumentFragment();
   for (const c of P.cues){
     const t = cueTimes(c); if (!t) continue;
-    const b = blk('cue' + (c.off ? ' off' : '') + (isFree(c) ? ' free' : ''), t.s, Math.max(0.1, t.e - t.s), pad, {cid: c.id});
+    const b = blk('cue' + (c.off ? ' off' : '') + (isFree(c) ? ' free' : '') + (c.own ? ' own' : ''), t.s, Math.max(0.1, t.e - t.s), pad, {cid: c.id});
     const sp = document.createElement('span'); sp.className = 'txt'; sp.textContent = cueText(c); b.append(sp);
     frag.append(b);
   }
@@ -210,7 +211,7 @@ function restoreSel(){
 function select(sel){
   tlInner.querySelectorAll('.blk.sel').forEach(x => x.classList.remove('sel'));
   TL.sel = sel; const b = selBlock(); if (b) b.classList.add('sel'); else TL.sel = null;
-  updateTools(); if (P) updateTitles(outPos);
+  paintLinks(); updateTools(); if (P) updateTitles(outPos);
 }
 function selectBlock(b){
   const tr = b.parentElement.id;
@@ -218,9 +219,35 @@ function selectBlock(b){
   else if (tr === 'trTxt') select({kind:'cue', id:b.dataset.cid});
   else { const it = P.items.find(x => x.id === b.dataset.id); if (!it) return; select({kind: it.type === 'zoom' ? 'zoom' : it.type === 'fx' ? 'fx' : it.type === 'title' ? 'title' : 'ovl', id: it.id}); }
 }
+// ── Verbinden: mehrere Objekte auswählen (Strg/Umschalt+Klick oder „Verbinden …“), dann zu einer Gruppe machen ──
+const blkKey = b => b.dataset.cid ? 'c:' + b.dataset.cid : b.dataset.id ? 'i:' + b.dataset.id : null;
+const objOfKey = k => k[0] === 'c' ? P.cues.find(c => c.id === k.slice(2)) : P.items.find(x => x.id === k.slice(2));
+const selKey = () => { const s = TL.sel; if (!s || s.kind === 'main' || s.kind === 'insert') return null; return (s.kind === 'cue' ? 'c:' : 'i:') + s.id; };
+function paintLinks(){
+  tlInner.querySelectorAll('.blk').forEach(b => { const k = blkKey(b), o = k && objOfKey(k);
+    b.classList.toggle('linked', !!(o && o.lk)); b.classList.toggle('pick', !!(TL.pick && k && TL.pick.has(k)));
+    const sel = TL.sel && selKey() && objOfKey(selKey()); b.classList.toggle('grp', !!(o && o.lk && sel && sel !== o && sel.lk === o.lk));
+    if (o && o.lk && !b.querySelector('.lnk')) b.insertAdjacentHTML('afterbegin', `<i class="lnk">${icon('🔗')}</i>`); });
+}
+function startPick(extra){
+  const k = selKey(); if (!k) return toast('Erst ein Objekt auswählen');
+  TL.pick = new Set([k]); if (extra) TL.pick.add(extra); paintLinks(); updateTools();
+  toast(FINE ? 'Weitere Objekte anklicken, dann „Verbinden“' : 'Weitere Objekte antippen, dann „Verbinden“');
+}
+function endPick(){ TL.pick = null; paintLinks(); updateTools(); }
+function doLink(){
+  const objs = [...(TL.pick || [])].map(objOfKey).filter(Boolean);
+  if (objs.length < 2) return toast('Mindestens zwei Objekte auswählen');
+  let n = 0; commit(() => { n = linkObjects(objs); }, false); TL.pick = null; renderTimeline();
+  toast(`${n} Objekte verbunden – sie bleiben jetzt beieinander`);
+}
+function doUnlink(){ const k = selKey(), o = k && objOfKey(k); if (!o || !o.lk) return; commit(() => unlinkObject(o), false); renderTimeline(); toast('Verbindung gelöst'); }
 tlInner.addEventListener('click', e => {
   if (TL.drag && TL.drag.moved) return;
   const b = e.target.closest('.blk');
+  const k = b && blkKey(b);
+  if (TL.pick){ if (k){ if (TL.pick.has(k)) TL.pick.delete(k); else TL.pick.add(k); paintLinks(); updateTools(); } return; }
+  if (k && (e.ctrlKey || e.metaKey || e.shiftKey) && selKey() && selKey() !== k){ startPick(k); return; }
   if (!b){ select(null); if (TL.mode === 'move' && !e.target.closest('.ruler')){ if (playing) pausePlay(); seekOut(timeAtX(e.clientX), false); placeHead(outPos); } return; }
   if (b.classList.contains('sel') && TL.justSelected){ TL.justSelected = false; return; }
   selectBlock(b);
@@ -275,6 +302,7 @@ function snapPoints(exclude){
 function snapTo(val, pts){ if (!TL.snap) return val; let best = val, bd = 7 / TL.pps; for (const p of pts){ const d = Math.abs(p - val); if (d < bd){ bd = d; best = p; } } return best; }
 tlInner.addEventListener('pointerdown', e => {
   if (e.button === 2) return;
+  if (TL.pick || ((e.ctrlKey || e.metaKey || e.shiftKey) && e.pointerType === 'mouse')) return;   // Verbinden: nur auswählen, nicht ziehen
   let b = e.target.closest('.blk.sel');
   if (!b && e.pointerType === 'mouse' && e.button === 0){   // mit der Maus: Clip direkt greifen
     const nb = e.target.closest('.blk'); if (!nb) return; selectBlock(nb); TL.justSelected = true; b = selBlock(); if (!b) return; }
@@ -370,7 +398,17 @@ function applyDrag(side, d){
     if (moved){ if (tokens.length) renderTranscript(); toast('Clip verschoben – Strg+Z macht es rückgängig'); } else renderTimeline();
     return;
   }
+  const lnk = s.kind === 'cue' ? selCue() : (s.kind === 'main' || s.kind === 'insert') ? null : selItem();
   commit(() => {
+    const p0 = lnk && lnk.lk ? objStart(lnk) : null;
+    linkedDrag(side, d);
+    if (p0 != null){ if (side === 'm') groupShift(lnk, objStart(lnk) - p0); else refreshLo(lnk); }
+  }, false);
+  tokens.forEach(t => paint(t.i));
+}
+function linkedDrag(side, d){
+  const s = TL.sel;
+  {
     if (s.kind === 'main'){
       const g = timeline[s.i];
       if (side === 'l'){
@@ -409,15 +447,23 @@ function applyDrag(side, d){
       if (side === 'l') setCueFree(c, Math.min(t.s + d, t.e - 0.2), t.e); else if (side === 'r') setCueFree(c, t.s, t.e + d);
       else { const len = t.e - t.s, ns = clamp(t.s + d, 0, Math.max(0, total - len)); setCueFree(c, ns, ns + len); }
     }
-  }, false);
-  tokens.forEach(t => paint(t.i));
+  }
 }
 
 // ───────── Werkzeuge ─────────
 const T = (icon, label, fn, cls = '') => ({icon, label, fn, cls});
 function toolList(){
+  if (TL.pick) return [T('🔗', `Verbinden (${TL.pick.size})`, doLink), T('✕', 'Abbrechen', endPick)];
+  const lt = linkTools();
+  return [...toolListBase(), ...lt];
+}
+function linkTools(){
+  const k = selKey(), o = k && objOfKey(k); if (!o) return [];
+  return o.lk ? [T('⛓', 'Verbindung lösen', doUnlink)] : [T('🔗', 'Verbinden …', () => startPick())];
+}
+function toolListBase(){
   const s = TL.sel; const g = s && (s.kind === 'main' || s.kind === 'insert') ? timeline[s.i] : null;
-  if (!s) return [T('✂', 'Teilen', splitHere), T('⌫', 'Bis hier weg', () => cutTo('l')), T('⌦', 'Ab hier weg', () => cutTo('r')), T('＋', 'Clip', addClip), T('T', 'Titel', addTitle), T('🔍', 'Zoom', addZoom),
+  if (!s) return [T('✂', 'Teilen', splitHere), T('⌫', 'Bis hier weg', () => cutTo('l')), T('⌦', 'Ab hier weg', () => cutTo('r')), T('＋', 'Clip', addClip), T('T', 'Titel', addTitle), T('💬', 'Untertitel', addOwnCue), T('🔍', 'Zoom', addZoom),
     ...(P.moves.length ? [T('↺', 'Reihenfolge zurück', () => { commit(() => P.moves = [], true); if (tokens.length) renderTranscript(); toast('Ursprüngliche Reihenfolge'); })] : [])];
   if (s.kind === 'main') return [T('✂', 'Teilen', splitHere), T('⚙', 'Anpassen', () => openFx(g)), T('🗑', 'Löschen', delSel, 'danger'), T('⇤', 'Anfang −1', () => nudge('l', -1)), T('⇥', 'Anfang +1', () => nudge('l', 1)),
     T('⇤', 'Ende −1', () => nudge('r', -1)), T('⇥', 'Ende +1', () => nudge('r', 1)), T('🔍', 'Zoom', addZoom), T('T', 'Titel', addTitle), T('＋', 'Clip', addClip)];
@@ -430,6 +476,7 @@ function toolList(){
   if (s.kind === 'fx'){ const it = selItem(); return [T('⚙', 'Anpassen', () => openFxItem(it)), T('🗑', 'Löschen', delSel, 'danger')]; }
   if (s.kind === 'title'){ const it = selItem(); return [T('✎', 'Text & Stil', () => editTitle(it.id)), T('🗑', 'Löschen', delSel, 'danger')]; }
   if (s.kind === 'cue'){ const c = selCue(); return [T('✎', 'Text', editCue), T('✂', 'Teilen', splitCue), T(c && c.off ? '👁' : '⦸', c && c.off ? 'Einblenden' : 'Ausblenden', () => { commit(() => c.off = !c.off, false); }),
+    ...(c && c.own ? [T('🗑', 'Löschen', delSel, 'danger')] : [T('⇄', 'Vom Text lösen', () => { commit(() => detachCue(c), false); toast('Eigener Untertitel – Text und Zeit hängen nicht mehr am Transkript'); })]),
     ...(c && c.x != null ? [T('⌖', 'Position ↺', () => { commit(() => { delete c.x; delete c.y; }, false); placeOverlay(); })] : []),
     ...(c && (isFree(c) || c.ds || c.de) ? [T('↺', 'Zeit ↺', () => { commit(() => { delete c.fa; delete c.fd; c.ds = 0; c.de = 0; }, false); })] : [])]; }
   return [];
@@ -471,12 +518,14 @@ function cutTo(side){
   const g = curMainSeg(); if (!g) return;
   const x = vT();
   commit(() => side === 'l' ? addDel(g.in, x) : addDel(x, g.out), false); tokens.forEach(t => paint(t.i));
+  // Abspiellinie genau auf den neuen Schnitt
+  if (playing) pausePlay(); const o = srcToOut(x); seekOut(o, false); revealHead(o);
 }
 function delSel(){
   const s = TL.sel; if (!s) return;
   if (s.kind === 'main'){ const g = timeline[s.i]; commit(() => addDel(g.in, g.out), false); tokens.forEach(t => paint(t.i)); toast('Clip gelöscht'); }
   else if (s.kind === 'insert'){ const id = timeline[s.i].item.id; commit(() => P.items = P.items.filter(x => x.id !== id), false); }
-  else if (s.kind === 'cue'){ const c = selCue(); commit(() => c.off = true, false); }
+  else if (s.kind === 'cue'){ const c = selCue(); if (c.own) commit(() => P.cues = P.cues.filter(x => x !== c), false); else commit(() => c.off = true, false); }
   else { commit(() => P.items = P.items.filter(x => x.id !== s.id), false); }
   TL.sel = null; renderTimeline(); updateTitles(outPos);
 }
@@ -583,20 +632,37 @@ function openFxItem(it){
   $('#fxOk').onclick = () => { const same = JSON.stringify(it.fx) === JSON.stringify(FX_DEF); if (same) P.items = P.items.filter(x => x !== it); undo.push(before); redo = []; closeSheet(); changed(true); };
   body.onclick = null;
 }
-function editCue(){
+// Neuer eigener Untertitel an der Abspiellinie (bis zum nächsten Untertitel, höchstens 2,5 s)
+function addOwnCue(){
+  if (S().enabled === false){ S().enabled = true; syncStyleInputs(); }
+  const s0 = outPos, nx = computedCues().map(x => x.s).filter(x => x > s0 + 0.3).sort((a, b) => a - b)[0];
+  const e0 = Math.min(total, s0 + 2.5, nx != null ? nx - 0.02 : Infinity);
+  if (e0 - s0 < 0.2) return toast('Hier ist kein Platz – Abspiellinie verschieben');
+  let c; commit(() => { c = newOwnCue(s0, e0, ''); insertCue(c); }, false);
+  select({kind:'cue', id:c.id}); editCue(true);
+}
+function editCue(fresh){
   const c = selCue(); if (!c) return;
   const body = $('#sheetBody');
   body.innerHTML = `<h3>Untertitel</h3><textarea id="cueEdit" rows="3" style="width:100%;font:17px/1.4 var(--read)"></textarea>
     <div class="row" style="margin-top:10px"><button class="btn" id="cueAuto">↺ gesprochener Text</button><button class="btn primary" id="cueOk" style="margin-left:auto">Fertig</button></div>`;
-  $('#cueEdit').value = cueText(c);
-  openSheet(false);
+  $('#cueEdit').value = cueText(c); $('#cueAuto').classList.toggle('hidden', !!c.own);
+  openSheet(false); setTimeout(() => $('#cueEdit').focus(), 30);
   const before = snapshot();
   $('#cueAuto').onclick = () => { $('#cueEdit').value = autoText(c); };
-  $('#cueOk').onclick = () => { const v = $('#cueEdit').value; c.text = v.trim() === autoText(c) ? null : v; undo.push(before); redo = []; closeSheet(); changed(false); };
+  $('#cueOk').onclick = () => { const v = $('#cueEdit').value;
+    if (c.own){ if (!v.trim() && fresh === true){ P.cues = P.cues.filter(x => x !== c); select(null); } else c.text = v; }
+    else c.text = v.trim() === autoText(c) ? null : v;
+    if (fresh !== true) { undo.push(before); redo = []; } closeSheet(); changed(false); };
+  $('#cueEdit').onkeydown = ev => { if (ev.key === 'Enter' && !ev.shiftKey){ ev.preventDefault(); $('#cueOk').click(); } };
   body.onclick = null;
 }
 function splitCue(){
-  const c = selCue(); if (!c) return; const ids = cueWords(c); if (ids.length < 2) return toast('Zu wenige Wörter');
+  const c = selCue(); if (!c) return;
+  if (c.own){ const w = (c.text || '').trim().split(/\s+/); if (w.length < 2) return toast('Zu wenige Wörter');
+    const t = cueTimes(c); if (!t) return; const k = clamp(Math.round(w.length * (outPos - t.s) / (t.e - t.s)), 1, w.length - 1);
+    commit(() => { const c2 = splitOwnCue(c, w.slice(0, k).join(' '), w.slice(k).join(' ')); if (c2) P.cues.splice(P.cues.indexOf(c) + 1, 0, c2); }, false); return; }
+  const ids = cueWords(c); if (ids.length < 2) return toast('Zu wenige Wörter');
   const x = curSrc(); let k = ids.findIndex(i => tokens[i].ws >= x); if (k <= 0) k = Math.ceil(ids.length / 2);
   const idx = P.cues.indexOf(c);
   commit(() => { const c2 = {id:newId(), a: ids[k-1] + 1, b: c.b, text:null, ds:0, de:c.de || 0, off:c.off}; c.b = ids[k-1]; c.text = null; c.de = 0; delete c.fa; delete c.fd; P.cues.splice(idx + 1, 0, c2); }, false);
@@ -661,6 +727,7 @@ document.addEventListener('keydown', e => {
   const mod = e.ctrlKey || e.metaKey, k = e.key;
   if (k === 'Escape' && $('#proj').classList.contains('full')){ setFull(false); return; }
   if (!typing && !mod && (k === 'f' || k === 'F')){ e.preventDefault(); setFull(!$('#proj').classList.contains('full')); return; }
+  if (k === 'Escape' && TL.pick){ endPick(); return; }
   if (k === 'Escape'){ closeMenu(); if (!$('#sheet').classList.contains('hidden')) closeSheet(); else { select(null); clearSel(); } return; }
   if (typing) return;
   const handled = () => e.preventDefault();
@@ -701,6 +768,8 @@ document.addEventListener('keydown', e => {
 // Mausrad: scrollen, mit Strg zoomen
 tlEl.addEventListener('wheel', e => {
   if (e.ctrlKey){ e.preventDefault(); setPps(TL.pps * (e.deltaY < 0 ? 1.15 : 1 / 1.15)); return; }
+  const body = $('.tl-body');
+  if (e.shiftKey && body.scrollHeight > body.clientHeight + 1){ e.preventDefault(); body.scrollTop += e.deltaY || e.deltaX; return; }   // Umschalt+Mausrad: Spuren senkrecht
   if (Math.abs(e.deltaY) > Math.abs(e.deltaX)){ e.preventDefault(); if (TL.mode === 'move') TL.expect = -1; tlEl.scrollLeft += e.deltaY; }
 }, {passive:false});
 // Klick auf die Zeitskala setzt die Abspiellinie

@@ -1,8 +1,8 @@
 """
-Textschnitt als Desktop-Anwendung: eigenes Programmfenster (Edge WebView2), kein Terminal, kein Browser.
+HoneyCut als Desktop-Anwendung: eigenes Programmfenster (Edge WebView2), kein Terminal, kein Browser.
 
 Start: pythonw textschnitt_app.pyw [videodatei]
-Läuft Textschnitt schon, wird die Datei im offenen Fenster geöffnet und das Fenster nach vorn geholt.
+Läuft HoneyCut schon, wird die Datei im offenen Fenster geöffnet und das Fenster nach vorn geholt.
 """
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ if links.is_dir():
     os.environ["PATH"] = str(links) + os.pathsep + os.environ.get("PATH", "")
 
 FIRST_PORT = 8765
-TITLE = "Textschnitt"
+TITLE = "HoneyCut"
 VIDEO_TYPES = ("Video und Audio (*.mp4;*.mov;*.mkv;*.m4v;*.webm;*.avi;*.mts;*.m2ts;*.wmv;*.mp3;*.wav;*.m4a;*.flac;*.aac;*.ogg)",
                "Alle Dateien (*.*)")
 FONT_TYPES = ("Schriften (*.ttf;*.otf)", "Alle Dateien (*.*)")
@@ -120,12 +120,12 @@ def main():
     try:
         import webview  # pywebview
     except ImportError:
-        fail("Für das Programmfenster fehlt „pywebview“.\n\nBitte install.bat im Textschnitt-Ordner noch einmal ausführen.")
+        fail("Für das Programmfenster fehlt „pywebview“.\n\nBitte install.bat im HoneyCut-Ordner noch einmal ausführen.")
 
     try:
         import textschnitt as T
     except Exception:
-        fail("Textschnitt konnte nicht geladen werden:\n\n" + traceback.format_exc()[-1500:])
+        fail("HoneyCut konnte nicht geladen werden:\n\n" + traceback.format_exc()[-1500:])
 
     port = next((p for p in range(FIRST_PORT, FIRST_PORT + 20) if port_free(p)), None)
     if port is None:
@@ -137,7 +137,7 @@ def main():
 
     try:  # eigenes Taskleisten-Symbol statt dem von Python
         import ctypes
-        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Textschnitt.App")
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("HoneyCut.App")
     except Exception:
         pass
 

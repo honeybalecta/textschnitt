@@ -1,8 +1,8 @@
-# Textschnitt
+# HoneyCut
 
-Gesprochene Videos über das Transkript schneiden – mit einem kleinen Studio dazu: Videos öffnen (auch mehrere hintereinander), transkribieren lassen, im Text löschen, was raus soll, in der Zeitleiste feinschneiden, Clips, Fotos, Bild-im-Bild und Zooms einsetzen, Untertitel gestalten und frei platzieren, exportieren.
+*(früher „Textschnitt“)* – Gesprochene Videos über das Transkript schneiden – mit einem kleinen Studio dazu: Videos öffnen (auch mehrere hintereinander), transkribieren lassen, im Text löschen, was raus soll, in der Zeitleiste feinschneiden, Clips, Fotos, Bild-im-Bild und Zooms einsetzen, Untertitel gestalten und frei platzieren, exportieren.
 
-Textschnitt gibt es für **Windows**, **Android** und als **Web-Version** direkt im Browser: **https://honeybalecta.github.io/textschnitt/**
+HoneyCut gibt es für **Windows**, **Android** und als **Web-Version** direkt im Browser: **https://honeybalecta.github.io/textschnitt/**
 
 ## Aufbau
 

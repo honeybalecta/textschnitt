@@ -1,4 +1,4 @@
-﻿# Textschnitt – Einrichtung für Windows
+﻿# HoneyCut – Einrichtung für Windows
 # Installiert (falls nötig) Python 3.12, ffmpeg und faster-whisper und legt Verknüpfungen an.
 $ErrorActionPreference = "Stop"
 $App = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -57,7 +57,7 @@ if ($LASTEXITCODE -ne 0) { throw "pip install pywebview ist fehlgeschlagen." }
 & $py -c "import webview; print('pywebview OK')"
 
 Step "Starter und Verknüpfungen anlegen"
-$bat = Join-Path $App "Textschnitt starten.bat"
+$bat = Join-Path $App "HoneyCut starten.bat"
 @"
 @echo off
 chcp 65001 >nul
@@ -74,8 +74,8 @@ $appScript = Join-Path $App "textschnitt_app.pyw"
 $icon = Join-Path $App "textschnitt.ico"
 $shell = New-Object -ComObject WScript.Shell
 $targets = @(
-    (Join-Path ([Environment]::GetFolderPath("Desktop")) "Textschnitt.lnk"),
-    (Join-Path ([Environment]::GetFolderPath("Programs")) "Textschnitt.lnk")
+    (Join-Path ([Environment]::GetFolderPath("Desktop")) "HoneyCut.lnk"),
+    (Join-Path ([Environment]::GetFolderPath("Programs")) "HoneyCut.lnk")
 )
 foreach ($lnkPath in $targets) {
     if (Test-Path $lnkPath) { Remove-Item $lnkPath -Force }
@@ -89,5 +89,5 @@ foreach ($lnkPath in $targets) {
 }
 
 Write-Host ""
-Write-Host "Fertig. Textschnitt liegt auf dem Desktop und im Startmenü." -ForegroundColor Green
-Write-Host "Textschnitt öffnet sich jetzt als eigenes Programmfenster. Videos lassen sich auch auf die Verknüpfung oder ins Fenster ziehen."
+Write-Host "Fertig. HoneyCut liegt auf dem Desktop und im Startmenü." -ForegroundColor Green
+Write-Host "HoneyCut öffnet sich jetzt als eigenes Programmfenster. Videos lassen sich auch auf die Verknüpfung oder ins Fenster ziehen."

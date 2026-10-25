@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Textschnitt – Desktop-Backend für das gemeinsame Studio (core/web).
+HoneyCut (früher Textschnitt) – Desktop-Backend für das gemeinsame Studio (core/web).
 
 Start:  python textschnitt.py            (öffnet die Oberfläche im Browser)
         pythonw textschnitt_app.pyw      (eigenes Programmfenster)
@@ -37,7 +37,7 @@ os.environ.setdefault("HF_HUB_DISABLE_IMPLICIT_TOKEN", "1")
 import warnings  # noqa: E402
 warnings.filterwarnings("ignore", module="huggingface_hub")
 
-VERSION = "2.5.0"
+VERSION = "2.6.0"
 APP_DIR = Path(__file__).resolve().parent
 FROZEN = bool(getattr(sys, "frozen", False))          # als installierte .exe gebaut
 RES_DIR = Path(getattr(sys, "_MEIPASS", APP_DIR))      # mitgelieferte Dateien (Oberfläche, ffmpeg, Modelle)
@@ -1235,7 +1235,7 @@ def export_job(job: dict, plan: dict):
     fmt = plan.get("format") or "video"
     first = next((s for s in plan.get("sources") or [] if s.get("uri")), None) or {"uri": plan["segments"][0]["uri"]}
     src = Path(norm_path(first["uri"]))
-    outdir = src.parent / f"{src.stem}_textschnitt"
+    outdir = src.parent / f"{src.stem}_honeycut"
     stem = safe_name(plan.get("name") or f"{src.stem}_geschnitten")
     subs = plan.get("subs") or {}
     cues = clean_cues(subs.get("cues"))
@@ -1470,7 +1470,7 @@ def handle_open_paths(paths: list[str]):
 # ───────────────────────────── HTTP ─────────────────────────────
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "Textschnitt/2"
+    server_version = "HoneyCut/2"
     protocol_version = "HTTP/1.1"
 
     def log_message(self, fmt, *args):
@@ -1722,7 +1722,7 @@ def main():
         print("⚠  ffmpeg/ffprobe nicht gefunden. Bitte installieren und in den PATH aufnehmen.")
     srv = make_server(PORT)
     url = app_url(PORT)
-    print(f"Textschnitt läuft auf {url}  (Beenden mit Strg+C)")
+    print(f"HoneyCut läuft auf {url}  (Beenden mit Strg+C)")
     log(f"Start – Python {sys.version.split()[0]}, {platform.platform()}, faster-whisper {'ja' if whisper_available() else 'nein'}")
     if not os.environ.get("TEXTSCHNITT_NO_BROWSER"):
         threading.Timer(0.6, lambda: webbrowser.open(url)).start()
