@@ -37,7 +37,7 @@ os.environ.setdefault("HF_HUB_DISABLE_IMPLICIT_TOKEN", "1")
 import warnings  # noqa: E402
 warnings.filterwarnings("ignore", module="huggingface_hub")
 
-VERSION = "2.7.1"
+VERSION = "2.7.2"
 APP_DIR = Path(__file__).resolve().parent
 FROZEN = bool(getattr(sys, "frozen", False))          # als installierte .exe gebaut
 RES_DIR = Path(getattr(sys, "_MEIPASS", APP_DIR))      # mitgelieferte Dateien (Oberfläche, ffmpeg, Modelle)
@@ -765,15 +765,22 @@ def ovl_geom(o: dict, W: int, H: int):
     if len(kf) >= 2:
         at = float(o["at"])
         ks = sorted(kf, key=lambda k: float(k["t"]))
-        wx = pw_expr([(at + float(k["t"]), float(k["w"])) for k in ks])
+        ws = [float(k["w"]) for k in ks]
         xx = pw_expr([(at + float(k["t"]), float(k["x"])) for k in ks])
         yx = pw_expr([(at + float(k["t"]), float(k["y"])) for k in ks])
-        return {"anim": True, "w": f"max(2,trunc({W}*({wx})/2)*2)", "h": f"max(2,trunc({W}*({wx})/{a:.5f}/2)*2)",
-                "x": f"{W}*({xx})-overlay_w/2", "y": f"{H}*({yx})-overlay_h/2"}
+        if max(ws) - min(ws) < 1e-4:
+            # nur die Lage ändert sich: Bild einmal skalieren, nur die Position wird je Bild berechnet
+            pw = max(2, round(W * ws[0] / 2) * 2)
+            ph = max(2, round(pw / a / 2) * 2)
+            return {"anim": False, "move": True, "w": pw, "h": ph, "x": f"{W}*({xx})-overlay_w/2", "y": f"{H}*({yx})-overlay_h/2"}
+        wx = pw_expr([(at + float(k["t"]), float(k["w"])) for k in ks])
+        mw = max(2, round(W * max(ws) / 2) * 2)
+        return {"anim": True, "move": True, "w": f"max(2,trunc({W}*({wx})/2)*2)", "h": f"max(2,trunc({W}*({wx})/{a:.5f}/2)*2)",
+                "x": f"{W}*({xx})-overlay_w/2", "y": f"{H}*({yx})-overlay_h/2", "maxw": mw, "maxh": max(2, round(mw / a / 2) * 2)}
     k0 = kf[0] if kf else o
     pw = max(2, round(W * float(k0["w"]) / 2) * 2)
     ph = max(2, round(pw / a / 2) * 2)
-    return {"anim": False, "w": pw, "h": ph, "x": round(float(k0["x"]) * W - pw / 2), "y": round(float(k0["y"]) * H - ph / 2)}
+    return {"anim": False, "move": False, "w": pw, "h": ph, "x": round(float(k0["x"]) * W - pw / 2), "y": round(float(k0["y"]) * H - ph / 2)}
 
 
 def video_fx_chain(fx: dict) -> str:
@@ -834,8 +841,13 @@ def build_graph(plan: dict, with_video: bool, ass_name: str | None):
                 parts.append(f"[{i}:v:0]{fit},fps={fps_s},format=yuv420p,trim=duration={d:.4f},setpts=PTS-STARTPTS{vlab}")
             parts.append(f"anullsrc=r=48000:cl=stereo,atrim=duration={d:.4f},aformat=sample_fmts=fltp:channel_layouts=stereo{alab}")
         else:
-            i = file_input(s["uri"])
-            off = starts.get(norm_path(s["uri"]), 0.0)
+            # Jeder Abschnitt bekommt eine eigene, vorgespulte Eingabe. Liest man alle Abschnitte aus einer
+            # gemeinsamen Eingabe, puffert ffmpeg die Bilder für spätere Abschnitte – bei 4K und vielen Schnitten
+            # oder umsortierten Abschnitten reicht dann der Arbeitsspeicher nicht.
+            un = norm_path(s["uri"])
+            seek = max(0.0, a0 - 1.0)
+            inputs.append(["-ss", f"{seek:.3f}", "-i", un])
+            i, off = len(inputs) - 1, -seek
             if with_video:
                 if s.get("hasVideo", True):
                     z = ""
@@ -896,7 +908,8 @@ def build_graph(plan: dict, with_video: bool, ass_name: str | None):
                 x, y = f"'{g['x']}'", f"'{g['y']}'"
                 sc = f"scale=w='{g['w']}':h='{g['h']}':eval=frame,setsar=1"
             elif g:
-                pw, ph, x, y = g["w"], g["h"], g["x"], g["y"]
+                pw, ph = g["w"], g["h"]
+                x, y = (f"'{g['x']}'", f"'{g['y']}'") if g["move"] else (g["x"], g["y"])
                 sc = f"scale={pw}:{ph}:force_original_aspect_ratio=increase,crop={pw}:{ph},setsar=1"
             elif o.get("mode") == "pip":
                 sz = float(o.get("size") or 0.33)
@@ -913,9 +926,10 @@ def build_graph(plan: dict, with_video: bool, ass_name: str | None):
                 # Standbild: nur ein Bild einlesen (kein Endlos-Eingang, der Speicher füllt); die Überlagerung wiederholt es
                 inputs.append(["-i", norm_path(o["uri"])])
                 i = len(inputs) - 1
-                if g and g["anim"]:   # wächst/schrumpft: Bilder erst im Filter erzeugen
+                if g and g["anim"]:   # wächst/schrumpft: einmal auf die größte Größe bringen, dann im Filter wiederholen
                     nfr = max(1, int(d * fps + 0.999))
-                    src = f"[{i}:v:0]loop=loop={nfr}:size=1:start=0,setpts=N/({fps_s})/TB+{at:.4f}/TB"
+                    src = (f"[{i}:v:0]scale={g['maxw']}:{g['maxh']},format=yuva420p,"
+                           f"loop=loop={nfr}:size=1:start=0,setpts=N/({fps_s})/TB+{at:.4f}/TB")
                 else:
                     src = f"[{i}:v:0]setpts=PTS-STARTPTS+{at:.4f}/TB"
             else:
@@ -924,7 +938,7 @@ def build_graph(plan: dict, with_video: bool, ass_name: str | None):
                 src = f"[{i}:v:0]trim=start={inn + off:.4f}:end={inn + d + off:.4f},setpts=PTS-STARTPTS+{at:.4f}/TB"
             still = bool(o.get("image")) and not (g and g["anim"])
             parts.append(f"{src}{'' if still else f',fps={fps_s}'},{sc},format=yuva420p[o{k}]")
-            ev = ":eval=frame" if g and g["anim"] else ""
+            ev = ":eval=frame" if g and (g["anim"] or g["move"]) else ""
             parts.append(f"{cur}[o{k}]overlay=x={x}:y={y}{ev}:eof_action={'repeat' if still else 'pass'}:enable='between(t,{at:.4f},{at + d:.4f})'[c{k}]")
             cur = f"[c{k}]"
         if ass_name:
@@ -940,35 +954,114 @@ AUDIO_CODECS = {"wav": ["-c:a", "pcm_s16le"], "mp3": ["-c:a", "libmp3lame", "-b:
                 "m4a": ["-c:a", "aac", "-b:a", "192k"], "flac": ["-c:a", "flac"]}
 
 
+CHUNK = 6   # so viele Abschnitte der Hauptspur rechnet ffmpeg auf einmal (begrenzt den Speicher)
+
+
+def seg_duration(s: dict) -> float:
+    fx = seg_fx(s) if s.get("kind") == "main" else seg_fx({})
+    return max(0.04, (float(s["out"]) - float(s["in"])) / fx["speed"])
+
+
+def shift_plan(plan: dict, segs: list[dict], o0: float, dur: float) -> dict:
+    """Teilplan für ein Stück der Ausgabe [o0, o0+dur): Einblendungen werden verschoben und zugeschnitten."""
+    sub = dict(plan)
+    sub["segments"] = segs
+    sub["total"] = dur
+    ovs = []
+    for o in plan.get("overlays") or []:
+        at, inn, out = float(o["at"]), float(o["in"]), float(o["out"])
+        d = out - inn
+        a, e = max(at, o0), min(at + d, o0 + dur)
+        if e - a < 0.02:
+            continue
+        cut = a - at   # am Anfang abgeschnittener Teil
+        q = dict(o)
+        q["at"] = a - o0
+        q["in"] = inn + (0.0 if o.get("image") else cut)
+        q["out"] = q["in"] + (e - a)
+        if o.get("image"):
+            q["in"], q["out"] = 0.0, e - a
+        if o.get("kf"):
+            q["kf"] = [{**k, "t": float(k["t"]) - cut} for k in o["kf"]]
+        ovs.append(q)
+    sub["overlays"] = ovs
+    return sub
+
+
+def shift_cues(cues: list[dict], o0: float, dur: float) -> list[dict]:
+    out = []
+    for c in cues:
+        a, e = max(c["start"], o0), min(c["end"], o0 + dur)
+        if e - a > 0.02:
+            out.append({**c, "start": a - o0, "end": e - o0})
+    return out
+
+
+def ffmpeg_graph(job, inputs, graph, tail, total, tmp, base=0.0, span=1.0):
+    script = tmp / "filter.txt"
+    script.write_text(graph, encoding="utf-8")
+    log(f"ffmpeg startet: {sum(1 for a in inputs if a == '-i')} Eingaben, Graph {len(graph)} Zeichen\n{graph[:20000]}")
+    flag = ["-/filter_complex", str(script)] if ffmpeg_major() >= 7 else ["-filter_complex_script", str(script)]
+    try:
+        run_ffmpeg(inputs + flag + tail, total, job, base, span, cwd=tmp)
+    except RuntimeError as e:
+        if "Unrecognized option" in str(e) or "Option not found" in str(e):
+            other = ["-filter_complex_script", str(script)] if flag[0].startswith("-/") else ["-/filter_complex", str(script)]
+            run_ffmpeg(inputs + other + tail, total, job, base, span, cwd=tmp)
+        else:
+            raise
+
+
 def render_plan(job: dict, plan: dict, out: Path, with_video: bool, cues: list[dict]):
     tmp = Path(tempfile.mkdtemp(prefix="textschnitt_"))
     try:
-        ass = None
-        if with_video and cues and plan.get("burn", True):
-            ass = "untertitel.ass"
-            subs = plan.get("subs") or {}
-            fonts = collect_fonts(subs.get("fonts") or {}, tmp / "fonts")
-            write_ass(cues, subs.get("style") or {}, tmp / ass, int(plan["width"]) // 2 * 2, int(plan["height"]) // 2 * 2, fonts)
-        inputs, graph = build_graph(plan, with_video, ass)
-        script = tmp / "filter.txt"
-        script.write_text(graph, encoding="utf-8")
-        log(f"ffmpeg startet: {len(inputs) // 2} Eingaben, Graph {len(graph)} Zeichen\n{graph[:20000]}")
-        flag = ["-/filter_complex", str(script)] if ffmpeg_major() >= 7 else ["-filter_complex_script", str(script)]
-        if with_video:
-            tail = ["-map", "[vout]", "-map", "[aout]", "-c:v", "libx264", "-crf", QUALITY_CRF.get(plan.get("quality"), "20"),
-                    "-preset", "medium", "-pix_fmt", "yuv420p", "-r", f"{float(plan.get('fps') or 30):.3f}",
-                    "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(out)]
-        else:
-            tail = ["-map", "[aout]", "-vn"] + AUDIO_CODECS.get(plan.get("audioFormat") or "wav", AUDIO_CODECS["wav"]) + [str(out)]
+        W, H = int(plan["width"]) // 2 * 2, int(plan["height"]) // 2 * 2
         total = float(plan.get("total") or 1)
-        try:
-            run_ffmpeg(inputs + flag + tail, total, job, cwd=tmp)
-        except RuntimeError as e:
-            if "Unrecognized option" in str(e) or "Option not found" in str(e):
-                other = ["-filter_complex_script", str(script)] if flag[0].startswith("-/") else ["-/filter_complex", str(script)]
-                run_ffmpeg(inputs + other + tail, total, job, cwd=tmp)
-            else:
-                raise
+        burn = with_video and cues and plan.get("burn", True)
+        subs = plan.get("subs") or {}
+        fonts = collect_fonts(subs.get("fonts") or {}, tmp / "fonts") if burn else {}
+        vtail = ["-c:v", "libx264", "-crf", QUALITY_CRF.get(plan.get("quality"), "20"), "-preset", "medium",
+                 "-pix_fmt", "yuv420p", "-r", f"{float(plan.get('fps') or 30):.3f}"]
+        segs = plan["segments"]
+        if not with_video:
+            inputs, graph = build_graph(plan, False, None)
+            tail = ["-map", "[aout]", "-vn"] + AUDIO_CODECS.get(plan.get("audioFormat") or "wav", AUDIO_CODECS["wav"]) + [str(out)]
+            ffmpeg_graph(job, inputs, graph, tail, total, tmp)
+            return
+        if len(segs) <= CHUNK:
+            ass = None
+            if burn:
+                ass = "untertitel.ass"
+                write_ass(cues, subs.get("style") or {}, tmp / ass, W, H, fonts)
+            inputs, graph = build_graph(plan, True, ass)
+            tail = ["-map", "[vout]", "-map", "[aout]"] + vtail + ["-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(out)]
+            ffmpeg_graph(job, inputs, graph, tail, total, tmp)
+            return
+        # Viele Abschnitte: in Stücken zu je CHUNK Abschnitten fertig rechnen (gleiche Qualität, Ton unkomprimiert),
+        # dann ohne erneutes Kodieren aneinanderhängen. So bleibt der Speicherbedarf klein.
+        parts, o0 = [], 0.0
+        groups = [segs[i:i + CHUNK] for i in range(0, len(segs), CHUNK)]
+        for n, g in enumerate(groups):
+            dur = sum(seg_duration(x) for x in g)
+            sub = shift_plan(plan, g, o0, dur)
+            ass = None
+            if burn:
+                cs = shift_cues(cues, o0, dur)
+                if cs:
+                    ass = f"untertitel_{n}.ass"
+                    write_ass(cs, subs.get("style") or {}, tmp / ass, W, H, fonts)
+            inputs, graph = build_graph(sub, True, ass)
+            part = tmp / f"stueck_{n:03d}.mkv"
+            tail = ["-map", "[vout]", "-map", "[aout]"] + vtail + ["-c:a", "pcm_s16le", str(part)]
+            job["message"] = f"Exportiere Teil {n + 1} von {len(groups)} …"
+            ffmpeg_graph(job, inputs, graph, tail, dur, tmp, base=0.97 * o0 / total, span=0.97 * dur / total)
+            parts.append(part)
+            o0 += dur
+        lst = tmp / "stuecke.txt"
+        lst.write_text("".join(f"file '{p.name}'\n" for p in parts), encoding="utf-8")
+        job["message"] = "Teile werden zusammengefügt …"
+        run_ffmpeg(["-f", "concat", "-safe", "0", "-i", str(lst), "-map", "0:v", "-map", "0:a", "-c:v", "copy",
+                    "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(out)], total, job, 0.97, 0.03, cwd=tmp)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
