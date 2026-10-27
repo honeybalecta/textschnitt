@@ -321,6 +321,29 @@
       return {words, lang: lg, env};
     });
   }
+  // Einzelne Stellen getrennt transkribieren (Lücken, die im Zusammenhang ausgelassen wurden)
+  function transcribeRanges(uri, model, lang, rangesJson){
+    const file = need(uri), ranges = JSON.parse(rangesJson);
+    return newJob(async job => {
+      const eng = await E();
+      job.message = 'Ton wird vorbereitet';
+      const pcm = await eng.decodeAudio(file, 16000, p => { job.progress = 0.2 * p; }, job);
+      const db = eng.envelopeDb(pcm);
+      await loadModel(model, job, 0.2, 0.25);
+      const lg = lang || (navigator.language || 'de').slice(0, 2).toLowerCase();
+      const {floor} = speechChunks(db, 16000), PAD = 0.3, padN = Math.round(PAD * 16000), out = [];
+      for (let n = 0; n < ranges.length; n++){
+        if (job.cancel) throw new Error('Abgebrochen');
+        job.message = `Nicht erkannte Stellen nachhören (${n + 1} von ${ranges.length})`; job.progress = 0.25 + 0.75 * n / ranges.length;
+        const [a, b] = ranges[n], s0 = Math.max(0, Math.floor((a - 0.15) * 100) * 160), e0 = Math.min(pcm.length, Math.ceil((b + 0.15) * 100) * 160);
+        if (e0 - s0 < 3200){ out.push({words: []}); continue; }
+        const audio = new Float32Array(e0 - s0 + 2 * padN); audio.set(pcm.subarray(s0, e0), padN);
+        const r = await asr({cmd:'run', model, device: forced || '', audio, lang: lg});
+        out.push({words: fixWords(r.chunks, s0 / 16000, (e0 - s0) / 16000, db.subarray(s0 / 160, e0 / 160), floor, PAD)});
+      }
+      return {ranges: out};
+    });
+  }
   function envelope(uri){
     const file = need(uri);
     return newJob(async job => { const eng = await E(); const pcm = await eng.decodeAudio(file, 16000, p => job.progress = p, job); return {env: eng.envelopeB64(eng.envelopeDb(pcm))}; });
@@ -381,7 +404,7 @@
     deleteProject: id => { projects.delete(id); summaries.delete(id); idb('projects', 'readwrite', s => s.delete(id)).catch(() => {}); },
     models: () => JSON.stringify(modelsList()),
     downloadModel: name => newJob(async job => { await loadModel(name, job, 0, 1); return {}; }),
-    transcribe, exportVideo, makeProxy, envelope,
+    transcribe, transcribeRanges, exportVideo, makeProxy, envelope,
     job: id => { const j = jobs.get(id); if (!j) return ''; const {cancel, ...o} = j; if (j.status !== 'running') setTimeout(() => jobs.delete(id), 60000); return JSON.stringify(o); },
     cancel: id => { const j = jobs.get(id); if (j) j.cancel = true; },
     share: id => {

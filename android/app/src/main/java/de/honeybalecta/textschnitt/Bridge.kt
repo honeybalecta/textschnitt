@@ -140,6 +140,10 @@ class Bridge(private val act: MainActivity) {
             act.askNotifications(); WorkService.track(ctx, it, "Transkription") }.id
 
     @JavascriptInterface
+    fun transcribeRanges(uri: String, model: String, lang: String, ranges: String): String =
+        Jobs.start { Transcriber.runRanges(ctx, Uri.parse(uri), model, lang, JSONArray(ranges), it) }.also { WorkService.track(ctx, it, "Transkription") }.id
+
+    @JavascriptInterface
     fun envelope(uri: String): String = Jobs.start {
         val audio = AudioDecoder.decode(ctx, Uri.parse(uri), it, 0.95)
         JSONObject().put("env", Transcriber.envelope(audio))

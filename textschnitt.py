@@ -37,7 +37,7 @@ os.environ.setdefault("HF_HUB_DISABLE_IMPLICIT_TOKEN", "1")
 import warnings  # noqa: E402
 warnings.filterwarnings("ignore", module="huggingface_hub")
 
-VERSION = "2.6.0"
+VERSION = "2.7.0"
 APP_DIR = Path(__file__).resolve().parent
 FROZEN = bool(getattr(sys, "frozen", False))          # als installierte .exe gebaut
 RES_DIR = Path(getattr(sys, "_MEIPASS", APP_DIR))      # mitgelieferte Dateien (Oberfläche, ffmpeg, Modelle)
@@ -428,7 +428,7 @@ def get_model(name: str, phase: dict, job: dict):
         return _model_cache[name]
 
 
-def transcribe_job(job: dict, path: str, model_name: str, language: str | None, fillers: bool):
+def transcribe_job(job: dict, path: str, model_name: str, language: str | None, fillers: bool, ranges: list | None = None):
     path = norm_path(path)
     info = probe(path)
     duration = info["duration"] or 1
@@ -453,6 +453,8 @@ def transcribe_job(job: dict, path: str, model_name: str, language: str | None, 
     model, device = get_model(model_name, phase, job)
     if job["cancel"]:
         raise RuntimeError("Abgebrochen")
+    if ranges is not None:
+        return {"ranges": transcribe_ranges(job, model, device, audio, ranges, language, phase)}
     job["progress"] = 0.05
     phase["text"] = "Transkription startet (die erste Minute dauert am längsten)"
     prompt = FILLER_PROMPT.get(language or "de") if fillers else None
@@ -475,6 +477,30 @@ def transcribe_job(job: dict, path: str, model_name: str, language: str | None, 
             rest = f" · noch ca. {r // 60}:{r % 60:02d}"
         phase["text"] = f"Transkribiere {fmt_ts(seg.end)[:8]} von {fmt_ts(duration)[:8]}{rest}"
     return {"words": words, "lang": language or getattr(tinfo, "language", None), "env": env}
+
+
+def transcribe_ranges(job: dict, model, device, audio, ranges: list, language: str | None, phase: dict) -> list:
+    """Einzelne Stellen getrennt transkribieren (Lücken, die Whisper im Zusammenhang ausgelassen hat)."""
+    out = []
+    pad = 0.15
+    for n, (a, b) in enumerate(ranges):
+        if job["cancel"]:
+            raise RuntimeError("Abgebrochen")
+        phase["text"] = f"Nicht erkannte Stellen nachhören ({n + 1} von {len(ranges)})"
+        job["progress"] = 0.05 + 0.94 * n / max(1, len(ranges))
+        s0 = max(0, int((float(a) - pad) * 16000))
+        e0 = min(len(audio), int((float(b) + pad) * 16000))
+        words = []
+        if e0 - s0 >= 3200:
+            segs, _ = model.transcribe(audio[s0:e0], language=language or None, word_timestamps=True,
+                                       beam_size=5 if device == "cuda" else 2, condition_on_previous_text=False, vad_filter=False)
+            for seg in segs:
+                for w in seg.words or []:
+                    if w.word.strip():
+                        words.append({"text": w.word.strip(), "start": round(w.start + s0 / 16000, 3),
+                                      "end": round(w.end + s0 / 16000, 3), "prob": round(w.probability, 3)})
+        out.append({"words": words})
+    return out
 
 
 def envelope_job(job: dict, path: str):
@@ -690,7 +716,39 @@ def zoom_expr(zooms: list[dict], seg_in: float):
 
 def seg_fx(s: dict) -> dict:
     return {"speed": max(0.25, min(4.0, float(s.get("speed") or 1))), "vol": max(0.0, min(4.0, float(s.get("vol", 1) if s.get("vol") is not None else 1))),
-            "bright": float(s.get("bright") or 0), "contrast": float(s.get("contrast") or 0), "sat": float(s.get("sat") or 0), "gray": bool(s.get("gray"))}
+            "bright": float(s.get("bright") or 0), "contrast": float(s.get("contrast") or 0), "sat": float(s.get("sat") or 0), "gray": bool(s.get("gray")),
+            "tx": float(s.get("tx") or 0), "ty": float(s.get("ty") or 0), "sc": max(0.05, float(s.get("sc") or 1))}
+
+
+def pw_expr(pts: list[tuple[float, float]]) -> str:
+    """Stückweise lineare Funktion der Zeit t (Keyframes) als ffmpeg-Ausdruck."""
+    if len(pts) == 1:
+        return f"{pts[0][1]:.5f}"
+    e = f"{pts[-1][1]:.5f}"
+    for i in range(len(pts) - 2, -1, -1):
+        (t0, v0), (t1, v1) = pts[i], pts[i + 1]
+        e = f"if(lt(t,{t1:.4f}),{v0:.5f}+({v1 - v0:.5f})*(t-{t0:.4f})/{max(1e-3, t1 - t0):.4f},{e})"
+    return f"if(lt(t,{pts[0][0]:.4f}),{pts[0][1]:.5f},{e})"
+
+
+def ovl_geom(o: dict, W: int, H: int):
+    """Lage einer Einblendung: (Breite, Höhe, x, y) fest oder als Ausdrücke (Keyframes); None = Vollbild."""
+    if o.get("w") is None:
+        return None
+    a = max(0.05, float(o.get("aspect") or 16 / 9))
+    kf = o.get("kf") or []
+    if len(kf) >= 2:
+        at = float(o["at"])
+        ks = sorted(kf, key=lambda k: float(k["t"]))
+        wx = pw_expr([(at + float(k["t"]), float(k["w"])) for k in ks])
+        xx = pw_expr([(at + float(k["t"]), float(k["x"])) for k in ks])
+        yx = pw_expr([(at + float(k["t"]), float(k["y"])) for k in ks])
+        return {"anim": True, "w": f"max(2,trunc({W}*({wx})/2)*2)", "h": f"max(2,trunc({W}*({wx})/{a:.5f}/2)*2)",
+                "x": f"{W}*({xx})-overlay_w/2", "y": f"{H}*({yx})-overlay_h/2"}
+    k0 = kf[0] if kf else o
+    pw = max(2, round(W * float(k0["w"]) / 2) * 2)
+    ph = max(2, round(pw / a / 2) * 2)
+    return {"anim": False, "w": pw, "h": ph, "x": round(float(k0["x"]) * W - pw / 2), "y": round(float(k0["y"]) * H - ph / 2)}
 
 
 def video_fx_chain(fx: dict) -> str:
@@ -740,7 +798,7 @@ def build_graph(plan: dict, with_video: bool, ass_name: str | None):
     parts, labels = [], []
     for k, s in enumerate(plan["segments"]):
         a0, b0 = float(s["in"]), float(s["out"])
-        fx = seg_fx(s) if s.get("kind") == "main" else seg_fx({})
+        fx = seg_fx(s) if s.get("kind") == "main" else seg_fx({"vol": s.get("vol", 1)})
         sp = fx["speed"]
         d = max(0.04, (b0 - a0) / sp)
         img = bool(s.get("image"))
@@ -762,7 +820,15 @@ def build_graph(plan: dict, with_video: bool, ass_name: str | None):
                             zx, cx, cy = (e.replace("it", f"(it*{sp:.4f})") for e in (zx, cx, cy))
                         z = (f",zoompan=z='{zx}':x='{cx}*iw*(1-1/zoom)':y='{cy}*ih*(1-1/zoom)':d=1:s={W}x{H}:fps={fps_s}")
                     spv = f"setpts=(PTS-STARTPTS)/{sp:.4f}" if abs(sp - 1) > 1e-3 else "setpts=PTS-STARTPTS"
-                    parts.append(f"[{i}:v:0]trim=start={a0 + off:.4f}:end={b0 + off:.4f},{spv},{fit},fps={fps_s}{z}{video_fx_chain(fx)},format=yuv420p{vlab}")
+                    tf = abs(fx["sc"] - 1) > 1e-3 or abs(fx["tx"]) > 1e-4 or abs(fx["ty"]) > 1e-4
+                    lab = f"[vp{k}]" if tf else vlab
+                    parts.append(f"[{i}:v:0]trim=start={a0 + off:.4f}:end={b0 + off:.4f},{spv},{fit},fps={fps_s}{z}{video_fx_chain(fx)},format=yuv420p{lab}")
+                    if tf:   # Bild verkleinern/vergrößern und verschieben, Rest schwarz
+                        sw, sh = max(2, round(W * fx["sc"] / 2) * 2), max(2, round(H * fx["sc"] / 2) * 2)
+                        X, Y = round((W - sw) / 2 + fx["tx"] * W), round((H - sh) / 2 + fx["ty"] * H)
+                        parts.append(f"color=c=black:s={W}x{H}:r={fps_s}:d={d:.4f},format=yuv420p[vb{k}]")
+                        parts.append(f"[vp{k}]scale={sw}:{sh},setsar=1[vs{k}]")
+                        parts.append(f"[vb{k}][vs{k}]overlay=x={X}:y={Y}:shortest=1:eof_action=pass,format=yuv420p,setsar=1{vlab}")
                 else:
                     parts.append(f"color=c=black:s={W}x{H}:r={fps_s},trim=duration={d:.4f},format=yuv420p,setsar=1{vlab}")
             if s.get("hasAudio", True):
@@ -776,18 +842,36 @@ def build_graph(plan: dict, with_video: bool, ass_name: str | None):
                 parts.append(f"anullsrc=r=48000:cl=stereo,atrim=duration={d:.4f},aformat=sample_fmts=fltp:channel_layouts=stereo{alab}")
         labels.append((vlab if with_video else "") + alab)
     n = len(plan["segments"])
-    parts.append("".join(labels) + f"concat=n={n}:v={int(with_video)}:a=1" + ("[base]" if with_video else "") + "[aout]")
+    ovs = sorted(plan.get("overlays") or [], key=lambda o: (int(o.get("track") or 1), float(o["at"])))
+    # Ton der Einblendungen (Lautstärke je Element) dazumischen
+    oa = []
+    for k, o in enumerate(ovs):
+        vol = float(o.get("vol") or 0)
+        if vol <= 0 or o.get("image") or o.get("hasAudio") is False:
+            continue
+        at, inn = float(o["at"]), float(o["in"])
+        d = max(0.05, float(o["out"]) - inn)
+        i = file_input(o["uri"])
+        off = starts.get(norm_path(o["uri"]), 0.0)
+        ms = int(round(at * 1000))
+        parts.append(f"[{i}:a:0]atrim=start={inn + off:.4f}:end={inn + d + off:.4f},asetpts=PTS-STARTPTS,aresample=48000,"
+                     f"aformat=sample_fmts=fltp:channel_layouts=stereo,volume={vol:.3f},afade=t=in:st=0:d=0.01,adelay={ms}|{ms}[oa{k}]")
+        oa.append(f"[oa{k}]")
+    amain = "[amain]" if oa else "[aout]"
+    parts.append("".join(labels) + f"concat=n={n}:v={int(with_video)}:a=1" + ("[base]" if with_video else "") + amain)
+    if oa:
+        parts.append("[amain]" + "".join(oa) + f"amix=inputs={len(oa) + 1}:normalize=0:duration=first:dropout_transition=0[aout]")
     if with_video:
         cur = "[base]"
-        for k, o in enumerate(plan.get("overlays") or []):
+        for k, o in enumerate(ovs):
             at, inn, out = float(o["at"]), float(o["in"]), float(o["out"])
             d = max(0.05, out - inn)
-            if o.get("mode") == "pip" and o.get("w") is not None:
-                # frei platziert: Mittelpunkt x/y, Breite w (Anteil), Seitenverhältnis des Clips
-                pw = max(2, round(W * float(o["w"]) / 2) * 2)
-                ph = max(2, round(pw / max(0.05, float(o.get("aspect") or 16 / 9)) / 2) * 2)
-                x = round(float(o.get("x", 0.5)) * W - pw / 2)
-                y = round(float(o.get("y", 0.5)) * H - ph / 2)
+            g = ovl_geom(o, W, H)
+            if g and g["anim"]:
+                x, y = f"'{g['x']}'", f"'{g['y']}'"
+                sc = f"scale=w='{g['w']}':h='{g['h']}':eval=frame,setsar=1"
+            elif g:
+                pw, ph, x, y = g["w"], g["h"], g["x"], g["y"]
                 sc = f"scale={pw}:{ph}:force_original_aspect_ratio=increase,crop={pw}:{ph},setsar=1"
             elif o.get("mode") == "pip":
                 sz = float(o.get("size") or 0.33)
@@ -808,7 +892,8 @@ def build_graph(plan: dict, with_video: bool, ass_name: str | None):
                 off = starts.get(norm_path(o["uri"]), 0.0)
                 src = f"[{i}:v:0]trim=start={inn + off:.4f}:end={inn + d + off:.4f},setpts=PTS-STARTPTS+{at:.4f}/TB"
             parts.append(f"{src},fps={fps_s},{sc},format=yuva420p[o{k}]")
-            parts.append(f"{cur}[o{k}]overlay=x={x}:y={y}:eof_action=pass:enable='between(t,{at:.4f},{at + d:.4f})'[c{k}]")
+            ev = ":eval=frame" if g and g["anim"] else ""
+            parts.append(f"{cur}[o{k}]overlay=x={x}:y={y}{ev}:eof_action=pass:enable='between(t,{at:.4f},{at + d:.4f})'[c{k}]")
             cur = f"[c{k}]"
         if ass_name:
             parts.append(f"{cur}subtitles=filename={ass_name}:fontsdir=fonts[vout]")
@@ -894,12 +979,30 @@ def cover_factor(cw: float, ch: float, W: float, H: float) -> float:
     return max(W / cw, H / ch) / min(W / cw, H / ch)
 
 
-def pip_scale(o: dict, W: float, H: float) -> float:
+def pip_scale(o: dict, W: float, H: float, w: float | None = None) -> float:
     """Skalierung einer Einblendung in CapCut/Concat (Clip wird dort zuerst ins Bild eingepasst)."""
-    if o.get("w") is None:
+    if w is None and o.get("w") is None:
         return float(o.get("size") or 0.33)
     a = max(0.05, float(o.get("aspect") or 16 / 9))
-    return round(float(o["w"]) * W / min(W, H * a), 4)
+    return round(float(w if w is not None else o["w"]) * W / min(W, H * a), 4)
+
+
+def capcut_keyframes(o: dict, W: float, H: float) -> list[dict]:
+    """Keyframes einer Einblendung für CapCut (Lage in halben Bildbreiten, Skalierung wie clip.scale)."""
+    kf = sorted(o.get("kf") or [], key=lambda k: float(k["t"]))
+    if len(kf) < 2:
+        return []
+    props = {"KFTypePositionX": lambda k: round((float(k["x"]) - 0.5) * 2, 5),
+             "KFTypePositionY": lambda k: round((0.5 - float(k["y"])) * 2, 5),
+             "KFTypeScaleX": lambda k: pip_scale(o, W, H, float(k["w"])),
+             "KFTypeScaleY": lambda k: pip_scale(o, W, H, float(k["w"]))}
+    out = []
+    for prop, fn in props.items():
+        out.append({"id": uuid.uuid4().hex, "material_id": "", "property_type": prop, "keyframe_list": [
+            {"curveType": "Line", "graphID": "", "id": uuid.uuid4().hex, "left_control": {"x": 0.0, "y": 0.0},
+             "right_control": {"x": 0.0, "y": 0.0}, "time_offset": int(round(float(k["t"]) * 1_000_000)), "values": [fn(k)]}
+            for k in kf]})
+    return out
 
 
 def pip_center(o: dict, W: float, H: float) -> tuple[float, float]:
@@ -953,7 +1056,7 @@ def write_concat(plan: dict, name: str, cues: list[dict], style: dict) -> Path:
         m = med(s["uri"], img)
         kind = "image" if img else ("video" if s.get("hasVideo", True) else "audio")
         pieces = [(float(s["in"]), float(s["out"]), 1.0, 0.5, 0.5)] if img else split_zooms(s)
-        fx = seg_fx(s) if s.get("kind") == "main" else seg_fx({})
+        fx = seg_fx(s) if s.get("kind") == "main" else seg_fx({"vol": s.get("vol", 1)})
         for a, b, sc, cx, cy in pieces:
             d = (b - a) / fx["speed"]
             if d <= 0.0005:
@@ -963,16 +1066,21 @@ def write_concat(plan: dict, name: str, cues: list[dict], style: dict) -> Path:
                  "sourceStart": round(0.0 if img else a, 6), "speed": round(fx["speed"], 4), "volume": round(fx["vol"], 3)}
             if sc > 1.001:
                 c.update(scale=round(sc, 4), offsetX=round((cx - 0.5) * (1 - sc), 4), offsetY=round((cy - 0.5) * (1 - sc), 4))
+            if abs(fx["sc"] - 1) > 1e-3 or fx["tx"] or fx["ty"]:
+                c.update(scale=round(c["scale"] * fx["sc"], 4), offsetX=round(c["offsetX"] * fx["sc"] + fx["tx"], 4), offsetY=round(c["offsetY"] * fx["sc"] + fx["ty"], 4))
             clips.append(c)
             cursor += d
+    ovl_tracks: set[int] = set()
     for o in plan.get("overlays") or []:
         img = bool(o.get("image"))
         m = med(o["uri"], img)
         d = float(o["out"]) - float(o["in"])
-        c = {**base, "id": f"c{len(clips) + 1}", "trackId": "T2", "kind": "image" if img else "video", "mediaId": m,
+        trk = int(o.get("track") or 1)
+        c = {**base, "id": f"c{len(clips) + 1}", "trackId": f"V{trk}", "kind": "image" if img else "video", "mediaId": m,
              "name": Path(o["uri"]).name, "start": round(float(o["at"]), 6), "duration": round(d, 6),
-             "sourceStart": round(0.0 if img else float(o["in"]), 6), "volume": 0.0}
-        if o.get("mode") == "pip":
+             "sourceStart": round(0.0 if img else float(o["in"]), 6), "volume": round(float(o.get("vol") or 0), 3)}
+        ovl_tracks.add(trk)
+        if o.get("mode") == "pip" or o.get("w") is not None:
             x, y = pip_center(o, W, H)
             c.update(scale=pip_scale(o, W, H), offsetX=round(x - 0.5, 4), offsetY=round(y - 0.5, 4))
         else:
@@ -995,7 +1103,9 @@ def write_concat(plan: dict, name: str, cues: list[dict], style: dict) -> Path:
         if c["kind"] == "text":
             c.pop("sourceStart", None)
             c.pop("preservePitch", None)
-    tracks = [{"id": f"T{i}", "muted": False, "visible": True} for i in range(1, 5)]
+    # Spuren: T1 Hauptspur, Videospuren V1…, T3 Untertitel (Reihenfolge der Liste = Stapel)
+    tracks = [{"id": "T1", "muted": False, "visible": True}] + [{"id": f"V{k}", "muted": False, "visible": True} for k in sorted(ovl_tracks)] + \
+             [{"id": f"T{i}", "muted": False, "visible": True} for i in (3, 4)]
     timeline = {"id": "TL1", "name": "Timeline 1", "tracks": tracks, "clips": clips, "video": video}
     doc = {"activeTimelineId": "TL1", "clips": clips, "concat": "0.1.0", "fonts": [], "media": media,
            "name": folder.name, "timelines": [timeline], "tracks": tracks, "version": 1, "video": video}
@@ -1138,12 +1248,14 @@ def write_capcut(plan: dict, root: Path, name: str, cues: list[dict], style: dic
         img = bool(s.get("image"))
         mid, kind, _ = material(s["uri"], img)
         pieces = [(float(s["in"]), float(s["out"]), 1.0, 0.5, 0.5)] if img else split_zooms(s)
-        fx = seg_fx(s) if s.get("kind") == "main" else seg_fx({})
+        fx = seg_fx(s) if s.get("kind") == "main" else seg_fx({"vol": s.get("vol", 1)})
         for a, b, sc, cx, cy in pieces:
             d = (b - a) / fx["speed"]
             if d <= 0.0005:
                 continue
             tx, ty = (2 * (cx - 0.5) * (1 - sc), 2 * (cy - 0.5) * (sc - 1)) if sc > 1.001 else (0.0, 0.0)
+            # Lage/Größe des Clips: zuerst Zoom, dann skaliert um die Mitte und verschoben
+            tx, ty, sc = tx * fx["sc"] + 2 * fx["tx"], ty * fx["sc"] - 2 * fx["ty"], sc * fx["sc"]
             seg = segment(mid, kind, cursor, 0.0 if img else a, d, volume=round(fx["vol"], 3), scale=round(sc, 4), tx=round(tx, 4), ty=round(ty, 4), speed=round(fx["speed"], 4))
             (main_segs if kind == "video" else audio_segs).append(seg)
             cursor += d
@@ -1154,21 +1266,25 @@ def write_capcut(plan: dict, root: Path, name: str, cues: list[dict], style: dic
     if audio_segs:
         tracks.append({"attribute": 0, "flag": 0, "id": uuid.uuid4().hex, "is_default_name": True, "name": "",
                        "segments": audio_segs, "type": "audio"})
-    ovl = []
+    by_track: dict[int, list] = {}
     for o in plan.get("overlays") or []:
         img = bool(o.get("image"))
         mid, kind, info = material(o["uri"], img)
         d = float(o["out"]) - float(o["in"])
-        if o.get("mode") == "pip":
+        trk = int(o.get("track") or 1)
+        vol = round(float(o.get("vol") or 0), 3)
+        if o.get("mode") == "pip" or o.get("w") is not None:
             x, y = pip_center(o, W, H)
-            ovl.append(segment(mid, "video", float(o["at"]), 0.0 if img else float(o["in"]), d, volume=0.0,
-                               scale=pip_scale(o, W, H), tx=round((x - 0.5) * 2, 4), ty=round((0.5 - y) * 2, 4), render=1))
+            seg = segment(mid, "video", float(o["at"]), 0.0 if img else float(o["in"]), d, volume=vol,
+                          scale=pip_scale(o, W, H), tx=round((x - 0.5) * 2, 4), ty=round((0.5 - y) * 2, 4), render=trk)
+            seg["common_keyframes"] = capcut_keyframes(o, W, H)
         else:
-            ovl.append(segment(mid, "video", float(o["at"]), 0.0 if img else float(o["in"]), d, volume=0.0,
-                               scale=round(cover_factor(info["width"], info["height"], W, H), 4), render=1))
-    if ovl:
-        tracks.append({"attribute": 0, "flag": 0, "id": uuid.uuid4().hex, "is_default_name": False, "name": "B-Roll",
-                       "segments": ovl, "type": "video"})
+            seg = segment(mid, "video", float(o["at"]), 0.0 if img else float(o["in"]), d, volume=vol,
+                          scale=round(cover_factor(info["width"], info["height"], W, H), 4), render=trk)
+        by_track.setdefault(trk, []).append(seg)
+    for trk in sorted(by_track):
+        tracks.append({"attribute": 0, "flag": 0, "id": uuid.uuid4().hex, "is_default_name": False, "name": f"Video {trk + 1}",
+                       "segments": by_track[trk], "type": "video"})
     if cues:
         tsegs = []
         for c in cues:
@@ -1663,7 +1779,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not whisper_available():
                     raise ValueError("faster-whisper ist nicht installiert.")
                 job = run_job(new_job("transcribe"), transcribe_job, data["uri"], data.get("model") or "small",
-                              data.get("lang") or None, bool(data.get("fillers", True)))
+                              data.get("lang") or None, bool(data.get("fillers", True)), data.get("ranges"))
                 return self._json({"job": job["id"]})
             if rest == "api/models/download":
                 job = run_job(new_job("download"), download_job, data["name"])

@@ -115,6 +115,9 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
             val zooms = s.optJSONArray("zooms")
             if (zooms != null && zooms.length() > 0) fx.add(ZoomEffect(s.getDouble("in"), zooms))
             fx.add(Presentation.createForWidthAndHeight(w, h, Presentation.LAYOUT_SCALE_TO_FIT))
+            // Lage und Größe des Clips (Mitte verschieben, um die Mitte skalieren)
+            val sc = s.optDouble("sc", 1.0); val tx = s.optDouble("tx", 0.0); val ty = s.optDouble("ty", 0.0)
+            if (Math.abs(sc - 1) > 1e-3 || Math.abs(tx) > 1e-4 || Math.abs(ty) > 1e-4) fx.add(TransformEffect(sc.toFloat(), tx.toFloat(), ty.toFloat()))
             mainItems.add(item(s, s.getDouble("in"), s.getDouble("out"), false, fx))
         }
         require(mainItems.isNotEmpty()) { "Nach dem Schnitt bleibt nichts übrig." }
@@ -122,12 +125,17 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
         val mainSeq = EditedMediaItemSequence.Builder(setOf(C.TRACK_TYPE_AUDIO, C.TRACK_TYPE_VIDEO))
             .addItems(mainItems).build()
 
-        // Overlays (B-Roll / Bild-im-Bild)
+        // Videospuren über der Hauptspur: je Spur eine Sequenz (oberste Spur zuerst, die Hauptspur zuletzt)
         val ovs = plan.optJSONArray("overlays") ?: JSONArray()
-        val composition = if (ovs.length() > 0) {
-            val total = plan.getDouble("total")
-            val list = (0 until ovs.length()).map { ovs.getJSONObject(it) }.sortedBy { it.getDouble("at") }
-            val seq = EditedMediaItemSequence.Builder(setOf(C.TRACK_TYPE_VIDEO))
+        val total = plan.getDouble("total")
+        val byTrack = (0 until ovs.length()).map { ovs.getJSONObject(it) }.groupBy { it.optInt("track", 1) }
+        val seqs = ArrayList<EditedMediaItemSequence>()
+        val trackSpans = ArrayList<List<OvSpan>>()
+        for (trk in byTrack.keys.sortedDescending()) {
+            val list = byTrack.getValue(trk).sortedBy { it.getDouble("at") }
+            // Ton nur, wenn ein Element dieser Spur hörbar ist
+            val withAudio = list.any { it.optDouble("vol", 0.0) > 0 && it.optBoolean("hasAudio", true) && !it.optBoolean("image") }
+            val seq = EditedMediaItemSequence.Builder(if (withAudio) setOf(C.TRACK_TYPE_AUDIO, C.TRACK_TYPE_VIDEO) else setOf(C.TRACK_TYPE_VIDEO))
             val spans = ArrayList<OvSpan>()
             var cursor = 0.0
             for (o in list) {
@@ -136,21 +144,25 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
                 val dur = minOf(outS - inS, total - at)
                 if (dur <= 0.05) continue
                 if (at - cursor > 0.01) seq.addGap(us(at - cursor))
-                val free = o.getString("mode") == "pip" && o.has("w")
-                // Frei platzierte Einblendung: Bild auf die eigene Größe bringen (Seitenverhältnis des Clips), dann an den Mittelpunkt setzen
-                val pw = if (free) (maxOf(2.0, w * o.getDouble("w")) / 2).toInt() * 2 else w
-                val ph = if (free) (maxOf(2.0, pw / maxOf(0.05, o.optDouble("aspect", 16.0 / 9))) / 2).toInt() * 2 else h
-                seq.addItem(item(o, inS, inS + dur, true, listOf(Presentation.createForWidthAndHeight(pw, ph, Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP))))
+                val free = o.has("w")
+                val aspect = maxOf(0.05, o.optDouble("aspect", 16.0 / 9))
+                val kf = o.optJSONArray("kf")?.let { a -> (0 until a.length()).map { a.getJSONObject(it) }.map { floatArrayOf(it.getDouble("t").toFloat(), it.getDouble("x").toFloat(), it.getDouble("y").toFloat(), it.getDouble("w").toFloat()) } } ?: emptyList()
+                // Frei liegendes Element: Bild in der größten benötigten Breite, Seitenverhältnis des Clips
+                val baseW = if (free) maxOf(o.getDouble("w"), kf.maxOfOrNull { it[3].toDouble() } ?: 0.0).coerceIn(0.02, 3.0) else 1.0
+                val pw = if (free) (maxOf(2.0, w * baseW) / 2).toInt() * 2 else w
+                val ph = if (free) (maxOf(2.0, pw / aspect) / 2).toInt() * 2 else h
+                val o2 = JSONObject(o.toString()).put("vol", if (withAudio) o.optDouble("vol", 0.0) else 1.0)
+                seq.addItem(item(o2, inS, inS + dur, !withAudio || o.optBoolean("image"), listOf(Presentation.createForWidthAndHeight(pw, ph, Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP))))
                 spans.add(OvSpan(at, at + dur, o.getString("mode"), o.optString("corner", "or"), o.optDouble("size", 0.33).toFloat(),
-                    free, (o.optDouble("x", 0.5) * 2 - 1).toFloat(), (1 - o.optDouble("y", 0.5) * 2).toFloat()))
+                    free, o.optDouble("x", 0.5).toFloat(), o.optDouble("y", 0.5).toFloat(), o.optDouble("w", 1.0).toFloat(), baseW.toFloat(), kf))
                 cursor = at + dur
             }
-            if (spans.isEmpty()) Composition.Builder(mainSeq)
-            else {
-                if (total - cursor > 0.01) seq.addGap(us(total - cursor))
-                Composition.Builder(seq.build(), mainSeq).setVideoCompositorSettings(OvSettings(w, h, spans))
-            }
-        } else Composition.Builder(mainSeq)
+            if (spans.isEmpty()) continue
+            if (total - cursor > 0.01) seq.addGap(us(total - cursor))
+            seqs.add(seq.build()); trackSpans.add(spans)
+        }
+        val composition = if (seqs.isEmpty()) Composition.Builder(mainSeq)
+            else Composition.Builder(seqs + mainSeq).setVideoCompositorSettings(OvSettings(w, h, trackSpans))
 
         // Untertitel
         val subs = plan.optJSONObject("subs")
@@ -235,19 +247,37 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
 
     // ── Overlay-Steuerung ──
     data class OvSpan(val a: Double, val b: Double, val mode: String, val corner: String, val size: Float,
-                      val free: Boolean = false, val nx: Float = 0f, val ny: Float = 0f)
+                      val free: Boolean = false, val x: Float = 0.5f, val y: Float = 0.5f, val wf: Float = 1f, val baseW: Float = 1f,
+                      val kf: List<FloatArray> = emptyList())
 
-    class OvSettings(private val w: Int, private val h: Int, private val spans: List<OvSpan>) : VideoCompositorSettings {
+    class OvSettings(private val w: Int, private val h: Int, private val tracks: List<List<OvSpan>>) : VideoCompositorSettings {
         private val hidden = StaticOverlaySettings.Builder().setAlphaScale(0f).build()
         private val full = StaticOverlaySettings.Builder().build()
         override fun getOutputSize(inputSizes: List<Size>): Size = Size(w, h)
         override fun getOverlaySettings(inputId: Int, presentationTimeUs: Long): OverlaySettings {
-            if (inputId != 0) return full // Hauptspur
+            if (inputId >= tracks.size) return full // Hauptspur
             val t = presentationTimeUs / 1e6
-            val s = spans.firstOrNull { t >= it.a - 0.001 && t < it.b } ?: return hidden
+            val s = tracks[inputId].firstOrNull { t >= it.a - 0.001 && t < it.b } ?: return hidden
+            if (s.free) {
+                // Keyframes: stückweise linear; Bild liegt in der Breite baseW vor und wird auf die aktuelle Breite skaliert
+                var x = s.x; var y = s.y; var wf = s.wf
+                if (s.kf.isNotEmpty()) {
+                    val rel = (t - s.a).toFloat(); val k = s.kf
+                    when {
+                        rel <= k[0][0] -> { x = k[0][1]; y = k[0][2]; wf = k[0][3] }
+                        rel >= k.last()[0] -> { x = k.last()[1]; y = k.last()[2]; wf = k.last()[3] }
+                        else -> for (i in 0 until k.size - 1) if (rel < k[i + 1][0]) {
+                            val f = (rel - k[i][0]) / maxOf(1e-6f, k[i + 1][0] - k[i][0])
+                            x = k[i][1] + (k[i + 1][1] - k[i][1]) * f; y = k[i][2] + (k[i + 1][2] - k[i][2]) * f; wf = k[i][3] + (k[i + 1][3] - k[i][3]) * f
+                            break
+                        }
+                    }
+                }
+                val sc = wf / s.baseW
+                return StaticOverlaySettings.Builder().setScale(sc, sc)
+                    .setOverlayFrameAnchor(0f, 0f).setBackgroundFrameAnchor(x * 2 - 1, 1 - y * 2).build()
+            }
             if (s.mode != "pip") return full
-            if (s.free) return StaticOverlaySettings.Builder()
-                .setOverlayFrameAnchor(0f, 0f).setBackgroundFrameAnchor(s.nx, s.ny).build()
             val m = 0.06f // Rand in NDC
             val right = s.corner.endsWith("r"); val top = s.corner.startsWith("o")
             val my = m * w / h
@@ -257,6 +287,11 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
                 .setBackgroundFrameAnchor(if (right) 1f - m else -1f + m, if (top) 1f - my else -1f + my)
                 .build()
         }
+    }
+
+    // ── Lage und Größe eines Hauptspur-Clips ──
+    class TransformEffect(private val sc: Float, private val tx: Float, private val ty: Float) : MatrixTransformation {
+        override fun getMatrix(presentationTimeUs: Long): Matrix = Matrix().apply { setScale(sc, sc); postTranslate(2 * tx, -2 * ty) }
     }
 
     // ── Zoom (Sprung oder Fahrt) – Zeiten in Sekunden der Quelle ──

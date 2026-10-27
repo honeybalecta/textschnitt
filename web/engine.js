@@ -172,7 +172,7 @@ export function ensureEncoders(){
 }
 
 // ───────── Export ─────────
-const FX_DEF = {speed:1, vol:1, bright:0, contrast:0, sat:0, gray:false};
+const FX_DEF = {speed:1, vol:1, bright:0, contrast:0, sat:0, gray:false, tx:0, ty:0, sc:1};
 const SIZE_F = {klein:0.045, mittel:0.058, 'groß':0.075};
 const QUAL = {hoch:'very-high', standard:'high', klein:'medium'};
 const AUDIO_FMT = {
@@ -194,8 +194,16 @@ function zoomAt(zs, t){
   }
   return {s, cx, cy};
 }
+// Keyframes: stückweise linear zwischen {t, x, y, w}
+function kfAt(kf, rel){
+  const n = kf.length; if (rel <= kf[0].t) return kf[0]; if (rel >= kf[n-1].t) return kf[n-1];
+  for (let i = 0; i < n - 1; i++){ const a = kf[i], b = kf[i+1]; if (rel < b.t){ const f = (rel - a.t) / Math.max(1e-6, b.t - a.t);
+    return {x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f, w: a.w + (b.w - a.w) * f}; } }
+  return kf[n-1];
+}
 function segFx(s){
-  return {speed: clamp(+s.speed || 1, 0.25, 4), vol: clamp(s.vol == null ? 1 : +s.vol, 0, 4), bright:+s.bright || 0, contrast:+s.contrast || 0, sat:+s.sat || 0, gray:!!s.gray};
+  return {speed: clamp(+s.speed || 1, 0.25, 4), vol: clamp(s.vol == null ? 1 : +s.vol, 0, 4), bright:+s.bright || 0, contrast:+s.contrast || 0, sat:+s.sat || 0, gray:!!s.gray,
+    tx:+s.tx || 0, ty:+s.ty || 0, sc: clamp(+s.sc || 1, 0.05, 4)};
 }
 
 // Gibt das fertige Ergebnis als Blob/File zurück; job: {cancel, progress, message}
@@ -204,7 +212,7 @@ export async function render(plan, fileOf, job){
   const video = plan.format !== 'audio';
   const W = Math.max(2, (plan.width | 0) & ~1), H = Math.max(2, (plan.height | 0) & ~1);
   const fps = clamp(+plan.fps || 30, 1, 120);
-  const segs = (plan.segments || []).map(s => { const fx = s.kind === 'main' ? segFx(s) : {...FX_DEF};
+  const segs = (plan.segments || []).map(s => { const fx = s.kind === 'main' ? segFx(s) : {...FX_DEF, vol: clamp(s.vol == null ? 1 : +s.vol, 0, 4)};
     return {...s, fx, d: Math.max(0.04, (s.out - s.in) / fx.speed)}; });
   const total = segs.reduce((a, s) => a + s.d, 0);
   const af = video ? null : (AUDIO_FMT[plan.audioFormat] || AUDIO_FMT.wav);
@@ -235,6 +243,7 @@ export async function render(plan, fileOf, job){
   await output.start();
 
   const A = new AudioWriter(asrc);
+  A.mix = await overlayAudio(plan, fileOf, job);
   const totalFrames = Math.ceil(total * fps - 1e-6);
   let frame = 0, o = 0;
   const t0 = performance.now();
@@ -292,6 +301,11 @@ class AudioWriter {
   async silence(n){ const z = new Float32Array(Math.min(n, SR)); while (n > 0){ const k = Math.min(n, SR); await this.push(z.subarray(0, k), z.subarray(0, k)); n -= k; } }
   async flush(){
     if (!this.n) return;
+    // Ton der Einblendungen an ihrer Stelle dazumischen
+    for (const m of this.mix || []){
+      const a = Math.max(this.written, m.start), b = Math.min(this.written + this.n, m.start + m.L.length);
+      for (let p = a; p < b; p++){ const i = p - this.written, j = p - m.start; this.L[i] += m.L[j]; this.R[i] += m.R[j]; }
+    }
     const d = new Float32Array(this.n * 2); d.set(this.L.subarray(0, this.n), 0); d.set(this.R.subarray(0, this.n), this.n);
     const s = new AudioSample({data:d, format:'f32-planar', numberOfChannels:2, sampleRate:SR, timestamp: this.written / SR});
     this.written += this.n; this.n = 0;
@@ -300,6 +314,23 @@ class AudioWriter {
   get pos(){ return this.written + this.n; }
 }
 
+// Ton der Einblendungen mit Lautstärke > 0, fertig auf 48 kHz und mit Lautstärke
+async function overlayAudio(plan, fileOf, job){
+  const out = [];
+  for (const o of plan.overlays || []){
+    const vol = +o.vol || 0; if (vol <= 0 || o.image || o.hasAudio === false) continue;
+    const file = fileOf(o.uri); if (!file || !(await audioTrack(file))) continue;
+    if (job) job.message = 'Ton der Einblendungen wird vorbereitet …';
+    const parts = []; let len = 0, rs = null;
+    for await (const c of sourceAudio(file, +o.in, +o.out)){ rs ||= new Resampler(c.sr); const p = rs.push(c.L, c.R); parts.push(p); len += p[0].length; }
+    const L = new Float32Array(len), R = new Float32Array(len); let q = 0;
+    for (const [a, b] of parts){ L.set(a, q); R.set(b, q); q += a.length; }
+    const fade = Math.min(480, len >> 2);
+    for (let i = 0; i < len; i++){ let g = vol; if (i < fade) g *= i / fade; else if (i >= len - fade) g *= (len - 1 - i) / fade; L[i] *= g; R[i] *= g; }
+    out.push({start: Math.round(+o.at * SR), L, R});
+  }
+  return out;
+}
 // Dekodierter Ton eines Zeitbereichs (Quelle in Sekunden), als Stereo-Stücke in Originalrate
 async function* sourceAudio(file, a, b){
   const tr = await audioTrack(file); if (!tr) return;
@@ -399,7 +430,7 @@ class Renderer {
     this.ctx = ctx; this.W = W; this.H = H; this.fps = fps; this.fileOf = fileOf;
     this.sinks = new Map();
     this.base = document.createElement('canvas'); this.base.width = W; this.base.height = H; this.bctx = this.base.getContext('2d', {alpha:false});
-    this.ovs = (plan.overlays || []).map(o => ({...o, at:+o.at, d: Math.max(0.05, o.out - o.in)})).sort((a, b) => a.at - b.at);
+    this.ovs = (plan.overlays || []).map(o => ({...o, at:+o.at, d: Math.max(0.05, o.out - o.in)})).sort((a, b) => (a.track || 1) - (b.track || 1) || a.at - b.at);
     this.ovState = new Map();
     const subs = plan.subs || {}, style = subs.style || {};
     this.style = style;
@@ -443,8 +474,11 @@ class Renderer {
         const flt = s.kind === 'main' ? cssFilter(s.fx) : '';
         const z = s.kind === 'main' ? zoomAt(s.zooms, st) : {s:1};
         if (flt && this.canFilter) ctx.filter = flt;
+        const tf = s.kind === 'main' && (Math.abs(s.fx.sc - 1) > 1e-3 || s.fx.tx || s.fx.ty);
+        if (tf){ ctx.save(); ctx.translate(W / 2 + s.fx.tx * W, H / 2 + s.fx.ty * H); ctx.scale(s.fx.sc, s.fx.sc); ctx.translate(-W / 2, -H / 2); }
         if (z.s > 1.001){ const sw = W / z.s, sh = H / z.s; ctx.drawImage(this.base, z.cx * W * (1 - 1 / z.s), z.cy * H * (1 - 1 / z.s), sw, sh, 0, 0, W, H); }
         else ctx.drawImage(this.base, 0, 0);
+        if (tf) ctx.restore();
         if (flt && this.canFilter) ctx.filter = 'none';
         if (flt && !this.canFilter) manualFx(ctx, W, H, s.fx);
         await this.overlays(t);
@@ -457,10 +491,12 @@ class Renderer {
     const {ctx, W, H, fps} = this;
     for (const o of this.ovs){
       if (t < o.at - 1e-6 || t >= o.at + o.d) { if (t >= o.at + o.d) this.endOverlay(o); continue; }
-      let rect;
-      if (o.mode === 'pip' && o.w != null){
-        const pw = Math.max(2, Math.round(W * o.w / 2) * 2), ph = Math.max(2, Math.round(pw / Math.max(0.05, +o.aspect || 16 / 9) / 2) * 2);
-        rect = [Math.round((o.x ?? 0.5) * W - pw / 2), Math.round((o.y ?? 0.5) * H - ph / 2), pw, ph];
+      let rect, sinkWH = null;
+      if (o.w != null){
+        const a = Math.max(0.05, +o.aspect || 16 / 9), v = o.kf && o.kf.length ? kfAt(o.kf, t - o.at) : o;
+        const pw = Math.max(2, Math.round(W * v.w / 2) * 2), ph = Math.max(2, Math.round(pw / a / 2) * 2);
+        rect = [Math.round(v.x * W - pw / 2), Math.round(v.y * H - ph / 2), pw, ph];
+        if (o.kf && o.kf.length){ const mw = Math.max(...o.kf.map(k => k.w)); const sw = Math.max(2, Math.round(Math.min(W * 2, W * mw) / 2) * 2); sinkWH = [sw, Math.max(2, Math.round(sw / a / 2) * 2)]; }
       } else if (o.mode === 'pip'){
         const sz = +o.size || 0.33, pw = Math.max(2, Math.round(W * sz / 2) * 2), ph = Math.max(2, Math.round(H * sz / 2) * 2), m = Math.round(0.03 * W), c = o.corner || 'or';
         rect = [c[1] === 'r' ? W - pw - m : m, c[0] === 'o' ? m : H - ph - m, pw, ph];
@@ -475,7 +511,7 @@ class Renderer {
           if (tr){
             const off = await firstTs(file), ts = [];
             for (let f = Math.ceil(t * fps - 1e-6); f / fps < o.at + o.d; f++) ts.push(off + o.in + (f / fps - o.at));
-            st.it = this.sink(file, tr, rect[2], rect[3], 'cover').canvasesAtTimestamps(ts)[Symbol.asyncIterator]();
+            st.it = this.sink(file, tr, (sinkWH || rect)[0], (sinkWH || rect)[1], 'cover').canvasesAtTimestamps(ts)[Symbol.asyncIterator]();
           }
         }
       }

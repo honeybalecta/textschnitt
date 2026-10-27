@@ -36,6 +36,7 @@
     models: () => call('GET', 'models'),
     downloadModel: name => jobOf(call('POST', 'models/download', {name})),
     transcribe: (uri, model, lang, fillers) => jobOf(call('POST', 'transcribe', {uri, model, lang, fillers})),
+    transcribeRanges: (uri, model, lang, ranges) => jobOf(call('POST', 'transcribe', {uri, model, lang, fillers:false, ranges: JSON.parse(ranges)})),
     exportVideo: plan => jobOf(call('POST', 'export', plan)),
     makeProxy: uri => jobOf(call('POST', 'proxy', {uri})),
     job: id => call('GET', 'job?id=' + q(id)),
