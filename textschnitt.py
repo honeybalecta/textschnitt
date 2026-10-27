@@ -37,7 +37,7 @@ os.environ.setdefault("HF_HUB_DISABLE_IMPLICIT_TOKEN", "1")
 import warnings  # noqa: E402
 warnings.filterwarnings("ignore", module="huggingface_hub")
 
-VERSION = "2.7.0"
+VERSION = "2.7.1"
 APP_DIR = Path(__file__).resolve().parent
 FROZEN = bool(getattr(sys, "frozen", False))          # als installierte .exe gebaut
 RES_DIR = Path(getattr(sys, "_MEIPASS", APP_DIR))      # mitgelieferte Dateien (Oberfläche, ffmpeg, Modelle)
@@ -119,8 +119,11 @@ def probe_raw(path: str) -> dict:
     key = f"{path}|{os.path.getmtime(path) if os.path.exists(path) else 0}"
     if key in _probe_cache:
         return _probe_cache[key]
-    res = subprocess.run([FFPROBE, "-v", "error", "-print_format", "json", "-show_streams", "-show_format", path],
-                         capture_output=True, text=True, encoding="utf-8", errors="replace", **NOWIN)
+    try:
+        res = subprocess.run([FFPROBE, "-v", "error", "-print_format", "json", "-show_streams", "-show_format", path],
+                             capture_output=True, text=True, encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL, timeout=90, **NOWIN)
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(f"ffprobe kam bei „{Path(path).name}“ nicht weiter (liegt die Datei in einem Cloud-Ordner, der erst geladen werden muss?).")
     if res.returncode:
         raise RuntimeError(res.stderr.strip() or "ffprobe konnte die Datei nicht lesen.")
     d = json.loads(res.stdout)
@@ -256,17 +259,39 @@ def run_ffmpeg(args: list[str], total: float, job: dict | None, base: float = 0.
     err: list[str] = []
     t = threading.Thread(target=lambda: err.extend(p.stderr.readlines()), daemon=True)
     t.start()
+    # Wächter: kommt minutenlang kein Fortschritt, wird ffmpeg beendet und der Fehler gemeldet statt ewig zu warten
+    state = {"last": time.time(), "pos": -1, "stuck": False, "t0": time.time()}
+
+    def watchdog():
+        while p.poll() is None:
+            time.sleep(2)
+            if job and job["cancel"]:
+                p.terminate()
+                return
+            if time.time() - state["last"] > 240:
+                state["stuck"] = True
+                log(f"ffmpeg hängt seit 4 Minuten ohne Fortschritt – wird beendet:\n{' '.join(cmd)}\n{''.join(err[-40:])}")
+                p.kill()
+                return
+    threading.Thread(target=watchdog, daemon=True).start()
     for line in p.stdout:  # type: ignore[union-attr]
-        if job and (line.startswith("out_time_us=") or line.startswith("out_time_ms=")):
+        if line.startswith("out_time_us=") or line.startswith("out_time_ms="):
             val = line.split("=", 1)[1].strip()
-            if val.isdigit() and total > 0:
-                job["progress"] = base + span * min(1.0, int(val) / 1e6 / total)
+            if val.isdigit():
+                if int(val) != state["pos"]:
+                    state["pos"], state["last"] = int(val), time.time()
+                if job and total > 0:
+                    job["progress"] = base + span * min(1.0, int(val) / 1e6 / total)
+                    el = int(time.time() - state["t0"])
+                    job["message"] = f"Exportiere … {int(job['progress'] * 100)} % · läuft seit {el // 60}:{el % 60:02d}"
         if job and job["cancel"]:
             p.terminate()
     p.wait()
     t.join(timeout=2)
     if job and job["cancel"]:
         raise RuntimeError("Abgebrochen")
+    if state["stuck"]:
+        raise RuntimeError("Der Export ist hängen geblieben (ffmpeg kam nicht weiter). Details stehen in der Protokolldatei textschnitt.log.")
     if p.returncode:
         log(f"ffmpeg-Fehler bei: {' '.join(cmd)}\n{''.join(err[-40:])}")
         raise RuntimeError("ffmpeg-Fehler:\n" + "".join(err[-12:]))
@@ -885,15 +910,22 @@ def build_graph(plan: dict, with_video: bool, ass_name: str | None):
                 x = y = 0
                 sc = f"scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},setsar=1"
             if o.get("image"):
-                i = image_input(o["uri"], d)
-                src = f"[{i}:v:0]trim=duration={d:.4f},setpts=PTS-STARTPTS+{at:.4f}/TB"
+                # Standbild: nur ein Bild einlesen (kein Endlos-Eingang, der Speicher füllt); die Überlagerung wiederholt es
+                inputs.append(["-i", norm_path(o["uri"])])
+                i = len(inputs) - 1
+                if g and g["anim"]:   # wächst/schrumpft: Bilder erst im Filter erzeugen
+                    nfr = max(1, int(d * fps + 0.999))
+                    src = f"[{i}:v:0]loop=loop={nfr}:size=1:start=0,setpts=N/({fps_s})/TB+{at:.4f}/TB"
+                else:
+                    src = f"[{i}:v:0]setpts=PTS-STARTPTS+{at:.4f}/TB"
             else:
                 i = file_input(o["uri"])
                 off = starts.get(norm_path(o["uri"]), 0.0)
                 src = f"[{i}:v:0]trim=start={inn + off:.4f}:end={inn + d + off:.4f},setpts=PTS-STARTPTS+{at:.4f}/TB"
-            parts.append(f"{src},fps={fps_s},{sc},format=yuva420p[o{k}]")
+            still = bool(o.get("image")) and not (g and g["anim"])
+            parts.append(f"{src}{'' if still else f',fps={fps_s}'},{sc},format=yuva420p[o{k}]")
             ev = ":eval=frame" if g and g["anim"] else ""
-            parts.append(f"{cur}[o{k}]overlay=x={x}:y={y}{ev}:eof_action=pass:enable='between(t,{at:.4f},{at + d:.4f})'[c{k}]")
+            parts.append(f"{cur}[o{k}]overlay=x={x}:y={y}{ev}:eof_action={'repeat' if still else 'pass'}:enable='between(t,{at:.4f},{at + d:.4f})'[c{k}]")
             cur = f"[c{k}]"
         if ass_name:
             parts.append(f"{cur}subtitles=filename={ass_name}:fontsdir=fonts[vout]")
@@ -920,6 +952,7 @@ def render_plan(job: dict, plan: dict, out: Path, with_video: bool, cues: list[d
         inputs, graph = build_graph(plan, with_video, ass)
         script = tmp / "filter.txt"
         script.write_text(graph, encoding="utf-8")
+        log(f"ffmpeg startet: {len(inputs) // 2} Eingaben, Graph {len(graph)} Zeichen\n{graph[:20000]}")
         flag = ["-/filter_complex", str(script)] if ffmpeg_major() >= 7 else ["-filter_complex_script", str(script)]
         if with_video:
             tail = ["-map", "[vout]", "-map", "[aout]", "-c:v", "libx264", "-crf", QUALITY_CRF.get(plan.get("quality"), "20"),
