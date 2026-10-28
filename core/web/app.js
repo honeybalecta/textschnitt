@@ -70,7 +70,7 @@ function dispSize(m){ const r = Math.abs(m.rotation || 0) % 180 === 90; const w 
 function envArr(s){
   if (!s.env) return null;
   if (!s._env){ const b = atob(s.env), a = new Uint8Array(b.length); for (let i = 0; i < b.length; i++) a[i] = b.charCodeAt(i);
-    Object.defineProperty(s, '_env', {value:a, writable:true, enumerable:false}); }
+    Object.defineProperty(s, '_env', {value:a, writable:true, enumerable:false, configurable:true}); }
   return s._env;
 }
 // Sprachabschnitte („Bursts“) aus der Hüllkurve: [[start, ende], …] in Sekunden der Quelle (ohne off).
@@ -133,9 +133,70 @@ let srcForAlign = null;
 function alignThr(a){ const n = a.length, hist = new Uint32Array(256); for (let i = 0; i < n; i++) hist[a[i]]++;
   const pct = q => { let c = 0, lim = q * n; for (let v = 0; v < 256; v++){ c += hist[v]; if (c >= lim) return v / 2.8 - 90; } return 0; };
   return Math.max(pct(0.2) + 10, pct(0.9) - 25); }
+// Wortgrenzen am Ton nachschärfen. Whisper liefert Wortzeiten aus der Aufmerksamkeit des Modells – die liegen oft
+// 0,1–0,4 s daneben: Wörter nach einer Pause beginnen zu früh (noch in der Stille), Wörter vor einer Pause enden zu spät.
+//  1. Gleichmäßiger Versatz (Ton und Wortzeiten verschoben): Anfänge nach und Enden vor Pausen sind beide in dieselbe
+//     Richtung verschoben → alle Wörter um den Mittelwert verschieben.
+//  2. Jede Grenze an einer Pause wird auf den tatsächlichen Stimmeinsatz bzw. das Verklingen gesetzt –
+//     nur innerhalb des Fensters zwischen Nachbarwörtern, nie über ein anderes Wort hinweg.
+function refineTimes(words){
+  const a = envArr(srcForAlign); if (!a || !words.length) return words;
+  const n = a.length, thr = alignThr(a), soft = thr - 6;
+  const dB = i => i < 0 || i >= n ? -90 : a[i] / 2.8 - 90;
+  const on = (i, t) => dB(i) >= t;
+  const real = words.map((w, k) => k).filter(k => !words[k].unk);
+  const prevEnd = j => j > 0 ? words[real[j-1]].end : -1, nextStart = j => j < real.length - 1 ? words[real[j+1]].start : Infinity;
+  // Stimmeinsatz in der Nähe von t: erster lauter Frame nach mindestens 0,15 s Stille
+  const onsetNear = (t, r) => { const c = Math.round(t * 100); let best = null;
+    for (let i = Math.max(1, c - r); i <= Math.min(n - 1, c + r); i++){ if (!on(i, thr) || on(i - 1, soft)) continue;
+      let q = true; for (let j = i - 15; j < i; j++) if (j >= 0 && on(j, soft)){ q = false; break; }
+      if (q && (best == null || Math.abs(i - c) < Math.abs(best - c))) best = i; }
+    return best == null ? null : best / 100; };
+  const offsetNear = (t, r) => { const c = Math.round(t * 100); let best = null;
+    for (let i = Math.max(0, c - r); i <= Math.min(n - 2, c + r); i++){ if (!on(i, thr) || on(i + 1, soft)) continue;
+      let q = true; for (let j = i + 1; j <= i + 15; j++) if (j < n && on(j, soft)){ q = false; break; }
+      if (q && (best == null || Math.abs(i - c) < Math.abs(best - c))) best = i; }
+    return best == null ? null : (best + 1) / 100; };
+  // 1. gleichmäßiger Versatz
+  const dS = [], dE = [];
+  real.forEach((k, j) => { const w = words[k];
+    // nur eindeutige Fälle: Whisper sieht eine Lücke, und der gefundene Einsatz liegt näher an diesem Wort als an den Nachbarn
+    if (w.start - prevEnd(j) >= 0.1){ const o = onsetNear(w.start, 50); if (o != null && (j === 0 || Math.abs(o - w.start) < Math.abs(o - words[real[j-1]].start))) dS.push(o - w.start); }
+    if (nextStart(j) - w.end >= 0.1){ const o = offsetNear(w.end, 50); if (o != null && (j === real.length - 1 || Math.abs(o - w.end) < Math.abs(o - words[real[j+1]].end))) dE.push(o - w.end); } });
+  const med = v => { const x = [...v].sort((p, q) => p - q); return x[x.length >> 1]; };
+  if (dS.length >= 6 && dE.length >= 6){
+    const ms = med(dS), me = med(dE);
+    // Beide in dieselbe Richtung verschoben = Versatz der Wortzeiten insgesamt (Pausen-Fehler heben sich im Mittel auf)
+    if (Math.sign(ms) === Math.sign(me) && Math.abs(ms + me) / 2 >= 0.06){
+      const sh = clamp((ms + me) / 2, -0.5, 0.5);
+      for (const w of words){ w.start = r3(Math.max(0, w.start + sh)); w.end = r3(Math.max(w.start + 0.02, w.end + sh)); }
+    }
+  }
+  // 2. Grenzen an Pausen
+  real.forEach((k, j) => {
+    const w = words[k], lo = Math.max(0, prevEnd(j)), hi = nextStart(j);
+    const si = Math.round(w.start * 100), ei = Math.round(w.end * 100);
+    // Anfang liegt in der Stille → zum Stimmeinsatz vor
+    let quietS = true; for (let i = si; i < si + 6; i++) if (on(i, soft)){ quietS = false; break; }
+    if (quietS){ const lim = Math.min(ei - 3, si + 60); for (let i = si + 1; i <= lim; i++) if (on(i, soft)){ w.start = r3(Math.max(lo, i / 100 - 0.03)); break; } }
+    else { // Anfang mitten im Klang: beginnt der Klang erst kurz davor (nach einer Pause, die hinter dem Vorgänger liegt)? → dorthin
+      let i = si; while (i > 0 && si - i < 30 && on(i - 1, soft)) i--;
+      if (si - i < 30 && i / 100 - 0.03 > lo + 0.05){ let q = true; for (let j2 = i - 12; j2 < i; j2++) if (j2 >= 0 && on(j2, soft)){ q = false; break; } if (q) w.start = r3(i / 100 - 0.03); }
+    }
+    // Ende liegt in der Stille → auf das Verklingen zurück
+    let quietE = true; for (let i = ei - 5; i <= ei; i++) if (on(i, soft)){ quietE = false; break; }
+    if (quietE){ const lim = Math.max(Math.round(w.start * 100) + 3, ei - 60); for (let i = ei - 1; i >= lim; i--) if (on(i, soft)){ w.end = r3(Math.min(hi, (i + 1) / 100 + 0.04)); break; } }
+    else { // Ende mitten im Klang: klingt das Wort noch kurz weiter und folgt dann eine Pause? → bis dorthin
+      let i = ei; while (i < n - 1 && i - ei < 30 && on(i + 1, soft)) i++;
+      if (i - ei < 30 && (i + 1) / 100 + 0.03 < hi - 0.05){ let q = true; for (let j2 = i + 1; j2 <= i + 12; j2++) if (j2 < n && on(j2, soft)){ q = false; break; } if (q) w.end = r3((i + 1) / 100 + 0.03); }
+    }
+    if (w.end < w.start + 0.04) w.end = r3(w.start + 0.04);
+  });
+  return words;
+}
 function alignWithAudio(words, bursts){
   if (!bursts || !bursts.length || !words.length) return words;
-  words = words.map(w => ({...w}));
+  words = refineTimes(words.map(w => ({...w})));
   // Grundsatz: Die Textreihenfolge von Whisper ist verlässlich, die Zeiten sind es nicht. Zeiten werden nur
   // innerhalb des Fensters zwischen Vorgänger- und Nachfolgerwort verändert, nie wird umsortiert.
   const len = w => Math.max(1, norm(w.text || '').length);
@@ -378,14 +439,24 @@ addEventListener('orientationchange', () => setTimeout(fitStage, 200));
 // Alte Projekte ohne Lautstärke-Hüllkurve: im Hintergrund nachberechnen, damit Schnitte in Pausen landen
 function backfillEnv(){
   if (!TS.envelope || !P) return;
-  const pid = P.id, todo = P.sources.filter(s => s.tr && !s.noAudio && !s.env && s.hasAudio !== false);
+  // Windows ab 2.8: Ton wird ab Bildbeginn gelesen. Ältere Transkripte von Videos, deren Ton später beginnt,
+  // lagen um diesen Versatz zu früh – sie werden einmalig verschoben.
+  const desk = CAP.platform === 'desktop';
+  const pid = P.id, todo = P.sources.filter(s => s.tr && !s.noAudio && s.hasAudio !== false && (!s.env || (desk && !s.pad0)));
   (function next(){
     const s = todo.shift(); if (!s || !P || P.id !== pid) return;
     let id; try { id = TS.envelope(s.uri); } catch(_){ return; }
-    watchJob(id, () => {}, j => { if (P && P.id === pid && j.result && j.result.env){ s.env = j.result.env; delete s._env; delete s._bursts; realign(); toast('Transkript am Ton ausgerichtet'); } next(); }, () => next());
+    watchJob(id, () => {}, j => { const r = j.result || {};
+      if (P && P.id === pid && r.env){
+        const had = !!s.env, sh = r.padded ? +(r.astart || 0) : 0, k = P.sources.indexOf(s);
+        s.env = r.env; if (r.padded) s.pad0 = true; if (s._env) s._env = null; delete s._bursts;
+        if (sh >= 0.02 && k >= 0) tokens.forEach(t => { if (t.src === k && t.ws != null){ t.ws = r3(Math.min(t.ws + sh, s.off + s.duration)); t.we = r3(Math.min(t.we + sh, s.off + s.duration)); } });
+        if (!had || sh >= 0.02){ realign(); toast(sh >= 0.02 ? `Transkript korrigiert: Ton lag ${fmtD2(sh)} s versetzt` : 'Transkript am Ton ausgerichtet'); } else saveNow();
+      } next(); }, () => next());
   })();
 }
 
+const fmtD2 = x => x.toFixed(2).replace('.', ',');
 function untouched(){
   return !deleted.size && !Object.keys(P.edits || {}).length && !Object.keys(P.trims).length && !Object.keys(P.adj).length && !P.items.length && !P.dels.length && !P.splits.length && !(P.moves || []).length
     && !P.cues.some(c => c.text != null || c.ds || c.de || c.off || c.x != null);
@@ -925,7 +996,10 @@ function pipFree(it){ if (it.w != null) return; const v = elVals(it, 0) || cover
   if (v.legacy){ const [W, H] = outSize(), ph = it.w * W / clipAspect(it.clip), c = it.corner || 'or', m = PIP_M * W; it.y = r3((c[0] === 'o' ? m + ph / 2 : H - m - ph / 2) / H); } }
 // Werte setzen: mit Keyframes an der Stelle rel (neu oder vorhandener), sonst fest
 function setElVals(it, rel, v){
-  v = {x: r3(clamp(v.x, -0.5, 1.5)), y: r3(clamp(v.y, -0.5, 1.5)), w: r3(clamp(v.w, 0.03, 3))};
+  // Grenzen nach Größe: Ein Element darf so weit aus dem Bild ragen, dass nur noch ein schmaler Rand sichtbar ist –
+  // auch sehr hohe Bilder (Screenshots, Grafiken) lassen sich so weit schieben, dass nur ihr oberer oder unterer Teil zu sehen ist.
+  const [W, H] = outSize(), w = clamp(v.w, 0.03, 5), hh = w * W / clipAspect(it.clip) / H, m = 0.04;
+  v = {x: r3(clamp(v.x, m - w / 2, 1 - m + w / 2)), y: r3(clamp(v.y, m - hh / 2, 1 - m + hh / 2)), w: r3(w)};
   if (it.kf && it.kf.length){
     const tol = 0.5 / (primary().fps || 30), k = it.kf.find(k => Math.abs(k.t - rel) <= tol);
     if (k) Object.assign(k, v); else { it.kf.push({t: r3(rel), ...v}); it.kf.sort((a, b) => a.t - b.t); }
@@ -1030,8 +1104,12 @@ $('#pipBox').addEventListener('pointermove', e => {
     else { const s0 = g.ssc, f = Math.max((s0 * W / 2 + dx) / (s0 * W / 2), (s0 * H / 2 + dy) / (s0 * H / 2)); g.sc = clamp(s0 * f, 0.1, 4); if (Math.abs(g.sc - 1) < 0.02) g.sc = 1; }
     applyMainTransform(); placeBox(W, H); return;
   }
-  if (g.mode === 'move'){ let x = g.sx + dx / W, y = g.sy + dy / H; if (Math.abs(x - 0.5) < 0.02) x = 0.5; if (Math.abs(y - 0.5) < 0.02) y = 0.5; g.x = x; g.y = y; }
-  else { const a = clipAspect(g.clip); let pw = Math.max(dx + g.sw * W, W * 0.04, (dy + g.sw * W / a) * a); pw = Math.min(pw, W * 3);
+  if (g.mode === 'move'){ let x = g.sx + dx / W, y = g.sy + dy / H; const hw = g.w / 2, hh = g.w * W / clipAspect(g.clip) / H / 2;
+    if (Math.abs(x - 0.5) < 0.02) x = 0.5; if (Math.abs(y - 0.5) < 0.02) y = 0.5;
+    // Kanten rasten am Bildrand ein (z. B. Oberkante eines hohen Bildes genau oben)
+    for (const e of [0, 1]){ if (Math.abs(x - hw - e) < 0.015) x = e + hw; else if (Math.abs(x + hw - e) < 0.015) x = e - hw; if (Math.abs(y - hh - e) < 0.015) y = e + hh; else if (Math.abs(y + hh - e) < 0.015) y = e - hh; }
+    x = clamp(x, 0.04 - hw, 0.96 + hw); y = clamp(y, 0.04 - hh, 0.96 + hh); g.x = x; g.y = y; }
+  else { const a = clipAspect(g.clip); let pw = Math.max(dx + g.sw * W, W * 0.04, (dy + g.sw * W / a) * a); pw = Math.min(pw, W * 5);
     g.w = pw / W; g.x = (g.left + pw / 2) / W; g.y = (g.top + pw / a / 2) / H; }
   $('#stage').classList.toggle('snap-x', g.mode === 'move' && g.x === 0.5);
   updateOverlay(outPos);
@@ -1208,7 +1286,7 @@ $('#transBtn').onclick = () => {
     const label = todo.length > 1 ? `Video ${n + 1} von ${todo.length}: ` : '';
     try { transJob = TS.transcribe(s.uri, model, lang, fillers); } catch(e){ end(); $('#transMsg').textContent = 'Fehler: ' + e.message; return; }
     watchJob(transJob, j => { $('#transProg i').style.width = ((n + j.progress) / todo.length * 100).toFixed(1) + '%'; $('#transMsg').textContent = label + (j.message || ''); },
-      j => { const r = j.result || {}; if (r.env) s.env = r.env; if (r.lang && !P.language) P.language = r.lang;
+      j => { const r = j.result || {}; if (r.env){ s.env = r.env; if (s._env) s._env = null; delete s._bursts; } if (r.padded) s.pad0 = true; if (r.lang && !P.language) P.language = r.lang;
              s.asr = {v: CAP.version || '', timing: r.timing || '', chunks: r.chunks || 0, model, at: Date.now()};   // zur Fehlersuche: womit transkribiert wurde
              const base = appendSourceTokens(k, r.words || []); words += (r.words || []).length;
              // Stellen ohne erkannte Wörter (🗣) einzeln nachhören: meist Anläufe, die Whisper im Zusammenhang auslässt
@@ -2032,7 +2110,7 @@ function openItem(id){
       </div>
       <div class="field"><span>Position im Video</span><div class="nudge"><button data-at="-0.5">−0,5</button><button data-at="-0.1">−0,1</button><span class="val" id="cAt"></span><button data-at="0.1">+0,1</button><button data-at="0.5">+0,5</button></div></div>
       <div class="field volopt"><span>Lautstärke <b id="cVolV"></b></span><input type="range" id="cVol" min="0" max="200" step="5"></div>
-      <div class="field pipopt"><span>Größe <b id="cSizeV"></b></span><input type="range" id="cSize" min="5" max="300" step="1"></div>
+      <div class="field pipopt"><span>Größe <b id="cSizeV"></b></span><input type="range" id="cSize" min="5" max="500" step="1"></div>
       <div class="field pipopt"><span>Platzieren</span><div class="seg-ctl" id="cCorner"><button data-v="ol">↖</button><button data-v="or">↗</button><button data-v="mm">Mitte</button><button data-v="ul">↙</button><button data-v="ur">↘</button><button data-v="full">Vollbild</button></div></div>
       <p class="muted small pipopt">Im Bild ziehen verschiebt, die Ecke unten rechts ändert die Größe${FINE ? ' (auch mit dem Mausrad)' : ''}. Mit Keyframes (Taste M) bewegt sich das Element über die Zeit.</p>`);
   }

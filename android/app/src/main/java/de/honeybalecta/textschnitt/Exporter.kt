@@ -148,13 +148,15 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
                 val aspect = maxOf(0.05, o.optDouble("aspect", 16.0 / 9))
                 val kf = o.optJSONArray("kf")?.let { a -> (0 until a.length()).map { a.getJSONObject(it) }.map { floatArrayOf(it.getDouble("t").toFloat(), it.getDouble("x").toFloat(), it.getDouble("y").toFloat(), it.getDouble("w").toFloat()) } } ?: emptyList()
                 // Frei liegendes Element: Bild in der größten benötigten Breite, Seitenverhältnis des Clips
-                val baseW = if (free) maxOf(o.getDouble("w"), kf.maxOfOrNull { it[3].toDouble() } ?: 0.0).coerceIn(0.02, 3.0) else 1.0
-                val pw = if (free) (maxOf(2.0, w * baseW) / 2).toInt() * 2 else w
+                val baseW = if (free) maxOf(o.getDouble("w"), kf.maxOfOrNull { it[3].toDouble() } ?: 0.0).coerceIn(0.02, 5.0) else 1.0
+                // sehr große Elemente (z. B. hohe Screenshots) als kleinere Textur, die beim Zusammensetzen hochskaliert wird
+                val texR = if (free) minOf(1.0, 4096.0 / maxOf(w * baseW, w * baseW / aspect)) else 1.0
+                val pw = if (free) (maxOf(2.0, w * baseW * texR) / 2).toInt() * 2 else w
                 val ph = if (free) (maxOf(2.0, pw / aspect) / 2).toInt() * 2 else h
                 val o2 = JSONObject(o.toString()).put("vol", if (withAudio) o.optDouble("vol", 0.0) else 1.0)
                 seq.addItem(item(o2, inS, inS + dur, !withAudio || o.optBoolean("image"), listOf(Presentation.createForWidthAndHeight(pw, ph, Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP))))
                 spans.add(OvSpan(at, at + dur, o.getString("mode"), o.optString("corner", "or"), o.optDouble("size", 0.33).toFloat(),
-                    free, o.optDouble("x", 0.5).toFloat(), o.optDouble("y", 0.5).toFloat(), o.optDouble("w", 1.0).toFloat(), baseW.toFloat(), kf))
+                    free, o.optDouble("x", 0.5).toFloat(), o.optDouble("y", 0.5).toFloat(), o.optDouble("w", 1.0).toFloat(), (baseW * texR).toFloat(), kf))
                 cursor = at + dur
             }
             if (spans.isEmpty()) continue

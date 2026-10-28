@@ -486,8 +486,8 @@ function linkedDrag(side, d){
 const T = (icon, label, fn, cls = '') => ({icon, label, fn, cls});
 function toolList(){
   if (TL.pick) return [T('🔗', `Verbinden (${TL.pick.size})`, doLink), T('✕', 'Abbrechen', endPick)];
-  const lt = linkTools();
-  return [...toolListBase(), ...lt];
+  const lt = linkTools(), cp = TL.sel ? [T('⧉', 'Kopieren', copySel), T('⧉', 'Duplizieren', duplicateSel)] : [];
+  return [...toolListBase(), ...cp, ...(CLIP ? [T('📋', 'Einfügen', () => pasteClip())] : []), ...lt];
 }
 function linkTools(){
   const k = selKey(), o = k && objOfKey(k); if (!o) return [];
@@ -499,18 +499,19 @@ function toolListBase(){
     ...(P.moves.length ? [T('↺', 'Reihenfolge zurück', () => { commit(() => P.moves = [], true); if (tokens.length) renderTranscript(); toast('Ursprüngliche Reihenfolge'); })] : [])];
   if (s.kind === 'main') return [T('✂', 'Teilen', splitHere), T('⚙', 'Anpassen', () => openFx(g)), T('🗑', 'Löschen', delSel, 'danger'), T('⇤', 'Anfang −1', () => nudge('l', -1)), T('⇥', 'Anfang +1', () => nudge('l', 1)),
     T('⇤', 'Ende −1', () => nudge('r', -1)), T('⇥', 'Ende +1', () => nudge('r', 1)), T('🔍', 'Zoom', addZoom), T('T', 'Titel', addTitle), T('＋', 'Clip', addClip)];
-  if (s.kind === 'insert') return [T('🎞', 'Ausschnitt', () => openItem(g.item.id)), T('🗑', 'Löschen', delSel, 'danger'), T('⇄', 'Als B-Roll', () => convert('broll'))];
-  if (s.kind === 'ovl'){ const it = selItem(); return [T('🎞', 'Ausschnitt', () => openItem(it.id)), T('🗑', 'Löschen', delSel, 'danger'),
+  const cuts = [T('⌫', 'Bis hier weg', () => cutSel('l')), T('⌦', 'Ab hier weg', () => cutSel('r'))];
+  if (s.kind === 'insert') return [T('🎞', 'Ausschnitt', () => openItem(g.item.id)), T('🗑', 'Löschen', delSel, 'danger'), ...cuts, T('⇄', 'Als B-Roll', () => convert('broll'))];
+  if (s.kind === 'ovl'){ const it = selItem(); return [T('🎞', 'Ausschnitt', () => openItem(it.id)), T('🗑', 'Löschen', delSel, 'danger'), ...cuts,
     T('◆', hasKfHere(it) ? 'Keyframe weg (M)' : 'Keyframe (M)', () => toggleKeyframe(it)),
     T('−', 'Kleiner', () => pipScale(1 / 1.15)), T('＋', 'Größer', () => pipScale(1.15)), T('↗', 'Ecke', cycleCorner),
     ...(it.w != null || it.type === 'pip' ? [T('▣', 'Vollbild', () => convert('broll'))] : []),
     T('⚙', 'Größe, Lage, Ton', () => openItem(it.id)), T('↑', 'Spur hoch', () => moveTrack(it, elTrack(it) + 1)), ...(elTrack(it) > 1 ? [T('↓', 'Spur runter', () => moveTrack(it, elTrack(it) - 1))] : []),
     T('⇄', 'Als Einschub', () => convert('insert'))]; }
   if (s.kind === 'zoom'){ const it = selItem(); return [T('◎', 'Mittelpunkt', () => openItem(it.id)), T('⟳', it.kind === 'punch' ? 'Sprung' : it.kind === 'in' ? 'Fahrt rein' : 'Fahrt raus', cycleZoomKind),
-    T('−', 'Schwächer', () => zoomStrength(-0.05)), T('＋', 'Stärker', () => zoomStrength(0.05)), T('🗑', 'Löschen', delSel, 'danger')]; }
-  if (s.kind === 'fx'){ const it = selItem(); return [T('⚙', 'Anpassen', () => openFxItem(it)), T('🗑', 'Löschen', delSel, 'danger')]; }
-  if (s.kind === 'title'){ const it = selItem(); return [T('✎', 'Text & Stil', () => editTitle(it.id)), T('🗑', 'Löschen', delSel, 'danger')]; }
-  if (s.kind === 'cue'){ const c = selCue(); return [T('✎', 'Text', editCue), T('✂', 'Teilen', splitCue), T(c && c.off ? '👁' : '⦸', c && c.off ? 'Einblenden' : 'Ausblenden', () => { commit(() => c.off = !c.off, false); }),
+    T('−', 'Schwächer', () => zoomStrength(-0.05)), T('＋', 'Stärker', () => zoomStrength(0.05)), T('🗑', 'Löschen', delSel, 'danger'), ...cuts]; }
+  if (s.kind === 'fx'){ const it = selItem(); return [T('⚙', 'Anpassen', () => openFxItem(it)), T('🗑', 'Löschen', delSel, 'danger'), ...cuts]; }
+  if (s.kind === 'title'){ const it = selItem(); return [T('✎', 'Text & Stil', () => editTitle(it.id)), T('🗑', 'Löschen', delSel, 'danger'), ...cuts]; }
+  if (s.kind === 'cue'){ const c = selCue(); return [T('✎', 'Text', editCue), T('✂', 'Teilen', splitCue), ...cuts, T(c && c.off ? '👁' : '⦸', c && c.off ? 'Einblenden' : 'Ausblenden', () => { commit(() => c.off = !c.off, false); }),
     ...(c && c.own ? [T('🗑', 'Löschen', delSel, 'danger')] : [T('⇄', 'Vom Text lösen', () => { commit(() => detachCue(c), false); toast('Eigener Untertitel – Text und Zeit hängen nicht mehr am Transkript'); })]),
     ...(c && c.x != null ? [T('⌖', 'Position ↺', () => { commit(() => { delete c.x; delete c.y; }, false); placeOverlay(); })] : []),
     ...(c && (isFree(c) || c.ds || c.de) ? [T('↺', 'Zeit ↺', () => { commit(() => { delete c.fa; delete c.fd; c.ds = 0; c.de = 0; }, false); })] : [])]; }
@@ -550,11 +551,33 @@ function splitHere(){
   commit(() => P.splits.push(+x.toFixed(3)), false); select({kind:'main', i: segAtOut(outPos), src: x + 0.05}); toast('Geteilt');
 }
 function cutTo(side){
+  // Element auf einer anderen Ebene ausgewählt (Videospur, Titel, Zoom, Anpassung, Untertitel, Einschub):
+  // dessen Teil vor bzw. nach der Abspiellinie entfernen
+  const s = TL.sel; if (s && s.kind !== 'main') return cutSel(side);
   const g = curMainSeg(); if (!g) return;
   const x = vT();
   commit(() => side === 'l' ? addDel(g.in, x) : addDel(x, g.out), false); tokens.forEach(t => paint(t.i));
   // Abspiellinie genau auf den neuen Schnitt
   if (playing) pausePlay(); const o = srcToOut(x); seekOut(o, false); revealHead(o);
+}
+function selRange(){
+  const s = TL.sel; if (!s) return null;
+  if (s.kind === 'main' || s.kind === 'insert'){ const g = timeline[s.i]; return g ? [g.o, g.o + segDur(g)] : null; }
+  if (s.kind === 'cue'){ const t = cueTimes(selCue()); return t ? [t.s, t.e] : null; }
+  const it = selItem(); return it ? itemOutRange(it) : null;
+}
+function cutSel(side){
+  const r = selRange(); if (!r) return;
+  const [a, e] = r, o = outPos;
+  if (o <= a + 0.02 || o >= e - 0.02) return toast('Abspiellinie in das ausgewählte Element setzen');
+  if (playing) pausePlay();
+  let d = side === 'l' ? o - a : o - e;
+  if (TL.sel.kind === 'insert') d = snapF(d);
+  d = clampDrag(side, d); if (Math.abs(d) < 1e-4) return toast('Geht hier nicht weiter');
+  applyDrag(side, d);
+  toast(side === 'l' ? 'Anfang bis zur Abspiellinie entfernt' : 'Ende ab der Abspiellinie entfernt');
+  if (TL.sel && TL.sel.kind === 'insert'){ const g = timeline[TL.sel.i]; if (g){ const no = side === 'l' ? g.o : g.o + segDur(g); seekOut(Math.min(no, Math.max(0, total - 0.01)), false); } }
+  revealHead(outPos);
 }
 function delSel(){
   const s = TL.sel; if (!s) return;
@@ -705,6 +728,77 @@ function splitCue(){
   commit(() => { const c2 = {id:newId(), a: ids[k-1] + 1, b: c.b, text:null, ds:0, de:c.de || 0, off:c.off}; c.b = ids[k-1]; c.text = null; c.de = 0; delete c.fa; delete c.fd; P.cues.splice(idx + 1, 0, c2); }, false);
 }
 
+
+// ───────── Kopieren und Einfügen ─────────
+// Zwischenablage innerhalb von HoneyCut: Elemente (auch verbundene Gruppen) werden an der Abspiellinie eingefügt,
+// mit gleichem Abstand untereinander. Ein Clip der Hauptspur wird als Einschub (Hauptvideo pausiert) eingefügt.
+let CLIP = null;
+const clone = o => JSON.parse(JSON.stringify(o));
+function clipOfSource(src){ const c = clone(src); for (const k of ['env', 'tr', 'off', 'k', 'noAudio', 'legacy']) delete c[k]; return c; }
+function copySel(quiet){
+  const s = TL.sel; if (!s) return toast('Erst ein Element auswählen');
+  if (s.kind === 'main'){
+    const g = timeline[s.i], src = P.sources[g.si]; if (!hasVid(src)) return toast('Reine Tonspur – lässt sich nicht als Clip einfügen');
+    CLIP = {objs: [{kind:'insert', clip: clipOfSource(src), in: r3(g.in - src.off), out: r3(g.out - src.off), rel: 0, dur: segDur(g)}]};
+  } else if (s.kind === 'insert'){
+    const it = timeline[s.i].item; CLIP = {objs: [{kind:'item', data: clone(it), rel: 0, dur: segDur(timeline[s.i])}]};
+  } else {
+    const o = s.kind === 'cue' ? selCue() : selItem(); if (!o) return;
+    const ms = o.lk ? groupOf(o) : [o];
+    const span = x => { if (isCueObj(x)){ const t = cueTimes(x); return t ? [t.s, t.e] : null; } return itemOutRange(x); };
+    const list = ms.map(x => ({x, r: span(x)})).filter(y => y.r); if (!list.length) return;
+    const a0 = Math.min(...list.map(y => y.r[0]));
+    CLIP = {a0, objs: list.map(({x, r}) => isCueObj(x) ? {kind:'cue', data: clone(x), text: cueText(x), rel: r[0] - a0, dur: r[1] - r[0]}
+                                                   : {kind:'item', data: clone(x), rel: r[0] - a0, dur: r[1] - r[0], track: elTrack(x)})};
+  }
+  const s0 = TL.sel.kind === 'main' || TL.sel.kind === 'insert' ? timeline[TL.sel.i].o : null;
+  CLIP.a0 = s0 != null ? s0 : CLIP.a0; CLIP.span = Math.max(...CLIP.objs.map(c => c.rel + c.dur));
+  if (quiet === true) return;
+  const n = CLIP.objs.length; toast(n > 1 ? `${n} verbundene Elemente kopiert – Strg+V fügt sie an der Abspiellinie ein` : 'Kopiert – Strg+V fügt an der Abspiellinie ein');
+  updateTools();
+}
+function cutSelToClip(){ if (!TL.sel) return toast('Erst ein Element auswählen'); copySel(); if (CLIP) delSel(); }
+function pasteClip(at){
+  if (!CLIP) return toast('Nichts kopiert – erst ein Element auswählen und kopieren (Strg+C)');
+  if (playing) pausePlay();
+  const base = at != null ? at : outPos, made = [];
+  let sel = null;
+  commit(() => {
+    for (const c of CLIP.objs){
+      const start = clamp(base + c.rel, 0, Math.max(0, total - 0.1));
+      if (c.kind === 'insert' || (c.kind === 'item' && c.data.type === 'insert')){
+        const it = c.kind === 'insert' ? {id:newId(), type:'insert', clip: clone(c.clip), in: c.in, out: c.out, vol: 1, corner:'or', size:0.4} : {...clone(c.data), id:newId()};
+        delete it.lk; delete it.lo; delete it.lead;
+        // Einschübe sitzen an einer Stelle der Hauptspur: an der Abspiellinie (im laufenden Clip)
+        it.at = r3(outToSrcT(start)); P.items.push(it); made.push(it); sel = {kind:'insert', itemId: it.id, i:0}; continue;
+      }
+      if (c.kind === 'cue'){
+        const cue = clone(c.data); cue.id = newId(); cue.own = true; cue.text = c.text; delete cue.a; delete cue.b; delete cue.lk; delete cue.lo; delete cue.lead; cue.off = false;
+        setCueFree(cue, start, start + c.dur); insertCue(cue); made.push(cue); if (!sel) sel = {kind:'cue', id: cue.id}; continue;
+      }
+      const it = {...clone(c.data), id: newId()}; delete it.lk; delete it.lo; delete it.lead;
+      it.at = r3(outToSrcT(start));
+      if (it.type === 'broll' || it.type === 'pip'){
+        computeOverlays();
+        const busy = k => overlays.some(o => elTrack(o.x) === k && o.at < start + c.dur - 0.01 && o.end > start + 0.01);
+        it.track = !busy(c.track || 1) ? (c.track || 1) : freeTrack(start, start + c.dur);
+      }
+      P.items.push(it); made.push(it); computeOverlays();
+      if (!sel || sel.kind === 'cue') sel = {kind: it.type === 'broll' || it.type === 'pip' ? 'ovl' : it.type, id: it.id};
+    }
+    if (made.length > 1){ const gid = newId(); made.forEach(x => { if (x.type !== 'insert') x.lk = gid; }); const ms = made.filter(x => x.lk); if (ms.length > 1) relinkGroup(ms); else ms.forEach(x => delete x.lk); }
+  }, false);
+  if (made.some(x => x.type === 'insert') && tokens.length) renderTranscript();
+  TL.sel = sel; renderTimeline(); seekOut(outPos, false); updateTitles(outPos);
+  toast(made.length > 1 ? `${made.length} Elemente eingefügt` : 'Eingefügt');
+}
+// Duplizieren: Kopie direkt hinter dem Element (bei verbundenen Elementen hinter der ganzen Gruppe)
+function duplicateSel(){
+  if (!TL.sel) return toast('Erst ein Element auswählen');
+  const keep = CLIP; copySel(true); if (CLIP === keep) return;
+  try { pasteClip(CLIP.a0 + CLIP.span); } finally { CLIP = keep; updateTools(); }
+}
+
 // ───────── Tastatur (wie CapCut) und Maus ─────────
 const KEYS = [
   ['Leertaste', 'Abspielen / Pause'], ['K / L', 'Pause / Abspielen'],
@@ -712,7 +806,7 @@ const KEYS = [
   ['↑ / ↓', 'zum vorigen / nächsten Schnitt springen'], ['Pos1 / Ende', 'an den Anfang / das Ende'],
   ['Strg + F', 'im Text suchen (Enter: nächster Treffer, dann Entf löscht)'], ['Strg + H', 'suchen und ersetzen'], ['Doppelklick auf ein Wort', 'Wort korrigieren'],
   ['Markierten Text ziehen', 'Abschnitt verschieben'], ['Clip in der Zeitleiste ziehen', 'Clips umsortieren'],
-  ['Strg + B', 'an der Abspiellinie teilen'], ['Q / W', 'links / rechts der Abspiellinie löschen'],
+  ['Strg + B', 'an der Abspiellinie teilen'], ['Strg + C / X / V', 'Element kopieren / ausschneiden / an der Abspiellinie einfügen'], ['Strg + D', 'Element duplizieren (direkt dahinter)'], ['Q / W', 'links / rechts der Abspiellinie löschen (mit ausgewähltem Element: nur dessen Teil)'],
   ['Entf / Rücktaste', 'Auswahl löschen'], ['Alt + ← / →', 'Auswahl um ein Bild verschieben'],
   [', / .', 'Anfang / Ende der Auswahl zur Abspiellinie trimmen'],
   ['M', 'Keyframe an der Abspiellinie setzen / entfernen (ausgewählte Einblendung)'], ['F', 'Vollbild-Vorschau'],
@@ -775,6 +869,11 @@ document.addEventListener('keydown', e => {
   if (mod && k.toLowerCase() === 'z'){ handled(); (e.shiftKey ? $('#redoBtn') : $('#undoBtn')).click(); return; }
   if (mod && k.toLowerCase() === 'y'){ handled(); $('#redoBtn').click(); return; }
   if (mod && k.toLowerCase() === 'b'){ handled(); splitHere(); return; }
+  if (mod && studioOn() && !e.altKey){ const lk = k.toLowerCase(), txtSel = String(window.getSelection && getSelection() || '').trim();
+    if (lk === 'c' && TL.sel && !txtSel){ handled(); copySel(); return; }
+    if (lk === 'x' && TL.sel && !txtSel){ handled(); cutSelToClip(); return; }
+    if (lk === 'v' && CLIP){ handled(); pasteClip(); return; }
+    if (lk === 'd' && TL.sel){ handled(); duplicateSel(); return; } }
   if (mod && k.toLowerCase() === 'h' && tokens.length){ handled(); if (tab !== 'text') setTab('text'); $('#replRow').classList.remove('hidden'); ($('#findIn').value ? $('#replIn') : $('#findIn')).focus(); return; }
   if (mod && k.toLowerCase() === 'f' && tokens.length){ handled(); if (tab !== 'text') setTab('text'); $('#findIn').focus(); $('#findIn').select(); return; }
   if (mod && (k === '+' || k === '=')){ handled(); setPps(TL.pps * 1.4); return; }

@@ -37,7 +37,7 @@ os.environ.setdefault("HF_HUB_DISABLE_IMPLICIT_TOKEN", "1")
 import warnings  # noqa: E402
 warnings.filterwarnings("ignore", module="huggingface_hub")
 
-VERSION = "2.7.2"
+VERSION = "2.8.0"
 APP_DIR = Path(__file__).resolve().parent
 FROZEN = bool(getattr(sys, "frozen", False))          # als installierte .exe gebaut
 RES_DIR = Path(getattr(sys, "_MEIPASS", APP_DIR))      # mitgelieferte Dateien (Oberfläche, ffmpeg, Modelle)
@@ -167,6 +167,8 @@ def probe(path: str) -> dict:
         "width": w, "height": h, "rotation": 0, "fps": round(fps, 3),
         "hasAudio": a is not None and not is_img, "hasVideo": v is not None,
         "startTime": float(fmt.get("start_time") or 0),
+        # Ton beginnt später als das Bild (z. B. bei geschnittenen Handyvideos): so weit lagen Wortzeiten früher daneben
+        "audioStart": round(max(0.0, float(a.get("start_time") or 0) - float(fmt.get("start_time") or 0)), 3) if a else 0.0,
     }
     allow(path)
     return info
@@ -470,7 +472,7 @@ def transcribe_job(job: dict, path: str, model_name: str, language: str | None, 
     phase["text"] = "Ton wird vorbereitet"
     wav = Path(tempfile.gettempdir()) / f"textschnitt_{uuid.uuid4().hex[:8]}.wav"
     try:
-        run_ffmpeg(["-i", path, "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", str(wav)], duration, job, 0.0, 0.04)
+        run_ffmpeg(["-i", path, "-vn", "-af", "aresample=async=1:first_pts=0", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", str(wav)], duration, job, 0.0, 0.04)
         audio = read_wav16k(wav)
     finally:
         wav.unlink(missing_ok=True)
@@ -501,7 +503,7 @@ def transcribe_job(job: dict, path: str, model_name: str, language: str | None, 
             r = int(el / frac - el)
             rest = f" · noch ca. {r // 60}:{r % 60:02d}"
         phase["text"] = f"Transkribiere {fmt_ts(seg.end)[:8]} von {fmt_ts(duration)[:8]}{rest}"
-    return {"words": words, "lang": language or getattr(tinfo, "language", None), "env": env}
+    return {"words": words, "lang": language or getattr(tinfo, "language", None), "env": env, "padded": True}
 
 
 def transcribe_ranges(job: dict, model, device, audio, ranges: list, language: str | None, phase: dict) -> list:
@@ -535,8 +537,8 @@ def envelope_job(job: dict, path: str):
     job["message"] = "Analysiere Ton …"
     wav = Path(tempfile.gettempdir()) / f"textschnitt_{uuid.uuid4().hex[:8]}.wav"
     try:
-        run_ffmpeg(["-i", path, "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", str(wav)], info["duration"], job)
-        return {"env": envelope(read_wav16k(wav))}
+        run_ffmpeg(["-i", path, "-vn", "-af", "aresample=async=1:first_pts=0", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", str(wav)], info["duration"], job)
+        return {"env": envelope(read_wav16k(wav)), "astart": info.get("audioStart", 0.0), "padded": True}
     finally:
         wav.unlink(missing_ok=True)
 
