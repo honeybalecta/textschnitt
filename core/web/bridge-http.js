@@ -28,6 +28,11 @@
     },
     immersive: on => { try { return JSON.parse(call('POST', 'fullscreen', {on: !!on})).ok; } catch(_){ return false; } },
     fonts: () => call('GET', 'fonts'),
+    // Projektpakete: Dateidialog im Backend, danach läuft ein Job; Antwort kommt wie bei pick über TSApp.onPicked
+    exportPackage(id, spec){ fetch(api + 'package/export', {method:'POST', headers:{'Content-Type':'application/json'}, body: spec})
+      .then(r => r.text()).then(t => TSApp.onPicked(id, t && t !== 'null' ? t : null)).catch(() => TSApp.onPicked(id, null)); },
+    importPackage(id){ fetch(api + 'package/import', {method:'POST', headers:{'Content-Type':'application/json'}, body: '{}'})
+      .then(r => r.text()).then(t => TSApp.onPicked(id, t && t !== 'null' ? t : null)).catch(() => TSApp.onPicked(id, null)); },
     deleteFont: uri => { call('POST', 'fonts/delete', {uri}); },
     listProjects: () => call('GET', 'projects'),
     loadProject: id => call('GET', 'project?id=' + q(id)),

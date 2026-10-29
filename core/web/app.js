@@ -327,11 +327,11 @@ function showHome(){
   $('#homeEmpty').classList.toggle('hidden', list.length > 0);
   list.sort((a, b) => b.updated - a.updated).forEach(p => {
     const el = document.createElement('div'); el.className = 'proj-item';
-    el.innerHTML = `<div class="meta"><b></b><span class="muted small"></span></div>${TS.shareProject ? '<button class="del share" title="Projektdatei teilen (z. B. zur Fehlersuche)">⤴</button>' : ''}<button class="del" title="Löschen">🗑</button>`;
+    el.innerHTML = `<div class="meta"><b></b><span class="muted small"></span></div>${TS.exportPackage ? '<button class="del share" title="Projekt weitergeben (.honeycut) – auf einem anderen Gerät oder von einer anderen Person weiterbearbeiten">⤴</button>' : ''}<button class="del" title="Löschen">🗑</button>`;
     el.querySelector('b').textContent = p.name;
     el.querySelector('span').textContent = `${fmtT(p.duration)}${p.sources > 1 ? ` · ${p.sources} Videos` : ''} · ${p.transcribed ? 'transkribiert' : 'noch nicht transkribiert'} · ${new Date(p.updated).toLocaleDateString('de-DE')}`;
     el.onclick = e => { if (e.target.closest('.del')) return; openProject(p.id); };
-    const sh = el.querySelector('.share'); if (sh) sh.onclick = () => TS.shareProject(p.id);
+    const sh = el.querySelector('.share'); if (sh) sh.onclick = () => packageDialog(p.id);
     el.querySelector('.del:not(.share)').onclick = () => { if (confirm(`„${p.name}“ löschen? Deine Videos bleiben erhalten.`)) { TS.deleteProject(p.id); showHome(); } };
     box.append(el);
   });
@@ -455,6 +455,130 @@ function backfillEnv(){
       } next(); }, () => next());
   })();
 }
+
+
+// ───────── Projekte weitergeben (.honeycut) ─────────
+// Das Paket enthält das Projekt mit Platzhaltern (@hc:n) statt Dateipfaden und – wenn gewünscht – die Dateien selbst.
+// Auf dem anderen Gerät werden die Platzhalter durch die dort abgelegten Dateien ersetzt. Ohne Dateien werden die Videos
+// einer früher empfangenen Fassung desselben Projekts genommen (gleicher Name und gleiche Länge) oder erfragt.
+function platformCall(fn){ return new Promise(res => { const id = newId(); pending.set(id, res); fn(id); }); }
+function hcModal(html){
+  closeHcModal(); const m = document.createElement('div'); m.className = 'hc-modal'; m.id = 'hcModal';
+  m.innerHTML = `<div class="hc-card">${html}</div>`; document.body.append(m); return m;
+}
+function closeHcModal(){ const m = $('#hcModal'); if (m) m.remove(); }
+function packageSpec(proj, withMedia){
+  const p = JSON.parse(JSON.stringify(proj)), files = [], hfiles = [], byUri = new Map();
+  const fileFor = (m, kind) => {
+    if (byUri.has(m.uri)) return byUri.get(m.uri);
+    const n = (kind === 'font' ? 'f' : 'm') + hfiles.length;
+    byUri.set(m.uri, n);
+    hfiles.push({n, kind, name: m.name || ('Datei' + hfiles.length), duration: m.duration || 0, width: m.width || 0, height: m.height || 0, mediaKind: m.kind || ''});
+    files.push({n, uri: m.uri, include: kind === 'font' || withMedia});
+    return n;
+  };
+  const walk = o => { if (Array.isArray(o)) o.forEach(walk);
+    else if (o && typeof o === 'object'){ if (typeof o.uri === 'string' && o.uri && !o.uri.startsWith('@hc')) o.uri = '@hc:' + fileFor(o, 'media');
+      delete o.proxy; for (const k in o) if (o[k] && typeof o[k] === 'object') walk(o[k]); } };
+  walk(p.sources); walk(p.items); walk(p.media || []);
+  // eigene Schriften (Untertitel, Titel)
+  const fontKey = key => { const f = key && userFonts.find(x => x.key === key); return f ? '@hcf:' + fileFor({uri: f.uri, name: (f.uri.split(/[\\/]/).pop() || f.label + '.ttf')}, 'font') : key; };
+  if (p.sub_style && p.sub_style.font) p.sub_style.font = fontKey(p.sub_style.font);
+  for (const it of p.items || []) if (it.font) it.font = fontKey(it.font);
+  const header = {format: 'honeycut-projekt', v: 1, app: CAP.version || '', platform: CAP.platform || '', created: Date.now(), name: p.name, project: p, files: hfiles};
+  return {name: p.name || 'Projekt', header, files};
+}
+function packageDialog(pid){
+  if (!TS.exportPackage) return toast('Projekte weitergeben geht in dieser Version noch nicht');
+  if (P && P.id === pid) saveNow();
+  const proj = J(TS.loadProject(pid)); if (!proj) return toast('Projekt nicht gefunden');
+  const m = hcModal(`<h3>Projekt weitergeben</h3>
+    <p class="muted small">„${esc(proj.name || 'Projekt')}“ wird als eine Datei (.honeycut) gespeichert. Die Datei z. B. über eine Cloud, per USB oder AirDrop/Quick Share aufs andere Gerät bringen und dort mit „Projekt importieren“ öffnen.</p>
+    <label class="row"><input type="checkbox" id="pkgMedia" checked> Videos, Bilder und Schriften mitschicken</label>
+    <p class="muted small" id="pkgHint">Ohne: nur der Schnitt (kleine Datei). Das andere Gerät nimmt dann die Videos aus einer früher empfangenen Fassung dieses Projekts oder fragt nach ihnen.</p>
+    <div class="progress hidden" id="pkgProg"><i></i></div><div class="small muted" id="pkgMsg"></div>
+    <div class="row" style="margin-top:12px"><button class="btn" id="pkgCancel">Abbrechen</button><button class="btn primary" id="pkgGo" style="margin-left:auto">Exportieren</button></div>`);
+  let job = null;
+  m.querySelector('#pkgCancel').onclick = () => { if (job) TS.cancel(job); closeHcModal(); };
+  m.querySelector('#pkgGo').onclick = async () => {
+    const spec = packageSpec(proj, m.querySelector('#pkgMedia').checked);
+    m.querySelector('#pkgGo').disabled = true;
+    const r = await platformCall(id => TS.exportPackage(id, JSON.stringify(spec)));
+    if (!r || !r.job){ m.querySelector('#pkgGo').disabled = false; return; }
+    job = r.job; m.querySelector('#pkgProg').classList.remove('hidden');
+    watchJob(job, j => { m.querySelector('#pkgProg i').style.width = (j.progress * 100).toFixed(1) + '%'; m.querySelector('#pkgMsg').textContent = j.message || 'Projekt wird gepackt …'; },
+      j => { const res = j.result || {}; job = null; m.querySelector('#pkgProg i').style.width = '100%';
+        m.querySelector('#pkgMsg').textContent = 'Fertig' + (res.path ? ': ' + res.path : '') + (res.bytes ? ` (${fmtMB(res.bytes)})` : '');
+        m.querySelector('#pkgGo').classList.add('hidden'); m.querySelector('#pkgCancel').textContent = 'Schließen';
+        if (res.path && CAP.platform === 'desktop'){ const b = document.createElement('button'); b.className = 'btn'; b.textContent = 'Im Ordner zeigen'; b.onclick = () => TS.share(res.path); m.querySelector('.row').prepend(b); } },
+      j => { job = null; m.querySelector('#pkgMsg').textContent = j.status === 'cancelled' ? 'Abgebrochen' : 'Fehler: ' + (j.error || ''); m.querySelector('#pkgGo').disabled = false; });
+  };
+}
+const fmtMB = b => b >= 1e9 ? (b / 1e9).toFixed(1).replace('.', ',') + ' GB' : b >= 1e6 ? Math.round(b / 1e6) + ' MB' : Math.max(1, Math.round(b / 1e3)) + ' KB';
+async function importProject(){
+  if (!TS.importPackage) return toast('Projekte importieren geht in dieser Version noch nicht');
+  const r = await platformCall(id => TS.importPackage(id)); if (!r || !r.job) return;
+  const m = hcModal(`<h3>Projekt importieren</h3><div class="progress" id="pkgProg"><i></i></div><div class="small muted" id="pkgMsg">Projekt wird entpackt …</div>
+    <div class="row" style="margin-top:12px"><button class="btn" id="pkgCancel" style="margin-left:auto">Abbrechen</button></div>`);
+  let job = r.job; m.querySelector('#pkgCancel').onclick = () => { if (job) TS.cancel(job); closeHcModal(); };
+  watchJob(job, j => { m.querySelector('#pkgProg i').style.width = (j.progress * 100).toFixed(1) + '%'; if (j.message) m.querySelector('#pkgMsg').textContent = j.message; },
+    j => { job = null; finishImport(j.result || {}).catch(e => { console.error(e); m.querySelector('#pkgMsg').textContent = 'Fehler: ' + e.message; }); },
+    j => { job = null; m.querySelector('#pkgMsg').textContent = j.status === 'cancelled' ? 'Abgebrochen' : 'Fehler: ' + (j.error || ''); m.querySelector('#pkgCancel').textContent = 'Schließen'; });
+}
+async function finishImport(res){
+  const header = res.header || {}, map = res.map || {}, proj = header.project;
+  if (!proj || !proj.id) throw new Error('Im Paket steckt kein Projekt.');
+  await loadUserFonts().catch(() => {});
+  const hf = header.files || [], info = n => hf.find(f => f.n === n) || {};
+  // frühere Fassung desselben Projekts auf diesem Gerät: deren Dateien wiederverwenden
+  const old = J(TS.loadProject(proj.id) || 'null');
+  const local = [];
+  if (old){ const add = x => { if (x && x.uri && !x.uri.startsWith('@hc')) local.push(x); }; (old.sources || []).forEach(add); (old.items || []).forEach(x => add(x.clip)); (old.media || []).forEach(add); }
+  const resolved = {}, missing = [];
+  const media = n => { if (n in resolved) return resolved[n];
+    let u = map[n]; const h = info(n);
+    if (!u){ const x = local.find(x => x.name === h.name && Math.abs((+x.duration || 0) - (+h.duration || 0)) < 0.25); if (x) u = x.uri; }
+    if (!u){ missing.push(n); u = '@hc:' + n; }
+    return resolved[n] = u; };
+  const walk = o => { if (Array.isArray(o)) o.forEach(walk);
+    else if (o && typeof o === 'object'){ if (typeof o.uri === 'string' && o.uri.startsWith('@hc:')) o.uri = media(o.uri.slice(4)); for (const k in o) if (o[k] && typeof o[k] === 'object') walk(o[k]); } };
+  walk(proj);
+  const fk = key => { if (typeof key !== 'string' || !key.startsWith('@hcf:')) return key; const u = map[key.slice(5)]; return u ? 'u' + hashStr(u) : ''; };
+  if (proj.sub_style && proj.sub_style.font) proj.sub_style.font = fk(proj.sub_style.font);
+  for (const it of proj.items || []) if (it.font) it.font = fk(it.font);
+  // fehlende Dateien: auf diesem Gerät auswählen lassen
+  if (missing.length) await relinkDialog(proj, missing.map(n => ({n, ...info(n)})));
+  if (old){
+    const keep = confirm(`„${proj.name}“ gibt es auf diesem Gerät schon (zuletzt bearbeitet ${new Date(old.updated || 0).toLocaleString('de-DE')}).\n\nOK: durch die empfangene Fassung ersetzen\nAbbrechen: als Kopie daneben anlegen`);
+    if (!keep){ proj.id = newId(); proj.name += ' (Kopie)'; }
+  }
+  if (P && P.id === proj.id) closeProject();
+  TS.saveProject(proj.id, JSON.stringify(proj));
+  closeHcModal(); showHome(); openProject(proj.id);
+  toast(`„${proj.name}“ importiert` + (hf.some(f => f.included) ? '' : ' – ohne mitgeschickte Dateien'));
+}
+// Dateien, die nicht im Paket waren und hier nicht gefunden wurden, selbst auswählen
+function relinkDialog(proj, list){
+  return new Promise(done => {
+    const set = (n, m) => { const walk = o => { if (Array.isArray(o)) o.forEach(walk); else if (o && typeof o === 'object'){ if (o.uri === '@hc:' + n){ o.uri = m.uri; } for (const k in o) if (o[k] && typeof o[k] === 'object') walk(o[k]); } }; walk(proj); };
+    const render = () => {
+      const open = list.filter(x => !x.done);
+      if (!open.length){ done(); return; }
+      const m = hcModal(`<h3>Dateien zuordnen</h3><p class="muted small">Diese Dateien waren nicht im Paket und liegen hier noch nicht vor. Wähle sie auf diesem Gerät aus – Name und Länge sollten übereinstimmen.</p>
+        <ul class="relink">${open.map(x => `<li><span><b>${esc(x.name)}</b> <span class="muted small">${x.mediaKind === 'image' ? 'Foto' : fmtS(x.duration || 0)}</span></span><button class="btn small" data-n="${x.n}">Auswählen …</button></li>`).join('')}</ul>
+        <div class="row" style="margin-top:12px"><button class="btn ghost" id="relSkip" style="margin-left:auto">Ohne diese Dateien öffnen</button></div>`);
+      m.querySelector('#relSkip').onclick = () => done();
+      m.querySelectorAll('[data-n]').forEach(b => b.onclick = async () => {
+        const x = list.find(y => y.n === b.dataset.n), got = await pickMedia('clip'); if (!got) return;
+        if (x.duration && got.duration && Math.abs(got.duration - x.duration) > 1 && !confirm(`„${got.name}“ ist ${fmtS(got.duration)} lang, erwartet waren ${fmtS(x.duration)}. Trotzdem nehmen?`)) return;
+        set(x.n, got); x.done = true; render();
+      });
+    };
+    render();
+  });
+}
+$('#impProj').onclick = () => importProject();
+$('#pkgBtn').onclick = () => { if (P) packageDialog(P.id); };
 
 const fmtD2 = x => x.toFixed(2).replace('.', ',');
 function untouched(){
@@ -967,6 +1091,10 @@ function updateHead(o){ $('#head').style.left = (total ? o / total * 100 : 0) + 
 const elTrack = it => it.track || 1;
 const clipAspect = c => { const r = (c.rotation || 0) % 180 !== 0, w = r ? c.height : c.width, h = r ? c.width : c.height; return w > 0 && h > 0 ? w / h : 16 / 9; };
 const PIP_M = 0.03;
+// Zuschnitt eines Elements: crop = {l, t, r, b} (Anteile, die links/oben/rechts/unten wegfallen)
+const cropOf = it => { const c = it && it.crop; return c ? {l: c.l || 0, t: c.t || 0, r: c.r || 0, b: c.b || 0} : {l: 0, t: 0, r: 0, b: 0}; };
+const hasCrop = it => { const c = cropOf(it); return c.l + c.t + c.r + c.b > 0.0005; };
+const elAspect = it => { const c = cropOf(it); return clipAspect(it.clip) * Math.max(0.02, 1 - c.l - c.r) / Math.max(0.02, 1 - c.t - c.b); };
 const lerp = (a, b, f) => a + (b - a) * f;
 function kfAt(kf, rel){
   const n = kf.length; if (rel <= kf[0].t) return kf[0]; if (rel >= kf[n-1].t) return kf[n-1];
@@ -980,7 +1108,7 @@ function elVals(it, rel){
   if (it.type === 'pip'){ const [W, H] = outSize(), r = pipRect(it, W, H); return {x: r.cx / W, y: r.cy / H, w: r.w / W, legacy: r}; }
   return null;
 }
-function coverVals(it){ const [W, H] = outSize(), a = clipAspect(it.clip); return {x: 0.5, y: 0.5, w: Math.max(1, H * a / W)}; }
+function coverVals(it){ const [W, H] = outSize(), a = elAspect(it); return {x: 0.5, y: 0.5, w: Math.max(1, H * a / W)}; }
 function pipRect(it, W, H){   // ältere Projekte: feste Ecke, Größe als Anteil beider Seiten
   const sz = it.size || 0.33, pw = sz * W, ph = sz * H, m = PIP_M * W, c = it.corner || 'or';
   return {cx: c[1] === 'l' ? m + pw / 2 : W - m - pw / 2, cy: c[0] === 'o' ? m + ph / 2 : H - m - ph / 2, w: pw, h: ph};
@@ -989,16 +1117,16 @@ function pipRect(it, W, H){   // ältere Projekte: feste Ecke, Größe als Antei
 function elRect(it, v, W, H){
   if (!v) return null;
   if (v.legacy && it.w == null && !(it.kf && it.kf.length)){ const r = pipRect(it, W, H); return r; }
-  const pw = v.w * W; return {cx: v.x * W, cy: v.y * H, w: pw, h: pw / clipAspect(it.clip)};
+  const pw = v.w * W; return {cx: v.x * W, cy: v.y * H, w: pw, h: pw / elAspect(it)};
 }
 // Element auf freie Lage umstellen (Vollbild/alte Ecke → x/y/w)
 function pipFree(it){ if (it.w != null) return; const v = elVals(it, 0) || coverVals(it); it.w = r3(v.w); it.x = r3(v.x); it.y = r3(v.y);
-  if (v.legacy){ const [W, H] = outSize(), ph = it.w * W / clipAspect(it.clip), c = it.corner || 'or', m = PIP_M * W; it.y = r3((c[0] === 'o' ? m + ph / 2 : H - m - ph / 2) / H); } }
+  if (v.legacy){ const [W, H] = outSize(), ph = it.w * W / elAspect(it), c = it.corner || 'or', m = PIP_M * W; it.y = r3((c[0] === 'o' ? m + ph / 2 : H - m - ph / 2) / H); } }
 // Werte setzen: mit Keyframes an der Stelle rel (neu oder vorhandener), sonst fest
 function setElVals(it, rel, v){
   // Grenzen nach Größe: Ein Element darf so weit aus dem Bild ragen, dass nur noch ein schmaler Rand sichtbar ist –
   // auch sehr hohe Bilder (Screenshots, Grafiken) lassen sich so weit schieben, dass nur ihr oberer oder unterer Teil zu sehen ist.
-  const [W, H] = outSize(), w = clamp(v.w, 0.03, 5), hh = w * W / clipAspect(it.clip) / H, m = 0.04;
+  const [W, H] = outSize(), w = clamp(v.w, 0.03, 5), hh = w * W / elAspect(it) / H, m = 0.04;
   v = {x: r3(clamp(v.x, m - w / 2, 1 - m + w / 2)), y: r3(clamp(v.y, m - hh / 2, 1 - m + hh / 2)), w: r3(w)};
   if (it.kf && it.kf.length){
     const tol = 0.5 / (primary().fps || 30), k = it.kf.find(k => Math.abs(k.t - rel) <= tol);
@@ -1006,7 +1134,7 @@ function setElVals(it, rel, v){
   } else { pipFree(it); Object.assign(it, v); }
 }
 function pipCorner(it, c){
-  const v0 = elVals(it, curRel(it)) || coverVals(it); const [W, H] = outSize(), pw = v0.w * W, ph = pw / clipAspect(it.clip), m = PIP_M * W;
+  const v0 = elVals(it, curRel(it)) || coverVals(it); const [W, H] = outSize(), pw = v0.w * W, ph = pw / elAspect(it), m = PIP_M * W;
   const v = {w: v0.w, x: c === 'mm' ? 0.5 : (c[1] === 'l' ? m + pw / 2 : W - m - pw / 2) / W, y: c === 'mm' ? 0.5 : (c[0] === 'o' ? m + ph / 2 : H - m - ph / 2) / H};
   setElVals(it, curRel(it), v); if (c !== 'mm') it.corner = c;
 }
@@ -1052,10 +1180,8 @@ function updateOverlay(o){
     const it = a.x, el = layerFor(it), url = MEDIA(it.clip.uri);
     if (el.dataset.src !== url){ el.src = url; el.dataset.src = url; }
     el.classList.remove('hidden');
-    const v = PipDrag.on && PipDrag.it === it ? PipDrag : elVals(it, o - a.at), r = elRect(it, v, W, H);
-    el.classList.toggle('free', !!r);
-    if (r) Object.assign(el.style, {left: (r.cx - r.w / 2) + 'px', top: (r.cy - r.h / 2) + 'px', width: r.w + 'px', height: r.h + 'px'});
-    else Object.assign(el.style, {left: '', top: '', width: '', height: ''});
+    const v = PipDrag.on && PipDrag.it === it ? PipDrag : elVals(it, o - a.at), r = elRect(it, v, W, H) || (hasCrop(it) || Crop.it === it ? elRect(it, coverVals(it), W, H) : null);
+    placeLayer(el, it, r);
     if (el.tagName !== 'VIDEO') return;
     const vol = it.vol || 0; el.muted = !(vol > 0) || !playing; el.volume = clamp(vol, 0, 1);
     const target = it.in + (o - a.at);
@@ -1067,15 +1193,27 @@ function updateOverlay(o){
   curPip = tgt ? tgt.x : null; pipTarget = tgt;
   placeBox(W, H);
 }
+// Ebene setzen: r = sichtbares (zugeschnittenes) Rechteck; die Datei selbst liegt größer dahinter und wird per clip-path beschnitten
+function placeLayer(el, it, r){
+  el.classList.toggle('free', !!r);
+  if (!r){ Object.assign(el.style, {left: '', top: '', width: '', height: '', clipPath: ''}); return; }
+  const c = cropOf(it), fw = r.w / Math.max(0.02, 1 - c.l - c.r), fh = r.h / Math.max(0.02, 1 - c.t - c.b);
+  const cut = Crop.it === it ? null : c;   // beim Zuschneiden ganze Datei zeigen
+  Object.assign(el.style, {left: (r.cx - r.w / 2 - c.l * fw) + 'px', top: (r.cy - r.h / 2 - c.t * fh) + 'px', width: fw + 'px', height: fh + 'px',
+    clipPath: cut && hasCrop(it) ? `inset(${(cut.t * 100).toFixed(3)}% ${(cut.r * 100).toFixed(3)}% ${(cut.b * 100).toFixed(3)}% ${(cut.l * 100).toFixed(3)}%)` : ''});
+}
 // Rahmen mit Griffen: Einblendung, sonst (Hauptspur-Clip ausgewählt) das Hauptbild
 function placeBox(W, H){
   const box = $('#pipBox');
   if (!W){ const st = $('#stage'); W = st.clientWidth; H = st.clientHeight; }
   let r = null;
   if (curPip){ const it = curPip, v = PipDrag.on && PipDrag.it === it ? PipDrag : elVals(it, outPos - pipTarget.at);
-    r = elRect(it, v, W, H); if (!r){ const c = coverVals(it); r = {cx: W / 2, cy: H / 2, w: c.w * W, h: c.w * W / clipAspect(it.clip)}; } }
+    r = elRect(it, v, W, H); if (!r){ const c = coverVals(it); r = {cx: W / 2, cy: H / 2, w: c.w * W, h: c.w * W / elAspect(it)}; } }
   else if (mainBoxOn()){ const f = PipDrag.on && PipDrag.main ? PipDrag : mainFx(); r = {cx: (0.5 + f.tx) * W, cy: (0.5 + f.ty) * H, w: f.sc * W, h: f.sc * H}; }
+  if (Crop.it) r = null;
   box.classList.toggle('hidden', !r); box.classList.toggle('main', !curPip && !!r);
+  box.classList.toggle('sel', !!r && (curPip ? selOvlId() === curPip.id : true)); box.classList.toggle('playing', !!playing);
+  if (Crop.it) placeCrop(W, H);
   if (r) Object.assign(box.style, {left: (r.cx - r.w / 2) + 'px', top: (r.cy - r.h / 2) + 'px', width: r.w + 'px', height: r.h + 'px'});
 }
 // Hauptspur: Lage und Größe des ausgewählten Clips (in einer Anpassung gespeichert)
@@ -1086,13 +1224,104 @@ function mainFxItem(g){
   if (!it){ it = {id:newId(), type:'fx', at:r3(g.in), dur:r3(g.out - g.in), fx:{...FX_DEF}}; P.items.push(it); }
   it.fx = {...FX_DEF, ...(it.fx || {})}; return it;
 }
+// ───────── Zuschneiden (wie in CapCut): ganze Datei zeigen, Ausschnitt mit Griffen wählen ─────────
+// Während des Zuschneidens bleibt das Element, wie es ist; erst „Fertig“ übernimmt den Ausschnitt.
+// Der gewählte Ausschnitt bleibt dabei genau an seiner Stelle im Bild – das Element wird entsprechend verkleinert/verschoben.
+const Crop = {it:null, cur:null, ratio:null};
+function fullRect(it, W, H){   // ganze Datei (ohne Zuschnitt) in Pixeln der Bühne
+  const a = ovOf(it), v = (a ? elVals(it, clamp(outPos - a.at, 0, a.end - a.at)) : null) || coverVals(it), r = elRect(it, v, W, H) || elRect(it, coverVals(it), W, H), c = cropOf(it);
+  const fw = r.w / Math.max(0.02, 1 - c.l - c.r), fh = r.h / Math.max(0.02, 1 - c.t - c.b);
+  return {x: r.cx - r.w / 2 - c.l * fw, y: r.cy - r.h / 2 - c.t * fh, w: fw, h: fh};
+}
+function startCrop(it){
+  if (!it || !(it.type === 'broll' || it.type === 'pip')) return toast('Zuschneiden geht bei Bildern und Videos auf den Videospuren');
+  const a = ovOf(it); if (!a) return;
+  if (playing) pausePlay();
+  if (outPos < a.at || outPos >= a.end) seekOut(a.at + Math.min(0.05, (a.end - a.at) / 2), false);
+  Crop.it = it; Crop.cur = cropOf(it); Crop.ratio = null; Crop.before = snapshot();
+  $('#cropBox').classList.remove('hidden'); updateOverlay(outPos);
+  if (window.updateTools) updateTools();
+  toast('Ausschnitt mit den Griffen wählen, innen ziehen verschiebt ihn – dann „Fertig“');
+}
+function placeCrop(W, H){
+  if (!W){ const st = $('#stage'); W = st.clientWidth; H = st.clientHeight; }
+  const it = Crop.it, box = $('#cropBox'); if (!it || !ovOf(it)){ box.classList.add('hidden'); return; }
+  const F = fullRect(it, W, H), c = Crop.cur; Crop.F = F;
+  Object.assign(box.style, {left: F.x + 'px', top: F.y + 'px', width: F.w + 'px', height: F.h + 'px'});
+  Object.assign($('#cropWin').style, {left: c.l * 100 + '%', top: c.t * 100 + '%', width: (1 - c.l - c.r) * 100 + '%', height: (1 - c.t - c.b) * 100 + '%'});
+  box.classList.toggle('locked', !!Crop.ratio);
+}
+// Ausschnitt mit festem Seitenverhältnis (Bildschirm-Verhältnis) um die Mitte des aktuellen Ausschnitts
+function cropRatio(ratio){
+  Crop.ratio = ratio; const it = Crop.it; if (!it) return;
+  if (ratio == null){ placeCrop(); return; }
+  const c = Crop.cur, fa = clipAspect(it.clip), cx = (c.l + 1 - c.r) / 2, cy = (c.t + 1 - c.b) / 2;
+  // Breite/Höhe als Anteil der Datei: (cw * fa) / ch = ratio
+  let cw = 1 - c.l - c.r, ch = cw * fa / ratio; if (ch > 1){ ch = 1; cw = ratio / fa; } if (cw > 1){ cw = 1; ch = fa / ratio; }
+  const l = clamp(cx - cw / 2, 0, 1 - cw), t = clamp(cy - ch / 2, 0, 1 - ch);
+  Crop.cur = {l, t, r: 1 - l - cw, b: 1 - t - ch}; placeCrop();
+}
+function endCrop(apply){
+  const it = Crop.it; if (!it) return; const n = Crop.cur;
+  Crop.it = null; $('#cropBox').classList.add('hidden');
+  if (apply){
+    const o = cropOf(it), same = ['l', 't', 'r', 'b'].every(k => Math.abs(o[k] - n[k]) < 0.0005);
+    if (!same){
+      undo.push(Crop.before); if (undo.length > 200) undo.shift(); redo = [];
+      pipFree(it);
+      const [W, H] = outSize(), fa = clipAspect(it.clip);
+      const conv = v => {   // Werte mit altem Zuschnitt → Werte mit neuem, ganze Datei bleibt an ihrem Platz
+        const fw = v.w / Math.max(0.02, 1 - o.l - o.r), fhn = fw * W / fa / H;   // Datei-Breite/-Höhe als Anteil von W/H
+        const h0 = v.w * W / elAspect(it) / H, fx = v.x - v.w / 2 - o.l * fw, fy = v.y - h0 / 2 - o.t * fhn;
+        const cw = Math.max(0.02, 1 - n.l - n.r), ch = Math.max(0.02, 1 - n.t - n.b);
+        return {x: r3(fx + (n.l + cw / 2) * fw), y: r3(fy + (n.t + ch / 2) * fhn), w: r3(fw * cw)};
+      };
+      const nv = conv({x: it.x, y: it.y, w: it.w}), nk = (it.kf || []).map(k => ({...k, ...conv(k)}));
+      Object.assign(it, nv); if (it.kf) it.kf = nk;
+      if (n.l + n.t + n.r + n.b > 0.0005) it.crop = {l: r3(n.l), t: r3(n.t), r: r3(n.r), b: r3(n.b)}; else delete it.crop;
+      changed(true); toast('Zugeschnitten');
+    }
+  }
+  seekOut(outPos, false); if (window.updateTools) updateTools();
+}
+function resetCrop(){ if (Crop.it){ Crop.cur = {l:0, t:0, r:0, b:0}; Crop.ratio = null; placeCrop(); } }
+(() => {
+  const box = $('#cropBox'); let g = null;
+  box.addEventListener('pointerdown', e => {
+    if (!Crop.it) return; e.preventDefault(); e.stopPropagation(); box.setPointerCapture(e.pointerId);
+    const h = e.target.dataset && e.target.dataset.h; g = {h: h || (e.target.closest('#cropWin') ? 'move' : null), x0: e.clientX, y0: e.clientY, c0: {...Crop.cur}};
+    if (!g.h) g = null;
+  });
+  box.addEventListener('pointermove', e => {
+    if (!g || !Crop.F) return; const F = Crop.F, dx = (e.clientX - g.x0) / F.w, dy = (e.clientY - g.y0) / F.h, c0 = g.c0, m = 0.02;
+    let {l, t, r, b} = c0;
+    if (g.h === 'move'){ const w = 1 - l - r, hh = 1 - t - b; l = clamp(c0.l + dx, 0, 1 - w); t = clamp(c0.t + dy, 0, 1 - hh); r = 1 - l - w; b = 1 - t - hh; }
+    else if (Crop.ratio){   // Ecke mit festem Verhältnis: gegenüberliegende Ecke bleibt
+      const fa = clipAspect(Crop.it.clip), west = g.h.includes('w'), north = g.h.includes('n');
+      let cw = clamp((1 - c0.l - c0.r) + (west ? -dx : dx), 0.05, 1), ch = cw * fa / Crop.ratio;
+      const maxW = west ? 1 - c0.r : 1 - c0.l, maxH = north ? 1 - c0.b : 1 - c0.t;
+      if (cw > maxW){ cw = maxW; ch = cw * fa / Crop.ratio; } if (ch > maxH){ ch = maxH; cw = ch * Crop.ratio / fa; }
+      if (west) l = 1 - c0.r - cw; else r = 1 - c0.l - cw;
+      if (north) t = 1 - c0.b - ch; else b = 1 - c0.t - ch;
+    } else {
+      if (g.h.includes('w')) l = clamp(c0.l + dx, 0, 1 - c0.r - m);
+      if (g.h.includes('e')) r = clamp(c0.r - dx, 0, 1 - c0.l - m);
+      if (g.h.includes('n')) t = clamp(c0.t + dy, 0, 1 - c0.b - m);
+      if (g.h.includes('s')) b = clamp(c0.b - dy, 0, 1 - c0.t - m);
+    }
+    Crop.cur = {l, t, r, b}; placeCrop();
+  });
+  const up = () => { g = null; }; box.addEventListener('pointerup', up); box.addEventListener('pointercancel', up);
+  box.addEventListener('click', e => e.stopPropagation());
+  box.addEventListener('dblclick', e => { e.stopPropagation(); endCrop(true); });
+})();
 const PipDrag = {on:false};
 $('#pipBox').addEventListener('pointerdown', e => {
   if (!curPip && !mainBoxOn()) return; e.preventDefault(); e.stopPropagation(); $('#pipBox').setPointerCapture(e.pointerId);
   if (playing) pausePlay();
   const st = $('#stage').getBoundingClientRect(), W = st.width, H = st.height, mode = e.target.classList.contains('pip-h') ? 'size' : 'move';
   if (!curPip){ const f = mainFx(); Object.assign(PipDrag, {on:true, main:true, it:null, moved:false, mode, x0:e.clientX, y0:e.clientY, stx:f.tx, sty:f.ty, ssc:f.sc, tx:f.tx, ty:f.ty, sc:f.sc}); return; }
-  const it = curPip, rel = outPos - pipTarget.at, v = elVals(it, rel) || coverVals(it), r = elRect(it, v, W, H) || {cx: W / 2, cy: H / 2, w: v.w * W, h: v.w * W / clipAspect(it.clip)};
+  const it = curPip, rel = outPos - pipTarget.at, v = elVals(it, rel) || coverVals(it), r = elRect(it, v, W, H) || {cx: W / 2, cy: H / 2, w: v.w * W, h: v.w * W / elAspect(it)};
   Object.assign(PipDrag, {on:true, main:false, moved:false, it, rel, mode, x0:e.clientX, y0:e.clientY,
     sx: r.cx / W, sy: r.cy / H, sw: r.w / W, left: r.cx - r.w / 2, top: r.cy - r.h / 2, x: r.cx / W, y: r.cy / H, w: r.w / W, clip: it.clip});
 });
@@ -1104,12 +1333,12 @@ $('#pipBox').addEventListener('pointermove', e => {
     else { const s0 = g.ssc, f = Math.max((s0 * W / 2 + dx) / (s0 * W / 2), (s0 * H / 2 + dy) / (s0 * H / 2)); g.sc = clamp(s0 * f, 0.1, 4); if (Math.abs(g.sc - 1) < 0.02) g.sc = 1; }
     applyMainTransform(); placeBox(W, H); return;
   }
-  if (g.mode === 'move'){ let x = g.sx + dx / W, y = g.sy + dy / H; const hw = g.w / 2, hh = g.w * W / clipAspect(g.clip) / H / 2;
+  if (g.mode === 'move'){ let x = g.sx + dx / W, y = g.sy + dy / H; const hw = g.w / 2, hh = g.w * W / elAspect(g.it) / H / 2;
     if (Math.abs(x - 0.5) < 0.02) x = 0.5; if (Math.abs(y - 0.5) < 0.02) y = 0.5;
     // Kanten rasten am Bildrand ein (z. B. Oberkante eines hohen Bildes genau oben)
     for (const e of [0, 1]){ if (Math.abs(x - hw - e) < 0.015) x = e + hw; else if (Math.abs(x + hw - e) < 0.015) x = e - hw; if (Math.abs(y - hh - e) < 0.015) y = e + hh; else if (Math.abs(y + hh - e) < 0.015) y = e - hh; }
     x = clamp(x, 0.04 - hw, 0.96 + hw); y = clamp(y, 0.04 - hh, 0.96 + hh); g.x = x; g.y = y; }
-  else { const a = clipAspect(g.clip); let pw = Math.max(dx + g.sw * W, W * 0.04, (dy + g.sw * W / a) * a); pw = Math.min(pw, W * 5);
+  else { const a = elAspect(g.it); let pw = Math.max(dx + g.sw * W, W * 0.04, (dy + g.sw * W / a) * a); pw = Math.min(pw, W * 5);
     g.w = pw / W; g.x = (g.left + pw / 2) / W; g.y = (g.top + pw / a / 2) / H; }
   $('#stage').classList.toggle('snap-x', g.mode === 'move' && g.x === 0.5);
   updateOverlay(outPos);
@@ -2217,9 +2446,10 @@ function buildPlan(){
       tx:+(fx.tx || 0), ty:+(fx.ty || 0), sc:+(fx.sc || 1)};
   });
   const ovs = overlays.map(o => ({mode:o.x.type, image: isImg(o.x.clip), uri:o.x.clip.uri, in:o.x.in, out:r3(o.x.in + (o.end - o.at)), at:r3(o.at), corner:o.x.corner || 'or', size:o.x.size || 0.33,
-    ...(o.x.w != null || (o.x.kf && o.x.kf.length) ? (() => { const v = elVals(o.x, 0); return {x:r3(v.x), y:r3(v.y), w:r3(v.w)}; })() : {}),
+    ...(o.x.w != null || (o.x.kf && o.x.kf.length) || hasCrop(o.x) ? (() => { const v = elVals(o.x, 0) || coverVals(o.x); return {x:r3(v.x), y:r3(v.y), w:r3(v.w)}; })() : {}),
     ...(o.x.kf && o.x.kf.length ? {kf: o.x.kf.filter(k => k.t <= o.end - o.at + 0.01).map(k => ({t:k.t, x:k.x, y:k.y, w:k.w}))} : {}),
-    aspect:+clipAspect(o.x.clip).toFixed(5), track: elTrack(o.x), vol:+(o.x.vol || 0), hasAudio: o.x.clip.hasAudio !== false && !isImg(o.x.clip),
+    ...(hasCrop(o.x) ? {crop: (c => ({l:r3(c.l), t:r3(c.t), r:r3(c.r), b:r3(c.b)}))(cropOf(o.x))} : {}),
+    aspect:+elAspect(o.x).toFixed(5), track: elTrack(o.x), vol:+(o.x.vol || 0), hasAudio: o.x.clip.hasAudio !== false && !isImg(o.x.clip),
     width:o.x.clip.width, height:o.x.clip.height, rotation:o.x.clip.rotation || 0}));
   const cues = S().enabled !== false && P.cues.length ? computedCues().map(x => { const [cx, cy] = cueXY(x.c); return {start:r3(x.s), end:r3(x.e), text:wrapText(x.text), x:cx, y:cy}; }) : [];
   for (const t of P.items.filter(x => x.type === 'title' && (x.text || '').trim())){ const a = srcToOut(snapSrc(t.at)); if (a >= total) continue;

@@ -87,6 +87,8 @@
   const ACCEPT = {
     videos: {'video/*':['.mp4','.mov','.m4v','.webm','.mkv','.avi','.3gp'], 'audio/*':['.mp3','.m4a','.wav','.aac','.ogg','.opus','.flac']},
     clip:   {'video/*':['.mp4','.mov','.m4v','.webm','.mkv'], 'image/*':['.jpg','.jpeg','.png','.webp','.gif','.avif']},
+    package: {'application/octet-stream':['.honeycut']},
+    clips:  {'video/*':['.mp4','.mov','.m4v','.webm','.mkv'], 'image/*':['.jpg','.jpeg','.png','.webp','.gif','.avif']},
     video:  {'video/*':['.mp4','.mov','.m4v','.webm','.mkv']},
     font:   {'font/ttf':['.ttf'], 'font/otf':['.otf']},
   };
@@ -110,7 +112,7 @@
     const acc = ACCEPT[kind] || ACCEPT.videos;
     if (window.showOpenFilePicker){
       try {
-        const hs = await showOpenFilePicker({multiple, types:[{description: kind === 'clip' ? 'Videos und Bilder' : 'Videos und Audio', accept: acc}], excludeAcceptAllOption:false, id:'textschnitt'});
+        const hs = await showOpenFilePicker({multiple, types:[{description: kind === 'package' ? 'HoneyCut-Projekt' : kind === 'clip' || kind === 'clips' ? 'Videos und Bilder' : 'Videos und Audio', accept: acc}], excludeAcceptAllOption:false, id:'textschnitt'});
         return Promise.all(hs.map(async h => ({file: await h.getFile(), handle: h})));
       } catch(e){ if (e && e.name === 'AbortError') return []; /* sonst: klassische Auswahl */ }
     }
@@ -138,7 +140,7 @@
   async function pick(reqId, kind){
     let out = [];
     try {
-      const list = await pickFiles(kind, kind === 'videos');
+      const list = await pickFiles(kind, kind === 'videos' || kind === 'clips');
       if (list.length) showBusy('Dateien werden gelesen …');
       const eng = list.length ? await E() : null;
       for (const {file, handle} of list){
@@ -154,7 +156,7 @@
     } catch(e){ console.error(e); }
     hideBusy();
     requestPersist();
-    TSApp.onPicked(reqId, out.length ? JSON.stringify(kind === 'videos' ? out : out[0]) : null);
+    TSApp.onPicked(reqId, out.length ? JSON.stringify(kind === 'videos' || kind === 'clips' ? out : out[0]) : null);
   }
 
   // ───────── Zugriff nach dem Neuladen wiederherstellen ─────────
@@ -391,6 +393,84 @@
   const chans = new Map();
   function chan(pid){ if (!chans.has(pid)) chans.set(pid, new BroadcastChannel('textschnitt-bus-' + pid)); return chans.get(pid); }
 
+
+  // ───────── Projektpakete (.honeycut) – gleiches Format wie am Desktop und auf Android ─────────
+  const PKG_MAGIC = new TextEncoder().encode('HONEYCUT1\n');
+  async function blobOfUri(u){
+    if (u.startsWith('font:')){ const r = fontStore.get(u.slice(5)); return r ? r.blob : null; }
+    if (!files.has(u) && u.startsWith('opfs:')) await loadOpfs(u.slice(5));
+    return files.get(u) || null;
+  }
+  async function exportPackage(reqId, specTxt){
+    const spec = JSON.parse(specTxt), name = (spec.name || 'Projekt').replace(/[\\/:*?"<>|]/g, '_').slice(0, 80) + '.honeycut';
+    let handle = null;
+    if (window.showSaveFilePicker){
+      try { handle = await showSaveFilePicker({suggestedName: name, types:[{description:'HoneyCut-Projekt', accept:{'application/octet-stream':['.honeycut']}}], id:'honeycut-pkg'}); }
+      catch(e){ if (e && e.name === 'AbortError') return TSApp.onPicked(reqId, null); handle = null; }
+    }
+    const jid = newJob(async job => {
+      const header = spec.header, src = new Map((spec.files || []).map(f => [f.n, f])), parts = [];
+      for (const h of header.files || []){
+        const f = src.get(h.n); let b = null;
+        if (f && f.include !== false) b = await blobOfUri(f.uri);
+        h.size = b ? b.size : 0; h.included = !!(b && b.size > 0); if (h.included) parts.push(b);
+      }
+      const head = new TextEncoder().encode(JSON.stringify(header)), len = new Uint8Array(8);
+      new DataView(len.buffer).setUint32(0, head.length, true);
+      const blob = new Blob([PKG_MAGIC, len, head, ...parts], {type:'application/octet-stream'});
+      if (handle){
+        const w = await handle.createWritable(), rd = blob.stream().getReader(); let done = 0;
+        try { for (;;){ if (job.cancel) throw new Error('Abgebrochen'); const {value, done: end} = await rd.read(); if (end) break; await w.write(value); done += value.length;
+          job.progress = Math.min(0.99, done / blob.size); job.message = `Projekt wird gespeichert · ${Math.round(done / 1e6)} von ${Math.round(blob.size / 1e6)} MB`; } await w.close(); }
+        catch(e){ try { await w.abort(); } catch(_){} throw e; }
+      } else download(blob, name);
+      return {name, bytes: blob.size};
+    });
+    TSApp.onPicked(reqId, JSON.stringify({job: jid}));
+  }
+  async function importPackage(reqId){
+    const list = await pickFiles('package', false); if (!list.length) return TSApp.onPicked(reqId, null);
+    const file = list[0].file;
+    const jid = newJob(async job => {
+      const pre = new Uint8Array(await file.slice(0, 18).arrayBuffer());
+      if (pre.length < 18 || !PKG_MAGIC.every((b, i) => pre[i] === b)) throw new Error('Das ist kein HoneyCut-Projekt (.honeycut).');
+      const dv = new DataView(pre.buffer), n = dv.getUint32(10, true) + dv.getUint32(14, true) * 2 ** 32;
+      if (!(n > 0 && n < 2e8)) throw new Error('Projektdatei ist beschädigt.');
+      const header = JSON.parse(new TextDecoder().decode(await file.slice(18, 18 + n).arrayBuffer()));
+      const pid = String((header.project || {}).id || 'projekt').replace(/[^\w-]/g, '').slice(0, 20);
+      let off = 18 + n; const map = {}, total = (header.files || []).reduce((a, f) => a + (f.included ? +f.size : 0), 0); let done = 0;
+      let root = null; try { root = await navigator.storage.getDirectory(); } catch(_){}
+      for (const h of header.files || []){
+        if (!h.included) continue;
+        const size = +h.size, part = file.slice(off, off + size); off += size;
+        if (part.size !== size) throw new Error('Projektdatei ist unvollständig.');
+        if (h.kind === 'font'){
+          const buf = await part.arrayBuffer(); let rec = [...fontStore.values()].find(f => f.name === h.name && f.blob.size === size);
+          if (!rec){ rec = {id: newId(), name: h.name, blob: new Blob([buf], {type: /\.otf$/i.test(h.name) ? 'font/otf' : 'font/ttf'})}; fontStore.set(rec.id, rec); await idb('fonts', 'readwrite', s => s.put(rec, rec.id)).catch(() => {}); }
+          map[h.n] = 'font:' + rec.id; done += size; continue;
+        }
+        const fname = `imp-${pid}-${h.n}-${String(h.name || 'datei').replace(/[^\w.()-]/g, '_').slice(-80)}`, uri = 'opfs:' + fname;
+        let stored = false;
+        if (root){
+          try {
+            const fh = await root.getFileHandle(fname, {create: true}); const cur = await fh.getFile();
+            if (cur.size !== size){
+              const w = await fh.createWritable(), rd = part.stream().getReader();
+              for (;;){ if (job.cancel) { await w.abort(); throw new Error('Abgebrochen'); } const {value, done: end} = await rd.read(); if (end) break; await w.write(value); done += value.length;
+                job.progress = Math.min(0.99, done / Math.max(1, total)); job.message = `Projekt wird entpackt · ${Math.round(done / 1e6)} von ${Math.round(total / 1e6)} MB`; }
+              await w.close();
+            } else done += size;
+            files.set(uri, await fh.getFile()); stored = true;
+          } catch(e){ if (job.cancel) throw e; console.warn('OPFS', e); }
+        }
+        if (!stored){ files.set(uri, new File([part], h.name || fname, {type: part.type})); done += size; }   // nur für diese Sitzung
+        map[h.n] = uri;
+      }
+      requestPersist();
+      return {header, map};
+    });
+    TSApp.onPicked(reqId, JSON.stringify({job: jid}));
+  }
   // ───────── Schnittstelle für den Kern ─────────
   let wake = null;
   window.TS = {
@@ -404,7 +484,7 @@
     deleteProject: id => { projects.delete(id); summaries.delete(id); idb('projects', 'readwrite', s => s.delete(id)).catch(() => {}); },
     models: () => JSON.stringify(modelsList()),
     downloadModel: name => newJob(async job => { await loadModel(name, job, 0, 1); return {}; }),
-    transcribe, transcribeRanges, exportVideo, makeProxy, envelope,
+    transcribe, transcribeRanges, exportVideo, makeProxy, envelope, exportPackage, importPackage,
     job: id => { const j = jobs.get(id); if (!j) return ''; const {cancel, ...o} = j; if (j.status !== 'running') setTimeout(() => jobs.delete(id), 60000); return JSON.stringify(o); },
     cancel: id => { const j = jobs.get(id); if (j) j.cancel = true; },
     share: id => {

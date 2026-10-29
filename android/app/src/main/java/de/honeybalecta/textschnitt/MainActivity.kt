@@ -34,6 +34,11 @@ class MainActivity : ComponentActivity() {
         bridge.onPicked(uris)
     }
 
+    private val createDoc = registerForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri: Uri? ->
+        bridge.onCreated(uri)
+    }
+    fun launchCreate(name: String) = createDoc.launch(name)
+
     private val notifPerm = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
     private var notifAsked = false
 

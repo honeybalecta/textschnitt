@@ -29,11 +29,11 @@ class Bridge(private val act: MainActivity) {
     fun pick(id: String, kind: String) {
         pickId = id; pickKind = kind
         val mimes = when (kind) {
-            "clip" -> arrayOf("video/*", "image/*")
+            "clip", "clips" -> arrayOf("video/*", "image/*")
             "font" -> arrayOf("font/*", "application/x-font-ttf", "application/x-font-otf", "application/font-sfnt", "application/vnd.ms-opentype", "application/octet-stream")
             else -> arrayOf("video/*")
         }
-        main.post { act.launchPicker(mimes, kind == "videos" || kind == "font") }
+        main.post { act.launchPicker(mimes, kind == "videos" || kind == "clips" || kind == "font") }
     }
 
     // ── Eigene Schriften (für alle Projekte) ──
@@ -80,8 +80,13 @@ class Bridge(private val act: MainActivity) {
             }.start()
             return
         }
+        if (pickKind == "package") {
+            val job = Jobs.start { Package.read(ctx, uris[0], it, fontDir) }.also { WorkService.track(ctx, it, "Projekt-Import") }
+            js("TSApp.onPicked(${q(id)}, ${q(JSONObject().put("job", job.id).toString())})")
+            return
+        }
         uris.forEach { runCatching { ctx.contentResolver.takePersistableUriPermission(it, Intent.FLAG_GRANT_READ_URI_PERMISSION) } }
-        val multi = pickKind == "videos"
+        val multi = pickKind == "videos" || pickKind == "clips"
         Thread {
             val infos = uris.mapNotNull { Probe.probe(ctx, it) }
             val res = when {
@@ -91,6 +96,31 @@ class Bridge(private val act: MainActivity) {
             }
             js("TSApp.onPicked(${q(id)}, ${if (res == null) "null" else q(res)})")
         }.start()
+    }
+
+    // ── Projektpakete (.honeycut): auf einem anderen Gerät weiterarbeiten ──
+    @Volatile private var pkgSpec: String? = null
+
+    @JavascriptInterface
+    fun exportPackage(id: String, spec: String) {
+        pickId = id; pkgSpec = spec
+        val name = runCatching { JSONObject(spec).optString("name") }.getOrDefault("").ifBlank { "Projekt" }
+            .replace(Regex("[^\\p{L}\\p{N} _.()-]"), "_").take(80) + ".honeycut"
+        main.post { act.launchCreate(name) }
+    }
+
+    fun onCreated(uri: Uri?) {
+        val id = pickId ?: return; pickId = null
+        val spec = pkgSpec; pkgSpec = null
+        if (uri == null || spec == null) { js("TSApp.onPicked(${q(id)}, null)"); return }
+        val job = Jobs.start { Package.write(ctx, uri, JSONObject(spec), it) }.also { WorkService.track(ctx, it, "Projekt-Export") }
+        js("TSApp.onPicked(${q(id)}, ${q(JSONObject().put("job", job.id).toString())})")
+    }
+
+    @JavascriptInterface
+    fun importPackage(id: String) {
+        pickId = id; pickKind = "package"
+        main.post { act.launchPicker(arrayOf("application/octet-stream", "*/*"), false) }
     }
 
     // ── Projekte ──

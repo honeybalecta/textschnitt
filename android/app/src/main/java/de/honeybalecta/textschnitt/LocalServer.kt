@@ -152,7 +152,7 @@ class LocalServer(private val ctx: Context) {
                     ctx.contentResolver.query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)?.use { c -> if (c.moveToFirst() && !c.isNull(0)) len = c.getLong(0) }
                 }
                 runCatching { afd.close() }
-                Triple(len, ctx.contentResolver.getType(uri) ?: "video/mp4") { ctx.contentResolver.openInputStream(uri)!! }
+                Triple(len, mimeOf(ctx, uri) ?: "video/mp4") { ctx.contentResolver.openInputStream(uri)!! }
             }
             else -> { send(out, 400, "Bad Request", "text/plain", ByteArray(0)); return }
         }
@@ -219,7 +219,7 @@ class LocalServer(private val ctx: Context) {
     /** Vorschau für Fotos: verkleinert dekodieren, EXIF-Drehung anwenden. */
     private fun imageThumb(u: String, h: Int, key: String): ByteArray? {
         val uri = Uri.parse(u)
-        if (ctx.contentResolver.getType(uri)?.startsWith("image/") != true) return null
+        if (mimeOf(ctx, uri)?.startsWith("image/") != true) return null
         return runCatching {
             val o = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
             ctx.contentResolver.openInputStream(uri)!!.use { android.graphics.BitmapFactory.decodeStream(it, null, o) }

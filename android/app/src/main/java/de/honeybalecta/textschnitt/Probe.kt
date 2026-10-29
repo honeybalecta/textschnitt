@@ -13,7 +13,7 @@ import org.json.JSONObject
 /** Liest Länge, Größe, Drehung und Bildrate eines Videos. */
 object Probe {
     fun probe(ctx: Context, uri: Uri): JSONObject? {
-        if (ctx.contentResolver.getType(uri)?.startsWith("image/") == true) return probeImage(ctx, uri)
+        if (mimeOf(ctx, uri)?.startsWith("image/") == true) return probeImage(ctx, uri)
         val r = MediaMetadataRetriever()
         try {
             r.setDataSource(ctx, uri)

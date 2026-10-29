@@ -23,7 +23,7 @@ function itemOutRange(it){
 }
 
 // ───────── Zeichnen ─────────
-function renderStudio(){ renderTimeline(); }
+function renderStudio(){ renderTimeline(); renderBin(); }
 function renderTimeline(){
   if (!P || !studioOn()) return;
   const pad = padL();
@@ -232,6 +232,7 @@ function restoreSel(){
   const b = selBlock(); if (b) b.classList.add('sel'); else TL.sel = null;
 }
 function select(sel){
+  if (Crop.it && !(sel && sel.id === Crop.it.id)) endCrop(true);
   tlInner.querySelectorAll('.blk.sel').forEach(x => x.classList.remove('sel'));
   TL.sel = sel; const b = selBlock(); if (b) b.classList.add('sel'); else TL.sel = null;
   paintLinks(); updateTools(); if (P) updateTitles(outPos);
@@ -486,6 +487,9 @@ function linkedDrag(side, d){
 const T = (icon, label, fn, cls = '') => ({icon, label, fn, cls});
 function toolList(){
   if (TL.pick) return [T('🔗', `Verbinden (${TL.pick.size})`, doLink), T('✕', 'Abbrechen', endPick)];
+  if (Crop.it){ const fa = clipAspect(Crop.it.clip), R = (lbl, v) => T(Crop.ratio != null && v != null && Math.abs(Crop.ratio - v) < 1e-3 ? '◆' : '◰', lbl, () => { cropRatio(v); updateTools(); });
+    return [T('✓', 'Fertig', () => endCrop(true), 'primary'), R('Frei', null), R('Original', fa), R('1:1', 1), R('9:16', 9 / 16), R('16:9', 16 / 9), R('4:5', 0.8),
+      T('↺', 'Ganzes Bild', () => { resetCrop(); updateTools(); }), T('✕', 'Abbrechen', () => endCrop(false))]; }
   const lt = linkTools(), cp = TL.sel ? [T('⧉', 'Kopieren', copySel), T('⧉', 'Duplizieren', duplicateSel)] : [];
   return [...toolListBase(), ...cp, ...(CLIP ? [T('📋', 'Einfügen', () => pasteClip())] : []), ...lt];
 }
@@ -501,7 +505,7 @@ function toolListBase(){
     T('⇤', 'Ende −1', () => nudge('r', -1)), T('⇥', 'Ende +1', () => nudge('r', 1)), T('🔍', 'Zoom', addZoom), T('T', 'Titel', addTitle), T('＋', 'Clip', addClip)];
   const cuts = [T('⌫', 'Bis hier weg', () => cutSel('l')), T('⌦', 'Ab hier weg', () => cutSel('r'))];
   if (s.kind === 'insert') return [T('🎞', 'Ausschnitt', () => openItem(g.item.id)), T('🗑', 'Löschen', delSel, 'danger'), ...cuts, T('⇄', 'Als B-Roll', () => convert('broll'))];
-  if (s.kind === 'ovl'){ const it = selItem(); return [T('🎞', 'Ausschnitt', () => openItem(it.id)), T('🗑', 'Löschen', delSel, 'danger'), ...cuts,
+  if (s.kind === 'ovl'){ const it = selItem(); return [T('🎞', 'Ausschnitt', () => openItem(it.id)), T('🗑', 'Löschen', delSel, 'danger'), ...cuts, T('◰', 'Zuschneiden', () => startCrop(it)),
     T('◆', hasKfHere(it) ? 'Keyframe weg (M)' : 'Keyframe (M)', () => toggleKeyframe(it)),
     T('−', 'Kleiner', () => pipScale(1 / 1.15)), T('＋', 'Größer', () => pipScale(1.15)), T('↗', 'Ecke', cycleCorner),
     ...(it.w != null || it.type === 'pip' ? [T('▣', 'Vollbild', () => convert('broll'))] : []),
@@ -609,7 +613,7 @@ function addZoom(){
 }
 function addClip(){
   const body = $('#sheetBody');
-  body.innerHTML = `<h3>Clip einfügen an der Abspiellinie</h3><p class="muted small">Videos und Fotos</p><div class="choice">
+  body.innerHTML = `<h3>Clip einfügen an der Abspiellinie</h3><p class="muted small">Videos und Fotos – alle eingefügten Dateien liegen danach auch in der Medienablage</p><div class="choice">
     <button class="tile" data-t="broll"><b>B-Roll</b><span>Bild drüber, dein Ton läuft weiter</span></button>
     <button class="tile" data-t="insert"><b>Einschub</b><span>Hauptvideo pausiert, Clip läuft mit eigenem Ton</span></button>
     <button class="tile" data-t="pip"><b>Einblendung</b><span>Bild oder Video frei im Bild – Größe und Lage frei wählbar</span></button></div>`;
@@ -617,15 +621,117 @@ function addClip(){
   body.onclick = async e => {
     const b = e.target.closest('[data-t]'); if (!b) return; const type = b.dataset.t;
     $('#sheet').classList.add('hidden'); $('#sheetBack').classList.add('hidden');
-    const at = +outToSrc(outPos).toFixed(3);
-    const clip = await pickMedia('clip'); if (!clip) return;
-    const img = clip.kind === 'image';
-    let it; commit(() => { it = {id:newId(), type, at, clip, in:0, out: img ? 4 : (type === 'insert' ? clip.duration : Math.min(clip.duration, 4)), corner:'or', size:0.4}; if (type !== 'insert'){ const o0 = outPos, d0 = it.out - it.in; it.track = freeTrack(o0, o0 + d0); }
-      if (type === 'pip'){ const [W, H] = outSize(); it.size = +Math.min(0.4, 0.45 * H * clipAspect(clip) / W).toFixed(3); P.items.push(it); computeOverlays(); pipCorner(it, 'or'); } else P.items.push(it); }, false);
-    TL.sel = type === 'insert' ? {kind:'insert', itemId: it.id, i:0} : {kind:'ovl', id: it.id}; renderTimeline();
-    toast(`${TYPE_LBL[type]} eingefügt – Griffe ziehen zum Kürzen`);
+    const o = outPos, clip = await pickMedia('clip'); if (!clip) return;
+    placeMedia(clip, type, o, null, true);
   };
 }
+// Datei als Element einfügen: type broll | insert | pip, an Zeit o (Ergebnis), auf Spur track (oder frei)
+function placeMedia(m, type, o, track, short){
+  if (!m || m.kind === 'audio' || m.hasVideo === false) return toast('Reine Tondateien lassen sich hier nicht einfügen');
+  const clip = clipOfSource(m), img = clip.kind === 'image';
+  if (o == null) o = outPos; o = clamp(o, 0, Math.max(0, total - 0.1));
+  const at = r3(outToSrc(o));
+  const len = img ? 4 : type === 'insert' ? clip.duration : short ? Math.min(clip.duration, 4) : Math.min(clip.duration, Math.max(0.5, total - o));
+  let it; commit(() => {
+    it = {id:newId(), type, at, clip, in:0, out: r3(len), corner:'or', size:0.4};
+    if (type !== 'insert'){ computeOverlays(); const busy = k => overlays.some(x => elTrack(x.x) === k && x.at < o + len - 0.01 && x.end > o + 0.01);
+      it.track = track && !busy(track) ? track : freeTrack(o, o + len); }
+    if (type === 'pip'){ const [W, H] = outSize(); it.size = +Math.min(0.4, 0.45 * H * clipAspect(clip) / W).toFixed(3); P.items.push(it); computeOverlays(); pipCorner(it, 'or'); }
+    else P.items.push(it);
+  }, false);
+  if (type === 'insert' && tokens.length) renderTranscript();
+  TL.sel = type === 'insert' ? {kind:'insert', itemId: it.id, i:0} : {kind:'ovl', id: it.id}; renderTimeline(); seekOut(outPos, false); renderBin();
+  toast(`${TYPE_LBL[type]} eingefügt – Griffe ziehen zum Kürzen`);
+}
+
+// ───────── Medienablage: alle Dateien des Projekts, zum Ziehen auf die Spuren ─────────
+function mediaList(){
+  const seen = new Map(), add = (m, from) => { if (!m || !m.uri) return; const e = seen.get(m.uri); if (e){ e.uses += from === 'used' ? 1 : 0; return; } seen.set(m.uri, {m, main: from === 'main', uses: from === 'used' ? 1 : 0}); };
+  P.sources.forEach(x => add(x, 'main')); P.items.forEach(x => x.clip && add(x.clip, 'used')); (P.media || []).forEach(x => add(x, 'bin'));
+  return [...seen.values()];
+}
+const binOpen = () => !$('#mediaBin').classList.contains('hidden');
+function toggleBin(on){
+  if (on == null) on = !binOpen();
+  $('#mediaBin').classList.toggle('hidden', !on); $('#barMedia').classList.toggle('on', on);
+  try { localStorage.setItem('ts-bin', on ? '1' : '0'); } catch(_){}
+  if (on) renderBin();
+}
+function renderBin(){
+  if (!P || !binOpen()) return;
+  const grid = $('#binGrid'); grid.innerHTML = '';
+  const list = mediaList();
+  $('#binEmpty').classList.toggle('hidden', list.length > 0);
+  for (const {m, main, uses} of list){
+    const d = document.createElement('div'); d.className = 'bin-item'; d.dataset.uri = m.uri; d.title = `${m.name} – ziehen auf eine Spur, antippen zum Einfügen`;
+    const img = document.createElement('img'); img.alt = ''; img.draggable = false;
+    if (m.kind === 'image') img.src = MEDIA(m.uri);
+    else if (m.kind !== 'audio'){ const u = THUMB(m.uri, Math.min(1, (m.duration || 2) / 2), 120); if (u && u.then) u.then(x => { if (x) img.src = x; }); else img.src = u; }
+    d.append(img);
+    const cap = document.createElement('span'); cap.className = 'cap';
+    cap.textContent = m.kind === 'image' ? 'Foto' : m.kind === 'audio' ? '♪ ' + fmtS(m.duration || 0) : fmtS(m.duration || 0);
+    d.append(cap);
+    const nm = document.createElement('b'); nm.textContent = m.name; d.append(nm);
+    const tag = document.createElement('i'); tag.className = 'tag' + (main ? ' main' : uses ? ' used' : '');
+    tag.textContent = main ? 'Hauptvideo' : uses ? `${uses}× im Projekt` : 'noch nicht verwendet'; d.append(tag);
+    if (!main && !uses){ const x = document.createElement('button'); x.className = 'rm'; x.title = 'Aus der Ablage nehmen'; x.textContent = '✕';
+      x.onclick = e => { e.stopPropagation(); P.media = (P.media || []).filter(y => y.uri !== m.uri); changed(false); renderBin(); }; d.append(x); }
+    grid.append(d);
+  }
+}
+async function binAdd(){
+  const got = asList(await pickMedia('clips')); if (!got.length) return;
+  P.media ||= []; let n = 0;
+  for (const m of got) if (!mediaList().some(x => x.m.uri === m.uri)){ P.media.push(clipOfSource(m)); n++; }
+  changed(false); renderBin(); toast(n ? `${n} Datei${n > 1 ? 'en' : ''} in der Ablage – auf eine Spur ziehen` : 'Schon in der Ablage');
+}
+function binMenu(m, x, y){
+  const o = outPos;
+  showMenu(x, y, [T('🎞', 'B-Roll an der Abspiellinie', () => placeMedia(m, 'broll', o)), T('▣', 'Einblendung an der Abspiellinie', () => placeMedia(m, 'pip', o)),
+    T('⇄', 'Einschub an der Abspiellinie', () => placeMedia(m, 'insert', o))]);
+}
+// Ziehen aus der Ablage auf die Zeitleiste (Maus und Touch)
+(() => {
+  const grid = $('#binGrid'); let g = null;
+  const target = (x, y) => {
+    const els = document.elementsFromPoint(x, y);
+    const ov = els.find(e => e.classList && e.classList.contains('t-ovl')); if (ov) return {kind:'ovl', track: +ov.dataset.track, el: ov};
+    const mn = els.find(e => e.id === 'trMain'); if (mn) return {kind:'insert', el: mn};
+    const tl = els.find(e => e.id === 'tlInner'); if (tl) return {kind:'ovl', track: null, el: null};
+    return null;
+  };
+  grid.addEventListener('pointerdown', e => {
+    const d = e.target.closest('.bin-item'); if (!d || e.target.closest('.rm') || e.button === 2) return;
+    const it = mediaList().find(x => x.m.uri === d.dataset.uri); if (!it) return;
+    e.preventDefault(); grid.setPointerCapture(e.pointerId);
+    g = {m: it.m, x0: e.clientX, y0: e.clientY, moved: false, ghost: null, d};
+  });
+  grid.addEventListener('pointermove', e => {
+    if (!g) return;
+    if (!g.moved && Math.hypot(e.clientX - g.x0, e.clientY - g.y0) < 6) return;
+    if (!g.moved){ g.moved = true; g.ghost = g.d.cloneNode(true); g.ghost.classList.add('bin-ghost'); document.body.append(g.ghost); if (playing) pausePlay(); }
+    Object.assign(g.ghost.style, {left: e.clientX + 'px', top: e.clientY + 'px'});
+    tlInner.querySelectorAll('.drop').forEach(x => x.classList.remove('drop'));
+    const t = target(e.clientX, e.clientY); g.t = t;
+    if (t && t.el) t.el.classList.add('drop');
+    if (t){ const o = timeAtX(e.clientX); $('#tlInfo').textContent = `${t.kind === 'insert' ? 'Einschub' : 'B-Roll'} bei ${fmtS(o)} – loslassen zum Einfügen`;
+      if (TL.mode === 'move') { seekOut(o, false); placeHead(o); } }
+  });
+  const end = e => {
+    if (!g) return; const s = g; g = null;
+    tlInner.querySelectorAll('.drop').forEach(x => x.classList.remove('drop'));
+    if (s.ghost) s.ghost.remove();
+    if (!s.moved){ binMenu(s.m, e.clientX, e.clientY); return; }
+    const t = s.t; if (!t){ updateTools(); return; }
+    const o = timeAtX(e.clientX);
+    placeMedia(s.m, t.kind === 'insert' ? 'insert' : 'broll', o, t.track);
+  };
+  grid.addEventListener('pointerup', end); grid.addEventListener('pointercancel', () => { if (g && g.ghost) g.ghost.remove(); g = null; });
+})();
+$('#barMedia').onclick = () => toggleBin();
+try { if (localStorage.getItem('ts-bin') === '1'){ $('#mediaBin').classList.remove('hidden'); $('#barMedia').classList.add('on'); } } catch(_){}
+$('#binAdd').onclick = () => binAdd();
+$('#binClose').onclick = () => toggleBin(false);
 // ── Titel ──
 function addTitle(){
   const at = +outToSrc(outPos).toFixed(3);
@@ -862,6 +968,7 @@ document.addEventListener('keydown', e => {
   if (k === 'Escape' && $('#proj').classList.contains('full')){ setFull(false); return; }
   if (!typing && !mod && (k === 'f' || k === 'F')){ e.preventDefault(); setFull(!$('#proj').classList.contains('full')); return; }
   if (k === 'Escape' && TL.pick){ endPick(); return; }
+  if (Crop.it && (k === 'Escape' || k === 'Enter') && !typing){ e.preventDefault(); endCrop(k === 'Enter'); return; }
   if (k === 'Escape'){ closeMenu(); if (!$('#sheet').classList.contains('hidden')) closeSheet(); else { select(null); clearSel(); } return; }
   if (typing) return;
   const handled = () => e.preventDefault();

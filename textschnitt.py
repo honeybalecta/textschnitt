@@ -37,7 +37,7 @@ os.environ.setdefault("HF_HUB_DISABLE_IMPLICIT_TOKEN", "1")
 import warnings  # noqa: E402
 warnings.filterwarnings("ignore", module="huggingface_hub")
 
-VERSION = "2.8.0"
+VERSION = "2.9.0"
 APP_DIR = Path(__file__).resolve().parent
 FROZEN = bool(getattr(sys, "frozen", False))          # als installierte .exe gebaut
 RES_DIR = Path(getattr(sys, "_MEIPASS", APP_DIR))      # mitgelieferte Dateien (Oberfläche, ffmpeg, Modelle)
@@ -924,20 +924,26 @@ def build_graph(plan: dict, with_video: bool, ass_name: str | None):
             else:
                 x = y = 0
                 sc = f"scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},setsar=1"
+            cr = o.get("crop") or None
+            cropf = ""
+            if cr:   # Zuschnitt: zuerst den Ausschnitt aus der Datei, dann wie gewohnt skalieren
+                l, t_, r_, b_ = (max(0.0, min(0.98, float(cr.get(k) or 0))) for k in ("l", "t", "r", "b"))
+                cw, ch = max(0.02, 1 - l - r_), max(0.02, 1 - t_ - b_)
+                cropf = f"crop=w='max(2,trunc(iw*{cw:.5f}/2)*2)':h='max(2,trunc(ih*{ch:.5f}/2)*2)':x='trunc(iw*{l:.5f}/2)*2':y='trunc(ih*{t_:.5f}/2)*2',"
             if o.get("image"):
                 # Standbild: nur ein Bild einlesen (kein Endlos-Eingang, der Speicher füllt); die Überlagerung wiederholt es
                 inputs.append(["-i", norm_path(o["uri"])])
                 i = len(inputs) - 1
                 if g and g["anim"]:   # wächst/schrumpft: einmal auf die größte Größe bringen, dann im Filter wiederholen
                     nfr = max(1, int(d * fps + 0.999))
-                    src = (f"[{i}:v:0]scale={g['maxw']}:{g['maxh']},format=yuva420p,"
+                    src = (f"[{i}:v:0]{cropf}scale={g['maxw']}:{g['maxh']},format=yuva420p,"
                            f"loop=loop={nfr}:size=1:start=0,setpts=N/({fps_s})/TB+{at:.4f}/TB")
                 else:
-                    src = f"[{i}:v:0]setpts=PTS-STARTPTS+{at:.4f}/TB"
+                    src = f"[{i}:v:0]{cropf}setpts=PTS-STARTPTS+{at:.4f}/TB"
             else:
                 i = file_input(o["uri"])
                 off = starts.get(norm_path(o["uri"]), 0.0)
-                src = f"[{i}:v:0]trim=start={inn + off:.4f}:end={inn + d + off:.4f},setpts=PTS-STARTPTS+{at:.4f}/TB"
+                src = f"[{i}:v:0]trim=start={inn + off:.4f}:end={inn + d + off:.4f},{cropf}setpts=PTS-STARTPTS+{at:.4f}/TB"
             still = bool(o.get("image")) and not (g and g["anim"])
             parts.append(f"{src}{'' if still else f',fps={fps_s}'},{sc},format=yuva420p[o{k}]")
             ev = ":eval=frame" if g and (g["anim"] or g["move"]) else ""
@@ -1319,18 +1325,20 @@ def write_capcut(plan: dict, root: Path, name: str, cues: list[dict], style: dic
     now = int(time.time())
     meta_values = []
 
-    def material(uri: str, image: bool) -> tuple[str, str, dict]:
+    def material(uri: str, image: bool, crop: dict | None = None) -> tuple[str, str, dict]:
         uri = norm_path(uri)
-        if uri in mats:
-            return mats[uri]
+        l, t_, r_, b_ = ((max(0.0, min(0.98, float((crop or {}).get(k) or 0))) for k in ("l", "t", "r", "b")))
+        key = uri + (f"|{l:.4f},{t_:.4f},{r_:.4f},{b_:.4f}" if crop else "")
+        if key in mats:
+            return mats[key]
         info = probe(uri)
         mid = uuid.uuid4().hex
         dur = us(10800.0 if image else info["duration"])
         if info["hasVideo"] or image:
             materials["videos"].append({
                 "audio_fade": None, "category_id": "", "category_name": "local", "check_flag": 63487,
-                "crop": {"upper_left_x": 0.0, "upper_left_y": 0.0, "upper_right_x": 1.0, "upper_right_y": 0.0,
-                         "lower_left_x": 0.0, "lower_left_y": 1.0, "lower_right_x": 1.0, "lower_right_y": 1.0},
+                "crop": {"upper_left_x": l, "upper_left_y": t_, "upper_right_x": 1.0 - r_, "upper_right_y": t_,
+                         "lower_left_x": l, "lower_left_y": 1.0 - b_, "lower_right_x": 1.0 - r_, "lower_right_y": 1.0 - b_},
                 "crop_ratio": "free", "crop_scale": 1.0, "duration": dur, "height": info["height"], "id": mid,
                 "local_material_id": "", "material_id": mid, "material_name": Path(uri).name, "media_path": "",
                 "path": uri, "type": "photo" if image else "video", "width": info["width"]})
@@ -1344,13 +1352,14 @@ def write_capcut(plan: dict, root: Path, name: str, cues: list[dict], style: dic
                 "tone_category_id": "", "tone_category_name": "", "tone_effect_id": "", "tone_effect_name": "",
                 "tone_speaker": "", "tone_type": "", "type": "extract_music", "video_id": "", "wave_points": []})
             kind = "audio"
-        meta_values.append({"create_time": now, "duration": dur, "extra_info": Path(uri).name, "file_Path": uri,
+        if not any(m["file_Path"] == uri for m in meta_values):
+          meta_values.append({"create_time": now, "duration": dur, "extra_info": Path(uri).name, "file_Path": uri,
                             "height": info["height"], "id": _uid(), "import_time": now, "import_time_ms": now * 1_000_000,
                             "item_source": 1, "md5": "", "metetype": "photo" if image else ("video" if kind == "video" else "music"),
                             "roughcut_time_range": {"duration": -1, "start": -1},
                             "sub_time_range": {"duration": -1, "start": -1}, "type": 0, "width": info["width"]})
-        mats[uri] = (mid, kind, info)
-        return mats[uri]
+        mats[key] = (mid, kind, info)
+        return mats[key]
 
     def segment(mid: str, kind: str, target: float, src: float | None, d: float, volume=1.0, scale=1.0, tx=0.0, ty=0.0, render=0, speed=1.0):
         speed_id = uuid.uuid4().hex
@@ -1397,7 +1406,7 @@ def write_capcut(plan: dict, root: Path, name: str, cues: list[dict], style: dic
     by_track: dict[int, list] = {}
     for o in plan.get("overlays") or []:
         img = bool(o.get("image"))
-        mid, kind, info = material(o["uri"], img)
+        mid, kind, info = material(o["uri"], img, o.get("crop"))
         d = float(o["out"]) - float(o["in"])
         trk = int(o.get("track") or 1)
         vol = round(float(o.get("vol") or 0), 3)
@@ -1588,10 +1597,10 @@ def save_project(pid: str, txt: str):
 # ───────────────────────────── Dateiauswahl, Ordner öffnen ─────────────────────────────
 
 def pick_files(kind: str) -> list[str]:
-    multi = kind == "videos"
+    multi = kind in ("videos", "clips")
     if APP_HOOKS.get("pick"):
         return APP_HOOKS["pick"](kind) or []
-    types = ("Schriften|*.ttf *.otf" if kind == "font" else f"Video und Audio|{VIDEO_EXT} {AUDIO_EXT}" if kind != "clip" else f"Videos und Bilder|{VIDEO_EXT} {IMAGE_EXT}")
+    types = ("Schriften|*.ttf *.otf" if kind == "font" else f"Video und Audio|{VIDEO_EXT} {AUDIO_EXT}" if kind not in ("clip", "clips") else f"Videos und Bilder|{VIDEO_EXT} {IMAGE_EXT}")
     label, pattern = types.split("|")
     code = ("import tkinter as tk, json\nfrom tkinter import filedialog\nr=tk.Tk();r.withdraw()\nr.attributes('-topmost',True)\n"
             f"f=filedialog.{'askopenfilenames' if multi else 'askopenfilename'}(title='Datei wählen',filetypes=[({label!r},{pattern!r}),('Alle','*.*')])\n"
@@ -1661,7 +1670,146 @@ def picked_media(kind: str):
             log(f"Datei nicht lesbar: {p}: {e}")
     if not out:
         return None
-    return out if kind == "videos" else out[0]
+    return out if kind in ("videos", "clips") else out[0]
+
+
+# ───────────────────────────── Projektpakete (.honeycut) ─────────────────────────────
+# Ein Projekt samt Videos, Bildern und Schriften in einer Datei – zum Weiterarbeiten auf einem anderen Gerät
+# (Android, Browser) oder zum Weitergeben an andere. Aufbau (gleich auf allen Plattformen):
+#   "HONEYCUT1\n" · 8 Byte Kopf-Länge (little endian) · Kopf (JSON, UTF-8) · Dateien in der Reihenfolge des Kopfes
+PKG_MAGIC = b"HONEYCUT1\n"
+
+
+def import_root() -> Path:
+    home = Path.home()
+    for d in (home / "Documents", home / "Dokumente", home / "OneDrive" / "Dokumente", home / "OneDrive" / "Documents"):
+        if d.is_dir():
+            return d / "HoneyCut Importe"
+    return home / "HoneyCut Importe"
+
+
+def save_dialog(name: str) -> str | None:
+    if APP_HOOKS.get("save"):
+        return APP_HOOKS["save"](name)
+    init = str(import_root().parent)
+    code = ("import tkinter as tk, json\nfrom tkinter import filedialog\nr=tk.Tk();r.withdraw()\nr.attributes('-topmost',True)\n"
+            f"f=filedialog.asksaveasfilename(title='Projekt speichern',initialdir={init!r},initialfile={name!r},defaultextension='.honeycut',"
+            "filetypes=[('HoneyCut-Projekt','*.honeycut')])\nprint(json.dumps(f or ''))")
+    res = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    if res.returncode:
+        raise RuntimeError("Kein Dateidialog verfügbar.")
+    return json.loads(res.stdout.strip() or '""') or None
+
+
+def open_dialog_package() -> str | None:
+    if APP_HOOKS.get("pick"):
+        r = APP_HOOKS["pick"]("package") or []
+        return r[0] if r else None
+    code = ("import tkinter as tk, json\nfrom tkinter import filedialog\nr=tk.Tk();r.withdraw()\nr.attributes('-topmost',True)\n"
+            "f=filedialog.askopenfilename(title='Projekt öffnen',filetypes=[('HoneyCut-Projekt','*.honeycut'),('Alle','*.*')])\nprint(json.dumps(f or ''))")
+    res = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    if res.returncode:
+        raise RuntimeError("Kein Dateidialog verfügbar.")
+    return json.loads(res.stdout.strip() or '""') or None
+
+
+def pkg_copy(src, dst, n: int, job: dict, done: list, total: int, label: str):
+    left = n
+    while left > 0:
+        if job["cancel"]:
+            raise RuntimeError("Abgebrochen")
+        b = src.read(min(1 << 20, left))
+        if not b:
+            raise RuntimeError("Projektdatei ist unvollständig.")
+        dst.write(b)
+        left -= len(b)
+        done[0] += len(b)
+        if total:
+            job["progress"] = min(0.99, done[0] / total)
+            job["message"] = f"{label} · {done[0] // 1_000_000} von {total // 1_000_000} MB"
+
+
+def package_export_job(job: dict, spec: dict, dest: str):
+    header = spec["header"]
+    srcs = {f["n"]: f for f in spec.get("files", [])}
+    plan = []
+    font_dir = norm_path(str(FONT_DIR))
+    for h in header.get("files", []):
+        f = srcs.get(h["n"])
+        size = 0
+        if f and f.get("include", True):
+            p = norm_path(f["uri"])
+            ok = p in ALLOWED or norm_path(str(Path(p).parent)) == font_dir
+            if ok and os.path.isfile(p):
+                size = os.path.getsize(p)
+                plan.append((p, size))
+        h["size"], h["included"] = size, size > 0
+    head = json.dumps(header, ensure_ascii=False).encode("utf-8")
+    total = sum(n for _, n in plan)
+    done = [0]
+    tmp = Path(dest + ".part")
+    with open(tmp, "wb") as out:
+        out.write(PKG_MAGIC)
+        out.write(len(head).to_bytes(8, "little"))
+        out.write(head)
+        for p, n in plan:
+            with open(p, "rb") as f:
+                pkg_copy(f, out, n, job, done, total, "Projekt wird gepackt")
+    os.replace(tmp, dest)
+    CREATED.add(norm_path(dest))
+    return {"path": norm_path(dest), "bytes": total + len(head) + 18}
+
+
+def package_import_job(job: dict, path: str):
+    path = norm_path(path)
+    with open(path, "rb") as f:
+        if f.read(len(PKG_MAGIC)) != PKG_MAGIC:
+            raise ValueError("Das ist kein HoneyCut-Projekt (.honeycut).")
+        n = int.from_bytes(f.read(8), "little")
+        if n <= 0 or n > 200_000_000:
+            raise ValueError("Projektdatei ist beschädigt.")
+        header = json.loads(f.read(n).decode("utf-8"))
+        proj = header.get("project") or {}
+        folder = re.sub(r'[\\/:*?"<>|]', "_", (proj.get("name") or "Projekt").strip())[:80] or "Projekt"
+        pid = re.sub(r"[^A-Za-z0-9_-]", "", proj.get("id", ""))[:12]
+        dest_dir = import_root() / (folder + (f" ({pid})" if pid else ""))
+        files = [h for h in header.get("files", []) if h.get("included")]
+        total = sum(int(h["size"]) for h in files)
+        done = [0]
+        mp = {}
+        for h in header.get("files", []):
+            if not h.get("included"):
+                continue
+            size = int(h["size"])
+            name = re.sub(r'[\\/:*?"<>|]', "_", h.get("name") or h["n"])[:120] or h["n"]
+            if h.get("kind") == "font":
+                FONT_DIR.mkdir(parents=True, exist_ok=True)
+                data = f.read(size)
+                done[0] += size
+                tgt, k = FONT_DIR / name, 2
+                while tgt.exists() and tgt.read_bytes() != data:
+                    tgt = FONT_DIR / f"{Path(name).stem}_{k}{Path(name).suffix}"
+                    k += 1
+                if not tgt.exists():
+                    tgt.write_bytes(data)
+                mp[h["n"]] = allow(tgt)
+                continue
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            tgt, k = dest_dir / name, 2
+            while tgt.exists() and tgt.stat().st_size != size:
+                tgt = dest_dir / f"{Path(name).stem}_{k}{Path(name).suffix}"
+                k += 1
+            if tgt.exists():   # schon da (erneuter Import desselben Projekts): überspringen
+                f.seek(size, 1)
+                done[0] += size
+            else:
+                part = Path(str(tgt) + ".part")
+                with open(part, "wb") as out:
+                    pkg_copy(f, out, size, job, done, total, "Projekt wird entpackt")
+                os.replace(part, tgt)
+            mp[h["n"]] = allow(tgt)
+    log(f"Projekt importiert: {len(mp)} Dateien nach {dest_dir}")
+    return {"header": header, "map": mp, "folder": norm_path(str(dest_dir))}
 
 
 def reveal(path: str):
@@ -1903,6 +2051,18 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"ok": font_delete(data.get("uri", ""))})
             if rest == "api/pick":
                 return self._json(picked_media(data.get("kind", "videos")))
+            if rest == "api/package/export":
+                dest = save_dialog(re.sub(r'[\\/:*?"<>|]', "_", data.get("name") or "Projekt")[:80] + ".honeycut")
+                if not dest:
+                    return self._json(None)
+                job = run_job(new_job("package-export"), package_export_job, data, dest)
+                return self._json({"job": job["id"]})
+            if rest == "api/package/import":
+                src = open_dialog_package()
+                if not src:
+                    return self._json(None)
+                job = run_job(new_job("package-import"), package_import_job, src)
+                return self._json({"job": job["id"]})
             if rest == "api/transcribe":
                 if not whisper_available():
                     raise ValueError("faster-whisper ist nicht installiert.")

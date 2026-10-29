@@ -15,6 +15,7 @@
     <button class="icon-btn" id="modelsBtn" title="Einstellungen: Whisper-Modelle und Schriften" data-ico="gear"></button>
   </header>
   <div class="home-body">
+    <div class="home-actions"><button class="btn" id="impProj" title="Projekt von einem anderen Gerät oder einer anderen Person öffnen (.honeycut)">⤓ Projekt importieren</button></div>
     <div id="projList"></div>
     <div class="empty-home hidden" id="homeEmpty">
       <h2>Noch keine Projekte</h2>
@@ -36,6 +37,12 @@
   </header>
 
   <div class="stage-wrap">
+    <div class="media-bin hidden" id="mediaBin">
+      <div class="bin-head"><b>Medien</b><button class="btn small" id="binAdd" title="Videos und Fotos zur Ablage hinzufügen">＋ Hinzufügen</button><button class="tb" id="binClose" title="Ablage schließen"><i>✕</i></button></div>
+      <div class="bin-grid" id="binGrid"></div>
+      <p class="muted small hidden bin-empty" id="binEmpty">Noch keine Medien – „Hinzufügen“ wählt Videos und Fotos.</p>
+      <p class="bin-hint muted small">Auf eine Videospur oder die Hauptspur ziehen · antippen fügt an der Abspiellinie ein</p>
+    </div>
     <div class="side l hidden" id="sideL">
       <button class="sbtn big" id="sidePlay" title="Abspielen / Pause (Leertaste)" data-ico="▶"></button>
       <div class="stime"><b id="sideNow">0:00,0</b><br><span id="sideTot">0:00</span></div>
@@ -53,6 +60,7 @@
       <div class="subov" id="subOv" title="Ziehen, um die Untertitel zu verschieben"></div>
       <div class="title-ov" id="titleOv"></div>
       <div class="pip-box hidden" id="pipBox" title="Ziehen zum Verschieben, Ecke ziehen (oder Mausrad) für die Größe"><i class="pip-h"></i></div>
+      <div class="crop-box hidden" id="cropBox"><div class="crop-win" id="cropWin"><i data-h="nw"></i><i data-h="n"></i><i data-h="ne"></i><i data-h="e"></i><i data-h="se"></i><i data-h="s"></i><i data-h="sw"></i><i data-h="w"></i><b class="crop-grid"></b></div></div>
       <div class="pin hidden" id="pin"></div>
       <div class="proxy-bar hidden" id="proxyBar"><span id="proxyMsg"></span>
         <button class="btn primary" id="proxyBtn">Vorschau-Datei erstellen</button><div class="progress hidden" id="proxyProg"><i></i></div></div>
@@ -158,6 +166,7 @@
           <button class="tb" id="barDel" title="Auswahl löschen (Entf)"><i>🗑</i><span>Löschen</span></button>
         </div>
         <div class="tl-grp">
+          <button class="tb" id="barMedia" title="Medienablage: alle Videos und Fotos des Projekts"><i>🎞</i><span>Medien</span></button>
           <button class="tb" id="barClip" title="Video oder Foto einfügen"><i>＋</i><span>Clip</span></button>
           <button class="tb" id="barTitle" title="Titel einfügen (T)"><i>T</i><span>Titel</span></button>
           <button class="tb" id="barZoom" title="Zoom einfügen"><i>🔍</i><span>Zoom</span></button>
@@ -233,6 +242,11 @@
         <pre class="small files" id="exFiles"></pre>
         <div class="row hidden" id="exDone"><button class="btn" id="exShare">Teilen</button><button class="btn" id="exOpen">Ansehen</button></div>
         <p class="muted small" id="exNote"></p>
+      </div>
+      <div class="card stack pkg-card">
+        <h3>Projekt weitergeben</h3>
+        <span class="muted small">Das ganze Projekt als eine Datei (.honeycut) – samt Videos, Bildern und Schriften. Auf dem Handy, Tablet, im Browser oder bei einer anderen Person mit „Projekt importieren“ öffnen und nahtlos weiterarbeiten.</span>
+        <div class="row"><button class="btn" id="pkgBtn">⤴ Projekt exportieren …</button></div>
       </div>
     </div>
   </main>

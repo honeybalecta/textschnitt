@@ -501,6 +501,9 @@ class Renderer {
         const sz = +o.size || 0.33, pw = Math.max(2, Math.round(W * sz / 2) * 2), ph = Math.max(2, Math.round(H * sz / 2) * 2), m = Math.round(0.03 * W), c = o.corner || 'or';
         rect = [c[1] === 'r' ? W - pw - m : m, c[0] === 'o' ? m : H - ph - m, pw, ph];
       } else rect = [0, 0, W, H];
+      // Zuschnitt: Bild/Video in voller Größe holen und nur den Ausschnitt zeichnen
+      const cr = o.crop, cl = cr ? +cr.l || 0 : 0, ct = cr ? +cr.t || 0 : 0, cw = cr ? Math.max(0.02, 1 - cl - (+cr.r || 0)) : 1, chh = cr ? Math.max(0.02, 1 - ct - (+cr.b || 0)) : 1;
+      if (cr){ const b = sinkWH || [rect[2], rect[3]], f = Math.min(1, 4096 / Math.max(b[0] / cw, b[1] / chh)); sinkWH = [Math.max(2, Math.round(b[0] / cw * f / 2) * 2), Math.max(2, Math.round(b[1] / chh * f / 2) * 2)]; }
       let st = this.ovState.get(o);
       if (!st){
         st = {last:null}; this.ovState.set(o, st);
@@ -516,7 +519,8 @@ class Renderer {
         }
       }
       if (st.it){ const r = await st.it.next(); if (r.value) st.last = r.value.canvas; }
-      if (st.bm) drawFit(ctx, st.bm, ...rect, true);
+      if (cr){ const im = st.bm || st.last; if (im){ const iw = im.width, ih = im.height; ctx.drawImage(im, cl * iw, ct * ih, cw * iw, chh * ih, rect[0], rect[1], rect[2], rect[3]); } }
+      else if (st.bm) drawFit(ctx, st.bm, ...rect, true);
       else if (st.last) ctx.drawImage(st.last, rect[0], rect[1], rect[2], rect[3]);
     }
   }

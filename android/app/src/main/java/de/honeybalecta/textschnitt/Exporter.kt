@@ -154,7 +154,13 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
                 val pw = if (free) (maxOf(2.0, w * baseW * texR) / 2).toInt() * 2 else w
                 val ph = if (free) (maxOf(2.0, pw / aspect) / 2).toInt() * 2 else h
                 val o2 = JSONObject(o.toString()).put("vol", if (withAudio) o.optDouble("vol", 0.0) else 1.0)
-                seq.addItem(item(o2, inS, inS + dur, !withAudio || o.optBoolean("image"), listOf(Presentation.createForWidthAndHeight(pw, ph, Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP))))
+                // Zuschnitt (Anteile links/oben/rechts/unten) zuerst, dann auf die Zielgröße bringen
+                val cr = o.optJSONObject("crop")
+                val cropFx: List<Effect> = if (cr == null) emptyList() else {
+                    val cl = cr.optDouble("l", 0.0).toFloat(); val ct = cr.optDouble("t", 0.0).toFloat(); val crr = cr.optDouble("r", 0.0).toFloat(); val cb = cr.optDouble("b", 0.0).toFloat()
+                    listOf(androidx.media3.effect.Crop(-1f + 2f * cl, 1f - 2f * crr, -1f + 2f * cb, 1f - 2f * ct))
+                }
+                seq.addItem(item(o2, inS, inS + dur, !withAudio || o.optBoolean("image"), cropFx + listOf(Presentation.createForWidthAndHeight(pw, ph, Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP))))
                 spans.add(OvSpan(at, at + dur, o.getString("mode"), o.optString("corner", "or"), o.optDouble("size", 0.33).toFloat(),
                     free, o.optDouble("x", 0.5).toFloat(), o.optDouble("y", 0.5).toFloat(), o.optDouble("w", 1.0).toFloat(), (baseW * texR).toFloat(), kf))
                 cursor = at + dur
