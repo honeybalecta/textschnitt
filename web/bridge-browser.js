@@ -88,7 +88,7 @@
     videos: {'video/*':['.mp4','.mov','.m4v','.webm','.mkv','.avi','.3gp'], 'audio/*':['.mp3','.m4a','.wav','.aac','.ogg','.opus','.flac']},
     clip:   {'video/*':['.mp4','.mov','.m4v','.webm','.mkv'], 'image/*':['.jpg','.jpeg','.png','.webp','.gif','.avif']},
     package: {'application/octet-stream':['.honeycut']},
-    clips:  {'video/*':['.mp4','.mov','.m4v','.webm','.mkv'], 'image/*':['.jpg','.jpeg','.png','.webp','.gif','.avif']},
+    clips:  {'video/*':['.mp4','.mov','.m4v','.webm','.mkv'], 'image/*':['.jpg','.jpeg','.png','.webp','.gif','.avif'], 'audio/*':['.mp3','.m4a','.wav','.aac','.ogg','.opus','.flac']},
     video:  {'video/*':['.mp4','.mov','.m4v','.webm','.mkv']},
     font:   {'font/ttf':['.ttf'], 'font/otf':['.otf']},
   };

@@ -29,14 +29,14 @@ function renderTimeline(){
   const pad = padL();
   tlInner.style.width = Math.ceil(total * TL.pps + pad + half() + 40) + 'px';
   $('#tlTotal').textContent = '/ ' + fmtS(total);
-  renderRuler(pad); renderMain(pad); renderOvl(pad); renderFx(pad); renderTitles(pad); renderTxt(pad);
+  renderRuler(pad); renderMain(pad); renderOvl(pad); renderAud(pad); renderFx(pad); renderTitles(pad); renderTxt(pad);
   paintLinks(); restoreSel(); updateTools(); paintBar();
   if (TL.mode === 'center') syncScroll(outPos, true); else placeHead(outPos);
 }
 function renderRuler(pad){
   const r = $('#ruler'); r.innerHTML = '';
-  const steps = [0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300];
-  const step = steps.find(s => s * TL.pps >= 64) || 600, minor = step / 5;
+  const steps = [0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600];
+  const step = steps.find(s => s * TL.pps >= 64) || 7200, minor = step / 5;
   const frag = document.createDocumentFragment();
   for (let t = 0; t <= total + 1e-6; t += step){
     const d = document.createElement('div'); d.className = 'tk'; d.style.left = (pad + t * TL.pps) + 'px';
@@ -124,10 +124,32 @@ function renderOvl(pad){
     tr.append(b);
   }
 }
+// Tonspuren: so viele wie belegt, plus eine freie
+function renderAud(pad){
+  const used = P.items.some(x => x.type === 'audio'), n = used ? Math.max(1, ...P.items.filter(x => x.type === 'audio').map(x => x.track || 1)) + 1 : 1;
+  $('.tl-body').style.setProperty('--nau', n);
+  const box = $('#trAudBox'), g = $('#gAud'); box.innerHTML = ''; g.innerHTML = '';
+  for (let k = 1; k <= n; k++){
+    const empty = !audios.some(a => (a.x.track || 1) === k);
+    const tr = document.createElement('div'); tr.className = 'track t-aud' + (empty ? ' empty' : ''); tr.id = 'trAud' + k; tr.dataset.atrack = k;
+    tr.style.top = `calc(var(--rh) + var(--mh) + 12px + var(--nov) * (var(--oh) + 6px) + ${k - 1} * (var(--ah) + 6px))`;
+    if (empty) tr.innerHTML = `<span class="track-ph">${used ? 'Neue Tonspur' : 'Tonspur – Musik oder Ton aus der Medienablage hierher ziehen'}</span>`;
+    box.append(tr);
+    const gr = document.createElement('div'); gr.className = 'g-row g-aud' + (empty ? ' empty' : ''); gr.innerHTML = `<i>${icon('♪')}</i><span>Ton ${k}</span>`; g.append(gr);
+  }
+  for (const a of audios){
+    const tr = $('#trAud' + (a.x.track || 1)); if (!tr) continue;
+    const b = blk('aud', a.at, a.end - a.at, pad, {id: a.x.id});
+    b.insertAdjacentHTML('beforeend', `<span class="txt"></span>`); b.querySelector('.txt').textContent = '♪ ' + a.x.clip.name + ((a.x.vol ?? 1) !== 1 ? ` · ${Math.round((a.x.vol ?? 1) * 100)} %` : '');
+    tr.append(b);
+  }
+}
+const freeATrack = (a, e, skip) => { for (let k = 1; ; k++) if (!audios.some(o => o.x !== skip && (o.x.track || 1) === k && o.at < e - 0.01 && o.end > a + 0.01)) return k; };
 // freie Spur für ein neues Element im Zeitraum [a, e]
 function freeTrack(a, e, skip){
   for (let k = 1; ; k++) if (!overlays.some(o => o.x !== skip && elTrack(o.x) === k && o.at < e - 0.01 && o.end > a + 0.01)) return k;
 }
+function moveATrack(it, k){ k = Math.max(1, k); if (k === (it.track || 1)) return; commit(() => { it.track = k; }, true); toast(`Auf Tonspur ${k}`); }
 function moveTrack(it, k){
   k = Math.max(1, k); if (k === elTrack(it)) return;
   commit(() => { it.track = k; }, true); toast(`Auf Videospur ${k + 1}`);
@@ -241,7 +263,7 @@ function selectBlock(b){
   const tr = b.parentElement.id;
   if (tr === 'trMain'){ const g = timeline[+b.dataset.i]; select(g.kind === 'insert' ? {kind:'insert', i:+b.dataset.i, itemId:g.item.id} : {kind:'main', i:+b.dataset.i, src:(g.in + g.out) / 2}); }
   else if (tr === 'trTxt') select({kind:'cue', id:b.dataset.cid});
-  else { const it = P.items.find(x => x.id === b.dataset.id); if (!it) return; select({kind: it.type === 'zoom' ? 'zoom' : it.type === 'fx' ? 'fx' : it.type === 'title' ? 'title' : 'ovl', id: it.id}); }
+  else { const it = P.items.find(x => x.id === b.dataset.id); if (!it) return; select({kind: it.type === 'zoom' ? 'zoom' : it.type === 'fx' ? 'fx' : it.type === 'title' ? 'title' : it.type === 'audio' ? 'aud' : 'ovl', id: it.id}); }
 }
 // ── Verbinden: mehrere Objekte auswählen (Strg/Umschalt+Klick oder „Verbinden …“), dann zu einer Gruppe machen ──
 const blkKey = b => b.dataset.cid ? 'c:' + b.dataset.cid : b.dataset.id ? 'i:' + b.dataset.id : null;
@@ -297,21 +319,23 @@ function closeMenu(){ const m = $('#ctxMenu'); if (m) m.remove(); }
 // Zoomen der Zeitleiste (Zeiger bleibt an Ort und Stelle)
 function setPps(p){
   const x = TL.mode === 'move' ? padL() + outPos * TL.pps - tlEl.scrollLeft : null;
-  TL.pps = clamp(p, 6, 800); renderTimeline();
+  TL.pps = clamp(p, minPps(), 800); renderTimeline();
   if (x != null){ TL.expect = -1; tlEl.scrollLeft = Math.max(0, padL() + outPos * TL.pps - x); placeHead(outPos); }
   paintBar();
 }
 $('#tlIn').onclick = () => setPps(TL.pps * 1.6);
 $('#tlOut').onclick = () => setPps(TL.pps / 1.6);
 $('#tlFit').onclick = () => fitTimeline();
-$('#tlZoom').oninput = e => setPps(6 * Math.pow(800 / 6, +e.target.value / 100));
+// Kleinste Stufe: ganzes Projekt passt in die sichtbare Spur (auch bei langen Videos)
+function minPps(){ const w = Math.max(200, tlEl.clientWidth - (TL.mode === 'center' ? 40 : padL() + 40)); return Math.max(0.005, Math.min(6, total > 0 ? w / total : 6)); }
+$('#tlZoom').oninput = e => setPps(minPps() * Math.pow(800 / minPps(), +e.target.value / 100));
 tlEl.addEventListener('touchstart', e => {
   if (e.touches.length === 2){ const d = Math.abs(e.touches[0].clientX - e.touches[1].clientX); TL.pinch = {d0: Math.max(20, d), p0: TL.pps, o: outPos}; }
 }, {passive:true});
 tlEl.addEventListener('touchmove', e => {
   if (!TL.pinch || e.touches.length !== 2) return; e.preventDefault();
   const d = Math.abs(e.touches[0].clientX - e.touches[1].clientX);
-  const p = clamp(TL.pinch.p0 * Math.max(20, d) / TL.pinch.d0, 6, 800);
+  const p = clamp(TL.pinch.p0 * Math.max(20, d) / TL.pinch.d0, minPps(), 800);
   if (Math.abs(p - TL.pps) / TL.pps > 0.04){ TL.pps = p; renderTimeline(); syncScroll(TL.pinch.o, true); }
 }, {passive:false});
 tlEl.addEventListener('touchend', e => { if (e.touches.length < 2 && TL.pinch){ const o = TL.pinch.o; TL.pinch = null; syncScroll(o, true); } });
@@ -334,13 +358,29 @@ tlInner.addEventListener('pointerdown', e => {
   if (!b) return;
   const h = e.target.closest('.h');
   e.preventDefault(); b.setPointerCapture(e.pointerId);
-  const s = TL.sel, it = s.kind === 'ovl' || s.kind === 'zoom' || s.kind === 'fx' || s.kind === 'title' ? selItem() : null;
-  TL.drag = {b, side: h ? (h.classList.contains('l') ? 'l' : 'r') : 'm', x0: e.clientX, left0: parseFloat(b.style.left), w0: parseFloat(b.style.width), moved: false, d: 0, pts: snapPoints(it)};
+  const s = TL.sel, it = s.kind === 'ovl' || s.kind === 'aud' || s.kind === 'zoom' || s.kind === 'fx' || s.kind === 'title' ? selItem() : null;
+  TL.drag = {b, side: h ? (h.classList.contains('l') ? 'l' : 'r') : 'm', x0: e.clientX, sl0: tlEl.scrollLeft, left0: parseFloat(b.style.left), w0: parseFloat(b.style.width), moved: false, d: 0, pts: snapPoints(it)};
   if (playing) pausePlay();
+  dragEdgeScroll();
 });
-tlInner.addEventListener('pointermove', e => {
+// Am Rand der sichtbaren Spur weiterscrollen, solange gezogen wird
+function dragEdgeScroll(){
   const g = TL.drag; if (!g) return;
-  const dx = e.clientX - g.x0; if (Math.abs(dx) > 3) g.moved = true; if (!g.moved) return;
+  if (g.moved && g.last){
+    const r = tlEl.getBoundingClientRect(), x = g.last.clientX, edge = 48; let v = 0;
+    if (x > r.right - edge) v = Math.ceil((x - (r.right - edge)) / 3) + 2; else if (x < r.left + edge) v = -Math.ceil(((r.left + edge) - x) / 3) - 2;
+    if (v){ const before = tlEl.scrollLeft, max = tlEl.scrollWidth - tlEl.clientWidth;
+      // Am Ende des Projekts mehr Platz schaffen, damit Elemente über das Ende hinaus gezogen werden können
+      if (v > 0 && before >= max - 2) tlInner.style.width = (tlInner.scrollWidth + 200) + 'px';
+      TL.expect = before + v; tlEl.scrollLeft = before + v;
+      if (tlEl.scrollLeft !== before){ TL.expect = tlEl.scrollLeft; dragMoveAt(g.last); } }
+  }
+  g.raf = requestAnimationFrame(dragEdgeScroll);
+}
+tlInner.addEventListener('pointermove', e => { const g = TL.drag; if (!g) return; g.last = {clientX: e.clientX, clientY: e.clientY, target: e.target}; dragMoveAt(g.last); });
+function dragMoveAt(e){
+  const g = TL.drag; if (!g) return;
+  const dx = e.clientX - g.x0 + (tlEl.scrollLeft - g.sl0); if (Math.abs(dx) > 3) g.moved = true; if (!g.moved) return;
   g.ptr = (e.clientX - tlInner.getBoundingClientRect().left - padL()) / TL.pps;   // Zeit unter dem Mauszeiger
   if (TL.sel && TL.sel.kind === 'ovl' && g.side === 'm'){   // Element senkrecht auf eine andere Videospur ziehen
     const row = e.target.ownerDocument.elementsFromPoint(e.clientX, e.clientY).find(x => x.classList && x.classList.contains('t-ovl'));
@@ -362,9 +402,9 @@ tlInner.addEventListener('pointermove', e => {
   else g.b.style.left = (g.left0 + px) + 'px';
   previewDrag(g.side, d);
   $('#tlInfo').textContent = (g.side === 'm' ? 'Verschieben ' : g.side === 'l' ? 'Anfang ' : 'Ende ') + (d >= 0 ? '+' : '−') + fmtD(Math.abs(d)) + ' s' + (isMain ? ` (${Math.round(Math.abs(d) * fps())} Bilder)` : '');
-});
+}
 function endDrag(){
-  const g = TL.drag; if (!g) return;
+  const g = TL.drag; if (!g) return; cancelAnimationFrame(g.raf);
   setTimeout(() => { TL.drag = null; }, 0);
   tlInner.querySelectorAll('.t-ovl.drop').forEach(x => x.classList.remove('drop'));
   if (g.trk && TL.sel && TL.sel.kind === 'ovl'){ const it = selItem(); if (it && g.trk !== elTrack(it)){
@@ -382,11 +422,12 @@ function clampDrag(side, d){
   if ((s.kind === 'main' || s.kind === 'insert') && side === 'm'){ const g = timeline[s.i]; return clamp(d, -g.o, total - g.o - segDur(g)); }
   if (s.kind === 'main'){ const g = timeline[s.i], len = g.out - g.in;
     if (side === 'l') return clamp(d, edgeMin(g, 'l'), len - 0.1); return clamp(d, -(len - 0.1), edgeMax(g, 'r')); }
-  if (s.kind === 'insert'){ const it = timeline[s.i].item;
-    return side === 'l' ? clamp(d, -it.in, it.out - it.in - 0.1) : clamp(d, -(it.out - it.in - 0.1), it.clip.duration - it.out); }
-  if (s.kind === 'ovl'){ const it = selItem(), [a] = itemOutRange(it);
-    if (side === 'l') return clamp(d, -it.in, it.out - it.in - 0.1);
-    if (side === 'r') return clamp(d, -(it.out - it.in - 0.1), it.clip.duration - it.out);
+  // Fotos haben keine feste Länge: beliebig lang ziehen, auch nach vorn
+  if (s.kind === 'insert'){ const it = timeline[s.i].item, img = isImg(it.clip);
+    return side === 'l' ? clamp(d, img ? -1e6 : -it.in, it.out - it.in - 0.1) : clamp(d, -(it.out - it.in - 0.1), img ? 1e6 : it.clip.duration - it.out); }
+  if (s.kind === 'ovl' || s.kind === 'aud'){ const it = selItem(), [a] = itemOutRange(it), img = isImg(it.clip);
+    if (side === 'l') return clamp(d, img ? -a : -it.in, it.out - it.in - 0.1);
+    if (side === 'r') return clamp(d, -(it.out - it.in - 0.1), img ? Math.max(0, total - (a + it.out - it.in)) : it.clip.duration - it.out);
     return clamp(d, -a, total - a - 0.1); }
   if (s.kind === 'zoom' || s.kind === 'fx' || s.kind === 'title'){ const it = selItem(), [a, e] = itemOutRange(it);
     if (side === 'l') return clamp(d, -a, e - a - 0.15); if (side === 'r') return clamp(d, -(e - a - 0.15), total - e); return clamp(d, -a, total - e); }
@@ -459,10 +500,13 @@ function linkedDrag(side, d){
       }
       normDels();
     } else if (s.kind === 'insert'){
-      const it = timeline[s.i].item; if (side === 'l') it.in = +(it.in + d).toFixed(3); else it.out = +(it.out + d).toFixed(3);
-    } else if (s.kind === 'ovl'){
+      const it = timeline[s.i].item;
+      if (side === 'l' && isImg(it.clip)){ const len = it.out - it.in - d; it.in = 0; it.out = r3(len); }
+      else if (side === 'l') it.in = +(it.in + d).toFixed(3); else it.out = +(it.out + d).toFixed(3);
+    } else if (s.kind === 'ovl' || s.kind === 'aud'){
       const it = selItem(), [a] = itemOutRange(it);
-      if (side === 'l'){ it.in = +(it.in + d).toFixed(3); it.at = +outToSrc(a + d).toFixed(3); if (it.kf) it.kf.forEach(k => k.t = r3(k.t - d)); }
+      if (side === 'l'){ if (isImg(it.clip)){ const len = it.out - it.in - d; it.in = 0; it.out = r3(len); } else it.in = +(it.in + d).toFixed(3);
+        it.at = +outToSrc(a + d).toFixed(3); if (it.kf) it.kf.forEach(k => k.t = r3(k.t - d)); }
       else if (side === 'r') it.out = +(it.out + d).toFixed(3);
       else it.at = +outToSrc(a + d).toFixed(3);
     } else if (s.kind === 'zoom' || s.kind === 'fx'){
@@ -511,6 +555,8 @@ function toolListBase(){
     ...(it.w != null || it.type === 'pip' ? [T('▣', 'Vollbild', () => convert('broll'))] : []),
     T('⚙', 'Größe, Lage, Ton', () => openItem(it.id)), T('↑', 'Spur hoch', () => moveTrack(it, elTrack(it) + 1)), ...(elTrack(it) > 1 ? [T('↓', 'Spur runter', () => moveTrack(it, elTrack(it) - 1))] : []),
     T('⇄', 'Als Einschub', () => convert('insert'))]; }
+  if (s.kind === 'aud'){ const it = selItem(); return [T('🔊', 'Lautstärke & Ausschnitt', () => openItem(it.id)), T('🗑', 'Löschen', delSel, 'danger'), ...cuts,
+    T('↑', 'Spur hoch', () => moveATrack(it, (it.track || 1) - 1)), T('↓', 'Spur runter', () => moveATrack(it, (it.track || 1) + 1))]; }
   if (s.kind === 'zoom'){ const it = selItem(); return [T('◎', 'Mittelpunkt', () => openItem(it.id)), T('⟳', it.kind === 'punch' ? 'Sprung' : it.kind === 'in' ? 'Fahrt rein' : 'Fahrt raus', cycleZoomKind),
     T('−', 'Schwächer', () => zoomStrength(-0.05)), T('＋', 'Stärker', () => zoomStrength(0.05)), T('🗑', 'Löschen', delSel, 'danger'), ...cuts]; }
   if (s.kind === 'fx'){ const it = selItem(); return [T('⚙', 'Anpassen', () => openFxItem(it)), T('🗑', 'Löschen', delSel, 'danger'), ...cuts]; }
@@ -535,7 +581,7 @@ function updateTools(){
 function paintBar(){
   $('#modeBtn').classList.toggle('on', TL.mode === 'move'); $('#modeBtn').title = TL.mode === 'move' ? 'Zeiger läuft über die Spur (klicken: fester Zeiger in der Mitte)' : 'Fester Zeiger, Spur bewegt sich (klicken: laufender Zeiger)';
   $('#snapBtn').classList.toggle('on', TL.snap);
-  $('#tlZoom').value = Math.round(Math.log(TL.pps / 6) / Math.log(800 / 6) * 100);
+  $('#tlZoom').value = Math.round(Math.log(TL.pps / minPps()) / Math.log(800 / minPps()) * 100);
 }
 $('#modeBtn').onclick = () => setMode(TL.mode === 'move' ? 'center' : 'move');
 $('#snapBtn').onclick = () => { TL.snap = !TL.snap; try { localStorage.setItem('ts-tl-snap', TL.snap ? '1' : '0'); } catch(_){} paintBar(); toast(TL.snap ? 'Einrasten an' : 'Einrasten aus'); };
@@ -627,10 +673,19 @@ function addClip(){
 }
 // Datei als Element einfügen: type broll | insert | pip, an Zeit o (Ergebnis), auf Spur track (oder frei)
 function placeMedia(m, type, o, track, short){
-  if (!m || m.kind === 'audio' || m.hasVideo === false) return toast('Reine Tondateien lassen sich hier nicht einfügen');
+  if (!m) return;
+  if (m.kind === 'audio' || m.hasVideo === false) type = 'audio';   // Tondateien kommen immer auf eine Tonspur
   const clip = clipOfSource(m), img = clip.kind === 'image';
   if (o == null) o = outPos; o = clamp(o, 0, Math.max(0, total - 0.1));
   const at = r3(outToSrc(o));
+  if (type === 'audio'){
+    if (m.hasAudio === false) return toast('Diese Datei hat keinen Ton');
+    const len = Math.min(clip.duration || 1, Math.max(0.5, total - o)); let it;
+    commit(() => { computeAudios(); const busy = k => audios.some(x => (x.x.track || 1) === k && x.at < o + len - 0.01 && x.end > o + 0.01);
+      it = {id:newId(), type:'audio', at, clip, in:0, out:r3(len), vol:1, track: track && !busy(track) ? track : freeATrack(o, o + len)}; P.items.push(it); }, false);
+    TL.sel = {kind:'aud', id: it.id}; renderTimeline(); seekOut(outPos, false); renderBin();
+    toast('Ton eingefügt – Lautstärke über „Lautstärke & Ausschnitt“'); return;
+  }
   const len = img ? 4 : type === 'insert' ? clip.duration : short ? Math.min(clip.duration, 4) : Math.min(clip.duration, Math.max(0.5, total - o));
   let it; commit(() => {
     it = {id:newId(), type, at, clip, in:0, out: r3(len), corner:'or', size:0.4};
@@ -665,6 +720,7 @@ function renderBin(){
   for (const {m, main, uses} of list){
     const d = document.createElement('div'); d.className = 'bin-item'; d.dataset.uri = m.uri; d.title = `${m.name} – ziehen auf eine Spur, antippen zum Einfügen`;
     const img = document.createElement('img'); img.alt = ''; img.draggable = false;
+    if (m.kind === 'audio'){ d.classList.add('audio'); d.insertAdjacentHTML('afterbegin', `<span class="aud-ph">${icon('♪')}</span>`); }
     if (m.kind === 'image') img.src = MEDIA(m.uri);
     else if (m.kind !== 'audio'){ const u = THUMB(m.uri, Math.min(1, (m.duration || 2) / 2), 120); if (u && u.then) u.then(x => { if (x) img.src = x; }); else img.src = u; }
     d.append(img);
@@ -687,15 +743,18 @@ async function binAdd(){
 }
 function binMenu(m, x, y){
   const o = outPos;
+  if (m.kind === 'audio' || m.hasVideo === false) return showMenu(x, y, [T('♪', 'Auf eine Tonspur an der Abspiellinie', () => placeMedia(m, 'audio', o))]);
   showMenu(x, y, [T('🎞', 'B-Roll an der Abspiellinie', () => placeMedia(m, 'broll', o)), T('▣', 'Einblendung an der Abspiellinie', () => placeMedia(m, 'pip', o)),
     T('⇄', 'Einschub an der Abspiellinie', () => placeMedia(m, 'insert', o))]);
 }
+const s0kind = (m, t) => m.kind === 'audio' || m.hasVideo === false ? 'Ton' : t.kind === 'insert' ? 'Einschub' : 'B-Roll';
 // Ziehen aus der Ablage auf die Zeitleiste (Maus und Touch)
 (() => {
   const grid = $('#binGrid'); let g = null;
   const target = (x, y) => {
     const els = document.elementsFromPoint(x, y);
     const ov = els.find(e => e.classList && e.classList.contains('t-ovl')); if (ov) return {kind:'ovl', track: +ov.dataset.track, el: ov};
+    const au = els.find(e => e.classList && e.classList.contains('t-aud')); if (au) return {kind:'audio', track: +au.dataset.atrack, el: au};
     const mn = els.find(e => e.id === 'trMain'); if (mn) return {kind:'insert', el: mn};
     const tl = els.find(e => e.id === 'tlInner'); if (tl) return {kind:'ovl', track: null, el: null};
     return null;
@@ -724,7 +783,8 @@ function binMenu(m, x, y){
     if (!s.moved){ binMenu(s.m, e.clientX, e.clientY); return; }
     const t = s.t; if (!t){ updateTools(); return; }
     const o = timeAtX(e.clientX);
-    placeMedia(s.m, t.kind === 'insert' ? 'insert' : 'broll', o, t.track);
+    const isAud = s.m.kind === 'audio' || s.m.hasVideo === false;
+    placeMedia(s.m, isAud ? 'audio' : t.kind === 'insert' ? 'insert' : 'broll', o, isAud === (t.kind === 'audio') ? t.track : null);
   };
   grid.addEventListener('pointerup', end); grid.addEventListener('pointercancel', () => { if (g && g.ghost) g.ghost.remove(); g = null; });
 })();
@@ -890,7 +950,7 @@ function pasteClip(at){
         it.track = !busy(c.track || 1) ? (c.track || 1) : freeTrack(start, start + c.dur);
       }
       P.items.push(it); made.push(it); computeOverlays();
-      if (!sel || sel.kind === 'cue') sel = {kind: it.type === 'broll' || it.type === 'pip' ? 'ovl' : it.type, id: it.id};
+      if (!sel || sel.kind === 'cue') sel = {kind: it.type === 'broll' || it.type === 'pip' ? 'ovl' : it.type === 'audio' ? 'aud' : it.type, id: it.id};
     }
     if (made.length > 1){ const gid = newId(); made.forEach(x => { if (x.type !== 'insert') x.lk = gid; }); const ms = made.filter(x => x.lk); if (ms.length > 1) relinkGroup(ms); else ms.forEach(x => delete x.lk); }
   }, false);

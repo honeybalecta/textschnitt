@@ -368,7 +368,7 @@ function openProjectNow(id, keep){
   const keepTab = keep ? tab : null, keepPos = keep ? outPos : 0;
   P = J(TS.loadProject(id)); if (!P) return toast('Projekt konnte nicht geladen werden');
   if (!P.sources){ P.sources = [P.main]; P.sources[0].tr = !!(P.tokens || []).length; delete P.main; }   // altes Format (ein Video)
-  P.adj ||= {}; P.items ||= []; P.dels ||= []; P.splits ||= []; P.edits ||= {}; P.moves ||= []; P.trims ||= {}; P.settings ||= {pad:0.06}; P.cues ||= [];
+  P.adj ||= {}; P.speakers ||= []; P.items ||= []; P.dels ||= []; P.splits ||= []; P.edits ||= {}; P.moves ||= []; P.trims ||= {}; P.settings ||= {pad:0.06}; P.cues ||= [];
   if (P.settings.burn == null) P.settings.burn = true;
   P.sub_style = {...DEF_STYLE, ...(P.sub_style || {})}; if (P.sub_style.y == null) P.sub_style.y = POS_Y[P.sub_style.pos] ?? 0.88;
   tokens = P.tokens || []; tokens.forEach(t => { if (t.src == null) t.src = 0; });
@@ -485,6 +485,7 @@ function packageSpec(proj, withMedia){
   const fontKey = key => { const f = key && userFonts.find(x => x.key === key); return f ? '@hcf:' + fileFor({uri: f.uri, name: (f.uri.split(/[\\/]/).pop() || f.label + '.ttf')}, 'font') : key; };
   if (p.sub_style && p.sub_style.font) p.sub_style.font = fontKey(p.sub_style.font);
   for (const it of p.items || []) if (it.font) it.font = fontKey(it.font);
+  for (const sp of p.speakers || []) if (sp.st && sp.st.font) sp.st.font = fontKey(sp.st.font);
   const header = {format: 'honeycut-projekt', v: 1, app: CAP.version || '', platform: CAP.platform || '', created: Date.now(), name: p.name, project: p, files: hfiles};
   return {name: p.name || 'Projekt', header, files};
 }
@@ -546,6 +547,7 @@ async function finishImport(res){
   const fk = key => { if (typeof key !== 'string' || !key.startsWith('@hcf:')) return key; const u = map[key.slice(5)]; return u ? 'u' + hashStr(u) : ''; };
   if (proj.sub_style && proj.sub_style.font) proj.sub_style.font = fk(proj.sub_style.font);
   for (const it of proj.items || []) if (it.font) it.font = fk(it.font);
+  for (const sp of proj.speakers || []) if (sp.st && sp.st.font) sp.st.font = fk(sp.st.font);
   // fehlende Dateien: auf diesem Gerät auswählen lassen
   if (missing.length) await relinkDialog(proj, missing.map(n => ({n, ...info(n)})));
   if (old){
@@ -592,7 +594,7 @@ function realign(){
   deleted = new Set(); P.edits = {}; P.trims = {};
   P.sources.forEach((src, k) => {
     const a = old.filter(t => t.src === k && t.type === 'word'), b = tokens.filter(t => t.src === k && t.type === 'word');
-    a.forEach((t, j) => { if (!b[j]) return; if (oldDel.has(t.i)) deleted.add(b[j].i); if (oldEdits[t.i] != null) P.edits[b[j].i] = oldEdits[t.i]; });
+    a.forEach((t, j) => { if (!b[j]) return; if (oldDel.has(t.i)) deleted.add(b[j].i); if (oldEdits[t.i] != null) P.edits[b[j].i] = oldEdits[t.i]; if (t.spk) b[j].spk = t.spk; if (t.ks) b[j].ks = true; });
   });
   if (deleted.size) tidyPauses([...deleted]).forEach(i => deleted.add(i));
   genCues(); renderTranscript(); changed(); saveNow();
@@ -648,9 +650,11 @@ function busApply(m){
 })();
 
 // ───────── Speichern & Rückgängig ─────────
-function snapshot(){ return JSON.stringify({d:[...deleted], t:P.trims, c:P.cues, i:P.items, a:P.adj, x:P.dels, y:P.splits, s:P.sub_style, e:P.edits, m:P.moves}); }
+function tokMarks(){ const o = {}; for (const t of tokens) if (t.spk || t.ks) o[t.i] = [t.spk || 0, t.ks ? 1 : 0]; return o; }
+function snapshot(){ return JSON.stringify({d:[...deleted], t:P.trims, c:P.cues, i:P.items, a:P.adj, x:P.dels, y:P.splits, s:P.sub_style, e:P.edits, m:P.moves, k:P.speakers, w:tokMarks()}); }
 function restore(s){ const o = JSON.parse(s); deleted = new Set(o.d); P.trims = o.t; P.cues = o.c; P.items = o.i; P.adj = o.a; P.dels = o.x || []; P.splits = o.y || [];
   if (o.s) P.sub_style = o.s; P.edits = o.e || {}; P.moves = o.m || [];
+  if (o.k) P.speakers = o.k; if (o.w){ for (const t of tokens){ const m = o.w[t.i]; if (m){ if (m[0]) t.spk = m[0]; else delete t.spk; if (m[1]) t.ks = true; else delete t.ks; } else { delete t.spk; delete t.ks; } } }
   const reorder = JSON.stringify(P.moves) !== lastOrderKey; syncStyleInputs(); changed(true);
   if (reorder && tokens.length) renderTranscript(); else tokens.forEach(t => paint(t.i)); }
 function commit(fn, rerender = true){ undo.push(snapshot()); if (undo.length > 200) undo.shift(); redo = []; fn(); changed(rerender); }
@@ -915,6 +919,26 @@ function segAtOut(o){
     if (o < g.o) hi = m - 1; else if (o >= g.o + d) lo = m + 1; else return m; }
   return o >= total ? timeline.length - 1 : 0;
 }
+// Tonspuren: Musik, Geräusche, Sprachaufnahmen (Elemente vom Typ audio, Spur track)
+let audios = [];
+function computeAudios(){
+  audios = P.items.filter(x => x.type === 'audio').map(x => { const at = srcToOut(snapSrc(x.at)); return {x, at, end: Math.min(total, at + Math.max(0.1, x.out - x.in))}; })
+    .filter(o => o.end - o.at > 0.05).sort((a, b) => (a.x.track || 1) - (b.x.track || 1) || a.at - b.at);
+}
+const audLayers = new Map();
+function updateAudio(o){
+  for (const [id, el] of audLayers) if (!P.items.some(x => x.id === id)){ el.pause(); el.removeAttribute('src'); audLayers.delete(id); }
+  for (const a of audios){
+    let el = audLayers.get(a.x.id); const on = o >= a.at && o < a.end;
+    if (!el){ if (!on) continue; el = new Audio(); el.preload = 'auto'; audLayers.set(a.x.id, el); }
+    const url = MEDIA(a.x.clip.uri); if (el.dataset.src !== url){ el.src = url; el.dataset.src = url; }
+    if (!on || !playing){ if (!el.paused) el.pause(); if (!on) continue; }
+    el.volume = clamp(a.x.vol ?? 1, 0, 1);
+    const target = a.x.in + (o - a.at);
+    if (Math.abs(el.currentTime - target) > (playing ? 0.3 : 0.05)) try { el.currentTime = target; } catch(_){}
+    if (playing && el.paused) el.play().catch(() => {});
+  }
+}
 function computeOverlays(){
   overlays = P.items.filter(x => x.type === 'broll' || x.type === 'pip').map(x => {
     const at = srcToOut(snapSrc(x.at)), d = Math.max(0.1, x.out - x.in);
@@ -934,7 +958,7 @@ function zoomAt(src){
   return {s, cx, cy};
 }
 function recompute(){
-  computeRanges(); computePieces(); computeOrder(); buildTimeline(); syncLinks(); computeOverlays(); drawScrub();
+  computeRanges(); computePieces(); computeOrder(); buildTimeline(); syncLinks(); computeOverlays(); computeAudios(); drawScrub();
   if (studioOn() && window.renderTimeline) renderTimeline();
   $('#tTot').textContent = fmtT(total); $('#sideTot').textContent = fmtT(total);
 }
@@ -1054,7 +1078,7 @@ function startPlay(){
 }
 function pausePlay(){
   const g0 = timeline[curSeg]; if (playing && g0 && g0.kind === 'insert' && isImg(g0.item.clip)) imgClock = {local: segLocal(g0), t0: performance.now()};
-  playing = false; stopAt = null; vWantPlay = false; V.pause(); IV.pause(); allLayers(el => { if (el.pause) el.pause(); }); setPlayIcons(false); TS.keepAwake(false);
+  playing = false; stopAt = null; vWantPlay = false; V.pause(); IV.pause(); allLayers(el => { if (el.pause) el.pause(); }); for (const el of audLayers.values()) el.pause(); setPlayIcons(false); TS.keepAwake(false);
 }
 $('#playBtn').onclick = togglePlay;
 // Seitensteuerung neben der Bühne
@@ -1188,6 +1212,7 @@ function updateOverlay(o){
     if (Math.abs(el.currentTime - target) > (playing ? 0.3 : 0.05)) el.currentTime = target;
     if (playing && el.paused) el.play().catch(() => {}); if (!playing && !el.paused) el.pause();
   });
+  updateAudio(o);
   // Griffe: am ausgewählten Element, sonst am obersten
   const sel = selOvlId(), tgt = act.find(a => a.x.id === sel) || act[act.length - 1] || null;
   curPip = tgt ? tgt.x : null; pipTarget = tgt;
@@ -1539,7 +1564,7 @@ let selA = null, selB = null;
 function renderTranscript(){
   const root = $('#transcript'); root.innerHTML = ''; spans = new Array(tokens.length);
   if (order.length !== tokens.length) computeOrder();
-  let para = -1, pEl = null, fillers = 0, src = -1, prev = -2; const frag = document.createDocumentFragment();
+  let para = -1, pEl = null, fillers = 0, src = -1, prev = -2, lastSpk = ''; const frag = document.createDocumentFragment();
   for (const i of order){
     const t = tokens[i];
     if (t.src !== src && P.sources.length > 1){ src = t.src; const h = document.createElement('div'); h.className = 'src-head'; h.textContent = `🎞 ${src + 1} · ${P.sources[src].name}`; frag.append(h); pEl = null; }
@@ -1547,6 +1572,8 @@ function renderTranscript(){
     if (t.p !== para || !pEl || jump){ pEl = document.createElement('p'); para = t.p;
       if (jump) pEl.classList.add('moved');
       const ts = document.createElement('span'); ts.className = 'ts'; ts.textContent = (jump ? '↕ ' : '') + fmtT(t.ws ?? t.s); pEl.append(ts); frag.append(pEl); }
+    if (t.type !== 'pause' && (t.spk || '') !== lastSpk){ lastSpk = t.spk || '';
+      const who = spkOf(lastSpk); if (who || P.speakers.length){ const l = document.createElement('span'); l.className = 'spk-lbl' + (who ? '' : ' none'); l.textContent = who ? who.name : 'ohne Person'; if (who) l.style.setProperty('--sc', spkCol(who)); pEl.append(l, ' '); } }
     const sp = document.createElement('span'); sp.dataset.i = t.i;
     if (t.type === 'word'){ sp.className = 'tk word' + (t.pr < 0.5 ? ' low' : '') + (t.ug ? ' rep' : ''); if (t.ug) sp.title = 'Nachgehört: Whisper hatte diese Stelle zunächst ausgelassen – meist ein Anlauf'; if (FILLER.test(norm(tokText(t)))){ sp.classList.add('filler'); fillers++; } }
     else if (t.type === 'unk'){ sp.className = 'tk unk'; sp.title = 'Hier wurde gesprochen, aber Whisper hat kein Wort erkannt – meist ein ausgelassener Anlauf. „Wiederholungen weg“ löscht solche Stellen; antippen spielt sie ab.'; if (t.att) sp.classList.add('att'); }
@@ -1565,6 +1592,7 @@ function paint(i){
   const t = tokens[i], sp = spans[i]; if (!sp) return;
   if (t.type === 'word'){ const tx = tokText(t); if (sp.textContent !== tx) sp.textContent = tx; sp.classList.toggle('empty', !tx); sp.classList.toggle('edited', P.edits[t.i] != null); }
   sp.classList.toggle('del', deleted.has(i) || (t.type === 'word' && isSrcDeleted((t.ws + t.we) / 2)));
+  sp.classList.toggle('ks', !!t.ks && sp.classList.contains('del'));
   const added = t.type !== 'word' && P.edits[i];
   sp.classList.toggle('added', !!added);
   if (added){ sp.textContent = P.edits[i]; return; }
@@ -1679,10 +1707,92 @@ function showSel(){
   spans.forEach(s => s && s.classList.remove('sel'));
   const ids = selIds(); ids.forEach(i => spans[i] && spans[i].classList.add('sel'));
   $('#selbar').classList.toggle('hidden', !ids.length);
+  const cutText = ids.filter(i => isTextTok(i) && isCut(i));
+  $('#selKeep').classList.toggle('hidden', !cutText.length);
+  if (cutText.length){ const on = cutText.every(i => tokens[i].ks); $('#selKeep').innerHTML = `${icon('💬')} ${on ? 'Untertitel weg' : 'Untertitel behalten'}`; }
   if (ids.length){ const allDel = ids.every(i => deleted.has(i) || (tokens[i].type === 'word' && isSrcDeleted((tokens[i].ws + tokens[i].we) / 2))); $('#selDel').textContent = allDel ? 'Wiederherstellen' : 'Löschen';
     $('#selInfo').textContent = ids.length === 1 ? (FINE ? 'Zweites Wort anklicken – oder mit gedrückter Maustaste ziehen' : 'Zweites Wort antippen – oder gedrückt halten und ziehen') : `${ids.filter(i => tokens[i].type === 'word').length} Wörter · ${FINE ? 'Markierung ziehen' : 'gedrückt halten und ziehen'} = verschieben`; }
 }
 function clearSel(){ selA = selB = null; showSel(); }
+// ── Untertitel weggeschnittener Wörter behalten: der Schnitt bleibt, nur der Text erscheint kurz am Schnitt ──
+function keepSubs(ids, on){
+  ids = ids.filter(i => isTextTok(i)); if (!ids.length) return;
+  for (const i of ids){ if (on) tokens[i].ks = true; else delete tokens[i].ks; }
+  if (on && S().mode === 'word'){   // 1 Wort pro Untertitel: das behaltene Wort bekommt einen eigenen Untertitel
+    for (const i of ids){
+      const k = P.cues.findIndex(c => !c.own && i >= c.a && i <= c.b); if (k < 0) continue; const c = P.cues[k];
+      const rest = cueWords({a: i + 1, b: c.b}); if (!rest.length || i === c.b) continue;
+      const c2 = {...c, id:newId(), a:i + 1, b:c.b}; c.b = i; c.text = null; P.cues.splice(k + 1, 0, c2);
+    }
+  }
+}
+$('#selKeep').onclick = () => {
+  const ids = selIds().filter(i => isTextTok(i) && isCut(i)); if (!ids.length) return;
+  const on = !ids.every(i => tokens[i].ks);
+  commit(() => keepSubs(ids, on), false); tokens.forEach(t => paint(t.i)); showSel();
+  toast(on ? 'Untertitel bleibt – erscheint kurz am Schnitt' : 'Untertitel wieder weg');
+};
+// ── Sprecher:innen zuordnen ──
+function askName(title, val){
+  return new Promise(res => {
+    const m = hcModal(`<h3>${esc(title)}</h3><input type="text" id="nmIn" style="width:100%;font-size:16px" placeholder="Name"><div class="row" style="margin-top:12px"><button class="btn" id="nmNo">Abbrechen</button><button class="btn primary" id="nmOk" style="margin-left:auto">OK</button></div>`);
+    const inp = m.querySelector('#nmIn'); inp.value = val || ''; setTimeout(() => { inp.focus(); inp.select(); }, 30);
+    const done = v => { closeHcModal(); res(v); };
+    m.querySelector('#nmNo').onclick = () => done(null); m.querySelector('#nmOk').onclick = () => done(inp.value.trim() || null);
+    inp.onkeydown = e => { if (e.key === 'Enter') done(inp.value.trim() || null); if (e.key === 'Escape') done(null); };
+  });
+}
+async function newSpeaker(){ const name = await askName('Neue Person', `Person ${P.speakers.length + 1}`); if (!name) return null; const sp = {id:newId(), name, st:{}}; P.speakers.push(sp); return sp; }
+function assignSpeaker(ids, sp){
+  commit(() => { for (const i of ids){ const t = tokens[i]; if (t.type === 'pause') continue; if (sp) t.spk = sp.id; else delete t.spk; } splitCuesBySpeaker(); }, false);
+  renderTranscript(); clearSel(); if (tab === 'subs') renderSubs();
+  toast(sp ? `${ids.filter(i => tokens[i].type === 'word').length} Wörter: ${sp.name}` : 'Zuordnung entfernt');
+}
+$('#selSpk').onclick = e => {
+  const ids = selIds(); if (!ids.length) return;
+  const b = e.currentTarget.getBoundingClientRect();
+  const list = P.speakers.map(sp => ({icon: `<b class="dot" style="background:${spkCol(sp)}"></b>`, label: esc(sp.name), fn: () => assignSpeaker(ids, sp)}));
+  list.push({icon: icon('＋'), label: 'Neue Person …', fn: async () => { const sp = await newSpeaker(); if (sp){ assignSpeaker(ids, sp); renderSpeakers(); } }});
+  if (P.speakers.length) list.push({icon: icon('✕'), label: 'Keine Person', fn: () => assignSpeaker(ids, null)});
+  if (window.showMenu) showMenu(b.left, b.top, list);
+};
+// Gestaltung je Person: nur abweichende Werte werden gespeichert, alles andere folgt der Grundeinstellung
+function renderSpeakers(){
+  const box = $('#spkList'); if (!box || !P) return; box.innerHTML = '';
+  $('#spkSame').classList.toggle('hidden', !P.speakers.some(sp => sp.st && Object.keys(sp.st).length));
+  if (!P.speakers.length){ box.innerHTML = '<p class="muted small">Noch keine Personen.</p>'; return; }
+  const fontOpts = () => '<option value="__">wie alle</option>' + FONTS.concat(userFonts).map(f => `<option value="${esc(f.key)}">${esc(f.label)}</option>`).join('');
+  for (const sp of P.speakers){
+    sp.st ||= {}; const st = sp.st, n = tokens.filter(t => t.spk === sp.id && t.type === 'word').length;
+    const row = document.createElement('div'); row.className = 'spk-row';
+    row.innerHTML = `<div class="spk-head"><b class="dot" style="background:${spkCol(sp)}"></b><input type="text" class="spk-name"><span class="muted small">${n} Wörter</span><button class="mini spk-del" title="Person entfernen">✕</button></div>
+      <div class="grid2">
+        <label>Farbe <span class="row"><select class="sp-colmode"><option value="">wie alle</option><option value="own">eigene</option></select><input type="color" class="sp-color"></span></label>
+        <label>Schrift <select class="sp-font">${fontOpts()}</select></label>
+        <label>Größe <select class="sp-size"><option value="">wie alle</option><option>klein</option><option>mittel</option><option>groß</option></select></label>
+        <label>Umrandung <select class="sp-outline"><option value="">wie alle</option><option value="1">an</option><option value="0">aus</option></select></label>
+        <label>Position <select class="sp-pos"><option value="">wie alle</option><option value="unten">unten</option><option value="mitte">mitte</option><option value="oben">oben</option>${st.y != null && !Object.values(POS_Y).includes(st.y) ? '<option value="frei">frei</option>' : ''}</select></label>
+      </div>`;
+    const q = c => row.querySelector(c);
+    q('.spk-name').value = sp.name; q('.sp-colmode').value = st.color ? 'own' : ''; q('.sp-color').value = (st.color || S().color || '#FFFFFF').toLowerCase(); q('.sp-color').disabled = !st.color;
+    q('.sp-font').value = st.font != null ? st.font : '__'; q('.sp-size').value = st.size || ''; q('.sp-outline').value = st.outline == null ? '' : st.outline ? '1' : '0';
+    q('.sp-pos').value = st.y == null ? '' : (Object.keys(POS_Y).find(k => POS_Y[k] === st.y) || 'frei');
+    const upd = fn => { commit(fn, false); styleOverlay(); renderSpeakers(); if (tab === 'text') renderTranscript(); };
+    q('.spk-name').onchange = e => upd(() => sp.name = e.target.value.trim() || sp.name);
+    q('.sp-colmode').onchange = e => upd(() => { if (e.target.value) st.color = (q('.sp-color').value || '#ffffff').toUpperCase(); else delete st.color; });
+    q('.sp-color').onchange = e => upd(() => st.color = e.target.value.toUpperCase());
+    q('.sp-font').onchange = e => upd(() => { if (e.target.value === '__') delete st.font; else st.font = e.target.value; });
+    q('.sp-size').onchange = e => upd(() => { if (e.target.value) st.size = e.target.value; else delete st.size; });
+    q('.sp-outline').onchange = e => upd(() => { if (e.target.value === '') delete st.outline; else st.outline = e.target.value === '1'; });
+    q('.sp-pos').onchange = e => upd(() => { const v = e.target.value; if (!v){ delete st.y; delete st.x; } else if (POS_Y[v] != null){ st.y = POS_Y[v]; st.x = 0.5; } });
+    q('.spk-del').onclick = () => { if (!confirm(`„${sp.name}“ entfernen? Die Wörter bleiben, nur die Zuordnung fällt weg.`)) return;
+      upd(() => { P.speakers = P.speakers.filter(x => x !== sp); tokens.forEach(t => { if (t.spk === sp.id) delete t.spk; }); P.cues.forEach(c => { if (c.spk === sp.id) delete c.spk; }); }); };
+    box.append(row);
+  }
+}
+$('#spkAdd').onclick = async () => { const sp = await newSpeaker(); if (sp){ changed(false); renderSpeakers(); toast('Jetzt im Text Wörter markieren und mit „👤 Person“ zuordnen'); } };
+$('#spkSame').onclick = () => { commit(() => P.speakers.forEach(sp => sp.st = {}), false); styleOverlay(); renderSpeakers(); toast('Alle Personen sehen wieder gleich aus'); };
+
 // ── Text eines Bereichs korrigieren ──
 // Der neue Text wird auf die Zeit der markierten Stellen verteilt: gleiche Wortzahl → Wort für Wort,
 // sonst nach Länge auf Wörter und nicht erkannte Stellen (🗣); fehlende Wörter lassen sich so ergänzen.
@@ -2053,7 +2163,34 @@ const isWord = i => tokens[i] && tokens[i].type === 'word';
 // Wort für die Untertitel: erkannte Wörter und Stellen (🗣/⏸), in die von Hand Text eingetragen wurde
 const isTextTok = i => tokens[i] && (tokens[i].type === 'word' || !!(P.edits && P.edits[i]));
 const wS = t => t.ws ?? t.s, wE = t => t.we ?? t.e;
-function cueWords(c){ const ids = []; for (let i = c.a; i <= c.b && i < tokens.length; i++) if (isTextTok(i) && tokText(tokens[i]) && !deleted.has(i) && !isSrcDeleted((wS(tokens[i]) + wE(tokens[i])) / 2)) ids.push(i); return ids; }
+// Weggeschnitten: im Text gelöscht oder in der Zeitleiste herausgeschnitten
+const isCut = i => deleted.has(i) || isSrcDeleted((wS(tokens[i]) + wE(tokens[i])) / 2);
+// Wörter eines Untertitels; weggeschnittene mit „Untertitel behalten“ (ks) bleiben im Untertitel
+function cueWords(c){ const ids = []; for (let i = c.a; i <= c.b && i < tokens.length; i++) if (isTextTok(i) && tokText(tokens[i]) && (!isCut(i) || tokens[i].ks)) ids.push(i); return ids; }
+// ── Sprecher:innen ──
+const SPK_COL = ['#E5402A', '#3E8A55', '#CFC6B0', '#6F9BE8', '#C58BE8', '#E8B43D', '#5EC4C4'];
+const spkOf = id => id ? (P.speakers || []).find(x => x.id === id) || null : null;
+const spkCol = sp => SPK_COL[Math.max(0, (P.speakers || []).indexOf(sp)) % SPK_COL.length];
+function cueSpk(c){
+  if (!c) return null; if (c.spk) return spkOf(c.spk); if (c.own) return null;
+  for (let i = c.a; i <= c.b && i < tokens.length; i++) if (isTextTok(i) && tokText(tokens[i])) return spkOf(tokens[i].spk);
+  return null;
+}
+// Stil eines Untertitels: Grundeinstellung, darüber die Abweichungen der Person
+function cueStyle(c){ const sp = cueSpk(c); return sp && sp.st ? {...S(), ...sp.st} : S(); }
+// Untertitel mit automatischem Text an Personenwechseln teilen
+function splitCuesBySpeaker(){
+  for (let k = 0; k < P.cues.length; k++){
+    const c = P.cues[k]; if (c.own || c.text != null || isFree(c)) continue;
+    let prev = null;
+    for (let i = c.a; i <= c.b && i < tokens.length; i++){
+      if (!isTextTok(i) || !tokText(tokens[i])) continue;
+      const sp = tokens[i].spk || '';
+      if (prev != null && sp !== prev){ const c2 = {...c, id:newId(), a:i, b:c.b}; delete c2.x; delete c2.y; c.b = i - 1; P.cues.splice(k + 1, 0, c2); break; }
+      prev = sp;
+    }
+  }
+}
 function autoText(c){ return cueWords(c).map(i => tokText(tokens[i])).join(' '); }
 function cueText(c){ return c.own ? (c.text || '') : c.text != null ? c.text : autoText(c); }
 // Untertitel erzeugen – ab Token startTok (beim Anhängen weiterer Videos), sonst alle neu
@@ -2070,7 +2207,7 @@ function genCues(startTok = 0){
       if (cur){
         const prev = tokens[cur.b], nl = len + 1 + tokText(w).length;
         const endS = /[.?!…]$/.test(tokText(prev)) && len > maxChars * 0.35, comma = /[,;:]$/.test(tokText(prev)) && len > maxChars * 0.7;
-        if (nl > maxChars || w.we - cur.t0 > maxDur || endS || comma || w.ws - lastEnd > 0.8 || w.src !== prev.src){ out.push(cur); cur = null; }
+        if (nl > maxChars || w.we - cur.t0 > maxDur || endS || comma || w.ws - lastEnd > 0.8 || w.src !== prev.src || (w.spk || '') !== (prev.spk || '')){ out.push(cur); cur = null; }
       }
       if (!cur){ cur = {id:newId(), a: out.length ? out[out.length-1].b + 1 : startTok, b:w.i, text:null, ds:0, de:0, off:false, t0:w.ws}; len = tokText(w).length; }
       else { cur.b = w.i; len += 1 + tokText(w).length; }
@@ -2132,7 +2269,7 @@ function outToSrcT(o){
   if (!g || g.kind !== 'main'){ for (let k = segAtOut(o); k < timeline.length; k++) if (timeline[k].kind === 'main') return timeline[k].in; return srcTotal; }
   return g.in + clamp(o - g.o, 0, segDur(g)) * (g.speed || 1);
 }
-const cueXY = c => c && c.x != null ? [c.x, c.y] : [S().x ?? 0.5, S().y ?? 0.88];
+const cueXY = c => { if (c && c.x != null) return [c.x, c.y]; const sp = cueSpk(c); if (sp && sp.st && sp.st.y != null) return [sp.st.x ?? 0.5, sp.st.y]; return [S().x ?? 0.5, S().y ?? 0.88]; };
 function computedCues(){
   const list = [];
   for (const c of P.cues){
@@ -2147,7 +2284,19 @@ function computedCues(){
         if (Math.abs((srcToOut(wS(w)) - srcToOut(wE(p))) - (wS(w) - wE(p))) > 0.3) flush(); } run.push(i); });
       flush(); continue;
     }
-    const t = cueTimes(c), text = cueText(c).trim(); if (!t || !text) continue; list.push({c, s:t.s, e:t.e, text}); }
+    const t = cueTimes(c), text = cueText(c).trim(); if (!t || !text) continue;
+    const kept = !c.own && c.text == null && !isFree(c) && cueWords(c).every(i => isCut(i));
+    list.push({c, s:t.s, e:t.e, text, kept}); }
+  list.sort((x, y) => x.s - y.s || (y.kept ? 1 : 0) - (x.kept ? 1 : 0));
+  // Untertitel weggeschnittener Wörter („behalten“): kurz am Schnitt einblenden, der folgende beginnt etwas später
+  let kEnd = -1;
+  for (let k = 0; k < list.length; k++){ const x = list[k]; if (!x.kept) continue;
+    if (x.s < kEnd) x.s = kEnd;
+    const n = list.slice(k + 1).find(y => !y.kept && y.e > x.s);
+    const D = n && n.s < x.s + 0.6 ? clamp((n.e - x.s) * 0.4, 0.12, 0.45) : 0.45;
+    x.e = x.s + D; kEnd = x.e;
+    if (n && n.s < x.e) n.s = x.e;
+  }
   list.sort((x, y) => x.s - y.s);
   // Frei gesetzte Untertitel behalten ihre Zeit; ein folgender automatischer beginnt erst danach
   for (let k = 0; k < list.length - 1; k++){ const x = list[k];
@@ -2169,7 +2318,8 @@ function updateSubs(o){
   if (!P || !P.cues.length || S().enabled === false){ ov.textContent = ''; shownCue = null; return; }
   const now = performance.now(); if (now - cueCache.at > 400) cueCache = {at:now, list:computedCues()};
   const cur = cueCache.list.find(x => o >= x.s && o < x.e);
-  if (!SubDrag.on){ ov.textContent = cur ? wrapText(cur.text) : ''; shownCue = cur ? cur.c : null; placeOverlay(); }
+  if (!SubDrag.on){ ov.textContent = cur ? wrapText(cur.text) : ''; const prevSp = cueSpk(shownCue); shownCue = cur ? cur.c : null;
+    if (cueSpk(shownCue) !== prevSp) styleOverlay(); else placeOverlay(); }
   const id = cur ? cur.c.id : null;
   if (id !== lastCue && tab === 'subs'){
     if (lastCue && cueEls.get(lastCue)) cueEls.get(lastCue).classList.remove('now');
@@ -2179,11 +2329,11 @@ function updateSubs(o){
 }
 // Schriftgröße wie im Export: Anteil an der kürzeren Bildseite
 const SIZE_F = {klein:0.045, mittel:0.058, groß:0.075};
-function subPx(w, h){ return (SIZE_F[S().size] || 0.058) * Math.min(w, h) * (h > w ? 1.25 : 1); }
+function subPx(w, h, st = S()){ return (SIZE_F[st.size] || 0.058) * Math.min(w, h) * (h > w ? 1.25 : 1); }
 function styleOverlay(){
   if (!P) return;
-  const ov = $('#subOv'), st = S(), stage = $('#stage');
-  const px = subPx(stage.clientWidth || 1, stage.clientHeight || 1), o = Math.max(1, px / 14);
+  const ov = $('#subOv'), st = shownCue ? cueStyle(shownCue) : S(), stage = $('#stage');
+  const px = subPx(stage.clientWidth || 1, stage.clientHeight || 1, st), o = Math.max(1, px / 14);
   ov.style.color = st.color; ov.style.fontSize = px.toFixed(1) + 'px'; ov.style.fontFamily = fontCss(st.font); ov.style.fontWeight = fontWeight(st.font);
   ov.style.textShadow = st.outline ? [[-1,-1],[1,-1],[-1,1],[1,1],[0,-1.4],[0,1.4],[-1.4,0],[1.4,0]].map(([x, y]) => `${(x*o).toFixed(1)}px ${(y*o).toFixed(1)}px 0 #000`).join(',') : `0 ${(px/20).toFixed(1)}px ${(px/10).toFixed(1)}px rgba(0,0,0,.8)`;
   placeOverlay();
@@ -2256,6 +2406,7 @@ function renderSubs(){
     const el = document.createElement('div'); el.className = 'cue'; el.dataset.id = c.id;
     el.innerHTML = `<div class="tm"><span class="t"></span><span class="w"></span></div><textarea rows="2"></textarea>
       <div class="acts"><button data-a="split">✂ teilen</button><button data-a="merge">⤓ zusammen</button><button data-a="off"></button>
+      <button data-a="keep" class="hidden"></button><select class="cue-spk hidden" title="Person dieses Untertitels"></select>
       <button data-a="auto" class="hidden">↺ auto</button><button data-a="pos" class="hidden">↺ Position</button><button data-a="time" class="hidden">↺ Zeit</button><button data-a="s-">Start −</button><button data-a="s+">Start +</button><button data-a="e-">Ende −</button><button data-a="e+">Ende +</button></div>`;
     if (idx === P.cues.length - 1) el.querySelector('[data-a=merge]').disabled = true;
     const ta = el.querySelector('textarea'); ta.value = cueText(c);
@@ -2264,7 +2415,7 @@ function renderSubs(){
     ta.addEventListener('blur', () => { if (ta._b && ta._b !== snapshot()){ undo.push(ta._b); redo = []; } ta._b = null; });
     frag.append(el); cueEls.set(c.id, el);
   });
-  box.append(frag); P.cues.forEach(c => paintCue(c)); updateCount();
+  box.append(frag); P.cues.forEach(c => paintCue(c)); updateCount(); renderSpeakers();
 }
 function paintCue(c, keepText){
   const el = cueEls.get(c.id); if (!el) return; const t = cueTimes(c), ta = el.querySelector('textarea');
@@ -2276,16 +2427,31 @@ function paintCue(c, keepText){
   el.querySelector('[data-a=auto]').classList.toggle('hidden', c.text == null || !!c.own);
   el.querySelector('[data-a=pos]').classList.toggle('hidden', c.x == null);
   el.querySelector('[data-a=time]').classList.toggle('hidden', !!c.own || (!isFree(c) && !c.ds && !c.de));
+  // weggeschnittene Wörter: Untertitel behalten
+  const cut = c.own ? [] : range(c.a, Math.min(c.b, tokens.length - 1)).filter(i => isTextTok(i) && tokText(tokens[i]) && isCut(i)), kb = el.querySelector('[data-a=keep]');
+  kb.classList.toggle('hidden', !cut.length); if (cut.length) kb.textContent = cut.every(i => tokens[i].ks) ? '💬 Untertitel wieder weg' : '💬 Untertitel behalten';
+  el.classList.toggle('kept', !!cut.length && cut.every(i => tokens[i].ks));
+  // Person
+  const ss = el.querySelector('.cue-spk'); ss.classList.toggle('hidden', !P.speakers.length);
+  if (P.speakers.length){ const auto = c.own ? null : (() => { const x = {...c}; delete x.spk; return cueSpk(x); })();
+    ss.innerHTML = `<option value="">${auto ? '👤 ' + esc(auto.name) + ' (Text)' : c.own ? '👤 keine Person' : '👤 ohne Person'}</option>` + P.speakers.map(sp => `<option value="${sp.id}">👤 ${esc(sp.name)}</option>`).join('');
+    ss.value = c.spk || ''; const sp = cueSpk(c); el.style.setProperty('--sc', sp ? spkCol(sp) : 'transparent'); }
 }
 function updateSubs2(){ P.cues.forEach(c => paintCue(c)); updateCount(); }
 function updateCount(){ $('#subCount').textContent = computedCues().length + ' Untertitel'; }
 function updateSubsList(){ if (tab === 'subs') updateSubs2(); }
+$('#cueList').addEventListener('change', e => {
+  const ss = e.target.closest('.cue-spk'); if (!ss) return; const c = P.cues.find(x => x.id === ss.closest('.cue').dataset.id); if (!c) return;
+  commit(() => { if (ss.value) c.spk = ss.value; else delete c.spk; }, false); paintCue(c); styleOverlay();
+});
 $('#cueList').addEventListener('click', e => {
   const el = e.target.closest('.cue'); if (!el) return;
   const idx = P.cues.findIndex(c => c.id === el.dataset.id), c = P.cues[idx];
   const btn = e.target.closest('[data-a]');
   if (!btn){ if (e.target.closest('.tm')){ const t = cueTimes(c); if (t) seekOut(t.s + 0.01, false); } return; }
   const a = btn.dataset.a, ta = el.querySelector('textarea');
+  if (a === 'keep'){ const cut = range(c.a, Math.min(c.b, tokens.length - 1)).filter(i => isTextTok(i) && tokText(tokens[i]) && isCut(i)); const on = !cut.every(i => tokens[i].ks);
+    commit(() => keepSubs(cut, on), false); renderSubs(); if (spans.length) tokens.forEach(t => paint(t.i)); toast(on ? 'Untertitel bleibt – erscheint kurz am Schnitt' : 'Untertitel wieder weg'); return; }
   if (c.own && a === 'split'){
     const text = ta.value, pos = ta.selectionStart ?? 0, left = text.slice(0, pos).trim(), right = text.slice(pos).trim();
     if (!left || !right) return toast('Erst den Cursor an die Teilungsstelle setzen');
@@ -2313,7 +2479,7 @@ $('#cueList').addEventListener('click', e => {
 });
 
 // ───────── Elemente (Clips, Zoom) ─────────
-const TYPE_LBL = {broll:'B-Roll', insert:'Einschub', pip:'Einblendung', zoom:'Zoom', fx:'Anpassung', title:'Titel'};
+const TYPE_LBL = {broll:'B-Roll', insert:'Einschub', pip:'Einblendung', zoom:'Zoom', fx:'Anpassung', title:'Titel', audio:'Ton'};
 let sheetItem = null, pinMode = false;
 function openSheet(passive){ $('#sheet').classList.remove('hidden'); $('#sheet').classList.toggle('passive', !!passive); $('#sheetBack').classList.toggle('hidden', !!passive); }
 function openItem(id){
@@ -2366,7 +2532,7 @@ function openItem(id){
     if (b.dataset.z){ commit(() => it.dur = clamp(+(it.dur + +b.dataset.z).toFixed(2), 0.2, 60), false); }
     else if (b.dataset.at){ commit(() => { const p0 = objStart(it); it.at = clamp(r3(it.at + +b.dataset.at), 0, srcTotal); groupShift(it, objStart(it) - p0); }, false); seekOut(srcToOut(snapSrc(it.at)), false); }
     else if (b.dataset.cin){ commit(() => it.in = clamp(r3(it.in + +b.dataset.cin), 0, it.out - 0.1), false); $('#cPrev').currentTime = it.in; }
-    else if (b.dataset.cout){ commit(() => it.out = clamp(r3(it.out + +b.dataset.cout), it.in + 0.1, it.clip.duration), false); $('#cPrev').currentTime = it.out; }
+    else if (b.dataset.cout){ commit(() => it.out = clamp(r3(it.out + +b.dataset.cout), it.in + 0.1, isImg(it.clip) ? 1e6 : it.clip.duration), false); if (!isImg(it.clip)) $('#cPrev').currentTime = it.out; }
     else if (b.id === 'cInHere'){ const t = $('#cPrev').currentTime; commit(() => it.in = clamp(t, 0, it.out - 0.1), false); }
     else if (b.id === 'cOutHere'){ const t = $('#cPrev').currentTime; commit(() => it.out = clamp(t, it.in + 0.1, it.clip.duration), false); }
     else if (b.id === 'itPlay'){ const o = srcToOut(snapSrc(it.at)), d = it.type === 'zoom' ? it.dur : it.out - it.in; seekOut(Math.max(0, o - 1), false); startPlay(); stopAt = o + d + 1; return; }
@@ -2386,10 +2552,11 @@ function paintItem(){
   if (it.type === 'zoom'){ $('#zStr').value = it.strength; $('#zStrV').textContent = it.strength.toFixed(2).replace('.', ',') + '×'; $('#zDur').textContent = it.dur.toFixed(1).replace('.', ',') + ' s'; $('#zAt').textContent = fmtS(srcToOut(snapSrc(it.at)));
     const pin = $('#pin'); pin.classList.remove('hidden'); pin.style.left = it.cx * 100 + '%'; pin.style.top = it.cy * 100 + '%'; }
   else { $('#cName').textContent = isImg(it.clip) ? `${it.clip.name} · Foto, Länge frei wählbar` : `${it.clip.name} · ${fmtS(it.clip.duration)}`; $('#cIn').textContent = fmtS(it.in); $('#cOut').textContent = fmtS(it.out); $('#cAt').textContent = fmtS(srcToOut(snapSrc(it.at)));
-    $$('.pipopt').forEach(x => x.classList.toggle('hidden', it.type === 'insert'));
+    $$('.pipopt').forEach(x => x.classList.toggle('hidden', it.type === 'insert' || it.type === 'audio'));
+    const cm = $('#cMode'); if (cm) cm.parentElement.classList.toggle('hidden', it.type === 'audio');
     $$('.volopt').forEach(x => x.classList.toggle('hidden', isImg(it.clip) || it.clip.hasAudio === false));
-    const vol = it.vol ?? (it.type === 'insert' ? 1 : 0); $('#cVol').value = Math.round(vol * 100); $('#cVolV').textContent = vol ? Math.round(vol * 100) + ' %' : 'stumm';
-    if (it.type !== 'insert'){ const v = elVals(it, curRel(it)), w = v ? v.w : coverVals(it).w; $('#cSize').value = Math.round(w * 100); $('#cSizeV').textContent = Math.round(w * 100) + ' %' + (it.kf && it.kf.length ? ` · ${it.kf.length} Keyframes` : ''); } $('#cInHere').classList.toggle('hidden', isImg(it.clip)); $('#cOutHere').classList.toggle('hidden', isImg(it.clip)); }
+    const vol = it.vol ?? (it.type === 'insert' || it.type === 'audio' ? 1 : 0); $('#cVol').value = Math.round(vol * 100); $('#cVolV').textContent = vol ? Math.round(vol * 100) + ' %' : 'stumm';
+    if (it.type !== 'insert' && it.type !== 'audio'){ const v = elVals(it, curRel(it)), w = v ? v.w : coverVals(it).w; $('#cSize').value = Math.round(w * 100); $('#cSizeV').textContent = Math.round(w * 100) + ' %' + (it.kf && it.kf.length ? ` · ${it.kf.length} Keyframes` : ''); } $('#cInHere').classList.toggle('hidden', isImg(it.clip)); $('#cOutHere').classList.toggle('hidden', isImg(it.clip)); }
   updateZoomPreview();
 }
 function updateZoomPreview(){ if (sheetItem && sheetItem.type === 'zoom' && !playing){ const z = sheetItem, s = z.kind === 'in' ? 1 : z.strength; V.style.transformOrigin = '50% 50%'; V.style.transform = `translate(${(-(z.cx - 0.5) * (s - 1) * 100).toFixed(3)}%, ${(-(z.cy - 0.5) * (s - 1) * 100).toFixed(3)}%) scale(${s})`; } }
@@ -2450,8 +2617,12 @@ function buildPlan(){
     ...(o.x.kf && o.x.kf.length ? {kf: o.x.kf.filter(k => k.t <= o.end - o.at + 0.01).map(k => ({t:k.t, x:k.x, y:k.y, w:k.w}))} : {}),
     ...(hasCrop(o.x) ? {crop: (c => ({l:r3(c.l), t:r3(c.t), r:r3(c.r), b:r3(c.b)}))(cropOf(o.x))} : {}),
     aspect:+elAspect(o.x).toFixed(5), track: elTrack(o.x), vol:+(o.x.vol || 0), hasAudio: o.x.clip.hasAudio !== false && !isImg(o.x.clip),
-    width:o.x.clip.width, height:o.x.clip.height, rotation:o.x.clip.rotation || 0}));
-  const cues = S().enabled !== false && P.cues.length ? computedCues().map(x => { const [cx, cy] = cueXY(x.c); return {start:r3(x.s), end:r3(x.e), text:wrapText(x.text), x:cx, y:cy}; }) : [];
+    width:o.x.clip.width, height:o.x.clip.height, rotation:o.x.clip.rotation || 0}))
+    .concat(audios.map(a => ({mode:'audio', image:false, uri:a.x.clip.uri, in:r3(a.x.in), out:r3(a.x.in + (a.end - a.at)), at:r3(a.at), track:a.x.track || 1, vol:+(a.x.vol ?? 1), hasAudio:true})));
+  const cues = S().enabled !== false && P.cues.length ? computedCues().map(x => { const [cx, cy] = cueXY(x.c), o = {start:r3(x.s), end:r3(x.e), text:wrapText(x.text), x:cx, y:cy};
+    const sp = cueSpk(x.c), st = sp && sp.st;   // Abweichungen der Person
+    if (st){ if (st.color) o.color = st.color; if (st.size) o.size = SIZE_F[st.size] || 0.058; if (st.font != null) o.font = st.font; if (st.outline != null) o.outline = !!st.outline; if (sp.name) o.speaker = sp.name; }
+    return o; }) : [];
   for (const t of P.items.filter(x => x.type === 'title' && (x.text || '').trim())){ const a = srcToOut(snapSrc(t.at)); if (a >= total) continue;
     cues.push({start:r3(a), end:r3(Math.min(total, a + t.dur)), text:t.text.trim(), x:t.x, y:t.y, size:+((SIZE_F[t.size] || 0.058) * (t.scale || 1)).toFixed(4), color:t.color || '#FFFFFF', outline:t.outline !== false, bg:!!t.bg, title:true, font:t.font || ''}); }
   const subs = cues.length ? {cues, style:S(), fonts: planFonts([S().font, ...cues.map(c => c.font)])} : null;

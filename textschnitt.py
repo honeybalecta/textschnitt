@@ -37,7 +37,7 @@ os.environ.setdefault("HF_HUB_DISABLE_IMPLICIT_TOKEN", "1")
 import warnings  # noqa: E402
 warnings.filterwarnings("ignore", module="huggingface_hub")
 
-VERSION = "2.9.0"
+VERSION = "2.10.0"
 APP_DIR = Path(__file__).resolve().parent
 FROZEN = bool(getattr(sys, "frozen", False))          # als installierte .exe gebaut
 RES_DIR = Path(getattr(sys, "_MEIPASS", APP_DIR))      # mitgelieferte Dateien (Oberfläche, ffmpeg, Modelle)
@@ -705,11 +705,14 @@ def write_ass(cues: list[dict], style: dict, out: Path, w: int, h: int, fonts: d
         if c.get("title"):
             tf, tb = fonts.get(c.get("font") or "") or ("", True)
             ov += f"\\fn{tf}\\b{1 if tb else 0}" if tf else "\\fnArial\\b1"
+        elif "font" in c:   # eigene Schrift einer Sprecherin / eines Sprechers
+            tf, tb = fonts.get(c.get("font") or "") or ("", False)
+            ov += f"\\fn{tf}\\b{1 if tb else 0}" if tf else "\\fnArial\\b1"
         if c.get("color"):
             cr, cg, cb = hex_rgb(c["color"])
             ov += f"\\1c&H{cb:02X}{cg:02X}{cr:02X}&"
-        if c.get("outline") is not None and c.get("title"):
-            ov += f"\\bord{max(1.0, csize / 14):.1f}" if c["outline"] else "\\bord0\\shad1"
+        if c.get("outline") is not None:
+            ov += f"\\bord{max(1.0, csize / 14):.1f}\\shad0" if c["outline"] else ("\\bord0\\shad1" if c.get("title") else f"\\bord0\\shad{max(1.0, csize / 20):.1f}")
         if c.get("bg"):
             ov += f"\\bord{max(2.0, csize / 8):.1f}\\3c&H000000&\\3a&H60&"   # dunkler Kasten statt Umrandung
         lines.append(f"Dialogue: 0,{ts(c['start'])},{ts(c['end'])},Default,,0,0,0,,{{{ov}}}{txt}")
@@ -903,6 +906,8 @@ def build_graph(plan: dict, with_video: bool, ass_name: str | None):
     if with_video:
         cur = "[base]"
         for k, o in enumerate(ovs):
+            if o.get("mode") == "audio":   # Tonspur: nur gemischt, kein Bild
+                continue
             at, inn, out = float(o["at"]), float(o["in"]), float(o["out"])
             d = max(0.05, out - inn)
             g = ovl_geom(o, W, H)
@@ -1205,11 +1210,18 @@ def write_concat(plan: dict, name: str, cues: list[dict], style: dict) -> Path:
             clips.append(c)
             cursor += d
     ovl_tracks: set[int] = set()
+    aud_tracks: set[int] = set()
     for o in plan.get("overlays") or []:
         img = bool(o.get("image"))
         m = med(o["uri"], img)
         d = float(o["out"]) - float(o["in"])
         trk = int(o.get("track") or 1)
+        if o.get("mode") == "audio":   # Tonspur
+            aud_tracks.add(trk)
+            clips.append({**base, "id": f"c{len(clips) + 1}", "trackId": f"A{trk}", "kind": "audio", "mediaId": m, "name": Path(o["uri"]).name,
+                          "start": round(float(o["at"]), 6), "duration": round(d, 6), "sourceStart": round(float(o["in"]), 6),
+                          "volume": round(float(o.get("vol", 1) if o.get("vol") is not None else 1), 3)})
+            continue
         c = {**base, "id": f"c{len(clips) + 1}", "trackId": f"V{trk}", "kind": "image" if img else "video", "mediaId": m,
              "name": Path(o["uri"]).name, "start": round(float(o["at"]), 6), "duration": round(d, 6),
              "sourceStart": round(0.0 if img else float(o["in"]), 6), "volume": round(float(o.get("vol") or 0), 3)}
@@ -1239,7 +1251,7 @@ def write_concat(plan: dict, name: str, cues: list[dict], style: dict) -> Path:
             c.pop("preservePitch", None)
     # Spuren: T1 Hauptspur, Videospuren V1…, T3 Untertitel (Reihenfolge der Liste = Stapel)
     tracks = [{"id": "T1", "muted": False, "visible": True}] + [{"id": f"V{k}", "muted": False, "visible": True} for k in sorted(ovl_tracks)] + \
-             [{"id": f"T{i}", "muted": False, "visible": True} for i in (3, 4)]
+             [{"id": f"T{i}", "muted": False, "visible": True} for i in (3, 4)] + [{"id": f"A{k}", "muted": False, "visible": True} for k in sorted(aud_tracks)]
     timeline = {"id": "TL1", "name": "Timeline 1", "tracks": tracks, "clips": clips, "video": video}
     doc = {"activeTimelineId": "TL1", "clips": clips, "concat": "0.1.0", "fonts": [], "media": media,
            "name": folder.name, "timelines": [timeline], "tracks": tracks, "version": 1, "video": video}
@@ -1294,7 +1306,7 @@ VISUAL = {"enable_adjust": True, "enable_color_correct_adjust": False, "enable_c
 def capcut_text(text: str, style: dict, cue: dict | None = None) -> tuple[dict, str]:
     cue = cue or {}
     r, g, b = hex_rgb(cue.get("color") or style.get("color", "#FFFFFF"))
-    outline = cue["outline"] if cue.get("title") and cue.get("outline") is not None else style.get("outline", True)
+    outline = cue["outline"] if cue.get("outline") is not None else style.get("outline", True)
     content = {"styles": [{
         "fill": {"alpha": 1.0, "content": {"render_type": "solid", "solid": {"alpha": 1.0, "color": [r / 255, g / 255, b / 255]}}},
         "range": [0, len(text.encode("utf-16-le")) // 2],
@@ -1404,12 +1416,16 @@ def write_capcut(plan: dict, root: Path, name: str, cues: list[dict], style: dic
         tracks.append({"attribute": 0, "flag": 0, "id": uuid.uuid4().hex, "is_default_name": True, "name": "",
                        "segments": audio_segs, "type": "audio"})
     by_track: dict[int, list] = {}
+    aud_by: dict[int, list] = {}
     for o in plan.get("overlays") or []:
         img = bool(o.get("image"))
         mid, kind, info = material(o["uri"], img, o.get("crop"))
         d = float(o["out"]) - float(o["in"])
         trk = int(o.get("track") or 1)
         vol = round(float(o.get("vol") or 0), 3)
+        if o.get("mode") == "audio":   # Tonspur (Musik, Geräusche)
+            aud_by.setdefault(trk, []).append(segment(mid, "audio", float(o["at"]), float(o["in"]), d, volume=vol))
+            continue
         if o.get("mode") == "pip" or o.get("w") is not None:
             x, y = pip_center(o, W, H)
             seg = segment(mid, "video", float(o["at"]), 0.0 if img else float(o["in"]), d, volume=vol,
@@ -1422,6 +1438,9 @@ def write_capcut(plan: dict, root: Path, name: str, cues: list[dict], style: dic
     for trk in sorted(by_track):
         tracks.append({"attribute": 0, "flag": 0, "id": uuid.uuid4().hex, "is_default_name": False, "name": f"Video {trk + 1}",
                        "segments": by_track[trk], "type": "video"})
+    for trk in sorted(aud_by):
+        tracks.append({"attribute": 0, "flag": 0, "id": uuid.uuid4().hex, "is_default_name": False, "name": f"Ton {trk}",
+                       "segments": aud_by[trk], "type": "audio"})
     if cues:
         tsegs = []
         for c in cues:
@@ -1600,7 +1619,7 @@ def pick_files(kind: str) -> list[str]:
     multi = kind in ("videos", "clips")
     if APP_HOOKS.get("pick"):
         return APP_HOOKS["pick"](kind) or []
-    types = ("Schriften|*.ttf *.otf" if kind == "font" else f"Video und Audio|{VIDEO_EXT} {AUDIO_EXT}" if kind not in ("clip", "clips") else f"Videos und Bilder|{VIDEO_EXT} {IMAGE_EXT}")
+    types = ("Schriften|*.ttf *.otf" if kind == "font" else f"Video und Audio|{VIDEO_EXT} {AUDIO_EXT}" if kind not in ("clip", "clips") else f"Videos, Bilder und Ton|{VIDEO_EXT} {IMAGE_EXT} {AUDIO_EXT}" if kind == "clips" else f"Videos und Bilder|{VIDEO_EXT} {IMAGE_EXT}")
     label, pattern = types.split("|")
     code = ("import tkinter as tk, json\nfrom tkinter import filedialog\nr=tk.Tk();r.withdraw()\nr.attributes('-topmost',True)\n"
             f"f=filedialog.{'askopenfilenames' if multi else 'askopenfilename'}(title='Datei wählen',filetypes=[({label!r},{pattern!r}),('Alle','*.*')])\n"

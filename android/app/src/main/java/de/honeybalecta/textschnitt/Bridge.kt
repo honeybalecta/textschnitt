@@ -29,7 +29,8 @@ class Bridge(private val act: MainActivity) {
     fun pick(id: String, kind: String) {
         pickId = id; pickKind = kind
         val mimes = when (kind) {
-            "clip", "clips" -> arrayOf("video/*", "image/*")
+            "clip" -> arrayOf("video/*", "image/*")
+            "clips" -> arrayOf("video/*", "image/*", "audio/*")
             "font" -> arrayOf("font/*", "application/x-font-ttf", "application/x-font-otf", "application/font-sfnt", "application/vnd.ms-opentype", "application/octet-stream")
             else -> arrayOf("video/*")
         }

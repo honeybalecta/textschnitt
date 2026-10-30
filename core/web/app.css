@@ -578,3 +578,32 @@ input[type=checkbox],input[type=radio]{accent-color:var(--rot)}
 .pkg-card{margin-top:12px}
 .btn.ghost{background:transparent;border-color:transparent;color:var(--sand)}
 .bin-grid{grid-auto-rows:max-content}
+
+/* Tonspuren unter der Hauptspur (Anzahl in --nau) */
+:root{--ah:30px}
+.g-aud{height:calc(var(--ah) + 6px)}
+.t-aud{height:var(--ah)}
+.t-fx{top:calc(var(--rh) + var(--mh) + 12px + var(--nov) * (var(--oh) + 6px) + var(--nau, 1) * (var(--ah) + 6px))}
+.t-title{top:calc(var(--rh) + var(--mh) + var(--fh) + 18px + var(--nov) * (var(--oh) + 6px) + var(--nau, 1) * (var(--ah) + 6px))}
+.t-txt{top:calc(var(--rh) + var(--mh) + var(--fh) + var(--th) + 24px + var(--nov) * (var(--oh) + 6px) + var(--nau, 1) * (var(--ah) + 6px))}
+.tl-inner{height:calc(var(--rh) + var(--mh) + var(--fh) + var(--th) * 2 + 30px + var(--nov) * (var(--oh) + 6px) + var(--nau, 1) * (var(--ah) + 6px)) !important}
+.blk.aud{background:linear-gradient(180deg,#2f4a3a,#24382c);border-color:#3E8A55}
+.blk.aud .txt{color:var(--creme)}
+.track.t-aud.drop{background:rgba(62,138,85,.18)}
+.g-aud.empty span,.t-aud.empty .track-ph{opacity:.45}
+.bin-item.audio img{display:none}
+.bin-item .aud-ph{display:flex;align-items:center;justify-content:center;aspect-ratio:16/10;font-size:28px;color:#3E8A55;background:#0B0B0A}
+/* Sprecher:innen */
+.spk-lbl{display:inline-block;font:600 11px/1 var(--ui);letter-spacing:.02em;text-transform:uppercase;color:var(--anthrazit,#131312);background:var(--sc,#CFC6B0);border-radius:4px;padding:3px 6px;margin:0 2px 0 0;vertical-align:2px;user-select:none}
+.spk-lbl.none{background:transparent;color:var(--grau,#A9A397);border:1px dashed var(--line)}
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%;flex:none}
+.ctx .dot{margin:0 4px}
+.spk-row{border:1px solid var(--line);border-radius:10px;padding:10px;margin:0 0 8px}
+.spk-head{display:flex;align-items:center;gap:8px;margin-bottom:8px}.spk-head .spk-name{flex:1;min-width:0;font-weight:600}
+.spk-row .grid2 .row{gap:6px;align-items:center}.spk-row input[type=color]:disabled{opacity:.35}
+.cue{box-shadow:inset 3px 0 0 var(--sc,transparent)}
+.cue-spk{font-size:12px;padding:3px 6px}
+.cue.kept{opacity:1}.cue.kept .t::after{content:' · Untertitel behalten';color:var(--sand)}
+/* weggeschnitten, Untertitel bleibt */
+.tk.del.ks{text-decoration-style:dotted;background:rgba(207,198,176,.12);border-radius:3px}
+.tk.del.ks{border-bottom:2px solid var(--sand);opacity:.9}

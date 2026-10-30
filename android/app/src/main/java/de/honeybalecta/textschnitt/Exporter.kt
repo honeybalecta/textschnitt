@@ -128,7 +128,25 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
         // Videospuren über der Hauptspur: je Spur eine Sequenz (oberste Spur zuerst, die Hauptspur zuletzt)
         val ovs = plan.optJSONArray("overlays") ?: JSONArray()
         val total = plan.getDouble("total")
-        val byTrack = (0 until ovs.length()).map { ovs.getJSONObject(it) }.groupBy { it.optInt("track", 1) }
+        val allOv = (0 until ovs.length()).map { ovs.getJSONObject(it) }
+        val byTrack = allOv.filter { it.optString("mode") != "audio" }.groupBy { it.optInt("track", 1) }
+        // Tonspuren (Musik, Geräusche): je Spur eine reine Ton-Sequenz hinter der Hauptspur
+        val audSeqs = ArrayList<EditedMediaItemSequence>()
+        for ((_, l0) in allOv.filter { it.optString("mode") == "audio" }.groupBy { it.optInt("track", 1) }) {
+            val seq = EditedMediaItemSequence.Builder(setOf(C.TRACK_TYPE_AUDIO)); var cursor = 0.0; var n = 0
+            for (o in l0.sortedBy { it.getDouble("at") }) {
+                val at = maxOf(o.getDouble("at"), cursor); val inS = o.getDouble("in"); val dur = minOf(o.getDouble("out") - inS, total - at)
+                if (dur <= 0.05) continue
+                if (at - cursor > 0.01) seq.addGap(us(at - cursor))
+                val vol = o.optDouble("vol", 1.0).toFloat(); val ap = ArrayList<AudioProcessor>()
+                if (Math.abs(vol - 1f) > 0.001) ap.add(ChannelMixingAudioProcessor().apply { for (ch in 1..6) putChannelMixingMatrix(ChannelMixingMatrix.createForConstantGain(ch, ch).scaleBy(vol.coerceIn(0f, 4f))) })
+                seq.addItem(EditedMediaItem.Builder(clip(o.getString("uri"), inS, inS + dur)).setRemoveVideo(true).setEffects(Effects(ap, listOf())).build())
+                cursor = at + dur; n++
+            }
+            if (n == 0) continue
+            if (total - cursor > 0.01) seq.addGap(us(total - cursor))
+            audSeqs.add(seq.build())
+        }
         val seqs = ArrayList<EditedMediaItemSequence>()
         val trackSpans = ArrayList<List<OvSpan>>()
         for (trk in byTrack.keys.sortedDescending()) {
@@ -169,8 +187,8 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
             if (total - cursor > 0.01) seq.addGap(us(total - cursor))
             seqs.add(seq.build()); trackSpans.add(spans)
         }
-        val composition = if (seqs.isEmpty()) Composition.Builder(mainSeq)
-            else Composition.Builder(seqs + mainSeq).setVideoCompositorSettings(OvSettings(w, h, trackSpans))
+        val composition = if (seqs.isEmpty()) Composition.Builder(listOf(mainSeq) + audSeqs)
+            else Composition.Builder(seqs + mainSeq + audSeqs).setVideoCompositorSettings(OvSettings(w, h, trackSpans))
 
         // Untertitel
         val subs = plan.optJSONObject("subs")
@@ -354,9 +372,9 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
                 if (it.isNull("y")) defY else it.optDouble("y", defY.toDouble()).toFloat(),
                 if (it.isNull("size")) baseSize else (it.getDouble("size") * minOf(w, h) * (if (h > w) 1.25 else 1.0)).toFloat(),
                 if (it.isNull("color")) baseColor else runCatching { Color.parseColor(it.getString("color")) }.getOrDefault(baseColor),
-                if (isTitle && it.has("outline")) it.optBoolean("outline", true) else baseOutline,
+                if (it.has("outline") && !it.isNull("outline")) it.optBoolean("outline", true) else baseOutline,
                 it.optBoolean("bg"),
-                if (isTitle) faceOf(it.optString("font", "")) else baseFace)
+                if (isTitle || it.has("font")) faceOf(it.optString("font", "")) else baseFace)
         }
         // Ein einziges Bild, das bei jedem Wechsel neu bemalt wird (spart bei 4K viel Speicher)
         private val bmp: Bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)

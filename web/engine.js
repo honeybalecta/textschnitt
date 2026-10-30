@@ -430,7 +430,7 @@ class Renderer {
     this.ctx = ctx; this.W = W; this.H = H; this.fps = fps; this.fileOf = fileOf;
     this.sinks = new Map();
     this.base = document.createElement('canvas'); this.base.width = W; this.base.height = H; this.bctx = this.base.getContext('2d', {alpha:false});
-    this.ovs = (plan.overlays || []).map(o => ({...o, at:+o.at, d: Math.max(0.05, o.out - o.in)})).sort((a, b) => (a.track || 1) - (b.track || 1) || a.at - b.at);
+    this.ovs = (plan.overlays || []).filter(o => o.mode !== 'audio').map(o => ({...o, at:+o.at, d: Math.max(0.05, o.out - o.in)})).sort((a, b) => (a.track || 1) - (b.track || 1) || a.at - b.at);
     this.ovState = new Map();
     const subs = plan.subs || {}, style = subs.style || {};
     this.style = style;
@@ -530,7 +530,7 @@ class Renderer {
     const {ctx, W, H} = this, st = this.style, port = H > W ? 1.25 : 1;
     for (const c of act){
       const size = (c.size ? c.size : (SIZE_F[st.size] || 0.058)) * Math.min(W, H) * port;
-      ctx.font = this.fontOf(c.title ? c.font : st.font, c.title ? 800 : 700).replace('%s', size.toFixed(1));
+      ctx.font = this.fontOf(c.title || c.font != null ? c.font : st.font, c.title ? 800 : 700).replace('%s', size.toFixed(1));
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       const rows = wrapRows(ctx, String(c.text), W * (c.title ? 0.92 : 0.88));
       const lh = size * 1.12, bw = Math.max(...rows.map(r => ctx.measureText(r).width)), bh = rows.length * lh, m = 0.02;
@@ -539,7 +539,7 @@ class Renderer {
         cx = bw > W * (1 - 2 * m) ? W / 2 : clamp(cx, bw / 2 + m * W, W - bw / 2 - m * W);
         cy = clamp(cy, bh / 2 + m * H, H - bh / 2 - m * H);
       }
-      const outline = c.title ? c.outline !== false : st.outline !== false, color = (c.title ? c.color : st.color) || '#FFFFFF';
+      const outline = c.outline != null ? c.outline !== false : c.title ? true : st.outline !== false, color = c.color || (c.title ? '' : st.color) || '#FFFFFF';
       if (c.bg){
         const px = size * 0.3, py = size * 0.1, r = size * 0.15;
         ctx.fillStyle = 'rgba(0,0,0,.55)'; roundRect(ctx, cx - bw / 2 - px, cy - bh / 2 - py, bw + 2 * px, bh + 2 * py, r); ctx.fill();
