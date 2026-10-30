@@ -64,6 +64,21 @@ function layoutSources(){ let o = 0; P.sources.forEach((s, k) => { s.off = r3(o)
 function srcAt(t){ for (let k = P.sources.length - 1; k > 0; k--) if (t >= P.sources[k].off - 1e-6) return k; return 0; }
 const srcEnd = si => P.sources[si].off + P.sources[si].duration;
 const hasVid = s => s.kind !== 'audio' && s.hasVideo !== false;
+// Ausgabeformat (Clips): 9:16, 4:5 … – sonst das Format des Videos
+const FORMATS = {'9:16':[9,16], '4:5':[4,5], '1:1':[1,1], '16:9':[16,9], '4:3':[4,3]};
+function baseDims(){
+  const [w, h] = dispSize(primary()), f = P && P.format && FORMATS[P.format]; if (!f) return [w, h];
+  const r = f[0] / f[1], m = Math.min(w, h); return r < 1 ? [m, Math.round(m / r)] : [Math.round(m * r), m];
+}
+// Bildausschnitt des ganzen Clips (P.frame), darüber Lage/Größe des einzelnen Abschnitts
+function frameFx(f){ const F = P && P.frame; if (!F) return f; const s1 = f.sc || 1;
+  return {...f, sc: (F.sc || 1) * s1, tx: s1 * (F.tx || 0) + (f.tx || 0), ty: s1 * (F.ty || 0) + (f.ty || 0)}; }
+// Anteil des Bildes, den das eingepasste Video einnimmt, und der Zoom, bei dem es das Bild ganz füllt
+function fitFrac(){ const [sw, sh] = dispSize(primary()), [W, H] = baseDims(), as = sw / sh, ao = W / H;
+  return as > ao ? [1, ao / as] : [as / ao, 1]; }
+const coverSc = () => { const [wf, hf] = fitFrac(); return Math.max(1 / wf, 1 / hf); };
+function clampFrame(F){ const [wf, hf] = fitFrac(), mx = Math.max(0, (F.sc * wf - 1) / 2), my = Math.max(0, (F.sc * hf - 1) / 2);
+  F.tx = r3(clamp(F.tx, -mx, mx)); F.ty = r3(clamp(F.ty, -my, my)); F.sc = r3(F.sc); return F; }
 function primary(){ return P.sources.find(hasVid) || {width:1920, height:1080, fps:30, rotation:0}; }
 function dispSize(m){ const r = Math.abs(m.rotation || 0) % 180 === 90; const w = m.width || 1920, h = m.height || 1080; return r ? [h, w] : [w, h]; }
 // Lautstärke-Hüllkurve (100 Werte/s, als Base64 gespeichert) für präzise Schnitte
@@ -376,12 +391,14 @@ function openProjectNow(id, keep){
   layoutSources(); vSi = -1; vPending = null;
   $('#home').classList.add('hidden'); $('#proj').classList.remove('hidden');
   $('#projName').textContent = P.name; $('#exName').value = P.name + '_geschnitten';
-  const [ow, oh] = dispSize(primary()); $('#exRes').options[0].textContent = `Original (${ow}×${oh})`;
+  const [ow, oh] = baseDims(); $('#exRes').options[0].textContent = `Original (${ow}×${oh})`;
   fitStage(); setTimeout(fitStage, 60);
   fillModels(); syncStyleInputs(); renderExportForm();
   if (tokens.length){ renderTranscript(); if (!P.cues.length) genCues(); }
   recompute();
-  setTab(keepTab || (tokens.length ? 'text' : 'trans'));
+  $('.clip-tab').classList.toggle('hidden', !P.clipOf && !P.format);
+  if (P.regen && tokens.length){ genCues(); delete P.regen; saveNow(); }
+  setTab(keepTab || (P.clipOf ? 'clip' : tokens.length ? 'text' : 'trans'));
   seekOut(keepPos, false);
   busStart(); backfillEnv();
 }
@@ -413,7 +430,7 @@ const fillsWrap = () => isWide() || matchMedia('(orientation: landscape) and (ma
 // Bühne: ein 16:9-Feld. Hochformat-Videos lassen links und rechts Platz – dort sitzt zusätzliche Steuerung.
 function fitStage(){
   if (!P) return;
-  const [w, h] = dispSize(primary()), wrap = $('.stage-wrap'), st = $('#stage');
+  const [w, h] = baseDims(), wrap = $('.stage-wrap'), st = $('#stage');
   const full = $('#proj').classList.contains('full');
   const fill = fillsWrap(), availW = full ? innerWidth : wrap.clientWidth || innerWidth;
   let boxH;
@@ -1234,7 +1251,7 @@ function placeBox(W, H){
   let r = null;
   if (curPip){ const it = curPip, v = PipDrag.on && PipDrag.it === it ? PipDrag : elVals(it, outPos - pipTarget.at);
     r = elRect(it, v, W, H); if (!r){ const c = coverVals(it); r = {cx: W / 2, cy: H / 2, w: c.w * W, h: c.w * W / elAspect(it)}; } }
-  else if (mainBoxOn()){ const f = PipDrag.on && PipDrag.main ? PipDrag : mainFx(); r = {cx: (0.5 + f.tx) * W, cy: (0.5 + f.ty) * H, w: f.sc * W, h: f.sc * H}; }
+  else if (mainBoxOn()){ const f = frameFx(PipDrag.on && PipDrag.main ? {tx: PipDrag.tx, ty: PipDrag.ty, sc: PipDrag.sc} : mainFx()); r = {cx: (0.5 + f.tx) * W, cy: (0.5 + f.ty) * H, w: f.sc * W, h: f.sc * H}; }
   if (Crop.it) r = null;
   box.classList.toggle('hidden', !r); box.classList.toggle('main', !curPip && !!r);
   box.classList.toggle('sel', !!r && (curPip ? selOvlId() === curPip.id : true)); box.classList.toggle('playing', !!playing);
@@ -1438,7 +1455,7 @@ function updateZoom(){
 // Zoom (innen) und Lage/Größe des Clips (außen), Ursprung in der Mitte
 function applyMainTransform(){
   const g = timeline[curSeg]; if (!g || g.kind !== 'main'){ V.style.transform = ''; return; }
-  const z = zoomAt(vT()), f = PipDrag.on && PipDrag.main ? PipDrag : (g.fx || FX_DEF);
+  const z = zoomAt(vT()), f = frameFx(PipDrag.on && PipDrag.main ? {tx: PipDrag.tx, ty: PipDrag.ty, sc: PipDrag.sc} : (g.fx || FX_DEF));
   const tx = f.tx || 0, ty = f.ty || 0, sc = f.sc || 1, parts = [];
   if (tx || ty) parts.push(`translate(${(tx * 100).toFixed(3)}%, ${(ty * 100).toFixed(3)}%)`);
   if (Math.abs(sc - 1) > 1e-3) parts.push(`scale(${sc.toFixed(4)})`);
@@ -2334,6 +2351,7 @@ function styleOverlay(){
   if (!P) return;
   const ov = $('#subOv'), st = shownCue ? cueStyle(shownCue) : S(), stage = $('#stage');
   const px = subPx(stage.clientWidth || 1, stage.clientHeight || 1, st), o = Math.max(1, px / 14);
+  ov.style.background = st.bg ? 'rgba(0,0,0,.6)' : ''; ov.style.borderRadius = st.bg ? (px * 0.18).toFixed(1) + 'px' : ''; ov.style.padding = st.bg ? `${(px * 0.1).toFixed(1)}px ${(px * 0.3).toFixed(1)}px` : '';
   ov.style.color = st.color; ov.style.fontSize = px.toFixed(1) + 'px'; ov.style.fontFamily = fontCss(st.font); ov.style.fontWeight = fontWeight(st.font);
   ov.style.textShadow = st.outline ? [[-1,-1],[1,-1],[-1,1],[1,1],[0,-1.4],[0,1.4],[-1.4,0],[1.4,0]].map(([x, y]) => `${(x*o).toFixed(1)}px ${(y*o).toFixed(1)}px 0 #000`).join(',') : `0 ${(px/20).toFixed(1)}px ${(px/10).toFixed(1)}px rgba(0,0,0,.8)`;
   placeOverlay();
@@ -2596,9 +2614,20 @@ function paintExportForm(){
 $('#exFmt').addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; exFmt = b.dataset.v; paintExportForm(); });
 $('#exSubs').onchange = e => { P.settings.burn = e.target.checked; changed(false); };
 function outSize(){
-  let [w, h] = dispSize(primary()); const lim = +$('#exRes').value;
+  let [w, h] = baseDims(); const lim = +$('#exRes').value;
   if (lim && Math.min(w, h) > lim){ const f = lim / Math.min(w, h); w *= f; h *= f; }
   return [Math.round(w / 2) * 2, Math.round(h / 2) * 2];
+}
+// Titel für den Export umbrechen wie in der Vorschau (höchstens 90 % der Bildbreite)
+let wrapCtx = null;
+function wrapTitle(text, size, font, W, H){
+  const px = size * Math.min(W, H) * (H > W ? 1.25 : 1); wrapCtx ||= document.createElement('canvas').getContext('2d');
+  wrapCtx.font = `${fontWeight(font, 800)} ${px.toFixed(1)}px ${fontCss(font).replace('var(--ui)', getComputedStyle(document.body).fontFamily || 'sans-serif')}`;
+  const max = W * 0.9 - px * 0.6, out = [];
+  for (const line of text.split('\n')){ let cur = '';
+    for (const w of line.split(/\s+/).filter(Boolean)){ const t = cur ? cur + ' ' + w : w; if (cur && wrapCtx.measureText(t).width > max){ out.push(cur); cur = w; } else cur = t; }
+    out.push(cur); }
+  return out.join('\n');
 }
 function buildPlan(){
   const [W, H] = outSize();
@@ -2610,7 +2639,7 @@ function buildPlan(){
     const fx = g.fx || FX_DEF;
     return {kind:'main', src:g.si, uri:s.uri, in:r3(g.in - off), out:r3(g.out - off), zooms:zs, hasAudio: s.hasAudio !== false, hasVideo: hasVid(s),
       speed:+(fx.speed || 1), vol:+(fx.vol ?? 1), bright:+(fx.bright || 0), contrast:+(fx.contrast || 0), sat:+(fx.sat || 0), gray:!!fx.gray,
-      tx:+(fx.tx || 0), ty:+(fx.ty || 0), sc:+(fx.sc || 1)};
+      ...(f2 => ({tx:r3(f2.tx || 0), ty:r3(f2.ty || 0), sc:+(f2.sc || 1).toFixed(4)}))(frameFx({tx:+(fx.tx || 0), ty:+(fx.ty || 0), sc:+(fx.sc || 1)}))};
   });
   const ovs = overlays.map(o => ({mode:o.x.type, image: isImg(o.x.clip), uri:o.x.clip.uri, in:o.x.in, out:r3(o.x.in + (o.end - o.at)), at:r3(o.at), corner:o.x.corner || 'or', size:o.x.size || 0.33,
     ...(o.x.w != null || (o.x.kf && o.x.kf.length) || hasCrop(o.x) ? (() => { const v = elVals(o.x, 0) || coverVals(o.x); return {x:r3(v.x), y:r3(v.y), w:r3(v.w)}; })() : {}),
@@ -2620,13 +2649,14 @@ function buildPlan(){
     width:o.x.clip.width, height:o.x.clip.height, rotation:o.x.clip.rotation || 0}))
     .concat(audios.map(a => ({mode:'audio', image:false, uri:a.x.clip.uri, in:r3(a.x.in), out:r3(a.x.in + (a.end - a.at)), at:r3(a.at), track:a.x.track || 1, vol:+(a.x.vol ?? 1), hasAudio:true})));
   const cues = S().enabled !== false && P.cues.length ? computedCues().map(x => { const [cx, cy] = cueXY(x.c), o = {start:r3(x.s), end:r3(x.e), text:wrapText(x.text), x:cx, y:cy};
+    if (S().bg) o.bg = true;   // Untertitel mit Kasten (Clip-Look)
     const sp = cueSpk(x.c), st = sp && sp.st;   // Abweichungen der Person
     if (st){ if (st.color) o.color = st.color; if (st.size) o.size = SIZE_F[st.size] || 0.058; if (st.font != null) o.font = st.font; if (st.outline != null) o.outline = !!st.outline; if (sp.name) o.speaker = sp.name; }
     return o; }) : [];
   for (const t of P.items.filter(x => x.type === 'title' && (x.text || '').trim())){ const a = srcToOut(snapSrc(t.at)); if (a >= total) continue;
-    cues.push({start:r3(a), end:r3(Math.min(total, a + t.dur)), text:t.text.trim(), x:t.x, y:t.y, size:+((SIZE_F[t.size] || 0.058) * (t.scale || 1)).toFixed(4), color:t.color || '#FFFFFF', outline:t.outline !== false, bg:!!t.bg, title:true, font:t.font || ''}); }
+    cues.push({start:r3(a), end:r3(Math.min(total, a + t.dur)), text:wrapTitle(t.text.trim(), (SIZE_F[t.size] || 0.058) * (t.scale || 1), t.font, W, H), x:t.x, y:t.y, size:+((SIZE_F[t.size] || 0.058) * (t.scale || 1)).toFixed(4), color:t.color || '#FFFFFF', outline:t.outline !== false, bg:!!t.bg, title:true, font:t.font || ''}); }
   const subs = cues.length ? {cues, style:S(), fonts: planFonts([S().font, ...cues.map(c => c.font)])} : null;
-  const media = P.sources.map(s => ({uri:s.uri, name:s.name, duration:s.duration, width:s.width, height:s.height, fps:s.fps, hasAudio:s.hasAudio !== false, hasVideo:hasVid(s), kind:s.kind || 'video'}));
+  const media = P.sources.map(s => ({uri:s.uri, name:s.name, duration:s.duration, width:dispSize(s)[0], height:dispSize(s)[1], fps:s.fps, hasAudio:s.hasAudio !== false, hasVideo:hasVid(s), kind:s.kind || 'video'}));
   return {format:exFmt, name: ($('#exName').value || P.name).replace(/[\\/:*?"<>|]/g, '_'), width:W, height:H, fps:primary().fps || 30, total:r3(total),
     segments:segs, overlays:ovs, subs, burn: P.settings.burn !== false, quality: $('#exQuality').value, audioFormat: $('#exAudioFmt').value,
     capcutInstall: $('#exCapcutInstall').checked, sources:media, project:P.id};
@@ -2665,12 +2695,13 @@ function setTab(t){
   $('#paneTrans').classList.toggle('hidden', t !== 'trans');
   $('#paneText').classList.toggle('hidden', t !== 'text'); $('#paneSubs').classList.toggle('hidden', t !== 'subs');
   $('#paneStudio').classList.toggle('hidden', t !== 'studio'); $('#paneExport').classList.toggle('hidden', t !== 'export');
+  $('#paneClip').classList.toggle('hidden', t !== 'clip'); if (t === 'clip' && window.renderClip) renderClip();
   $$('#tabs button[data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === t || (t === 'trans' && b.dataset.tab === 'text')));
   if (t === 'trans') renderSources();
   if (t === 'subs') renderSubs(); if (studioOn() && window.renderStudio) renderStudio(); if (t === 'export') renderExport();
   setTimeout(fitStage, 0);
 }
-const TAB_LBL = {text:'Text', trans:'Text', subs:'Untertitel', studio:'Studio', export:'Export'};
+const TAB_LBL = {text:'Text', trans:'Text', subs:'Untertitel', studio:'Studio', export:'Export', clip:'Clip'};
 $('#detachBtn').onclick = () => {
   if (!P) return; saveNow(); const view = tab === 'trans' ? 'text' : tab;
   let url = ''; try { url = TS.openWindow ? TS.openWindow(P.id, view) : ''; } catch(e){ return toast('Fenster konnte nicht geöffnet werden'); }
@@ -2679,7 +2710,7 @@ $('#detachBtn').onclick = () => {
 };
 $('#tabs').addEventListener('click', e => { const b = e.target.closest('button'); if (!b || !P) return;
   const t = b.dataset.tab;
-  if (!tokens.length && t !== 'studio' && t !== 'export' && !(t === 'subs' && P.cues.length)){
+  if (!tokens.length && t !== 'studio' && t !== 'export' && t !== 'clip' && !(t === 'subs' && P.cues.length)){
     setTab('trans');
     if (t === 'subs'){ if (studioCut()){ $('#subsOnly').checked = true; renderSources(); toast('Untertitel brauchen ein Transkript – „Nur für Untertitel“ lässt deinen Schnitt unverändert'); } else toast('Für Untertitel zuerst transkribieren'); }
     return; }

@@ -84,6 +84,7 @@
     <button data-tab="text" class="on">Text</button>
     <button data-tab="subs">Untertitel</button>
     <button data-tab="studio">Studio</button>
+    <button data-tab="clip" class="hidden clip-tab">Clip</button>
     <button data-tab="export">Export</button>
     <button class="detach" id="detachBtn" title="Diesen Bereich in einem eigenen Fenster öffnen (z. B. auf dem zweiten Bildschirm)">⧉</button>
   </nav>
@@ -162,6 +163,48 @@
         <div class="row"><button class="btn" id="spkAdd">＋ Person</button><button class="btn" id="spkSame" title="Alle Abweichungen entfernen – alle Personen sehen wieder gleich aus">Alle angleichen</button></div>
       </div>
       <div id="cueList"></div>
+    </div>
+
+    <!-- Clip-Studio: Kurzvideo aus einem Ausschnitt (eigenes Projekt, eigenes Format) -->
+    <div class="pane hidden clip-pane" id="paneClip">
+      <div class="card stack">
+        <div class="clip-head"><h3>Clip-Studio</h3><button class="btn small" id="clipParent" title="Zurück zum Projekt, aus dem der Clip stammt">↩ Hauptprojekt</button></div>
+        <span class="muted small" id="clipInfo"></span>
+      </div>
+      <div class="card stack">
+        <h4>Format</h4>
+        <div class="seg-ctl" id="clipFmt"><button data-v="9:16">9:16</button><button data-v="4:5">4:5</button><button data-v="1:1">1:1</button><button data-v="16:9">16:9</button><button data-v="">Original</button></div>
+      </div>
+      <div class="card stack">
+        <h4>Bildausschnitt</h4>
+        <span class="muted small">Im Bild ziehen verschiebt den Ausschnitt, Mausrad oder Regler zoomt.</span>
+        <div class="row wrap"><button class="btn small" data-fr="l">◀ Links</button><button class="btn small" data-fr="c">Mitte</button><button class="btn small" data-fr="r">Rechts ▶</button><button class="btn small" data-fr="fit">Ganzes Bild</button><button class="btn small" data-fr="fill">Füllen</button></div>
+        <label class="field"><span>Zoom <b id="clipZoomV"></b></span><input type="range" id="clipZoom" min="0" max="100" value="0"></label>
+      </div>
+      <div class="card stack">
+        <h4>Untertitel</h4>
+        <div class="clip-looks" id="clipLooks">
+          <button data-look="word"><b>EIN</b><span>Ein Wort</span></button>
+          <button data-look="punch"><b>Kurz &amp; fett</b><span>2–3 Wörter</span></button>
+          <button data-look="box"><b class="bx">Mit Kasten</b><span>Hintergrund</span></button>
+          <button data-look="classic"><b class="cl">Klassisch unten</b><span>zwei Zeilen</span></button>
+        </div>
+        <div class="row wrap clip-colors" id="clipColors"><span class="muted small">Farbe</span><button data-c="#FFFFFF" style="--c:#FFFFFF"></button><button data-c="#EDE7DA" style="--c:#EDE7DA"></button><button data-c="#F5D90A" style="--c:#F5D90A"></button><button data-c="#E5402A" style="--c:#E5402A"></button><button data-c="#3E8A55" style="--c:#3E8A55"></button></div>
+        <div class="row wrap"><span class="muted small">Höhe</span><button class="btn small" data-y="0.18">oben</button><button class="btn small" data-y="0.5">Mitte</button><button class="btn small" data-y="0.7">unteres Drittel</button><button class="btn small" data-y="0.86">unten</button></div>
+      </div>
+      <div class="card stack">
+        <h4>Hook – Titel am Anfang</h4>
+        <textarea id="clipHook" rows="2" placeholder="z. B. „Das hat niemand kommen sehen“"></textarea>
+        <div class="row wrap"><label class="row small">Dauer <select id="clipHookDur"><option value="2">2 s</option><option value="3" selected>3 s</option><option value="5">5 s</option><option value="0">ganzer Clip</option></select></label><button class="btn small" id="clipHookSet">Einblenden</button><button class="btn small ghost" id="clipHookDel">Entfernen</button></div>
+      </div>
+      <div class="card stack">
+        <h4>Tempo &amp; Dynamik</h4>
+        <div class="row wrap"><button class="btn small" id="clipPauses" title="Alle Pausen ganz herausschneiden">⏸ Pausen raus</button><button class="btn small" id="clipFillers">Füllwörter weg</button><button class="btn small" id="clipRepeats">Wiederholungen weg</button></div>
+        <div class="row wrap"><button class="btn small" id="clipAutoZoom" title="An Satzanfängen abwechselnd ran- und zurückspringen – wie in viralen Clips">🔍 Auto-Zoom</button><button class="btn small" id="clipZoomHere">Zoom hier</button><button class="btn small ghost" id="clipZoomOff">Zooms entfernen</button></div>
+      </div>
+      <div class="card stack">
+        <div class="row wrap"><button class="btn primary" id="clipExport">Clip exportieren</button><button class="btn" id="clipStudio">Feinschnitt im Studio</button></div>
+      </div>
     </div>
 
     <!-- Studio: Zeitleiste wie in CapCut -->
@@ -264,6 +307,7 @@
     <button class="btn" id="selPlay" title="Ab hier abspielen">▶</button>
     <button class="btn" id="selEdit" title="Text der markierten Wörter korrigieren, zusammenschreiben oder fehlende Wörter ergänzen">✎ Text</button>
     <button class="btn" id="selSpk" title="Markierte Wörter einer Sprecherin oder einem Sprecher zuordnen">👤 Person</button>
+    <button class="btn" id="selClip" title="Markierten Abschnitt als eigenen Clip (z. B. 9:16) im Clip-Studio öffnen">📱 Clip</button>
     <button class="btn hidden" id="selKeep" title="Nur den Untertitel der weggeschnittenen Wörter zeigen – der Schnitt bleibt">💬 Untertitel behalten</button>
     <button class="btn primary" id="selDel">Löschen</button>
     <button class="btn" id="selClose" title="Auswahl aufheben (Esc)">✕</button>

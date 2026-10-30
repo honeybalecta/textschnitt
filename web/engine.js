@@ -453,6 +453,10 @@ class Renderer {
     if (!frames.length) return;
     const {ctx, W, H, fps} = this, speed = s.fx.speed;
     const file = s.hasVideo === false ? null : this.fileOf(s.uri);
+    // Vergrößerter Bildausschnitt (z. B. 9:16 aus 16:9): Grundbild in höherer Auflösung holen, damit nichts unscharf hochskaliert wird
+    const kq = s.kind === 'main' && s.fx.sc > 1.001 ? Math.min(s.fx.sc, 4096 / Math.max(W, H)) : 1;
+    const BW = Math.max(2, Math.round(W * kq / 2) * 2), BH = Math.max(2, Math.round(H * kq / 2) * 2);
+    if (this.base.width !== BW || this.base.height !== BH){ this.base.width = BW; this.base.height = BH; this.bctx = this.base.getContext('2d', {alpha:false}); }
     let it = null, bm = null, last = null;
     if (file && (s.image || isImageFile(file))) bm = await bitmapOf(file);
     else if (file){
@@ -460,7 +464,7 @@ class Renderer {
       if (tr){
         const off = await firstTs(file);
         const ts = frames.map(f => off + s.in + (f / fps - o) * speed);
-        it = this.sink(file, tr, W, H, 'contain').canvasesAtTimestamps(ts)[Symbol.asyncIterator]();
+        it = this.sink(file, tr, BW, BH, 'contain').canvasesAtTimestamps(ts)[Symbol.asyncIterator]();
       }
     }
     try {
@@ -468,16 +472,16 @@ class Renderer {
         const t = f / fps, st = s.in + (t - o) * speed;
         if (it){ const r = await it.next(); if (r.value) last = r.value.canvas; }
         // Grundbild
-        const b = this.bctx; b.fillStyle = '#000'; b.fillRect(0, 0, W, H);
-        if (bm) drawFit(b, bm, 0, 0, W, H, false); else if (last) b.drawImage(last, 0, 0);
+        const b = this.bctx; b.fillStyle = '#000'; b.fillRect(0, 0, BW, BH);
+        if (bm) drawFit(b, bm, 0, 0, BW, BH, false); else if (last) b.drawImage(last, 0, 0);
         ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
         const flt = s.kind === 'main' ? cssFilter(s.fx) : '';
         const z = s.kind === 'main' ? zoomAt(s.zooms, st) : {s:1};
         if (flt && this.canFilter) ctx.filter = flt;
         const tf = s.kind === 'main' && (Math.abs(s.fx.sc - 1) > 1e-3 || s.fx.tx || s.fx.ty);
         if (tf){ ctx.save(); ctx.translate(W / 2 + s.fx.tx * W, H / 2 + s.fx.ty * H); ctx.scale(s.fx.sc, s.fx.sc); ctx.translate(-W / 2, -H / 2); }
-        if (z.s > 1.001){ const sw = W / z.s, sh = H / z.s; ctx.drawImage(this.base, z.cx * W * (1 - 1 / z.s), z.cy * H * (1 - 1 / z.s), sw, sh, 0, 0, W, H); }
-        else ctx.drawImage(this.base, 0, 0);
+        if (z.s > 1.001){ const sw = BW / z.s, sh = BH / z.s; ctx.drawImage(this.base, z.cx * BW * (1 - 1 / z.s), z.cy * BH * (1 - 1 / z.s), sw, sh, 0, 0, W, H); }
+        else ctx.drawImage(this.base, 0, 0, W, H);
         if (tf) ctx.restore();
         if (flt && this.canFilter) ctx.filter = 'none';
         if (flt && !this.canFilter) manualFx(ctx, W, H, s.fx);

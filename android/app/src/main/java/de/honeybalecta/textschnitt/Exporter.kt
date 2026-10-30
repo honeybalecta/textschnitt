@@ -68,6 +68,20 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
     private val h = plan.getInt("height")
 
     private fun us(sec: Double) = (sec * 1_000_000).roundToLong()
+
+    /** Ausschnitt in der Quelle als NDC (links, rechts, unten, oben), wenn der vergrößerte Clip das Bild ganz füllt. */
+    private fun coverWindow(s: JSONObject, sc: Double, tx: Double, ty: Double): FloatArray? {
+        if (sc <= 1.001) return null
+        val src = plan.optJSONArray("sources")?.optJSONObject(s.optInt("src", -1)) ?: return null
+        val sw = src.optDouble("width", 0.0); val sh = src.optDouble("height", 0.0); if (sw < 2 || sh < 2) return null
+        val W = w.toDouble(); val H = h.toDouble(); val k = minOf(W / sw, H / sh)
+        val ox = (W - sw * k) / 2; val oy = (H - sh * k) / 2; val vw = W / sc; val vh = H / sc
+        val cx = W / 2 - tx * W / sc; val cy = H / 2 - ty * H / sc
+        val xs = (cx - vw / 2 - ox) / k; val ys = (cy - vh / 2 - oy) / k; val ws = vw / k; val hs = vh / k
+        if (xs < -1 || ys < -1 || xs + ws > sw + 1 || ys + hs > sh + 1) return null
+        val x0 = xs.coerceIn(0.0, sw - ws); val y0 = ys.coerceIn(0.0, sh - hs)
+        return floatArrayOf((-1 + 2 * x0 / sw).toFloat(), (-1 + 2 * (x0 + ws) / sw).toFloat(), (1 - 2 * (y0 + hs) / sh).toFloat(), (1 - 2 * y0 / sh).toFloat())
+    }
     private val fps = plan.optDouble("fps", 30.0).let { if (it < 1 || it > 240) 30.0 else it }
 
     /** Ein Clip aus dem Plan: Video mit Ausschnitt oder Foto mit fester Dauer – plus Tempo, Lautstärke, Farbe. */
@@ -112,12 +126,19 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
         for (i in 0 until segs.length()) {
             val s = segs.getJSONObject(i)
             val fx = ArrayList<Effect>()
-            val zooms = s.optJSONArray("zooms")
+            var zooms = s.optJSONArray("zooms")
+            val sc = s.optDouble("sc", 1.0); val tx = s.optDouble("tx", 0.0); val ty = s.optDouble("ty", 0.0)
+            // Vergrößerter Ausschnitt, der das Bild füllt (z. B. 9:16 aus 16:9): direkt aus der Quelle ausschneiden (bleibt scharf)
+            val win = coverWindow(s, sc, tx, ty)
+            if (win != null) {
+                fx.add(androidx.media3.effect.Crop(win[0], win[1], win[2], win[3]))
+                if (zooms != null) zooms = JSONArray().also { a -> for (k in 0 until zooms!!.length()) a.put(JSONObject(zooms!!.getJSONObject(k).toString()).apply {
+                    put("cx", (0.5 + (optDouble("cx", 0.5) - 0.5) * sc + tx).coerceIn(0.0, 1.0)); put("cy", (0.5 + (optDouble("cy", 0.5) - 0.5) * sc + ty).coerceIn(0.0, 1.0)) }) }
+            }
             if (zooms != null && zooms.length() > 0) fx.add(ZoomEffect(s.getDouble("in"), zooms))
             fx.add(Presentation.createForWidthAndHeight(w, h, Presentation.LAYOUT_SCALE_TO_FIT))
             // Lage und Größe des Clips (Mitte verschieben, um die Mitte skalieren)
-            val sc = s.optDouble("sc", 1.0); val tx = s.optDouble("tx", 0.0); val ty = s.optDouble("ty", 0.0)
-            if (Math.abs(sc - 1) > 1e-3 || Math.abs(tx) > 1e-4 || Math.abs(ty) > 1e-4) fx.add(TransformEffect(sc.toFloat(), tx.toFloat(), ty.toFloat()))
+            if (win == null && (Math.abs(sc - 1) > 1e-3 || Math.abs(tx) > 1e-4 || Math.abs(ty) > 1e-4)) fx.add(TransformEffect(sc.toFloat(), tx.toFloat(), ty.toFloat()))
             mainItems.add(item(s, s.getDouble("in"), s.getDouble("out"), false, fx))
         }
         require(mainItems.isNotEmpty()) { "Nach dem Schnitt bleibt nichts übrig." }

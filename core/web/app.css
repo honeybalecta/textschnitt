@@ -278,7 +278,7 @@ input[type=range]{width:100%;accent-color:var(--honig)}
 .ctx button.danger{color:#ff8b7b}
 /* Titel in der Vorschau */
 .title-ov{position:absolute;inset:0;z-index:5;pointer-events:none}
-.titlebox{position:absolute;transform:translate(-50%,-50%);max-width:92%;text-align:center;font-weight:800;font-family:var(--ui);line-height:1.12;white-space:pre-line;padding:.1em .3em;border-radius:.15em;pointer-events:auto;cursor:move;user-select:none;-webkit-user-select:none;touch-action:none}
+.titlebox{position:absolute;transform:translate(-50%,-50%);width:max-content;max-width:90%;text-align:center;font-weight:800;font-family:var(--ui);line-height:1.12;white-space:pre-line;padding:.1em .3em;border-radius:.15em;pointer-events:auto;cursor:move;user-select:none;-webkit-user-select:none;touch-action:none}
 .titlebox.sel{outline:2px dashed var(--honig);outline-offset:3px}
 /* Maus und Tastatur */
 .tl{cursor:default}
@@ -350,7 +350,7 @@ pre.files:empty{display:none}
   #proj > .tabs .detach:hover{color:var(--text)}
   [data-platform=android] #proj > .tabs .detach{display:none}
   #proj > .panes, #proj > .panes:has(#paneStudio:not(.hidden)){display:contents}
-  #paneTrans,#paneText,#paneSubs,#paneExport,#paneStudio{grid-area:side;overflow:auto;min-height:0;border-left:1px solid var(--line);padding-bottom:70px}
+  #paneTrans,#paneText,#paneSubs,#paneExport,#paneStudio,#paneClip{grid-area:side;overflow:auto;min-height:0;border-left:1px solid var(--line);padding-bottom:70px}
   #paneStudio{overflow:hidden;padding-bottom:0;border-left:0;border-top:1px solid var(--line);background:var(--surface);height:auto}
   .selbar{position:static;grid-area:side;align-self:end;z-index:5;margin:0 10px 10px;border:1px solid var(--line);border-radius:12px}
   .sheet{left:50%;right:auto;bottom:auto;top:8vh;transform:translateX(-50%);width:min(560px,92vw);max-height:84vh;border-radius:16px;padding-bottom:16px}
@@ -607,3 +607,18 @@ input[type=checkbox],input[type=radio]{accent-color:var(--rot)}
 /* weggeschnitten, Untertitel bleibt */
 .tk.del.ks{text-decoration-style:dotted;background:rgba(207,198,176,.12);border-radius:3px}
 .tk.del.ks{border-bottom:2px solid var(--sand);opacity:.9}
+/* Clip-Studio */
+.clip-pane .card{margin-bottom:10px}
+.clip-pane h4{margin:0;font-size:13px;letter-spacing:.04em;text-transform:uppercase;color:var(--sand)}
+.clip-head{display:flex;align-items:center;gap:10px}.clip-head h3{margin:0;margin-right:auto}
+.row.wrap{flex-wrap:wrap;gap:6px}
+.clip-looks{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:8px}
+.clip-looks button{background:#0B0B0A;border:1px solid var(--line);border-radius:10px;padding:12px 8px;color:var(--creme);display:flex;flex-direction:column;align-items:center;gap:6px;cursor:pointer}
+.clip-looks button b{font:900 17px/1.1 var(--ui);text-transform:uppercase;text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000}
+.clip-looks button b.bx{background:rgba(0,0,0,.7);padding:3px 8px;border-radius:5px;text-shadow:none;text-transform:none;font-weight:700;font-size:14px}
+.clip-looks button b.cl{font-weight:600;font-size:13px;text-transform:none}
+.clip-looks button span{font-size:11.5px;color:var(--grau)}
+.clip-looks button.on{border-color:var(--rot);box-shadow:0 0 0 1px var(--rot)}
+.clip-colors button{width:26px;height:26px;border-radius:50%;border:2px solid var(--line);background:var(--c);cursor:pointer;padding:0}
+.clip-colors button.on{border-color:var(--rot);box-shadow:0 0 0 2px var(--rot)}
+#proj[data-tab=clip] .stage{cursor:grab}

@@ -543,9 +543,9 @@ function linkTools(){
 }
 function toolListBase(){
   const s = TL.sel; const g = s && (s.kind === 'main' || s.kind === 'insert') ? timeline[s.i] : null;
-  if (!s) return [T('✂', 'Teilen', splitHere), T('⌫', 'Bis hier weg', () => cutTo('l')), T('⌦', 'Ab hier weg', () => cutTo('r')), T('＋', 'Clip', addClip), T('T', 'Titel', addTitle), T('💬', 'Untertitel', addOwnCue), T('🔍', 'Zoom', addZoom),
+  if (!s) return [T('📱', 'Clip ab hier …', () => clipDialog(outPos, Math.min(total, outPos + 30))), T('✂', 'Teilen', splitHere), T('⌫', 'Bis hier weg', () => cutTo('l')), T('⌦', 'Ab hier weg', () => cutTo('r')), T('＋', 'Clip', addClip), T('T', 'Titel', addTitle), T('💬', 'Untertitel', addOwnCue), T('🔍', 'Zoom', addZoom),
     ...(P.moves.length ? [T('↺', 'Reihenfolge zurück', () => { commit(() => P.moves = [], true); if (tokens.length) renderTranscript(); toast('Ursprüngliche Reihenfolge'); })] : [])];
-  if (s.kind === 'main') return [T('✂', 'Teilen', splitHere), T('⚙', 'Anpassen', () => openFx(g)), T('🗑', 'Löschen', delSel, 'danger'), T('⇤', 'Anfang −1', () => nudge('l', -1)), T('⇥', 'Anfang +1', () => nudge('l', 1)),
+  if (s.kind === 'main') return [T('📱', 'Als Clip …', () => clipDialog(g.o, g.o + segDur(g))), T('✂', 'Teilen', splitHere), T('⚙', 'Anpassen', () => openFx(g)), T('🗑', 'Löschen', delSel, 'danger'), T('⇤', 'Anfang −1', () => nudge('l', -1)), T('⇥', 'Anfang +1', () => nudge('l', 1)),
     T('⇤', 'Ende −1', () => nudge('r', -1)), T('⇥', 'Ende +1', () => nudge('r', 1)), T('🔍', 'Zoom', addZoom), T('T', 'Titel', addTitle), T('＋', 'Clip', addClip)];
   const cuts = [T('⌫', 'Bis hier weg', () => cutSel('l')), T('⌦', 'Ab hier weg', () => cutSel('r'))];
   if (s.kind === 'insert') return [T('🎞', 'Ausschnitt', () => openItem(g.item.id)), T('🗑', 'Löschen', delSel, 'danger'), ...cuts, T('⇄', 'Als B-Roll', () => convert('broll'))];
@@ -965,6 +965,147 @@ function duplicateSel(){
   try { pasteClip(CLIP.a0 + CLIP.span); } finally { CLIP = keep; updateTools(); }
 }
 
+
+// ───────── Clips: Ausschnitte als eigene Kurzvideos (eigenes Projekt, eigenes Format) ─────────
+// Ein Clip ist eine Kopie des Projekts, in der alles außerhalb des Ausschnitts herausgeschnitten ist.
+// Er bekommt ein eigenes Format (Standard 9:16), einen Bildausschnitt (P.frame) und einen Untertitel-Look für Kurzvideos.
+const CLIP_LOOKS = {
+  word:    {mode:'word', size:'groß', lines:1, chars:14, outline:true, bg:false},
+  punch:   {mode:'lines', size:'groß', lines:2, chars:14, dur:2, outline:true, bg:false},
+  box:     {mode:'lines', size:'mittel', lines:2, chars:20, dur:3, outline:false, bg:true},
+  classic: {mode:'lines', size:'mittel', lines:2, chars:32, dur:4, outline:true, bg:false},
+};
+function clipDialog(o1, o2){
+  if (!(o2 - o1 > 0.3)) return toast('Der Ausschnitt ist zu kurz');
+  const n = J(TS.listProjects() || '[]').filter(p => (p.name || '').startsWith(P.name + ' – Clip')).length + 1;
+  const m = hcModal(`<h3>Clip erstellen</h3><p class="muted small">${fmtS(o1)} – ${fmtS(o2)} (${fmtD(o2 - o1)} s) wird ein eigenes Kurzvideo. Das Hauptprojekt bleibt unverändert.</p>
+    <label class="field"><span>Name</span><input type="text" id="clipName"></label>
+    <div class="field"><span>Format</span><div class="seg-ctl" id="clipNewFmt"><button data-v="9:16" class="on">9:16</button><button data-v="4:5">4:5</button><button data-v="1:1">1:1</button><button data-v="16:9">16:9</button><button data-v="">Original</button></div></div>
+    <div class="row" style="margin-top:12px"><button class="btn" id="clipNo">Abbrechen</button><button class="btn primary" id="clipGo" style="margin-left:auto">Clip öffnen</button></div>`);
+  let fmt = '9:16'; m.querySelector('#clipName').value = `${P.name} – Clip ${n}`;
+  m.querySelector('#clipNewFmt').onclick = e => { const b = e.target.closest('button'); if (!b) return; fmt = b.dataset.v; m.querySelectorAll('#clipNewFmt button').forEach(x => x.classList.toggle('on', x === b)); };
+  m.querySelector('#clipNo').onclick = closeHcModal;
+  m.querySelector('#clipGo').onclick = () => { const name = m.querySelector('#clipName').value.trim() || `${P.name} – Clip ${n}`; closeHcModal(); makeClip(o1, o2, fmt, name); };
+}
+function makeClip(o1, o2, fmt, name){
+  if (playing) pausePlay(); saveNow();
+  const c = JSON.parse(JSON.stringify(P));
+  c.id = newId(); c.name = name; c.created = c.updated = Date.now(); c.clipOf = P.id; c.clipRange = [r3(o1), r3(o2)];
+  // alles außerhalb des Ausschnitts herausschneiden (in Quellzeit)
+  const cut = [];
+  for (const g of timeline){
+    const d = segDur(g), a = g.o, e = g.o + d;
+    if (g.kind === 'insert'){ if (e <= o1 + 0.01 || a >= o2 - 0.01) c.items = c.items.filter(x => x.id !== g.item.id); continue; }
+    const sp = g.speed || 1, ka = Math.max(a, o1), kb = Math.min(e, o2);
+    if (kb <= ka + 0.01){ cut.push([g.in, g.out]); continue; }
+    if (ka > a + 0.001) cut.push([g.in, g.in + (ka - a) * sp]);
+    if (kb < e - 0.001) cut.push([g.in + (kb - a) * sp, g.out]);
+  }
+  c.dels = (c.dels || []).concat(cut.map(([x, y]) => [r3(x), r3(y)])).sort((p, q) => p[0] - q[0])
+    .reduce((acc, r) => { const l = acc[acc.length - 1]; if (l && r[0] <= l[1] + 1e-3) l[1] = Math.max(l[1], r[1]); else acc.push([...r]); return acc; }, []);
+  // Elemente außerhalb des Ausschnitts entfernen
+  c.items = c.items.filter(x => { if (x.type === 'insert') return true; const [a, e] = window.itemOutRange ? itemOutRange(x) : [0, 1e9]; return e > o1 + 0.05 && a < o2 - 0.05; });
+  c.cues = c.cues.filter(x => { if (!x.own) return true; const t = cueTimes(x); return t && t.e > o1 && t.s < o2; });
+  c.format = fmt || null;
+  c.sub_style = {...c.sub_style, ...CLIP_LOOKS[fmt ? 'punch' : 'classic'], y: fmt === '9:16' || fmt === '4:5' ? 0.7 : 0.86, x: 0.5, pos: 'frei', look: fmt ? 'punch' : 'classic'};
+  c.regen = true;
+  TS.saveProject(c.id, JSON.stringify(c));
+  // Bildausschnitt: füllt das neue Format (wird nach dem Öffnen berechnet, weil er vom Format abhängt)
+  const pid = c.id; closeProject(); openProject(pid);
+  const fill = () => { if (!P || P.id !== pid) return; if (P.format && !P.frame){ P.frame = clampFrame({sc: coverSc(), tx: 0, ty: 0}); changed(true); saveNow(); } setTab('clip'); seekOut(0, false); };
+  let tries = 0; (function wait(){ if (P && P.id === pid) return fill(); if (++tries < 60) setTimeout(wait, 100); })();
+  toast('Clip erstellt – hier Format, Ausschnitt, Untertitel und Hook einstellen');
+}
+// Ausschnitt aus der Textauswahl
+$('#selClip').onclick = () => {
+  const ids = selIds().filter(i => tokens[i].type !== 'pause'); if (!ids.length) return;
+  const outs = ids.filter(i => !isCut(i)).map(i => [srcToOut(snapSrc(wS(tokens[i]))), srcToOut(wE(tokens[i]))]);
+  if (!outs.length) return toast('Nur weggeschnittene Wörter markiert');
+  const o1 = Math.max(0, Math.min(...outs.map(x => x[0])) - 0.08), o2 = Math.min(total, Math.max(...outs.map(x => x[1])) + 0.15);
+  clipDialog(o1, o2);
+};
+// ── Clip-Studio ──
+function renderClip(){
+  if (!P) return;
+  const par = P.clipOf && J(TS.loadProject(P.clipOf) || 'null');
+  $('#clipParent').classList.toggle('hidden', !par);
+  $('#clipInfo').textContent = `${fmtS(total)} lang · ${P.format || 'Originalformat'}${par ? ' · aus „' + par.name + '“' : ''}`;
+  $$('#clipFmt button').forEach(b => b.classList.toggle('on', (b.dataset.v || null) === (P.format || null)));
+  const F = P.frame || {sc:1, tx:0, ty:0}, mx = Math.max(coverSc() * 2.5, 3);
+  $('#clipZoom').value = Math.round(Math.log(F.sc || 1) / Math.log(mx) * 100); $('#clipZoomV').textContent = Math.round((F.sc || 1) * 100) + ' %';
+  $$('#clipLooks button').forEach(b => b.classList.toggle('on', b.dataset.look === S().look));
+  $$('#clipColors button').forEach(b => b.classList.toggle('on', (b.dataset.c || '').toLowerCase() === (S().color || '').toLowerCase()));
+  const hook = P.items.find(x => x.type === 'title' && x.hook); if (document.activeElement !== $('#clipHook')) $('#clipHook').value = hook ? hook.text : '';
+}
+function setFrame(F, quiet){ P.frame = clampFrame(F); applyMainTransform(); placeBox(); if (!quiet){ changed(false); renderClip(); } }
+$('#clipFmt').onclick = e => { const b = e.target.closest('button'); if (!b) return;
+  commit(() => { P.format = b.dataset.v || null; P.frame = P.format ? clampFrame({sc: coverSc(), tx: 0, ty: 0}) : null; }, true);
+  fitStage(); setTimeout(fitStage, 50); renderExportForm(); renderClip(); seekOut(outPos, false); toast(P.format ? `Format ${P.format}` : 'Originalformat'); };
+$('#paneClip').addEventListener('click', e => {
+  const b = e.target.closest('[data-fr],[data-look],[data-c],[data-y]'); if (!b || !P) return;
+  if (b.dataset.fr){ const F = {...(P.frame || {sc:1, tx:0, ty:0})}, [wf] = fitFrac(), mx = Math.max(0, (F.sc * wf - 1) / 2);
+    if (b.dataset.fr === 'fit') Object.assign(F, {sc:1, tx:0, ty:0}); else if (b.dataset.fr === 'fill') Object.assign(F, {sc: coverSc(), tx:0, ty:0});
+    else F.tx = b.dataset.fr === 'l' ? mx : b.dataset.fr === 'r' ? -mx : 0;
+    commit(() => setFrame(F, true), false); renderClip(); return; }
+  if (b.dataset.look){ const L = CLIP_LOOKS[b.dataset.look]; commit(() => { Object.assign(S(), L, {look: b.dataset.look}); if (L.bg) S().bg = true; else delete S().bg; genCues(); }, false);
+    syncStyleInputs(); styleOverlay(); renderClip(); toast('Untertitel-Look geändert'); return; }
+  if (b.dataset.c){ commit(() => S().color = b.dataset.c, false); syncStyleInputs(); styleOverlay(); renderClip(); return; }
+  if (b.dataset.y){ commit(() => { S().y = +b.dataset.y; S().x = 0.5; S().pos = 'frei'; }, false); syncStyleInputs(); styleOverlay(); placeOverlay(); return; }
+});
+$('#clipZoom').oninput = e => { const F = {...(P.frame || {sc:1, tx:0, ty:0})}, mx = Math.max(coverSc() * 2.5, 3); F.sc = Math.max(1, Math.pow(mx, +e.target.value / 100)); setFrame(F, true); $('#clipZoomV').textContent = Math.round(F.sc * 100) + ' %'; };
+$('#clipZoom').onpointerdown = () => { $('#clipZoom')._b = snapshot(); };
+$('#clipZoom').onchange = () => { if ($('#clipZoom')._b){ undo.push($('#clipZoom')._b); redo = []; $('#clipZoom')._b = null; } changed(false); renderClip(); };
+// Im Bild ziehen verschiebt den Ausschnitt (nur im Clip-Reiter, sonst gilt das normale Verhalten)
+(() => {
+  const st = $('#stage'); let g = null;
+  st.addEventListener('pointerdown', e => {
+    if (!P || tab !== 'clip' || !P.format || e.target.closest('#subOv,.titlebox,#pipBox,#cropBox')) return;
+    g = {x0: e.clientX, y0: e.clientY, F: {...(P.frame || {sc:1, tx:0, ty:0})}, moved: false, b: snapshot()}; st.setPointerCapture(e.pointerId);
+  });
+  st.addEventListener('pointermove', e => {
+    if (!g) return; const r = st.getBoundingClientRect(), dx = (e.clientX - g.x0) / r.width, dy = (e.clientY - g.y0) / r.height;
+    if (Math.abs(dx) + Math.abs(dy) > 0.006) g.moved = true; if (!g.moved) return;
+    if (playing) pausePlay(); setFrame({...g.F, tx: g.F.tx + dx, ty: g.F.ty + dy}, true);
+  });
+  const end = () => { if (!g) return; const x = g; g = null; if (x.moved){ undo.push(x.b); redo = []; changed(false); renderClip(); st.dataset.noclick = '1'; setTimeout(() => delete st.dataset.noclick, 50); } };
+  st.addEventListener('pointerup', end); st.addEventListener('pointercancel', end);
+  st.addEventListener('click', e => { if (st.dataset.noclick){ e.stopImmediatePropagation(); } }, true);
+  st.addEventListener('wheel', e => { if (!P || tab !== 'clip' || !P.format) return; e.preventDefault(); const F = {...(P.frame || {sc:1, tx:0, ty:0})}; F.sc = Math.max(1, F.sc * (e.deltaY < 0 ? 1.05 : 1 / 1.05)); setFrame(F); }, {passive:false});
+})();
+// Hook: Titel am Anfang
+$('#clipHookSet').onclick = () => {
+  const text = $('#clipHook').value.trim(); if (!text) return toast('Erst einen Text eingeben');
+  const d = +$('#clipHookDur').value || Math.max(1, total - 0.05);
+  commit(() => { let it = P.items.find(x => x.type === 'title' && x.hook);
+    if (!it){ it = {id:newId(), type:'title', hook:true, x:0.5, y:0.16, size:'groß', scale:1.1, color:'#FFFFFF', outline:false, bg:true}; P.items.push(it); }
+    it.text = text; it.at = r3(outToSrc(0)); it.dur = Math.min(d, Math.max(0.5, total - 0.05)); }, false);
+  updateTitles(outPos); seekOut(0, false); renderClip(); toast('Hook eingeblendet – im Bild ziehen verschiebt ihn');
+};
+$('#clipHookDel').onclick = () => { commit(() => P.items = P.items.filter(x => !(x.type === 'title' && x.hook)), false); updateTitles(outPos); $('#clipHook').value = ''; renderClip(); };
+// Tempo
+$('#clipPauses').onclick = () => { let n = 0; commit(() => n = trimPauses(0), false); if (spans.length) tokens.forEach(t => paint(t.i)); toast(n ? `${n} Pausen herausgeschnitten` : 'Keine Pausen mehr'); renderClip(); };
+$('#clipFillers').onclick = () => { $('#fillerBtn').click(); renderClip(); };
+$('#clipRepeats').onclick = () => { $('#repeatBtn').click(); renderClip(); };
+// Auto-Zoom: an Satzanfängen abwechselnd ran (Sprung) und wieder normal – höchstens alle 2 s
+$('#clipAutoZoom').onclick = () => {
+  const starts = []; let prev = null, last = -9;
+  for (const t of tokens){ if (t.type !== 'word' || isCut(t.i)) { if (t.type === 'pause' && t.e - t.s > 0.35) prev = null; continue; }
+    const o = srcToOut(snapSrc(t.ws)); if (o >= total) continue;
+    const newSent = !prev || /[.?!…:]$/.test(tokText(prev)); if (newSent && o - last >= 2){ starts.push({t, o}); last = o; } prev = t; }
+  if (starts.length < 2) for (let o = 0; o < total; o += 3) starts.push({o});
+  let n = 0;
+  commit(() => { P.items = P.items.filter(x => !(x.type === 'zoom' && x.auto));
+    starts.forEach((s0, k) => { if (k % 2 === 0) return; const next = starts[k + 1], e = next ? next.o : total;
+      const a = outToSrc(s0.o), b = outToSrc(Math.max(s0.o + 0.4, e - 0.02));
+      P.items.push({id:newId(), type:'zoom', auto:true, at:r3(a), dur:r3(Math.max(0.4, b - a)), kind:'punch', strength:1.18, cx:0.5, cy:0.42}); n++; }); }, false);
+  seekOut(outPos, false); toast(n ? `${n} Zoom-Sprünge gesetzt – Feinschnitt im Studio` : 'Zu wenig Sätze für Auto-Zoom');
+};
+$('#clipZoomHere').onclick = () => { commit(() => P.items.push({id:newId(), type:'zoom', at:r3(outToSrc(outPos)), dur:2, kind:'punch', strength:1.2, cx:0.5, cy:0.42}), false); seekOut(outPos, false); toast('Zoom an der Abspiellinie (2 s)'); };
+$('#clipZoomOff').onclick = () => { let n = P.items.filter(x => x.type === 'zoom').length; commit(() => P.items = P.items.filter(x => x.type !== 'zoom'), false); seekOut(outPos, false); toast(n ? `${n} Zooms entfernt` : 'Keine Zooms'); };
+$('#clipExport').onclick = () => setTab('export');
+$('#clipStudio').onclick = () => setTab('studio');
+$('#clipParent').onclick = () => { const id = P.clipOf; closeProject(); openProject(id); };
+
 // ───────── Tastatur (wie CapCut) und Maus ─────────
 const KEYS = [
   ['Leertaste', 'Abspielen / Pause'], ['K / L', 'Pause / Abspielen'],
@@ -975,7 +1116,7 @@ const KEYS = [
   ['Strg + B', 'an der Abspiellinie teilen'], ['Strg + C / X / V', 'Element kopieren / ausschneiden / an der Abspiellinie einfügen'], ['Strg + D', 'Element duplizieren (direkt dahinter)'], ['Q / W', 'links / rechts der Abspiellinie löschen (mit ausgewähltem Element: nur dessen Teil)'],
   ['Entf / Rücktaste', 'Auswahl löschen'], ['Alt + ← / →', 'Auswahl um ein Bild verschieben'],
   [', / .', 'Anfang / Ende der Auswahl zur Abspiellinie trimmen'],
-  ['M', 'Keyframe an der Abspiellinie setzen / entfernen (ausgewählte Einblendung)'], ['F', 'Vollbild-Vorschau'],
+  ['M', 'Keyframe an der Abspiellinie setzen / entfernen (ausgewählte Einblendung)'], ['U', 'Untertitel weggeschnittener Wörter behalten / wieder weg (markierte Wörter oder ausgewählter Untertitel)'], ['F', 'Vollbild-Vorschau'],
   ['Strg / Umschalt + Klick', 'Objekte zum Verbinden auswählen'], ['Umschalt + Mausrad', 'Spuren senkrecht scrollen'],
   ['Element senkrecht ziehen', 'auf eine andere Videospur legen'],
   ['T', 'Titel an der Abspiellinie'], ['E', 'Clip anpassen (Tempo, Lautstärke, Farbe)'], ['S', 'Einrasten an / aus'],
@@ -1061,6 +1202,12 @@ document.addEventListener('keydown', e => {
     case 'w': case 'W': handled(); cutTo('r'); return;
     case ',': handled(); trimToPlayhead('l'); return;
     case '.': handled(); trimToPlayhead('r'); return;
+    case 'u': case 'U': {   // Untertitel weggeschnittener Wörter behalten / wieder weg
+      if (tab === 'text' && selA != null && !$('#selKeep').classList.contains('hidden')){ handled(); $('#selKeep').click(); return; }
+      const c = TL.sel && TL.sel.kind === 'cue' ? selCue() : null;
+      if (c && !c.own){ const cut = range(c.a, Math.min(c.b, tokens.length - 1)).filter(i => isTextTok(i) && tokText(tokens[i]) && isCut(i)); if (cut.length){ handled(); const on = !cut.every(i => tokens[i].ks);
+        commit(() => keepSubs(cut, on), false); toast(on ? 'Untertitel bleibt – erscheint kurz am Schnitt' : 'Untertitel wieder weg'); } }
+      return; }
     case 't': case 'T': if (studioOn()){ handled(); addTitle(); } return;
     case 'm': case 'M': if (studioOn()){ handled(); const it = TL.sel && TL.sel.kind === 'ovl' ? selItem() : (curPip || null);
       if (!it) toast('Erst eine Einblendung auswählen, dann M setzt an der Abspiellinie einen Keyframe'); else { if (!TL.sel || TL.sel.id !== it.id) select({kind:'ovl', id:it.id}); toggleKeyframe(it); } } return;

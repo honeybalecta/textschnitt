@@ -37,7 +37,7 @@ os.environ.setdefault("HF_HUB_DISABLE_IMPLICIT_TOKEN", "1")
 import warnings  # noqa: E402
 warnings.filterwarnings("ignore", module="huggingface_hub")
 
-VERSION = "2.10.0"
+VERSION = "2.11.0"
 APP_DIR = Path(__file__).resolve().parent
 FROZEN = bool(getattr(sys, "frozen", False))          # als installierte .exe gebaut
 RES_DIR = Path(getattr(sys, "_MEIPASS", APP_DIR))      # mitgelieferte Dateien (Oberfläche, ffmpeg, Modelle)
@@ -689,6 +689,9 @@ def write_ass(cues: list[dict], style: dict, out: Path, w: int, h: int, fonts: d
              "Alignment, MarginL, MarginR, MarginV, Encoding",
              f"Style: Default,{fam or 'Arial'},{size:.0f},&H00{b:02X}{g:02X}{r:02X},&H00FFFFFF,&H00000000,&H96000000,"
              f"{-1 if fbold or not fam else 0},0,0,0,100,100,0,0,1,{outline:.1f},{shadow:.1f},5,0,0,0,1",
+             # Kasten hinter dem Text (BorderStyle 3: deckender Kasten in OutlineColour)
+             f"Style: Box,{fam or 'Arial'},{size:.0f},&H00{b:02X}{g:02X}{r:02X},&H00FFFFFF,&H64000000,&H64000000,"
+             f"{-1 if fbold or not fam else 0},0,0,0,100,100,0,0,3,{max(2.0, size / 6):.1f},0,5,0,0,0,1",
              "", "[Events]", "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"]
     for c in cues:
         rows = c["text"].split("\n")
@@ -713,9 +716,11 @@ def write_ass(cues: list[dict], style: dict, out: Path, w: int, h: int, fonts: d
             ov += f"\\1c&H{cb:02X}{cg:02X}{cr:02X}&"
         if c.get("outline") is not None:
             ov += f"\\bord{max(1.0, csize / 14):.1f}\\shad0" if c["outline"] else ("\\bord0\\shad1" if c.get("title") else f"\\bord0\\shad{max(1.0, csize / 20):.1f}")
-        if c.get("bg"):
-            ov += f"\\bord{max(2.0, csize / 8):.1f}\\3c&H000000&\\3a&H60&"   # dunkler Kasten statt Umrandung
-        lines.append(f"Dialogue: 0,{ts(c['start'])},{ts(c['end'])},Default,,0,0,0,,{{{ov}}}{txt}")
+        sty = "Default"
+        if c.get("bg"):   # dunkler Kasten statt Umrandung
+            sty = "Box"
+            ov = re.sub(r"\\(bord|shad)[0-9.]+", "", ov) + f"\\bord{max(2.0, csize / 6):.1f}\\shad0"
+        lines.append(f"Dialogue: 0,{ts(c['start'])},{ts(c['end'])},{sty},,0,0,0,,{{{ov}}}{txt}")
     out.write_text("\n".join(lines) + "\n", encoding="utf-8-sig")
 
 
@@ -742,6 +747,28 @@ def zoom_expr(zooms: list[dict], seg_in: float):
         cx = f"if({cond},{z['cx']:.4f},{cx})"
         cy = f"if({cond},{z['cy']:.4f},{cy})"
     return zx, cx, cy
+
+
+def cover_window(s: dict, plan: dict, W: int, H: int, fx: dict) -> str | None:
+    """Ausschnitt in Quellpixeln (crop=w:h:x:y), wenn der vergrößerte Clip das Bild vollständig füllt, sonst None."""
+    if fx["sc"] <= 1.001:
+        return None
+    srcs = plan.get("sources") or []
+    si = s.get("src")
+    src = srcs[si] if isinstance(si, int) and 0 <= si < len(srcs) else None
+    sw, sh = float((src or {}).get("width") or 0), float((src or {}).get("height") or 0)
+    if sw < 2 or sh < 2:
+        return None
+    k = min(W / sw, H / sh)
+    ox, oy = (W - sw * k) / 2, (H - sh * k) / 2
+    vw, vh = W / fx["sc"], H / fx["sc"]
+    cx, cy = W / 2 - fx["tx"] * W / fx["sc"], H / 2 - fx["ty"] * H / fx["sc"]
+    xs, ys, ws, hs = (cx - vw / 2 - ox) / k, (cy - vh / 2 - oy) / k, vw / k, vh / k
+    if xs < -1 or ys < -1 or xs + ws > sw + 1 or ys + hs > sh + 1:
+        return None
+    ws, hs = max(2, int(ws) // 2 * 2), max(2, int(hs) // 2 * 2)
+    xs, ys = int(min(max(0.0, xs), sw - ws)), int(min(max(0.0, ys), sh - hs))
+    return f"{ws}:{hs}:{xs}:{ys}"
 
 
 def seg_fx(s: dict) -> dict:
@@ -856,15 +883,23 @@ def build_graph(plan: dict, with_video: bool, ass_name: str | None):
             if with_video:
                 if s.get("hasVideo", True):
                     z = ""
-                    if s.get("zooms"):
-                        zx, cx, cy = zoom_expr(s["zooms"], a0)
+                    # Vergrößerter Ausschnitt, der das Bild ganz füllt (z. B. 9:16 aus 16:9): direkt aus der Quelle
+                    # ausschneiden statt das verkleinerte Bild hochzuskalieren – bleibt scharf und spart Rechenzeit
+                    win = cover_window(s, plan, W, H, fx)
+                    zooms = s.get("zooms") or []
+                    if win and zooms:   # Zoom-Mittelpunkte in den Ausschnitt umrechnen (gleiches Ergebnis wie Zoom vor Lage)
+                        zooms = [{**zz, "cx": min(1.0, max(0.0, 0.5 + (float(zz["cx"]) - 0.5) * fx["sc"] + fx["tx"])),
+                                  "cy": min(1.0, max(0.0, 0.5 + (float(zz["cy"]) - 0.5) * fx["sc"] + fx["ty"]))} for zz in zooms]
+                    if zooms:
+                        zx, cx, cy = zoom_expr(zooms, a0)
                         if abs(sp - 1) > 1e-3:
                             zx, cx, cy = (e.replace("it", f"(it*{sp:.4f})") for e in (zx, cx, cy))
                         z = (f",zoompan=z='{zx}':x='{cx}*iw*(1-1/zoom)':y='{cy}*ih*(1-1/zoom)':d=1:s={W}x{H}:fps={fps_s}")
                     spv = f"setpts=(PTS-STARTPTS)/{sp:.4f}" if abs(sp - 1) > 1e-3 else "setpts=PTS-STARTPTS"
-                    tf = abs(fx["sc"] - 1) > 1e-3 or abs(fx["tx"]) > 1e-4 or abs(fx["ty"]) > 1e-4
+                    tf = not win and (abs(fx["sc"] - 1) > 1e-3 or abs(fx["tx"]) > 1e-4 or abs(fx["ty"]) > 1e-4)
                     lab = f"[vp{k}]" if tf else vlab
-                    parts.append(f"[{i}:v:0]trim=start={a0 + off:.4f}:end={b0 + off:.4f},{spv},{fit},fps={fps_s}{z}{video_fx_chain(fx)},format=yuv420p{lab}")
+                    fitk = f"crop={win},scale={W}:{H},setsar=1" if win else fit
+                    parts.append(f"[{i}:v:0]trim=start={a0 + off:.4f}:end={b0 + off:.4f},{spv},{fitk},fps={fps_s}{z}{video_fx_chain(fx)},format=yuv420p{lab}")
                     if tf:   # Bild verkleinern/vergrößern und verschieben, Rest schwarz
                         sw, sh = max(2, round(W * fx["sc"] / 2) * 2), max(2, round(H * fx["sc"] / 2) * 2)
                         X, Y = round((W - sw) / 2 + fx["tx"] * W), round((H - sh) / 2 + fx["ty"] * H)
