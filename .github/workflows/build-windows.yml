@@ -43,7 +43,18 @@ jobs:
       - name: Abhängigkeiten installieren
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt pyinstaller huggingface_hub
+          pip install -r requirements.txt huggingface_hub
+
+      # PyInstaller mit selbst übersetztem Startprogramm (Bootloader): Die mitgelieferten Bootloader stecken in
+      # unzähligen Programmen – auch in Schadsoftware – und lösen deshalb oft Fehlalarme von Virenscannern aus.
+      - name: PyInstaller mit eigenem Bootloader bauen
+        shell: pwsh
+        env:
+          PYINSTALLER_COMPILE_BOOTLOADER: "1"
+        run: |
+          pip install --no-binary pyinstaller "pyinstaller==6.11.1"
+          python -c "import PyInstaller, os; p = os.path.join(os.path.dirname(PyInstaller.__file__), 'bootloader', 'Windows-64bit-intel'); print(p); print(os.listdir(p))"
+
 
       - name: ffmpeg holen
         shell: pwsh
@@ -85,6 +96,22 @@ jobs:
           if (-not (Test-Path "C:\Program Files (x86)\Inno Setup 6\ISCC.exe")) { choco install innosetup -y --no-progress }
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" packaging\installer.iss
           Get-ChildItem dist\*.exe | Format-Table Name, Length
+
+      - name: Virenscan mit Microsoft Defender
+        shell: pwsh
+        run: |
+          $mp = Get-ChildItem "$env:ProgramData\Microsoft\Windows Defender\Platform\*\MpCmdRun.exe" -ErrorAction SilentlyContinue | Sort-Object FullName | Select-Object -Last 1
+          if (-not $mp) { $mp = Get-Item "$env:ProgramFiles\Windows Defender\MpCmdRun.exe" -ErrorAction SilentlyContinue }
+          if (-not $mp) { Write-Host "Defender nicht verfügbar – Scan übersprungen"; exit 0 }
+          & $mp.FullName -SignatureUpdate | Out-Host
+          $bad = $false
+          foreach ($f in @("dist\HoneyCut\HoneyCut.exe") + (Get-ChildItem dist\HoneyCut-Setup-*.exe | ForEach-Object FullName)) {
+            $full = (Resolve-Path $f).Path
+            $out = & $mp.FullName -Scan -ScanType 3 -File $full -DisableRemediation 2>&1 | Out-String
+            Write-Host "== $full`n$out"
+            if ($LASTEXITCODE -eq 2 -or $out -match "Threat\s") { $bad = $true }
+          }
+          if ($bad) { throw "Defender meldet eine Bedrohung – Release wird nicht veröffentlicht" }
 
       - name: Installer als Release veröffentlichen
         shell: pwsh
