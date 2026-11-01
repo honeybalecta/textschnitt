@@ -622,3 +622,10 @@ input[type=checkbox],input[type=radio]{accent-color:var(--rot)}
 .clip-colors button{width:26px;height:26px;border-radius:50%;border:2px solid var(--line);background:var(--c);cursor:pointer;padding:0}
 .clip-colors button.on{border-color:var(--rot);box-shadow:0 0 0 2px var(--rot)}
 #proj[data-tab=clip] .stage{cursor:grab}
+
+/* Lautstärke */
+.vol-list{display:flex;flex-direction:column;gap:6px;margin-top:10px;max-height:52vh;overflow:auto}
+.vol-row{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(90px,1fr) 52px 86px;gap:8px;align-items:center;border:1px solid var(--line);border-radius:10px;padding:8px 10px}
+.vol-name{min-width:0}.vol-name b{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600}
+.vol-v{text-align:right}
+@media (max-width:560px){.vol-row{grid-template-columns:1fr 52px}.vol-row input{grid-column:1/-1;grid-row:2}.vol-l{display:none}}

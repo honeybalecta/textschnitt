@@ -1106,6 +1106,87 @@ $('#clipExport').onclick = () => setTab('export');
 $('#clipStudio').onclick = () => setTab('studio');
 $('#clipParent').onclick = () => { const id = P.clipOf; closeProject(); openProject(id); };
 
+
+// ───────── Lautstärke: jeder Clip einzeln, und alle mit einem Klick angleichen ─────────
+// Clips = Videos der Hauptspur, Einschübe, Videos auf den Videospuren mit Ton, Tonspuren.
+const envCache = new Map();   // Datei → Lautstärkeverlauf (dB je 10 ms)
+function volClips(){
+  const out = [];
+  P.sources.forEach((src, k) => { if (src.hasAudio === false || src.noAudio) return; out.push({key:'s' + k, name: src.name, kind: P.sources.length > 1 ? `Video ${k + 1} (Hauptspur)` : 'Hauptvideo', uri: src.uri, a: 0, b: src.duration,
+    get: () => srcVol(k), set: v => { src.vol = r3(v); }}); });
+  for (const it of P.items){
+    if (!it.clip || isImg(it.clip) || it.clip.hasAudio === false) continue;
+    if (!['insert', 'audio', 'broll', 'pip'].includes(it.type)) continue;
+    const def = it.type === 'insert' || it.type === 'audio' ? 1 : 0;
+    out.push({key:'i' + it.id, name: it.clip.name, kind: it.type === 'audio' ? 'Tonspur' : it.type === 'insert' ? 'Einschub' : 'Videospur', uri: it.clip.uri, a: it.in, b: it.out, muted: (it.vol ?? def) <= 0,
+      get: () => it.vol ?? def, set: v => { it.vol = r3(v); }});
+  }
+  return out;
+}
+function envOfUri(uri){
+  const src = P.sources.find(x => x.uri === uri); if (src && envArr(src)) return Promise.resolve(envArr(src));
+  if (envCache.has(uri)) return envCache.get(uri);
+  const p = new Promise(res => {
+    if (!TS.envelope) return res(null);
+    let id; try { id = TS.envelope(uri); } catch(_){ return res(null); }
+    watchJob(id, () => {}, j => { const e = j.result && j.result.env; if (!e) return res(null); const b = atob(e), a = new Uint8Array(b.length); for (let i = 0; i < b.length; i++) a[i] = b.charCodeAt(i); res(a); }, () => res(null));
+  });
+  envCache.set(uri, p); return p;
+}
+// Lautheit eines Bereichs (gated, ähnlich LUFS): Mittel der Leistung über laute Stellen, Stille zählt nicht
+function loudness(a, from, to){
+  if (!a) return null;
+  const i0 = Math.max(0, Math.floor(from * 100)), i1 = Math.min(a.length, Math.ceil(to * 100)); let n = 0, sum = 0;
+  const pw = i => Math.pow(10, (a[i] / 2.8 - 90) / 10);
+  for (let i = i0; i < i1; i++){ if (a[i] / 2.8 - 90 > -60){ sum += pw(i); n++; } } if (!n) return null;
+  const g = 10 * Math.log10(sum / n) - 10; n = 0; sum = 0;
+  for (let i = i0; i < i1; i++){ if (a[i] / 2.8 - 90 > g){ sum += pw(i); n++; } }
+  return n ? 10 * Math.log10(sum / n) : null;
+}
+const pct = v => Math.round(v * 100) + ' %';
+function openVolumes(){
+  if (!P) return; const body = $('#sheetBody'), list = volClips();
+  body.innerHTML = `<h3>Lautstärke</h3>
+    <p class="muted small">Jeder Clip einzeln, oder alle mit einem Klick auf dieselbe Lautheit bringen. Stumm geschaltete B-Roll bleibt stumm. Über 100 % wird verstärkt.</p>
+    <div class="row"><button class="btn primary" id="volLevel">🔊 Alle angleichen</button><button class="btn" id="volReset">Alle auf 100 %</button><span class="muted small" id="volMsg"></span></div>
+    <div class="vol-list">${list.length ? '' : '<p class="muted small">Keine Clips mit Ton.</p>'}</div>
+    <div class="row" style="margin-top:12px"><button class="btn primary" id="volOk" style="margin-left:auto">Fertig</button></div>`;
+  const box = body.querySelector('.vol-list');
+  for (const c of list){
+    const row = document.createElement('div'); row.className = 'vol-row';
+    row.innerHTML = `<div class="vol-name"><b></b><span class="muted small"></span></div><input type="range" min="0" max="400" step="5"><span class="vol-v mono"></span><span class="vol-l muted small mono"></span>`;
+    row.querySelector('b').textContent = c.name; row.querySelector('.muted').textContent = c.kind + (c.muted ? ' · stumm' : '');
+    const r = row.querySelector('input'), v = row.querySelector('.vol-v'); r.value = Math.round(c.get() * 100); v.textContent = pct(c.get());
+    r.onpointerdown = () => { r._b = snapshot(); };
+    r.oninput = () => { c.set(+r.value / 100); v.textContent = pct(+r.value / 100); changed(false); seekOut(outPos, false); };
+    r.onchange = () => { if (r._b){ undo.push(r._b); redo = []; r._b = null; } renderTimeline(); };
+    row.dataset.key = c.key; box.append(row);
+  }
+  openSheet(false);
+  $('#volOk').onclick = closeSheet;
+  $('#volReset').onclick = () => { commit(() => list.forEach(c => { if (!c.muted) c.set(1); }), false); seekOut(outPos, false); openVolumes(); toast('Alle hörbaren Clips auf 100 %'); };
+  $('#volLevel').onclick = () => levelAll();
+  body.onclick = null;
+}
+// Alle hörbaren Clips auf dieselbe Lautheit: Verstärkung je Clip = Ziel − gemessene Lautheit
+async function levelAll(){
+  const list = volClips().filter(c => !c.muted); if (list.length < 2) return toast('Es braucht mindestens zwei Clips mit Ton');
+  const msg = t => { const m = $('#volMsg'); if (m) m.textContent = t; };
+  msg('Lautstärke wird gemessen …'); toast('Lautstärke wird gemessen …');
+  const meas = [];
+  for (const c of list){ const a = await envOfUri(c.uri); const L = loudness(a, c.a, c.b); if (L != null) meas.push({c, L}); }
+  if (meas.length < 2){ msg(''); return toast('Lautstärke ließ sich nicht messen'); }
+  // Ziel: die lautere Mitte – aber so, dass auch der leiseste Clip es mit höchstens +12 dB erreicht
+  const sorted = meas.map(m => m.L).sort((x, y) => x - y), target = Math.min(sorted[Math.floor(sorted.length / 2)], sorted[0] + 12);
+  commit(() => { for (const m of meas) m.c.set(clamp(Math.pow(10, (target - m.L) / 20), 0.1, 4)); }, false);
+  seekOut(outPos, false); renderTimeline();
+  if ($('#sheet').classList.contains('hidden')) toast(`${meas.length} Clips angeglichen`); else { openVolumes(); msg(`${meas.length} Clips angeglichen`); }
+  for (const m of meas){ const row = document.querySelector(`.vol-row[data-key="${m.c.key}"] .vol-l`); if (row) row.textContent = `vorher ${m.L.toFixed(0)} dB`; }
+}
+$('#barVol').onclick = () => openVolumes();
+$('#volBtn').onclick = () => openVolumes();
+$('#clipLevel').onclick = () => levelAll();
+
 // ───────── Tastatur (wie CapCut) und Maus ─────────
 const KEYS = [
   ['Leertaste', 'Abspielen / Pause'], ['K / L', 'Pause / Abspielen'],

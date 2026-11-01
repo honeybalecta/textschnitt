@@ -128,6 +128,7 @@
       <div class="findrow hidden" id="replRow"><input type="text" id="replIn" placeholder="Ersetzen durch …" autocomplete="off"><button class="chip" id="replOne">Ersetzen</button><button class="chip" id="replAll">Alle ersetzen</button><button class="chip danger" id="findDelAll">Alle Treffer löschen</button></div>
       <div class="toolrow">
         <button class="chip" id="fillerBtn">Füllwörter weg</button>
+        <button class="chip" id="volBtn" title="Lautstärke aller Clips einzeln einstellen oder mit einem Klick angleichen">🔊 Lautstärke</button>
         <button class="chip" id="repeatBtn" title="Wiederholte Anläufe finden und löschen – der letzte Versuch bleibt stehen">Wiederholungen weg</button>
         <span class="chip combo"><button id="pauseBtn">Pausen kürzen auf</button><select id="pauseLen"><option value="0" selected>ganz weg</option><option value="0.1">0,1 s</option><option value="0.2">0,2 s</option><option value="0.3">0,3 s</option><option value="0.5">0,5 s</option></select></span>
         <button class="chip" id="cutPlayBtn" title="2 Sekunden vor bis 2 Sekunden nach dem letzten Schnitt abspielen">▶ Letzten Schnitt anhören</button>
@@ -200,7 +201,7 @@
       <div class="card stack">
         <h4>Tempo &amp; Dynamik</h4>
         <div class="row wrap"><button class="btn small" id="clipPauses" title="Alle Pausen ganz herausschneiden">⏸ Pausen raus</button><button class="btn small" id="clipFillers">Füllwörter weg</button><button class="btn small" id="clipRepeats">Wiederholungen weg</button></div>
-        <div class="row wrap"><button class="btn small" id="clipAutoZoom" title="An Satzanfängen abwechselnd ran- und zurückspringen – wie in viralen Clips">🔍 Auto-Zoom</button><button class="btn small" id="clipZoomHere">Zoom hier</button><button class="btn small ghost" id="clipZoomOff">Zooms entfernen</button></div>
+        <div class="row wrap"><button class="btn small" id="clipLevel" title="Alle Clips auf dieselbe Lautheit bringen">🔊 Lautstärke angleichen</button><button class="btn small" id="clipAutoZoom" title="An Satzanfängen abwechselnd ran- und zurückspringen – wie in viralen Clips">🔍 Auto-Zoom</button><button class="btn small" id="clipZoomHere">Zoom hier</button><button class="btn small ghost" id="clipZoomOff">Zooms entfernen</button></div>
       </div>
       <div class="card stack">
         <div class="row wrap"><button class="btn primary" id="clipExport">Clip exportieren</button><button class="btn" id="clipStudio">Feinschnitt im Studio</button></div>
@@ -220,6 +221,7 @@
           <button class="tb" id="barTitle" title="Titel einfügen (T)"><i>T</i><span>Titel</span></button>
           <button class="tb" id="barZoom" title="Zoom einfügen"><i>🔍</i><span>Zoom</span></button>
           <button class="tb" id="barFx" title="Clip anpassen: Tempo, Lautstärke, Farbe (E)"><i>⚙</i><span>Anpassen</span></button>
+          <button class="tb" id="barVol" title="Lautstärke aller Clips – einzeln einstellen oder mit einem Klick angleichen"><i>🔊</i><span>Lautstärke</span></button>
         </div>
         <div class="tl-grp">
           <button class="tb" id="barUndo" title="Rückgängig (Strg+Z)"><i>↶</i></button>

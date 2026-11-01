@@ -950,7 +950,7 @@ function updateAudio(o){
     if (!el){ if (!on) continue; el = new Audio(); el.preload = 'auto'; audLayers.set(a.x.id, el); }
     const url = MEDIA(a.x.clip.uri); if (el.dataset.src !== url){ el.src = url; el.dataset.src = url; }
     if (!on || !playing){ if (!el.paused) el.pause(); if (!on) continue; }
-    el.volume = clamp(a.x.vol ?? 1, 0, 1);
+    setVol(el, a.x.vol ?? 1);
     const target = a.x.in + (o - a.at);
     if (Math.abs(el.currentTime - target) > (playing ? 0.3 : 0.05)) try { el.currentTime = target; } catch(_){}
     if (playing && el.paused) el.play().catch(() => {});
@@ -1076,7 +1076,7 @@ function seekOut(o, keepPlaying = playing){
   } else {
     V.pause(); II.classList.add('hidden');
     const url = MEDIA(g.uri); if (IV.dataset.src !== url){ IV.src = url; IV.dataset.src = url; }
-    IV.classList.remove('hidden'); IV.volume = clamp(g.item.vol ?? 1, 0, 1); IV.muted = !(g.item.vol ?? 1); IV.currentTime = local; if (keepPlaying) IV.play().catch(() => {});
+    IV.classList.remove('hidden'); setVol(IV, g.item.vol ?? 1); IV.muted = !(g.item.vol ?? 1); IV.currentTime = local; if (keepPlaying) IV.play().catch(() => {});
   }
   updateOverlay(o); updateZoom(); updateSubs(o); updateTitles(o); updateHead(o);
 }
@@ -1091,7 +1091,7 @@ function setPlayIcons(on){ if (typeof fullPoke === 'function') fullPoke(); for (
 function togglePlay(){ if (V.dataset.err){ toast('Vorschau nicht abspielbar – siehe Hinweis im Bild'); return; } playing ? pausePlay() : startPlay(); }
 function startPlay(){
   if (!timeline.length) return; if (outPos >= total - 0.05) seekOut(0, false);
-  playing = true; setPlayIcons(true); seekOut(outPos, true); TS.keepAwake(true);
+  playing = true; if (actx && actx.state === "suspended") actx.resume().catch(() => {}); setPlayIcons(true); seekOut(outPos, true); TS.keepAwake(true);
 }
 function pausePlay(){
   const g0 = timeline[curSeg]; if (playing && g0 && g0.kind === 'insert' && isImg(g0.item.clip)) imgClock = {local: segLocal(g0), t0: performance.now()};
@@ -1224,7 +1224,7 @@ function updateOverlay(o){
     const v = PipDrag.on && PipDrag.it === it ? PipDrag : elVals(it, o - a.at), r = elRect(it, v, W, H) || (hasCrop(it) || Crop.it === it ? elRect(it, coverVals(it), W, H) : null);
     placeLayer(el, it, r);
     if (el.tagName !== 'VIDEO') return;
-    const vol = it.vol || 0; el.muted = !(vol > 0) || !playing; el.volume = clamp(vol, 0, 1);
+    const vol = it.vol || 0; el.muted = !(vol > 0) || !playing; setVol(el, vol);
     const target = it.in + (o - a.at);
     if (Math.abs(el.currentTime - target) > (playing ? 0.3 : 0.05)) el.currentTime = target;
     if (playing && el.paused) el.play().catch(() => {}); if (!playing && !el.paused) el.pause();
@@ -1445,7 +1445,19 @@ const cssFilter = fx => !fx ? '' : [fx.bright ? `brightness(${(1 + fx.bright).to
 function applySegFx(g){
   const fx = g && g.kind === 'main' ? g.fx : null;
   V.style.filter = cssFilter(fx); const rate = g && g.kind === 'main' ? (g.speed || 1) : 1; if (Math.abs(V.playbackRate - rate) > 0.001) V.playbackRate = clamp(rate, 0.25, 4);
-  const vol = fx ? clamp(fx.vol, 0, 1) : 1; if (Math.abs(V.volume - vol) > 0.001) V.volume = vol;
+  setVol(V, (fx ? fx.vol ?? 1 : 1) * (g && g.kind === 'main' ? srcVol(g.si) : 1));
+}
+// Lautstärke je Video der Hauptspur (P.sources[k].vol) – wird mit der Anpassung des Abschnitts multipliziert
+const srcVol = si => { const s = P && P.sources[si]; return s && s.vol != null ? +s.vol : 1; };
+// Lautstärke in der Vorschau, auch über 100 % (dann über die Web-Audio-Schnittstelle verstärkt)
+let actx = null;
+function setVol(el, v){
+  v = Math.max(0, +v || 0);
+  if (!el._g && v <= 1){ if (Math.abs(el.volume - v) > 0.001) el.volume = v; return; }
+  try {
+    if (!el._g){ actx ||= new (window.AudioContext || window.webkitAudioContext)(); const src = actx.createMediaElementSource(el), gn = actx.createGain(); src.connect(gn).connect(actx.destination); el._g = gn; }
+    if (el.volume !== 1) el.volume = 1; el._g.gain.value = Math.min(v, 4); if (actx.state === 'suspended') actx.resume().catch(() => {});
+  } catch(_){ el.volume = Math.min(1, v); }
 }
 function updateZoom(){
   const g = timeline[curSeg]; applySegFx(g);
@@ -2638,7 +2650,7 @@ function buildPlan(){
       .map(z => ({at:r3(z.at - off), dur:z.dur, kind:z.kind, strength:z.strength, cx:z.cx, cy:z.cy}));
     const fx = g.fx || FX_DEF;
     return {kind:'main', src:g.si, uri:s.uri, in:r3(g.in - off), out:r3(g.out - off), zooms:zs, hasAudio: s.hasAudio !== false, hasVideo: hasVid(s),
-      speed:+(fx.speed || 1), vol:+(fx.vol ?? 1), bright:+(fx.bright || 0), contrast:+(fx.contrast || 0), sat:+(fx.sat || 0), gray:!!fx.gray,
+      speed:+(fx.speed || 1), vol:+((fx.vol ?? 1) * srcVol(g.si)).toFixed(3), bright:+(fx.bright || 0), contrast:+(fx.contrast || 0), sat:+(fx.sat || 0), gray:!!fx.gray,
       ...(f2 => ({tx:r3(f2.tx || 0), ty:r3(f2.ty || 0), sc:+(f2.sc || 1).toFixed(4)}))(frameFx({tx:+(fx.tx || 0), ty:+(fx.ty || 0), sc:+(fx.sc || 1)}))};
   });
   const ovs = overlays.map(o => ({mode:o.x.type, image: isImg(o.x.clip), uri:o.x.clip.uri, in:o.x.in, out:r3(o.x.in + (o.end - o.at)), at:r3(o.at), corner:o.x.corner || 'or', size:o.x.size || 0.33,
