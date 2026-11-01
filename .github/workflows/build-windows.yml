@@ -52,7 +52,7 @@ jobs:
         env:
           PYINSTALLER_COMPILE_BOOTLOADER: "1"
         run: |
-          pip install --no-binary pyinstaller "pyinstaller==6.11.1"
+          pip install --no-binary pyinstaller "pyinstaller==6.22.3" "pyinstaller-hooks-contrib==2026.9"
           python -c "import PyInstaller, os; p = os.path.join(os.path.dirname(PyInstaller.__file__), 'bootloader', 'Windows-64bit-intel'); print(p); print(os.listdir(p))"
 
 
