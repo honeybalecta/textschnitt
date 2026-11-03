@@ -206,7 +206,7 @@
       </div>
       <div class="card stack">
         <h4>Bildausschnitt</h4>
-        <span class="muted small">Im Bild ziehen verschiebt den Ausschnitt, Mausrad oder Regler zoomt.</span>
+        <span class="muted small">Im Bild ziehen verschiebt den Ausschnitt, Mausrad, zwei Finger oder Regler zoomen – beliebig weit hinein und hinaus. Einzelne Clips: auf der Zeitleiste antippen, dann den Rahmen ziehen.</span>
         <div class="row wrap"><button class="btn small" data-fr="l">◀ Links</button><button class="btn small" data-fr="c">Mitte</button><button class="btn small" data-fr="r">Rechts ▶</button><button class="btn small" data-fr="fit">Ganzes Bild</button><button class="btn small" data-fr="fill">Füllen</button></div>
         <label class="field"><span>Zoom <b id="clipZoomV"></b></span><input type="range" id="clipZoom" min="0" max="100" value="0"></label>
       </div>
@@ -238,6 +238,7 @@
 
     <!-- Studio: Zeitleiste wie in CapCut -->
     <div class="pane hidden studio" id="paneStudio">
+      <button class="tl-fold" id="tlFold" title="Zeitleiste ein- oder ausklappen"><i>▾</i><span>Zeitleiste</span><em class="muted"></em></button>
       <div class="tl-bar">
         <div class="tl-grp">
           <button class="tb" id="barSplit" title="Teilen (Strg+B)"><i>✂</i><span>Teilen</span></button>

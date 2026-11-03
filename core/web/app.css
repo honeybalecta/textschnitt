@@ -343,6 +343,7 @@ pre.files:empty{display:none}
   #proj[data-tab=clip]{grid-template-columns:minmax(0,1.7fr) minmax(340px,1fr);grid-template-rows:auto auto minmax(0,1fr) auto minmax(250px,40vh);
         grid-template-areas:"bar bar" "tabs tabs" "stage side" "transport side" "tl side"}
   #proj[data-tab=clip] #paneStudio{grid-area:tl;border-left:0}
+  #proj[data-tab=clip].tl-min{grid-template-rows:auto auto minmax(0,1fr) auto auto}
   #proj[data-tab=clip] #paneClip{border-left:1px solid var(--line)}
   #proj > .bar{grid-area:bar}
   #proj > .stage-wrap{grid-area:stage;min-height:0;height:100%}
@@ -698,5 +699,20 @@ input[type=checkbox],input[type=radio]{accent-color:var(--rot)}
 /* Clip-Reiter auf schmalen Bildschirmen: Zeitleiste oben, Einstellungen darunter scrollbar */
 @media (max-width: 999px), (max-height: 599px){
   #proj[data-tab=clip] .panes:has(#paneStudio:not(.hidden)) #paneStudio{order:-1;flex:none;height:min(300px,42vh)}
+  #proj[data-tab=clip].tl-min .panes:has(#paneStudio:not(.hidden)) #paneStudio{height:auto}
   #proj[data-tab=clip] .panes:has(#paneStudio:not(.hidden)) #paneClip{flex:1;min-height:0;overflow:auto}
 }
+
+/* Bilder auf der Zeitleiste: Vorschau wiederholt, Text bleibt lesbar */
+.blk.imgblk{background-repeat:repeat-x;background-size:auto 100%;background-position:left center}
+.blk.ovl .thumbs img{opacity:.75}
+.blk.ovl .txt,.blk.aud .txt{position:relative;z-index:1;text-shadow:0 1px 2px rgba(0,0,0,.9)}
+
+/* Zeitleiste im Clip-Reiter einklappen */
+.tl-fold{display:none;align-items:center;gap:8px;width:100%;flex:none;padding:7px 14px;background:transparent;border:0;border-bottom:1px solid var(--sline,#2F2E2A);color:var(--stext,#EDE7DA);font:600 12px var(--ui);letter-spacing:.06em;text-transform:uppercase;cursor:pointer;text-align:left}
+.tl-fold i{font-style:normal;display:inline-block;transition:transform .15s}
+.tl-fold em{font-style:normal;font-weight:500;text-transform:none;letter-spacing:0;margin-left:auto;font-size:12px}
+#proj[data-tab=clip] .tl-fold{display:flex}
+#proj[data-tab=clip].tl-min .tl-fold i{transform:rotate(-90deg)}
+#proj[data-tab=clip].tl-min #paneStudio > :not(.tl-fold){display:none !important}
+#proj[data-tab=clip].tl-min #paneStudio{height:auto;min-height:0}

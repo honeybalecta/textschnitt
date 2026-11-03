@@ -203,7 +203,7 @@ function kfAt(kf, rel){
 }
 function segFx(s){
   return {speed: clamp(+s.speed || 1, 0.25, 4), vol: clamp(s.vol == null ? 1 : +s.vol, 0, 4), bright:+s.bright || 0, contrast:+s.contrast || 0, sat:+s.sat || 0, gray:!!s.gray,
-    tx:+s.tx || 0, ty:+s.ty || 0, sc: clamp(+s.sc || 1, 0.05, 4)};
+    tx:+s.tx || 0, ty:+s.ty || 0, sc: clamp(+s.sc || 1, 0.002, 400)};
 }
 
 // Gibt das fertige Ergebnis als Blob/File zurück; job: {cancel, progress, message}

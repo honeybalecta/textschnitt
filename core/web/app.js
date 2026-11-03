@@ -76,8 +76,10 @@ function frameFx(f){ const F = P && P.frame; if (!F) return f; const s1 = f.sc |
 // Anteil des Bildes, den das eingepasste Video einnimmt, und der Zoom, bei dem es das Bild ganz füllt
 function fitFrac(){ const [sw, sh] = dispSize(primary()), [W, H] = baseDims(), as = sw / sh, ao = W / H;
   return as > ao ? [1, ao / as] : [as / ao, 1]; }
+function fitFracOf(src){ const [sw, sh] = dispSize(src || primary()), [W, H] = baseDims(), as = sw / sh, ao = W / H; return as > ao ? [1, ao / as] : [as / ao, 1]; }
 const coverSc = () => { const [wf, hf] = fitFrac(); return Math.max(1 / wf, 1 / hf); };
-function clampFrame(F){ const [wf, hf] = fitFrac(), mx = Math.max(0, (F.sc * wf - 1) / 2), my = Math.max(0, (F.sc * hf - 1) / 2);
+// Ausschnitt frei: beliebig zoomen und verschieben, ein schmaler Rand des Videos bleibt immer im Bild
+function clampFrame(F){ const [wf, hf] = fitFrac(); F.sc = clamp(F.sc || 1, 0.05, 20); const mx = (F.sc * wf + 1) / 2 - 0.04, my = (F.sc * hf + 1) / 2 - 0.04;
   F.tx = r3(clamp(F.tx, -mx, mx)); F.ty = r3(clamp(F.ty, -my, my)); F.sc = r3(F.sc); return F; }
 function primary(){ return P.sources.find(hasVid) || {width:1920, height:1080, fps:30, rotation:0}; }
 function dispSize(m){ const r = Math.abs(m.rotation || 0) % 180 === 90; const w = m.width || 1920, h = m.height || 1080; return r ? [h, w] : [w, h]; }
@@ -1170,7 +1172,7 @@ function pipFree(it){ if (it.w != null) return; const v = elVals(it, 0) || cover
 function setElVals(it, rel, v){
   // Grenzen nach Größe: Ein Element darf so weit aus dem Bild ragen, dass nur noch ein schmaler Rand sichtbar ist –
   // auch sehr hohe Bilder (Screenshots, Grafiken) lassen sich so weit schieben, dass nur ihr oberer oder unterer Teil zu sehen ist.
-  const [W, H] = outSize(), w = clamp(v.w, 0.03, 5), hh = w * W / elAspect(it) / H, m = 0.04;
+  const [W, H] = outSize(), w = clamp(v.w, 0.03, 20), hh = w * W / elAspect(it) / H, m = 0.04;
   v = {x: r3(clamp(v.x, m - w / 2, 1 - m + w / 2)), y: r3(clamp(v.y, m - hh / 2, 1 - m + hh / 2)), w: r3(w)};
   if (it.kf && it.kf.length){
     const tol = 0.5 / (primary().fps || 30), k = it.kf.find(k => Math.abs(k.t - rel) <= tol);
@@ -1210,7 +1212,7 @@ function layerFor(it){
 }
 function allLayers(fn){ for (const el of layers.values()) fn(el); }
 let curPip = null, pipTarget = null, layerOrder = '';
-function selOvlId(){ return window.TL && TL.sel && (TL.sel.kind === 'ovl') ? TL.sel.id : null; }
+function selOvlId(){ return typeof TL !== 'undefined' && TL.sel && (TL.sel.kind === 'ovl') ? TL.sel.id : null; }
 function updateOverlay(o){
   const st = $('#stage'), W = st.clientWidth, H = st.clientHeight;
   const act = overlays.filter(x => o >= x.at && o < x.end);
@@ -1234,7 +1236,7 @@ function updateOverlay(o){
   });
   updateAudio(o);
   // Griffe: am ausgewählten Element, sonst am obersten
-  const sel = selOvlId(), tgt = act.find(a => a.x.id === sel) || act[act.length - 1] || null;
+  const sel = selOvlId(), mainSel = typeof TL !== 'undefined' && TL.sel && TL.sel.kind === 'main', tgt = act.find(a => a.x.id === sel) || (mainSel ? null : act[act.length - 1]) || null;   // Hauptclip ausgewählt: Rahmen am Hauptbild
   curPip = tgt ? tgt.x : null; pipTarget = tgt;
   placeBox(W, H);
 }
@@ -1254,7 +1256,8 @@ function placeBox(W, H){
   let r = null;
   if (curPip){ const it = curPip, v = PipDrag.on && PipDrag.it === it ? PipDrag : elVals(it, outPos - pipTarget.at);
     r = elRect(it, v, W, H); if (!r){ const c = coverVals(it); r = {cx: W / 2, cy: H / 2, w: c.w * W, h: c.w * W / elAspect(it)}; } }
-  else if (mainBoxOn()){ const f = frameFx(PipDrag.on && PipDrag.main ? {tx: PipDrag.tx, ty: PipDrag.ty, sc: PipDrag.sc} : mainFx()); r = {cx: (0.5 + f.tx) * W, cy: (0.5 + f.ty) * H, w: f.sc * W, h: f.sc * H}; }
+  else if (mainBoxOn()){ const f = frameFx(PipDrag.on && PipDrag.main ? {tx: PipDrag.tx, ty: PipDrag.ty, sc: PipDrag.sc} : mainFx()), [wf, hf] = mainFit();
+    r = {cx: (0.5 + f.tx) * W, cy: (0.5 + f.ty) * H, w: f.sc * W * wf, h: f.sc * H * hf}; }
   if (Crop.it) r = null;
   box.classList.toggle('hidden', !r); box.classList.toggle('main', !curPip && !!r);
   box.classList.toggle('sel', !!r && (curPip ? selOvlId() === curPip.id : true)); box.classList.toggle('playing', !!playing);
@@ -1262,8 +1265,9 @@ function placeBox(W, H){
   if (r) Object.assign(box.style, {left: (r.cx - r.w / 2) + 'px', top: (r.cy - r.h / 2) + 'px', width: r.w + 'px', height: r.h + 'px'});
 }
 // Hauptspur: Lage und Größe des ausgewählten Clips (in einer Anpassung gespeichert)
-const mainBoxOn = () => !!(window.TL && TL.sel && TL.sel.kind === 'main' && timeline[TL.sel.i] && tab === 'studio');
-function mainFx(){ const g = window.TL && TL.sel && timeline[TL.sel.i]; const f = g && g.fx ? g.fx : FX_DEF; return {tx: f.tx || 0, ty: f.ty || 0, sc: f.sc || 1}; }
+const mainBoxOn = () => !!(typeof TL !== 'undefined' && TL.sel && TL.sel.kind === 'main' && timeline[TL.sel.i] && studioOn());
+const mainFit = () => { const g = typeof TL !== 'undefined' && TL.sel && timeline[TL.sel.i]; return fitFracOf(g && g.kind === 'main' ? P.sources[g.si] : null); };
+function mainFx(){ const g = typeof TL !== 'undefined' && TL.sel && timeline[TL.sel.i]; const f = g && g.fx ? g.fx : FX_DEF; return {tx: f.tx || 0, ty: f.ty || 0, sc: f.sc || 1}; }
 function mainFxItem(g){
   let it = P.items.find(x => x.type === 'fx' && x.at <= g.in + 0.01 && x.at + x.dur >= g.out - 0.01);
   if (!it){ it = {id:newId(), type:'fx', at:r3(g.in), dur:r3(g.out - g.in), fx:{...FX_DEF}}; P.items.push(it); }
@@ -1363,7 +1367,7 @@ function resetCrop(){ if (Crop.it){ Crop.cur = {l:0, t:0, r:0, b:0}; Crop.ratio 
 const PipDrag = {on:false};
 $('#pipBox').addEventListener('pointerdown', e => {
   if (!curPip && !mainBoxOn()) return; e.preventDefault(); e.stopPropagation(); $('#pipBox').setPointerCapture(e.pointerId);
-  if (playing) pausePlay();
+  if (playing) pausePlay(); PipDrag.pid = e.pointerId; PipDrag.p1 = {x: e.clientX, y: e.clientY}; PipDrag.p2 = null; PipDrag.pinch = null;
   const st = $('#stage').getBoundingClientRect(), W = st.width, H = st.height, mode = e.target.classList.contains('pip-h') ? 'size' : 'move';
   if (!curPip){ const f = mainFx(); Object.assign(PipDrag, {on:true, main:true, it:null, moved:false, mode, x0:e.clientX, y0:e.clientY, stx:f.tx, sty:f.ty, ssc:f.sc, tx:f.tx, ty:f.ty, sc:f.sc}); return; }
   const it = curPip, rel = outPos - pipTarget.at, v = elVals(it, rel) || coverVals(it), r = elRect(it, v, W, H) || {cx: W / 2, cy: H / 2, w: v.w * W, h: v.w * W / elAspect(it)};
@@ -1375,7 +1379,8 @@ $('#pipBox').addEventListener('pointermove', e => {
   const dx = e.clientX - g.x0, dy = e.clientY - g.y0; if (Math.abs(dx) + Math.abs(dy) > 3) g.moved = true;
   if (g.main){
     if (g.mode === 'move'){ let tx = g.stx + dx / W, ty = g.sty + dy / H; if (Math.abs(tx) < 0.015) tx = 0; if (Math.abs(ty) < 0.015) ty = 0; g.tx = tx; g.ty = ty; }
-    else { const s0 = g.ssc, f = Math.max((s0 * W / 2 + dx) / (s0 * W / 2), (s0 * H / 2 + dy) / (s0 * H / 2)); g.sc = clamp(s0 * f, 0.1, 4); if (Math.abs(g.sc - 1) < 0.02) g.sc = 1; }
+    else { const s0 = g.ssc, [wf, hf] = mainFit(), F0 = (P.frame && P.frame.sc) || 1, bw = s0 * F0 * W * wf / 2, bh = s0 * F0 * H * hf / 2;
+      const f = Math.max((bw + dx) / bw, (bh + dy) / bh); g.sc = clamp(s0 * f, 0.05, 20); if (Math.abs(g.sc - 1) < 0.02) g.sc = 1; }
     applyMainTransform(); placeBox(W, H); return;
   }
   if (g.mode === 'move'){ let x = g.sx + dx / W, y = g.sy + dy / H; const hw = g.w / 2, hh = g.w * W / elAspect(g.it) / H / 2;
@@ -1383,7 +1388,7 @@ $('#pipBox').addEventListener('pointermove', e => {
     // Kanten rasten am Bildrand ein (z. B. Oberkante eines hohen Bildes genau oben)
     for (const e of [0, 1]){ if (Math.abs(x - hw - e) < 0.015) x = e + hw; else if (Math.abs(x + hw - e) < 0.015) x = e - hw; if (Math.abs(y - hh - e) < 0.015) y = e + hh; else if (Math.abs(y + hh - e) < 0.015) y = e - hh; }
     x = clamp(x, 0.04 - hw, 0.96 + hw); y = clamp(y, 0.04 - hh, 0.96 + hh); g.x = x; g.y = y; }
-  else { const a = elAspect(g.it); let pw = Math.max(dx + g.sw * W, W * 0.04, (dy + g.sw * W / a) * a); pw = Math.min(pw, W * 5);
+  else { const a = elAspect(g.it); let pw = Math.max(dx + g.sw * W, W * 0.03, (dy + g.sw * W / a) * a); pw = Math.min(pw, W * 20);
     g.w = pw / W; g.x = (g.left + pw / 2) / W; g.y = (g.top + pw / a / 2) / H; }
   $('#stage').classList.toggle('snap-x', g.mode === 'move' && g.x === 0.5);
   updateOverlay(outPos);
@@ -1398,12 +1403,30 @@ function endPipDrag(){
   seekOut(outPos, false); if (sheetItem === it) paintItem();
   toast(`Größe ${Math.round(g.w * 100)} % der Bildbreite` + (it.kf && it.kf.length ? ' · Keyframe' : ''));
 }
+// Zwei Finger auf dem Bild: ausgewähltes Element (oder Hauptbild) zoomen
+(() => { const st = $('#stage'), dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+  st.addEventListener('pointerdown', e => {
+    const g = PipDrag; if (!g.on || e.pointerId === g.pid || g.p2) return; e.stopPropagation(); e.preventDefault();
+    g.p2 = {id: e.pointerId, x: e.clientX, y: e.clientY}; g.pinch = {d0: Math.max(10, dist(g.p1, g.p2)), sc: g.sc, w: g.w}; g.moved = true;
+    try { st.setPointerCapture(e.pointerId); } catch(_){}
+  }, true);
+  st.addEventListener('pointermove', e => {
+    const g = PipDrag; if (!g.on) return;
+    if (e.pointerId === g.pid) g.p1 = {x: e.clientX, y: e.clientY}; else if (g.p2 && e.pointerId === g.p2.id) Object.assign(g.p2, {x: e.clientX, y: e.clientY}); else return;
+    if (!g.pinch) return; e.stopPropagation();
+    const r = dist(g.p1, g.p2) / g.pinch.d0;
+    if (g.main){ g.sc = clamp(g.pinch.sc * r, 0.05, 20); applyMainTransform(); placeBox(); }
+    else { g.w = clamp(g.pinch.w * r, 0.03, 20); updateOverlay(outPos); }
+  }, true);
+  const up = e => { const g = PipDrag; if (g.p2 && e.pointerId === g.p2.id){ g.p2 = null; e.stopPropagation(); } };
+  st.addEventListener('pointerup', up, true); st.addEventListener('pointercancel', up, true);
+})();
 $('#pipBox').addEventListener('pointerup', endPipDrag);
 $('#pipBox').addEventListener('pointercancel', endPipDrag);
 $('#pipBox').addEventListener('click', e => e.stopPropagation());
 $('#pipBox').addEventListener('wheel', e => {
-  e.preventDefault(); const f = e.deltaY < 0 ? 1.06 : 1 / 1.06;
-  if (!curPip){ if (!mainBoxOn()) return; const sg = timeline[TL.sel.i]; commit(() => { const it = mainFxItem(sg); it.fx.sc = r3(clamp((it.fx.sc || 1) * f, 0.1, 4)); }, false); seekOut(outPos, false); return; }
+  e.preventDefault(); if (curPip || mainBoxOn()) e.stopPropagation(); const f = e.deltaY < 0 ? 1.06 : 1 / 1.06;
+  if (!curPip){ if (!mainBoxOn()) return; const sg = timeline[TL.sel.i]; commit(() => { const it = mainFxItem(sg); it.fx.sc = r3(clamp((it.fx.sc || 1) * f, 0.05, 20)); }, false); seekOut(outPos, false); return; }
   const it = curPip, rel = outPos - pipTarget.at, v = elVals(it, rel) || coverVals(it);
   commit(() => setElVals(it, rel, {x: v.x, y: v.y, w: v.w * f}), false); seekOut(outPos, false); if (sheetItem === it) paintItem();
 }, {passive:false});
@@ -1422,7 +1445,7 @@ function updateTitles(o){
     const px = (SIZE_F[x.size] || 0.058) * Math.min(W, H) * (H > W ? 1.25 : 1) * (x.scale || 1), ol = Math.max(1, px / 14);
     el.style.fontSize = px.toFixed(1) + 'px'; el.style.color = x.color || '#FFFFFF'; el.style.fontFamily = fontCss(x.font); el.style.fontWeight = fontWeight(x.font, 800);
     el.style.textShadow = x.outline !== false ? [[-1,-1],[1,-1],[-1,1],[1,1],[0,-1.4],[0,1.4],[-1.4,0],[1.4,0]].map(([a, b]) => `${(a*ol).toFixed(1)}px ${(b*ol).toFixed(1)}px 0 #000`).join(',') : 'none';
-    el.style.background = x.bg ? 'rgba(0,0,0,.55)' : ''; el.classList.toggle('sel', !!(window.TL && TL.sel && TL.sel.id === x.id));
+    el.style.background = x.bg ? 'rgba(0,0,0,.55)' : ''; el.classList.toggle('sel', !!(typeof TL !== 'undefined' && TL.sel && TL.sel.id === x.id));
   }
 }
 const TitleDrag = {on:false};

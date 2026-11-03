@@ -37,7 +37,7 @@ os.environ.setdefault("HF_HUB_DISABLE_IMPLICIT_TOKEN", "1")
 import warnings  # noqa: E402
 warnings.filterwarnings("ignore", module="huggingface_hub")
 
-VERSION = "2.15.0"
+VERSION = "2.16.0"
 APP_DIR = Path(__file__).resolve().parent
 FROZEN = bool(getattr(sys, "frozen", False))          # als installierte .exe gebaut
 RES_DIR = Path(getattr(sys, "_MEIPASS", APP_DIR))      # mitgelieferte Dateien (Oberfläche, ffmpeg, Modelle)
@@ -901,11 +901,22 @@ def build_graph(plan: dict, with_video: bool, ass_name: str | None):
                     fitk = f"crop={win},scale={W}:{H},setsar=1" if win else fit
                     parts.append(f"[{i}:v:0]trim=start={a0 + off:.4f}:end={b0 + off:.4f},{spv},{fitk},fps={fps_s}{z}{video_fx_chain(fx)},format=yuv420p{lab}")
                     if tf:   # Bild verkleinern/vergrößern und verschieben, Rest schwarz
-                        sw, sh = max(2, round(W * fx["sc"] / 2) * 2), max(2, round(H * fx["sc"] / 2) * 2)
-                        X, Y = round((W - sw) / 2 + fx["tx"] * W), round((H - sh) / 2 + fx["ty"] * H)
+                        sc_ = fx["sc"]
+                        sw, sh = W * sc_, H * sc_
+                        X, Y = (W - sw) / 2 + fx["tx"] * W, (H - sh) / 2 + fx["ty"] * H
+                        # nur den sichtbaren Teil ausschneiden und skalieren – auch bei sehr starkem Zoom klein und schnell
+                        vx0, vy0, vx1, vy1 = max(0.0, X), max(0.0, Y), min(float(W), X + sw), min(float(H), Y + sh)
                         parts.append(f"color=c=black:s={W}x{H}:r={fps_s}:d={d:.4f},format=yuv420p[vb{k}]")
-                        parts.append(f"[vp{k}]scale={sw}:{sh},setsar=1[vs{k}]")
-                        parts.append(f"[vb{k}][vs{k}]overlay=x={X}:y={Y}:shortest=1:eof_action=pass,format=yuv420p,setsar=1{vlab}")
+                        if vx1 - vx0 < 2 or vy1 - vy0 < 2:
+                            parts.append(f"[vp{k}]nullsink")
+                            parts.append(f"[vb{k}]null{vlab}")
+                        else:
+                            cx0, cy0 = (vx0 - X) / sc_, (vy0 - Y) / sc_
+                            cw, ch = max(2, int((vx1 - vx0) / sc_)), max(2, int((vy1 - vy0) / sc_))
+                            cx0, cy0 = int(min(max(0.0, cx0), W - cw)), int(min(max(0.0, cy0), H - ch))
+                            ow, oh = max(2, round((vx1 - vx0) / 2) * 2), max(2, round((vy1 - vy0) / 2) * 2)
+                            parts.append(f"[vp{k}]crop={min(cw, W)}:{min(ch, H)}:{cx0}:{cy0},scale={ow}:{oh},setsar=1[vs{k}]")
+                            parts.append(f"[vb{k}][vs{k}]overlay=x={round(vx0)}:y={round(vy0)}:shortest=1:eof_action=pass,format=yuv420p,setsar=1{vlab}")
                 else:
                     parts.append(f"color=c=black:s={W}x{H}:r={fps_s},trim=duration={d:.4f},format=yuv420p,setsar=1{vlab}")
             if s.get("hasAudio", True):
@@ -953,6 +964,14 @@ def build_graph(plan: dict, with_video: bool, ass_name: str | None):
                 pw, ph = g["w"], g["h"]
                 x, y = (f"'{g['x']}'", f"'{g['y']}'") if g["move"] else (g["x"], g["y"])
                 sc = f"scale={pw}:{ph}:force_original_aspect_ratio=increase,crop={pw}:{ph},setsar=1"
+                if not g["move"] and (pw > W or ph > H):   # stark vergrößert: nur den sichtbaren Teil skalieren
+                    vx0, vy0, vx1, vy1 = max(0, x), max(0, y), min(W, x + pw), min(H, y + ph)
+                    if vx1 - vx0 >= 2 and vy1 - vy0 >= 2:
+                        fx0, fy0, fw_, fh_ = (vx0 - x) / pw, (vy0 - y) / ph, (vx1 - vx0) / pw, (vy1 - vy0) / ph
+                        ow, oh = max(2, round((vx1 - vx0) / 2) * 2), max(2, round((vy1 - vy0) / 2) * 2)
+                        sc = (f"crop=w='max(2,trunc(iw*{fw_:.6f}))':h='max(2,trunc(ih*{fh_:.6f}))':x='trunc(iw*{fx0:.6f})':y='trunc(ih*{fy0:.6f})',"
+                              f"scale={ow}:{oh},setsar=1")
+                        x, y = vx0, vy0
             elif o.get("mode") == "pip":
                 sz = float(o.get("size") or 0.33)
                 pw, ph = max(2, round(W * sz / 2) * 2), max(2, round(H * sz / 2) * 2)

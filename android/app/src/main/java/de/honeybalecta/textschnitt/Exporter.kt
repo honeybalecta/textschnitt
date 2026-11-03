@@ -187,7 +187,7 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
                 val aspect = maxOf(0.05, o.optDouble("aspect", 16.0 / 9))
                 val kf = o.optJSONArray("kf")?.let { a -> (0 until a.length()).map { a.getJSONObject(it) }.map { floatArrayOf(it.getDouble("t").toFloat(), it.getDouble("x").toFloat(), it.getDouble("y").toFloat(), it.getDouble("w").toFloat()) } } ?: emptyList()
                 // Frei liegendes Element: Bild in der größten benötigten Breite, Seitenverhältnis des Clips
-                val baseW = if (free) maxOf(o.getDouble("w"), kf.maxOfOrNull { it[3].toDouble() } ?: 0.0).coerceIn(0.02, 5.0) else 1.0
+                val baseW = if (free) maxOf(o.getDouble("w"), kf.maxOfOrNull { it[3].toDouble() } ?: 0.0).coerceIn(0.02, 20.0) else 1.0
                 // sehr große Elemente (z. B. hohe Screenshots) als kleinere Textur, die beim Zusammensetzen hochskaliert wird
                 val texR = if (free) minOf(1.0, 4096.0 / maxOf(w * baseW, w * baseW / aspect)) else 1.0
                 val pw = if (free) (maxOf(2.0, w * baseW * texR) / 2).toInt() * 2 else w

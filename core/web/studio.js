@@ -67,10 +67,11 @@ function thumbs(b, uri, inS, d, aspect, speed = 1){
 }
 // Lautstärkeverlauf unten im Clip – so sieht man, wo wirklich gesprochen wird
 function wave(b, src, inS, d, speed = 1){
-  const a = envArr(src); if (!a) return;
+  if (src && !src.env && src.uri){ const ps = P.sources.find(x => x.uri === src.uri && x.env); if (ps) src = ps; }
+  const a = src && src.env ? envArr(src) : src && envDone.get(src.uri); if (!a) return;
   const w = Math.max(2, Math.round(d / speed * TL.pps)), h = 16, c = document.createElement('canvas'); c.className = 'wave'; c.width = w; c.height = h;
   const ctx = c.getContext('2d');
-  const bs = burstsOf(src) || [];
+  const bs = (src && src.env && burstsOf(src)) || [];
   for (let x = 0; x < w; x++){
     const t0 = inS + x / TL.pps * speed, t1 = inS + (x + 1) / TL.pps * speed; let m = 0;
     for (let i = Math.floor(t0 * 100); i <= Math.floor(t1 * 100) && i < a.length; i++) m = Math.max(m, a[i]);
@@ -80,6 +81,15 @@ function wave(b, src, inS, d, speed = 1){
     const y = Math.round(v * (h - 2)); ctx.fillRect(x, h - y, 1, y);
   }
   b.append(c);
+}
+// Vorschaubilder und Tonverlauf eines Clips; dl/dr verschieben Anfang/Ende (beim Ziehen an den Griffen)
+const envDone = new Map();   // fertig berechnete Lautstärkeverläufe von Medien, die keine Quelle sind
+function paintMedia(b, m, dl = 0, dr = 0){
+  if (!m) return; b.querySelectorAll(':scope > .thumbs, :scope > .wave').forEach(x => x.remove());
+  const inS = Math.max(0, m.inS + dl), d = Math.max(0.01, m.d - dl + dr);
+  if (m.img){ b.style.backgroundImage = `url("${MEDIA(m.img)}")`; b.classList.add('imgblk'); }
+  else if (m.uri) thumbs(b, m.uri, inS, d, m.aspect || 16 / 9, m.speed || 1);
+  if (m.src) wave(b, m.src, inS, d, m.speed || 1);
 }
 const fxBadges = fx => { if (!fx) return ''; const b = []; if (fx.speed && Math.abs(fx.speed - 1) > 0.001) b.push(`${(+fx.speed).toFixed(2).replace(/\.?0+$/, '').replace('.', ',')}×`);
   if (fx.vol != null && Math.abs(fx.vol - 1) > 0.001) b.push(fx.vol <= 0.001 ? '🔇' : `🔊${Math.round(fx.vol * 100)}%`); if (fx.gray) b.push('S/W'); else if (fx.bright || fx.contrast || fx.sat) b.push('🎨'); return b.join(' '); };
@@ -92,11 +102,11 @@ function renderMain(pad){
     const b = blk(g.kind === 'main' ? 'main' + (g.si % 2 ? ' alt' : '') : 'insert', g.o, d, pad, {kind: g.kind, i});
     let lbl = '';
     if (g.kind === 'main'){ const s = P.sources[g.si];
-      if (hasVid(s)){ const [sw, sh] = dispSize(s); thumbs(b, s.uri, g.in - s.off, g.out - g.in, sw / sh, g.speed || 1); } else b.classList.add('audio');
-      wave(b, s, g.in - s.off, g.out - g.in, g.speed || 1);
+      const [sw, sh] = dispSize(s); b._m = {uri: hasVid(s) ? s.uri : null, src: s, inS: g.in - s.off, d: g.out - g.in, aspect: sw / sh, speed: g.speed || 1};
+      if (!hasVid(s)) b.classList.add('audio'); paintMedia(b, b._m);
       if (multi && g.si !== lastSi) lbl = `${g.si + 1} · `; lastSi = g.si;
       const fb = fxBadges(g.fx); if (fb) b.insertAdjacentHTML('beforeend', `<span class="badge">${fb}</span>`); }
-    else { const c = g.item.clip; thumbs(b, c.uri, g.in, g.out - g.in, (c.width && c.height) ? dispSize(c)[0] / dispSize(c)[1] : asp); lbl = 'Einschub · '; }
+    else { const c = g.item.clip; b._m = isImg(c) ? {img: c.uri, inS: 0, d: g.out - g.in} : {uri: c.uri, inS: g.in, d: g.out - g.in, aspect: (c.width && c.height) ? dispSize(c)[0] / dispSize(c)[1] : asp, src: {uri: c.uri}}; paintMedia(b, b._m); lbl = 'Einschub · '; }
     b.insertAdjacentHTML('beforeend', `<span class="lbl">${lbl}${fmtD(d)} s</span>`);
     tr.append(b);
   });
@@ -120,6 +130,9 @@ function renderOvl(pad){
     const b = blk('ovl' + (o.x.type === 'pip' || o.x.w != null ? ' pip' : ''), o.at, o.end - o.at, pad, {id: o.x.id});
     const vol = o.x.vol > 0 ? ' ♪' : '';
     b.insertAdjacentHTML('beforeend', `<span class="txt"></span>`); b.querySelector('.txt').textContent = (o.x.w != null || o.x.type === 'pip' ? '▣ ' : '🎞 ') + o.x.clip.name + vol;
+    { const c = o.x.clip, it = o.x, span = Math.max(0.01, (it.out ?? (o.end - o.at)) - (it.in || 0)), spd = span / Math.max(0.01, o.end - o.at);
+      b._m = isImg(c) ? {img: c.uri, inS: 0, d: span} : {uri: c.uri, inS: it.in || 0, d: span, aspect: (c.width && c.height) ? dispSize(c)[0] / dispSize(c)[1] : 16 / 9, speed: spd || 1, src: {uri: c.uri}};
+      paintMedia(b, b._m); }
     for (const k of o.x.kf || []){ if (k.t > o.end - o.at + 0.01) continue; const d = document.createElement('i'); d.className = 'kf'; d.dataset.t = k.t; d.style.left = (k.t * TL.pps) + 'px'; d.title = 'Keyframe – antippen springt hierher'; b.append(d); }
     tr.append(b);
   }
@@ -140,6 +153,9 @@ function renderAud(pad){
   for (const a of audios){
     const tr = $('#trAud' + (a.x.track || 1)); if (!tr) continue;
     const b = blk('aud', a.at, a.end - a.at, pad, {id: a.x.id});
+    { const it = a.x, span = Math.max(0.01, (it.out ?? (a.end - a.at)) - (it.in || 0)); b._m = {inS: it.in || 0, d: span, speed: span / Math.max(0.01, a.end - a.at), src: {uri: it.clip.uri}};
+      if (!envDone.has(it.clip.uri) && window.envOfUri && !P.sources.some(x => x.uri === it.clip.uri)) envOfUri(it.clip.uri).then(e => { if (e && !envDone.has(it.clip.uri)){ envDone.set(it.clip.uri, e); if (studioOn()) renderTimeline(); } });
+      paintMedia(b, b._m); }
     b.insertAdjacentHTML('beforeend', `<span class="txt"></span>`); b.querySelector('.txt').textContent = '♪ ' + a.x.clip.name + ((a.x.vol ?? 1) !== 1 ? ` · ${Math.round((a.x.vol ?? 1) * 100)} %` : '');
     tr.append(b);
   }
@@ -400,6 +416,8 @@ function dragMoveAt(e){
   if (g.side === 'l'){ g.b.style.left = (g.left0 + px) + 'px'; g.b.style.width = Math.max(4, g.w0 - px) + 'px'; }
   else if (g.side === 'r') g.b.style.width = Math.max(4, g.w0 + px) + 'px';
   else g.b.style.left = (g.left0 + px) + 'px';
+  if (g.side !== 'm' && g.b._m){ const m = g.b._m, sd = d * (m.speed || 1); cancelAnimationFrame(g.mr);   // aufgedeckte Bilder und Ton gleich zeigen
+    g.mr = requestAnimationFrame(() => paintMedia(g.b, m, g.side === 'l' ? sd : 0, g.side === 'r' ? sd : 0)); }
   previewDrag(g.side, d);
   $('#tlInfo').textContent = (g.side === 'm' ? 'Verschieben ' : g.side === 'l' ? 'Anfang ' : 'Ende ') + (d >= 0 ? '+' : '−') + fmtD(Math.abs(d)) + ' s' + (isMain ? ` (${Math.round(Math.abs(d) * fps())} Bilder)` : '');
 }
@@ -1032,7 +1050,7 @@ function renderClip(){
   $('#clipInfo').textContent = `${fmtS(total)} lang · ${P.format || 'Originalformat'}${par ? ' · aus „' + par.name + '“' : ''}`;
   $$('#clipFmt button').forEach(b => b.classList.toggle('on', (b.dataset.v || null) === (P.format || null)));
   const F = P.frame || {sc:1, tx:0, ty:0}, mx = Math.max(coverSc() * 2.5, 3);
-  $('#clipZoom').value = Math.round(Math.log(F.sc || 1) / Math.log(mx) * 100); $('#clipZoomV').textContent = Math.round((F.sc || 1) * 100) + ' %';
+  $('#clipZoom').value = Math.round(zoomToSl(F.sc || 1)); $('#clipZoomV').textContent = Math.round((F.sc || 1) * 100) + ' %';
   $$('#clipLooks button').forEach(b => b.classList.toggle('on', b.dataset.look === S().look));
   $$('#clipColors button').forEach(b => b.classList.toggle('on', (b.dataset.c || '').toLowerCase() === (S().color || '').toLowerCase()));
   const hook = P.items.find(x => x.type === 'title' && x.hook); if (document.activeElement !== $('#clipHook')) $('#clipHook').value = hook ? hook.text : '';
@@ -1053,25 +1071,37 @@ $('#paneClip').addEventListener('click', e => {
   if (b.dataset.c){ commit(() => S().color = b.dataset.c, false); syncStyleInputs(); styleOverlay(); renderClip(); return; }
   if (b.dataset.y){ commit(() => { S().y = +b.dataset.y; S().x = 0.5; S().pos = 'frei'; }, false); syncStyleInputs(); styleOverlay(); placeOverlay(); return; }
 });
-$('#clipZoom').oninput = e => { const F = {...(P.frame || {sc:1, tx:0, ty:0})}, mx = Math.max(coverSc() * 2.5, 3); F.sc = Math.max(1, Math.pow(mx, +e.target.value / 100)); setFrame(F, true); $('#clipZoomV').textContent = Math.round(F.sc * 100) + ' %'; };
+// Zoomregler: links 20 % (weit herausgezoomt), Mitte = ganzes Bild … rechts stark vergrößert (logarithmisch)
+const ZMIN = 0.2, zmax = () => Math.max(coverSc() * 4, 6);
+const zoomToSl = sc => sc <= 1 ? 30 * Math.log(sc / ZMIN) / Math.log(1 / ZMIN) : 30 + 70 * Math.log(sc) / Math.log(zmax());
+const slToZoom = v => v <= 30 ? ZMIN * Math.pow(1 / ZMIN, v / 30) : Math.pow(zmax(), (v - 30) / 70);
+$('#clipZoom').oninput = e => { const F = {...(P.frame || {sc:1, tx:0, ty:0})}; let sc = slToZoom(+e.target.value); if (Math.abs(sc - 1) < 0.03) sc = 1; if (Math.abs(sc - coverSc()) < 0.04 * coverSc()) sc = coverSc();
+  F.sc = sc; setFrame(F, true); $('#clipZoomV').textContent = Math.round(F.sc * 100) + ' %'; };
 $('#clipZoom').onpointerdown = () => { $('#clipZoom')._b = snapshot(); };
 $('#clipZoom').onchange = () => { if ($('#clipZoom')._b){ undo.push($('#clipZoom')._b); redo = []; $('#clipZoom')._b = null; } changed(false); renderClip(); };
 // Im Bild ziehen verschiebt den Ausschnitt (nur im Clip-Reiter, sonst gilt das normale Verhalten)
 (() => {
   const st = $('#stage'); let g = null;
+  const pts = new Map();   // zwei Finger: zoomen
   st.addEventListener('pointerdown', e => {
     if (!P || tab !== 'clip' || !P.format || e.target.closest('#subOv,.titlebox,#pipBox,#cropBox')) return;
+    pts.set(e.pointerId, {x: e.clientX, y: e.clientY});
+    if (pts.size === 2 && g){ const [a, b] = [...pts.values()]; g.pinch = {d0: Math.hypot(a.x - b.x, a.y - b.y), F: {...(P.frame || {sc:1, tx:0, ty:0})}}; g.moved = true; st.setPointerCapture(e.pointerId); return; }
     g = {x0: e.clientX, y0: e.clientY, F: {...(P.frame || {sc:1, tx:0, ty:0})}, moved: false, b: snapshot()}; st.setPointerCapture(e.pointerId);
   });
   st.addEventListener('pointermove', e => {
-    if (!g) return; const r = st.getBoundingClientRect(), dx = (e.clientX - g.x0) / r.width, dy = (e.clientY - g.y0) / r.height;
+    if (!g) return; if (pts.has(e.pointerId)) pts.set(e.pointerId, {x: e.clientX, y: e.clientY});
+    if (g.pinch && pts.size >= 2){ const [a, b] = [...pts.values()], d = Math.hypot(a.x - b.x, a.y - b.y); if (playing) pausePlay();
+      setFrame({...g.pinch.F, sc: g.pinch.F.sc * d / Math.max(10, g.pinch.d0)}, true); return; }
+    if (g.pinch) return;
+    const r = st.getBoundingClientRect(), dx = (e.clientX - g.x0) / r.width, dy = (e.clientY - g.y0) / r.height;
     if (Math.abs(dx) + Math.abs(dy) > 0.006) g.moved = true; if (!g.moved) return;
     if (playing) pausePlay(); setFrame({...g.F, tx: g.F.tx + dx, ty: g.F.ty + dy}, true);
   });
-  const end = () => { if (!g) return; const x = g; g = null; if (x.moved){ undo.push(x.b); redo = []; changed(false); renderClip(); st.dataset.noclick = '1'; setTimeout(() => delete st.dataset.noclick, 50); } };
+  const end = e => { if (e) pts.delete(e.pointerId); if (!g || pts.size) return; const x = g; g = null; if (x.moved){ undo.push(x.b); redo = []; changed(false); renderClip(); st.dataset.noclick = '1'; setTimeout(() => delete st.dataset.noclick, 50); } };
   st.addEventListener('pointerup', end); st.addEventListener('pointercancel', end);
   st.addEventListener('click', e => { if (st.dataset.noclick){ e.stopImmediatePropagation(); } }, true);
-  st.addEventListener('wheel', e => { if (!P || tab !== 'clip' || !P.format) return; e.preventDefault(); const F = {...(P.frame || {sc:1, tx:0, ty:0})}; F.sc = Math.max(1, F.sc * (e.deltaY < 0 ? 1.05 : 1 / 1.05)); setFrame(F); }, {passive:false});
+  st.addEventListener('wheel', e => { if (!P || tab !== 'clip' || !P.format) return; e.preventDefault(); const F = {...(P.frame || {sc:1, tx:0, ty:0})}; F.sc = F.sc * (e.deltaY < 0 ? 1.05 : 1 / 1.05); setFrame(F); }, {passive:false});
 })();
 // Hook: Titel am Anfang
 $('#clipHookSet').onclick = () => {
@@ -1130,7 +1160,7 @@ function envOfUri(uri){
   const p = new Promise(res => {
     if (!TS.envelope) return res(null);
     let id; try { id = TS.envelope(uri); } catch(_){ return res(null); }
-    watchJob(id, () => {}, j => { const e = j.result && j.result.env; if (!e) return res(null); const b = atob(e), a = new Uint8Array(b.length); for (let i = 0; i < b.length; i++) a[i] = b.charCodeAt(i); res(a); }, () => res(null));
+    watchJob(id, () => {}, j => { const e = j.result && j.result.env; if (!e) return res(null); const b = atob(e), a = new Uint8Array(b.length); for (let i = 0; i < b.length; i++) a[i] = b.charCodeAt(i); envDone.set(uri, a); res(a); }, () => res(null));
   });
   envCache.set(uri, p); return p;
 }
@@ -1322,3 +1352,9 @@ tlInner.addEventListener('dblclick', e => {
   else if (b.classList.contains('fx')){ select({kind:'fx', id:b.dataset.id}); openFxItem(selItem()); }
   else if (b.classList.contains('main')){ selectBlock(b); openFx(timeline[TL.sel.i]); }
 });
+
+// Zeitleiste im Clip-Reiter ein-/ausklappen (gemerkt pro Gerät)
+function setTlFold(min){ $('#proj').classList.toggle('tl-min', !!min); try { localStorage.setItem('hc-clip-tl', min ? '1' : '0'); } catch(_){}
+  $('#tlFold em').textContent = min ? 'antippen zum Ausklappen' : 'antippen zum Einklappen'; setTimeout(fitStage, 0); if (!min && P && studioOn()) setTimeout(renderTimeline, 30); }
+$('#tlFold').onclick = () => setTlFold(!$('#proj').classList.contains('tl-min'));
+try { setTlFold(localStorage.getItem('hc-clip-tl') === '1'); } catch(_){ setTlFold(false); }
