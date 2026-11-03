@@ -37,7 +37,7 @@ os.environ.setdefault("HF_HUB_DISABLE_IMPLICIT_TOKEN", "1")
 import warnings  # noqa: E402
 warnings.filterwarnings("ignore", module="huggingface_hub")
 
-VERSION = "2.12.1"
+VERSION = "2.13.0"
 APP_DIR = Path(__file__).resolve().parent
 FROZEN = bool(getattr(sys, "frozen", False))          # als installierte .exe gebaut
 RES_DIR = Path(getattr(sys, "_MEIPASS", APP_DIR))      # mitgelieferte Dateien (Oberfläche, ffmpeg, Modelle)
@@ -1734,6 +1734,21 @@ def picked_media(kind: str):
 PKG_MAGIC = b"HONEYCUT1\n"
 
 
+def save_image(data: dict) -> dict:
+    """Bild aus der Oberfläche (Base64-PNG) im Datenordner ablegen, z. B. Folien des B-Roll-Generators."""
+    name = re.sub(r"[^\w.\-]", "_", str(data.get("name") or "bild"))[:80]
+    if not name.lower().endswith(".png"):
+        name += ".png"
+    proj = re.sub(r"[^A-Za-z0-9_-]", "", str(data.get("project") or ""))[:20] or "allgemein"
+    d = DATA_DIR / "folien" / proj
+    d.mkdir(parents=True, exist_ok=True)
+    f = d / name
+    f.write_bytes(base64.b64decode(str(data.get("data") or "").split(",")[-1]))
+    uri = allow(f)
+    return {"uri": uri, "name": name, "kind": "image", "duration": 600.0, "width": int(data.get("width") or 0), "height": int(data.get("height") or 0),
+            "rotation": 0, "fps": 30.0, "hasAudio": False, "hasVideo": True}
+
+
 def import_root() -> Path:
     home = Path.home()
     for d in (home / "Documents", home / "Dokumente", home / "OneDrive" / "Dokumente", home / "OneDrive" / "Documents"):
@@ -2025,7 +2040,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._file(f, "font/ttf" if f.suffix.lower() == ".ttf" else "font/otf" if f.suffix.lower() == ".otf" else "text/plain; charset=utf-8", cache=True)
             if rest == "api/fonts":
                 return self._json(fonts_list())
-            if rest in ("", "index.html", "app.js", "studio.js", "app.css", "bridge-http.js", "icons.js"):
+            if rest in ("", "index.html", "app.js", "studio.js", "slides.js", "app.css", "bridge-http.js", "icons.js"):
                 f = WEB_DIR / (rest or "index.html")
                 ctype = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
                          ".css": "text/css; charset=utf-8"}[f.suffix]
@@ -2105,6 +2120,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"ok": font_delete(data.get("uri", ""))})
             if rest == "api/pick":
                 return self._json(picked_media(data.get("kind", "videos")))
+            if rest == "api/image":   # erzeugtes Bild (z. B. Folie) speichern und als Medium zurückgeben
+                return self._json(save_image(data))
             if rest == "api/package/export":
                 dest = save_dialog(re.sub(r'[\\/:*?"<>|]', "_", data.get("name") or "Projekt")[:80] + ".honeycut")
                 if not dest:

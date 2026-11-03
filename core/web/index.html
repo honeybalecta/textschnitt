@@ -61,6 +61,7 @@
       <div class="title-ov" id="titleOv"></div>
       <div class="pip-box hidden" id="pipBox" title="Ziehen zum Verschieben, Ecke ziehen (oder Mausrad) für die Größe"><i class="pip-h"></i></div>
       <div class="crop-box hidden" id="cropBox"><div class="crop-win" id="cropWin"><i data-h="nw"></i><i data-h="n"></i><i data-h="ne"></i><i data-h="e"></i><i data-h="se"></i><i data-h="s"></i><i data-h="sw"></i><i data-h="w"></i><b class="crop-grid"></b></div></div>
+      <canvas class="sl-stage" id="slStage"></canvas>
       <div class="pin hidden" id="pin"></div>
       <div class="proxy-bar hidden" id="proxyBar"><span id="proxyMsg"></span>
         <button class="btn primary" id="proxyBtn">Vorschau-Datei erstellen</button><div class="progress hidden" id="proxyProg"><i></i></div></div>
@@ -83,6 +84,7 @@
   <nav class="tabs" id="tabs">
     <button data-tab="text" class="on">Text</button>
     <button data-tab="subs">Untertitel</button>
+    <button data-tab="slides">Folien</button>
     <button data-tab="studio">Studio</button>
     <button data-tab="clip" class="hidden clip-tab">Clip</button>
     <button data-tab="export">Export</button>
@@ -166,6 +168,27 @@
       <div id="cueList"></div>
     </div>
 
+    <!-- B-Roll-Generator: Folien im festen Design, direkt aus dem Transkript -->
+    <div class="pane hidden slides-pane" id="paneSlides">
+      <div class="card stack">
+        <div class="clip-head"><h3>Folien</h3>
+          <button class="btn small" id="slAdd" title="Leere Folie anlegen">＋ Folie</button>
+          <button class="btn small" id="slSuggest" title="Für jeden Absatz eine Folie mit dem ersten Satz als Titel – als Grundlage zum Weiterbearbeiten">✨ Grundlage aus dem Text</button>
+          <button class="btn small primary" id="slPlace" title="Alle mit dem Text verknüpften Folien an ihrer Stelle als B-Roll einsetzen">Als B-Roll einsetzen</button></div>
+        <span class="muted small">Im Text unten Wörter markieren und mit „→ Neue Folie“, „→ Titel“, „→ Text“ oder „→ Stichpunkt“ übernehmen. Im Studio setzt <b>N</b> an der Abspiellinie die nächste Folie ein, Umschalt+N beendet sie.</span>
+        <label class="row small"><input type="checkbox" id="slGapless" checked> lückenlos: jede Folie bleibt bis zur nächsten stehen</label>
+      </div>
+      <div class="sl-wrap">
+        <div class="sl-list" id="slList"></div>
+        <div class="card stack sl-edit" id="slEdit"></div>
+      </div>
+      <div class="card stack">
+        <div class="clip-head"><h4>Transkript</h4><span class="muted small" id="slSelInfo">Wort anklicken, Umschalt+Klick oder Ziehen markiert einen Bereich</span></div>
+        <div class="row wrap sl-tbar"><button class="btn small primary" data-to="new">→ Neue Folie</button><button class="btn small" data-to="title">→ Titel</button><button class="btn small" data-to="text">→ Text</button><button class="btn small" data-to="bullet">→ Stichpunkt</button><button class="btn small" data-to="link">⛓ Nur verknüpfen</button></div>
+        <div class="sl-trans" id="slTrans"></div>
+      </div>
+    </div>
+
     <!-- Clip-Studio: Kurzvideo aus einem Ausschnitt (eigenes Projekt, eigenes Format) -->
     <div class="pane hidden clip-pane" id="paneClip">
       <div class="card stack">
@@ -221,6 +244,7 @@
           <button class="tb" id="barTitle" title="Titel einfügen (T)"><i>T</i><span>Titel</span></button>
           <button class="tb" id="barZoom" title="Zoom einfügen"><i>🔍</i><span>Zoom</span></button>
           <button class="tb" id="barFx" title="Clip anpassen: Tempo, Lautstärke, Farbe (E)"><i>⚙</i><span>Anpassen</span></button>
+          <button class="tb" id="barSlide" title="Nächste Folie ab der Abspiellinie als B-Roll (N) – Umschalt+N beendet die laufende Folie"><i>🖼</i><span>Folie (N)</span></button>
           <button class="tb" id="barVol" title="Lautstärke aller Clips – einzeln einstellen oder mit einem Klick angleichen"><i>🔊</i><span>Lautstärke</span></button>
         </div>
         <div class="tl-grp">
@@ -310,6 +334,7 @@
     <button class="btn" id="selEdit" title="Text der markierten Wörter korrigieren, zusammenschreiben oder fehlende Wörter ergänzen">✎ Text</button>
     <button class="btn" id="selSpk" title="Markierte Wörter einer Sprecherin oder einem Sprecher zuordnen">👤 Person</button>
     <button class="btn" id="selClip" title="Markierten Abschnitt als eigenen Clip (z. B. 9:16) im Clip-Studio öffnen">📱 Clip</button>
+    <button class="btn" id="selSlide" title="Aus den markierten Wörtern eine Folie für den B-Roll-Generator machen">🖼 Folie</button>
     <button class="btn hidden" id="selKeep" title="Nur den Untertitel der weggeschnittenen Wörter zeigen – der Schnitt bleibt">💬 Untertitel behalten</button>
     <button class="btn primary" id="selDel">Löschen</button>
     <button class="btn" id="selClose" title="Auswahl aufheben (Esc)">✕</button>
@@ -336,5 +361,6 @@
 <script src="bridge-http.js"></script>
 <script src="app.js"></script>
 <script src="studio.js"></script>
+<script src="slides.js"></script>
 </body>
 </html>

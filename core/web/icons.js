@@ -20,6 +20,7 @@
     '⌨': '<rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/>',
     '‹': '<path d="m15 18-6-6 6-6"/>',
     '⧉': '<rect x="8" y="8" width="13" height="13" rx="2"/><path d="M4 16V5a1 1 0 0 1 1-1h11"/>',
+    '🖼': '<rect x="3" y="4" width="18" height="13" rx="1.5"/><path d="M12 17v3M8 20h8M7 13l3-3 2 2 3-4 2 5"/>',
     '📱': '<rect x="7" y="2.5" width="10" height="19" rx="2"/><path d="M11 18.5h2"/>',
     '👤': '<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/>',
     '📋': '<rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3h6v1M9 11h6M9 15h4"/>',

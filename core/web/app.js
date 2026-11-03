@@ -383,7 +383,7 @@ function openProjectNow(id, keep){
   const keepTab = keep ? tab : null, keepPos = keep ? outPos : 0;
   P = J(TS.loadProject(id)); if (!P) return toast('Projekt konnte nicht geladen werden');
   if (!P.sources){ P.sources = [P.main]; P.sources[0].tr = !!(P.tokens || []).length; delete P.main; }   // altes Format (ein Video)
-  P.adj ||= {}; P.speakers ||= []; P.items ||= []; P.dels ||= []; P.splits ||= []; P.edits ||= {}; P.moves ||= []; P.trims ||= {}; P.settings ||= {pad:0.06}; P.cues ||= [];
+  P.adj ||= {}; P.speakers ||= []; P.slides ||= []; P.items ||= []; P.dels ||= []; P.splits ||= []; P.edits ||= {}; P.moves ||= []; P.trims ||= {}; P.settings ||= {pad:0.06}; P.cues ||= [];
   if (P.settings.burn == null) P.settings.burn = true;
   P.sub_style = {...DEF_STYLE, ...(P.sub_style || {})}; if (P.sub_style.y == null) P.sub_style.y = POS_Y[P.sub_style.pos] ?? 0.88;
   tokens = P.tokens || []; tokens.forEach(t => { if (t.src == null) t.src = 0; });
@@ -497,7 +497,8 @@ function packageSpec(proj, withMedia){
   const walk = o => { if (Array.isArray(o)) o.forEach(walk);
     else if (o && typeof o === 'object'){ if (typeof o.uri === 'string' && o.uri && !o.uri.startsWith('@hc')) o.uri = '@hc:' + fileFor(o, 'media');
       delete o.proxy; for (const k in o) if (o[k] && typeof o[k] === 'object') walk(o[k]); } };
-  walk(p.sources); walk(p.items); walk(p.media || []);
+  walk(p.sources); walk(p.items); walk(p.media || []); walk(p.slides || []);
+  for (const sl of p.slides || []) if (sl.img && !String(sl.img).startsWith('@hc')) sl.img = '@hc:' + fileFor({uri: sl.img, name: String(sl.img).split(/[\\/]/).pop() || 'bild.png', kind: 'image'}, 'media');
   // eigene Schriften (Untertitel, Titel)
   const fontKey = key => { const f = key && userFonts.find(x => x.key === key); return f ? '@hcf:' + fileFor({uri: f.uri, name: (f.uri.split(/[\\/]/).pop() || f.label + '.ttf')}, 'font') : key; };
   if (p.sub_style && p.sub_style.font) p.sub_style.font = fontKey(p.sub_style.font);
@@ -561,6 +562,7 @@ async function finishImport(res){
   const walk = o => { if (Array.isArray(o)) o.forEach(walk);
     else if (o && typeof o === 'object'){ if (typeof o.uri === 'string' && o.uri.startsWith('@hc:')) o.uri = media(o.uri.slice(4)); for (const k in o) if (o[k] && typeof o[k] === 'object') walk(o[k]); } };
   walk(proj);
+  for (const sl of proj.slides || []) if (typeof sl.img === 'string' && sl.img.startsWith('@hc:')) sl.img = media(sl.img.slice(4));
   const fk = key => { if (typeof key !== 'string' || !key.startsWith('@hcf:')) return key; const u = map[key.slice(5)]; return u ? 'u' + hashStr(u) : ''; };
   if (proj.sub_style && proj.sub_style.font) proj.sub_style.font = fk(proj.sub_style.font);
   for (const it of proj.items || []) if (it.font) it.font = fk(it.font);
@@ -668,10 +670,10 @@ function busApply(m){
 
 // ───────── Speichern & Rückgängig ─────────
 function tokMarks(){ const o = {}; for (const t of tokens) if (t.spk || t.ks) o[t.i] = [t.spk || 0, t.ks ? 1 : 0]; return o; }
-function snapshot(){ return JSON.stringify({d:[...deleted], t:P.trims, c:P.cues, i:P.items, a:P.adj, x:P.dels, y:P.splits, s:P.sub_style, e:P.edits, m:P.moves, k:P.speakers, w:tokMarks()}); }
+function snapshot(){ return JSON.stringify({d:[...deleted], t:P.trims, c:P.cues, i:P.items, a:P.adj, x:P.dels, y:P.splits, s:P.sub_style, e:P.edits, m:P.moves, k:P.speakers, w:tokMarks(), f:P.slides}); }
 function restore(s){ const o = JSON.parse(s); deleted = new Set(o.d); P.trims = o.t; P.cues = o.c; P.items = o.i; P.adj = o.a; P.dels = o.x || []; P.splits = o.y || [];
   if (o.s) P.sub_style = o.s; P.edits = o.e || {}; P.moves = o.m || [];
-  if (o.k) P.speakers = o.k; if (o.w){ for (const t of tokens){ const m = o.w[t.i]; if (m){ if (m[0]) t.spk = m[0]; else delete t.spk; if (m[1]) t.ks = true; else delete t.ks; } else { delete t.spk; delete t.ks; } } }
+  if (o.f) P.slides = o.f; if (o.k) P.speakers = o.k; if (o.w){ for (const t of tokens){ const m = o.w[t.i]; if (m){ if (m[0]) t.spk = m[0]; else delete t.spk; if (m[1]) t.ks = true; else delete t.ks; } else { delete t.spk; delete t.ks; } } }
   const reorder = JSON.stringify(P.moves) !== lastOrderKey; syncStyleInputs(); changed(true);
   if (reorder && tokens.length) renderTranscript(); else tokens.forEach(t => paint(t.i)); }
 function commit(fn, rerender = true){ undo.push(snapshot()); if (undo.length > 200) undo.shift(); redo = []; fn(); changed(rerender); }
@@ -2708,12 +2710,13 @@ function setTab(t){
   $('#paneText').classList.toggle('hidden', t !== 'text'); $('#paneSubs').classList.toggle('hidden', t !== 'subs');
   $('#paneStudio').classList.toggle('hidden', t !== 'studio'); $('#paneExport').classList.toggle('hidden', t !== 'export');
   $('#paneClip').classList.toggle('hidden', t !== 'clip'); if (t === 'clip' && window.renderClip) renderClip();
+  $('#paneSlides').classList.toggle('hidden', t !== 'slides'); if (t === 'slides' && window.renderSlides) renderSlides();
   $$('#tabs button[data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === t || (t === 'trans' && b.dataset.tab === 'text')));
   if (t === 'trans') renderSources();
   if (t === 'subs') renderSubs(); if (studioOn() && window.renderStudio) renderStudio(); if (t === 'export') renderExport();
   setTimeout(fitStage, 0);
 }
-const TAB_LBL = {text:'Text', trans:'Text', subs:'Untertitel', studio:'Studio', export:'Export', clip:'Clip'};
+const TAB_LBL = {text:'Text', trans:'Text', subs:'Untertitel', studio:'Studio', export:'Export', clip:'Clip', slides:'Folien'};
 $('#detachBtn').onclick = () => {
   if (!P) return; saveNow(); const view = tab === 'trans' ? 'text' : tab;
   let url = ''; try { url = TS.openWindow ? TS.openWindow(P.id, view) : ''; } catch(e){ return toast('Fenster konnte nicht geöffnet werden'); }

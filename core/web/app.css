@@ -350,7 +350,7 @@ pre.files:empty{display:none}
   #proj > .tabs .detach:hover{color:var(--text)}
   [data-platform=android] #proj > .tabs .detach{display:none}
   #proj > .panes, #proj > .panes:has(#paneStudio:not(.hidden)){display:contents}
-  #paneTrans,#paneText,#paneSubs,#paneExport,#paneStudio,#paneClip{grid-area:side;overflow:auto;min-height:0;border-left:1px solid var(--line);padding-bottom:70px}
+  #paneTrans,#paneText,#paneSubs,#paneExport,#paneStudio,#paneClip,#paneSlides{grid-area:side;overflow:auto;min-height:0;border-left:1px solid var(--line);padding-bottom:70px}
   #paneStudio{overflow:hidden;padding-bottom:0;border-left:0;border-top:1px solid var(--line);background:var(--surface);height:auto}
   .selbar{position:static;grid-area:side;align-self:end;z-index:5;margin:0 10px 10px;border:1px solid var(--line);border-radius:12px}
   .sheet{left:50%;right:auto;bottom:auto;top:8vh;transform:translateX(-50%);width:min(560px,92vw);max-height:84vh;border-radius:16px;padding-bottom:16px}
@@ -629,3 +629,49 @@ input[type=checkbox],input[type=radio]{accent-color:var(--rot)}
 .vol-name{min-width:0}.vol-name b{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600}
 .vol-v{text-align:right}
 @media (max-width:560px){.vol-row{grid-template-columns:1fr 52px}.vol-row input{grid-column:1/-1;grid-row:2}.vol-l{display:none}}
+/* B-Roll-Generator (Folien) */
+.slides-pane .card{margin-bottom:10px}
+.slides-pane .clip-head{flex-wrap:wrap}
+.sl-wrap{display:grid;grid-template-columns:minmax(150px,220px) minmax(0,1fr);gap:10px;margin-bottom:10px}
+@media (max-width:820px){.sl-wrap{grid-template-columns:1fr}.sl-list{flex-direction:row;overflow-x:auto;max-height:none}.sl-item{min-width:150px}}
+.sl-list{display:flex;flex-direction:column;gap:8px;max-height:70vh;overflow:auto;scrollbar-width:thin}
+.sl-item{border:1px solid var(--line);border-radius:10px;background:var(--surface);overflow:hidden;cursor:pointer;position:relative}
+.sl-item.on{border-color:var(--rot);box-shadow:0 0 0 1px var(--rot)}
+.sl-item img{display:block;width:100%;background:#0B0B0A}
+.sl-meta{display:flex;gap:6px;align-items:baseline;padding:5px 8px;font-size:11.5px;flex-wrap:wrap}.sl-meta b{color:var(--rot)}
+.sl-acts{position:absolute;top:4px;right:4px;display:none;gap:3px}.sl-item:hover .sl-acts,.sl-item.on .sl-acts{display:flex}
+.sl-acts button{width:22px;height:22px;border-radius:5px;border:0;background:rgba(19,19,18,.85);color:var(--creme);font-size:11px;cursor:pointer;padding:0}
+.sl-edit{min-width:0}
+.sl-prev canvas{display:block;width:100%;max-height:46vh;object-fit:contain;border-radius:8px;border:1px solid var(--line);background:#0B0B0A}
+.sl-layouts{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:6px}
+.sl-layouts button{background:#0B0B0A;border:1px solid var(--line);border-radius:8px;color:var(--creme);font-size:12px;padding:8px 4px;display:flex;flex-direction:column;align-items:center;gap:5px;cursor:pointer}
+.sl-layouts button.on{border-color:var(--rot);box-shadow:0 0 0 1px var(--rot)}
+.sl-ico{display:block;width:40px;height:24px;border-radius:3px;background:#1E1E1C;position:relative;overflow:hidden}
+.sl-ico::before,.sl-ico::after{content:'';position:absolute;background:var(--creme)}
+.sl-ico-titel::before{left:5px;top:7px;width:28px;height:4px}.sl-ico-titel::after{left:5px;top:14px;width:18px;height:3px;background:var(--grau)}
+.sl-ico-liste::before{left:5px;top:5px;width:4px;height:14px;background:repeating-linear-gradient(var(--rot) 0 3px,transparent 3px 6px)}.sl-ico-liste::after{left:12px;top:5px;width:22px;height:14px;background:repeating-linear-gradient(var(--creme) 0 3px,transparent 3px 6px)}
+.sl-ico-zitat::before{content:'„';background:none;color:var(--rot);font:700 20px/1 Lora,serif;left:3px;top:-2px}.sl-ico-zitat::after{left:12px;top:9px;width:22px;height:3px;box-shadow:0 5px 0 var(--creme)}
+.sl-ico-zahl::before{content:'42';background:none;color:var(--rot);font:900 15px/1 Inter,sans-serif;left:5px;top:3px}.sl-ico-zahl::after{left:5px;top:18px;width:24px;height:2px;background:var(--grau)}
+.sl-ico-begriff::before{content:'Aa';background:none;color:var(--creme);font:700 13px/1 Lora,serif;left:5px;top:3px}.sl-ico-begriff::after{left:5px;top:17px;width:10px;height:2px;background:var(--rot)}
+.sl-ico-bild::before{right:0;top:0;width:18px;height:24px;background:var(--sand)}.sl-ico-bild::after{left:4px;top:9px;width:14px;height:3px}
+.sl-ico-vollbild::before{inset:0;background:linear-gradient(transparent 40%,#131312),var(--sand)}.sl-ico-vollbild::after{left:4px;top:16px;width:20px;height:3px}
+.sl-ico-zwei::before{left:3px;top:6px;width:15px;height:15px;background:#2a2a27;border-top:2px solid var(--rot)}.sl-ico-zwei::after{right:3px;top:6px;width:15px;height:15px;background:#2a2a27;border-top:2px solid var(--creme)}
+.sl-fields{display:grid;grid-template-columns:1fr 1fr;gap:8px}.sl-fields textarea{grid-column:auto}.sl-fields .field:has(textarea){grid-column:1/-1}
+@media (max-width:560px){.sl-fields{grid-template-columns:1fr}}
+.sl-fields textarea,.sl-fields input[type=text]{width:100%}
+.sl-link{line-height:1.6}
+.seg-ctl.small button{padding:4px 10px;font-size:12px}
+.sl-trans{max-height:44vh;overflow:auto;font:16px/1.7 var(--read,Lora,serif);user-select:none;-webkit-user-select:none;touch-action:pan-y}
+.sl-trans p{margin:0 0 10px}
+.sl-w{cursor:pointer;border-radius:3px;padding:0 1px}
+.sl-w:hover{background:rgba(237,231,218,.08)}
+.sl-w.cut{opacity:.35;text-decoration:line-through}
+.sl-w.linked{box-shadow:inset 0 -2px 0 rgba(229,64,42,.55)}.sl-w.linked.cur{background:rgba(229,64,42,.14)}
+.sl-w.sel{background:var(--rot);color:#fff}
+.sl-badge{display:inline-block;font:700 10px/1 var(--ui);background:var(--rot);color:#fff;border-radius:9px;padding:3px 6px;margin-right:3px;vertical-align:2px;cursor:pointer}
+.sl-badge:not(.on){background:#4a3a36}
+.sl-tbar{margin-bottom:6px}
+
+.sl-stage{position:absolute;inset:0;width:100%;height:100%;z-index:8;display:none;pointer-events:none}
+#proj[data-tab=slides] .sl-stage{display:block}
+@media (min-width:1000px) and (min-height:600px){#proj[data-tab=slides] .sl-prev{display:none}}

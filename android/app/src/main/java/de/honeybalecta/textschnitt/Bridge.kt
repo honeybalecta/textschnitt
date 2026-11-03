@@ -124,6 +124,17 @@ class Bridge(private val act: MainActivity) {
         main.post { act.launchPicker(arrayOf("application/octet-stream", "*/*"), false) }
     }
 
+    /** Erzeugtes Bild (z. B. Folie aus dem B-Roll-Generator) als PNG ablegen; Rückgabe wie bei der Dateiauswahl. */
+    @JavascriptInterface
+    fun saveImage(name: String, b64: String, width: Int, height: Int, project: String): String {
+        val dir = File(ctx.getExternalFilesDir(null) ?: ctx.filesDir, "Folien/" + safeId(project).ifBlank { "allgemein" }).apply { mkdirs() }
+        var n = name.replace(Regex("[^\\w.\\-]"), "_").take(80); if (!n.lowercase().endsWith(".png")) n += ".png"
+        val f = File(dir, n)
+        f.writeBytes(android.util.Base64.decode(b64.substringAfter(","), android.util.Base64.DEFAULT))
+        return JSONObject().put("uri", Uri.fromFile(f).toString()).put("name", n).put("kind", "image").put("duration", 600.0)
+            .put("width", width).put("height", height).put("rotation", 0).put("fps", 30.0).put("hasAudio", false).put("hasVideo", true).toString()
+    }
+
     // ── Projekte ──
     @JavascriptInterface
     fun listProjects(): String {

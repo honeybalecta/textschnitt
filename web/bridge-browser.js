@@ -485,6 +485,14 @@
     models: () => JSON.stringify(modelsList()),
     downloadModel: name => newJob(async job => { await loadModel(name, job, 0, 1); return {}; }),
     transcribe, transcribeRanges, exportVideo, makeProxy, envelope, exportPackage, importPackage,
+    // Erzeugtes Bild (Folie): sofort nutzbar, im Hintergrund dauerhaft im Browser-Speicher (OPFS) abgelegt
+    saveImage(name, b64, width, height, project){
+      const bin = atob(String(b64).split(',').pop()), u8 = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+      const fname = ('folie-' + String(project || '') + '-' + String(name)).replace(/[^\w.-]/g, '_').slice(0, 120), file = new File([u8], fname, {type:'image/png'}), uri = 'opfs:' + fname;
+      files.set(uri, file);
+      (async () => { try { const root = await navigator.storage.getDirectory(), fh = await root.getFileHandle(fname, {create:true}), w = await fh.createWritable(); await w.write(file); await w.close(); requestPersist(); } catch(e){ console.warn('OPFS', e); } })();
+      return JSON.stringify({uri, name: fname, kind:'image', duration:600, width, height, rotation:0, fps:30, hasAudio:false, hasVideo:true});
+    },
     job: id => { const j = jobs.get(id); if (!j) return ''; const {cancel, ...o} = j; if (j.status !== 'running') setTimeout(() => jobs.delete(id), 60000); return JSON.stringify(o); },
     cancel: id => { const j = jobs.get(id); if (j) j.cancel = true; },
     share: id => {
@@ -554,7 +562,7 @@
       for (const [k, v] of await idbAll('fonts')) if (v && v.blob) fontStore.set(k, v);
     } catch(e){ console.error(e); }
     try { hasGpu = !!(navigator.gpu && await Promise.race([navigator.gpu.requestAdapter(), new Promise(r => setTimeout(() => r(null), 1500))])); } catch(_){}
-    await loadScript('app.js'); await loadScript('studio.js');
+    await loadScript('app.js'); await loadScript('studio.js'); await loadScript('slides.js');
     // Hinweise auf der Startseite
     const home = $('#home .home-body');
     if (home){
