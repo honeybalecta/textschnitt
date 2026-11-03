@@ -102,8 +102,25 @@ function slImgPh(ctx, x, y, w, h, C, u){
   ctx.fillStyle = C.line; ctx.beginPath(); ctx.moveTo(cx - s * 1.6, cy + s); ctx.lineTo(cx - s * 0.4, cy - s * 0.4); ctx.lineTo(cx + s * 0.3, cy + s * 0.3); ctx.lineTo(cx + s * 0.8, cy - s * 0.1); ctx.lineTo(cx + s * 1.6, cy + s); ctx.closePath(); ctx.fill();
   ctx.fillStyle = C.acc; ctx.beginPath(); ctx.arc(cx + s * 0.9, cy - s * 0.9, s * 0.35, 0, 7); ctx.fill();
 }
-async function renderSlide(sl, W, H, k, prof){
+// Platz für Untertitel: unten bleibt ein Streifen frei, solange Untertitel laufen (abschaltbar im Reiter „Folien“)
+function slSafe(){ if (!P || P.settings.slSubSafe === false || S().enabled === false || !P.cues.length) return 0; const [W, H] = outSize(); return H > W ? 0.2 : 0.17; }
+window.slSafe = slSafe;
+// Untertitel, die während einer eingesetzten Folie laufen, rücken in den freien Streifen
+function subSlideY(s, e){
+  const f = slSafe(); if (!f || !P.items.some(it => it.slide)) return null;
+  const on = P.items.some(it => { if (!it.slide) return false; const [a, b] = itemOutRange(it); return Math.min(b, e) - Math.max(a, s) > 0.05; });
+  return on ? 1 - f / 2 : null;
+}
+window.subSlideY = subSlideY;
+async function renderSlide(sl, W, H, k, prof, safe){
   const pr = prof || slProfile(); await slFonts(pr);
+  safe ??= slSafe();
+  if (safe > 0){   // Folie in den oberen Teil setzen, darunter Fläche in Hintergrundfarbe
+    const ih = Math.round(H * (1 - safe)), inner = await renderSlide(sl, W, ih, k, pr, 0);
+    const out = document.createElement('canvas'); out.width = W; out.height = H; const c2 = out.getContext('2d');
+    c2.fillStyle = slColors(pr, slIsDark(sl, k, pr) || sl.layout === 'vollbild').bg; c2.fillRect(0, 0, W, H); c2.drawImage(inner, 0, 0);
+    return out;
+  }
   const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
   const ctx = cv.getContext('2d'), port = H > W, u = Math.min(W, H) / 100;
   const C = slColors(pr, slIsDark(sl, k, pr) || sl.layout === 'vollbild'), CD = slColors(pr, true);
@@ -175,7 +192,7 @@ async function renderSlide(sl, W, H, k, prof){
     if (sl.text){ ctx.font = INTER(400)(xf.size); slText(ctx, xf, tx, ty + 3 * u, 1.35, C.mute); }
   } else if (L === 'vollbild'){
     if (im) slCover(ctx, im, 0, 0, W, H); else slImgPh(ctx, 0, 0, W, H, C, u);
-    const g = ctx.createLinearGradient(0, H * 0.45, 0, H); g.addColorStop(0, CD.bg + '00'); g.addColorStop(1, CD.bg + 'EB'); ctx.fillStyle = g; ctx.fillRect(0, H * 0.4, W, H * 0.6);
+    const g = ctx.createLinearGradient(0, H * 0.45, 0, H); g.addColorStop(0, CD.bg + '00'); g.addColorStop(1, CD.bg + 'F5'); ctx.fillStyle = g; ctx.fillRect(0, H * 0.4, W, H * 0.6);
     const xf = slFit(ctx, sl.text || '', INTER(500), cw * 0.9, H * 0.12, 3 * u, 2 * u, 1.3);
     const tf = slFit(ctx, sl.title || '', INTER(800), port ? cw : cw * 0.75, H * 0.24, 6 * u, 3 * u, 1.08);
     let y = bottom - (sl.text ? xf.lines.length * xf.size * 1.3 + 2 * u : 0) - (sl.title ? tf.lines.length * tf.size * 1.08 : 0);
@@ -230,7 +247,7 @@ function slTimes(sl){
 // Bild der Folie erzeugen und als Medium ablegen (nur neu, wenn sich etwas geändert hat)
 async function slMedia(sl){
   const [W, H] = outSize(), k = slIdx(sl);
-  const key = JSON.stringify([sl.layout, slIsDark(sl, k), sl.kicker, sl.title, sl.text, sl.text2, sl.source, sl.img, W, H, slProfile()]);
+  const key = JSON.stringify([sl.layout, slIsDark(sl, k), sl.kicker, sl.title, sl.text, sl.text2, sl.source, sl.img, W, H, slProfile(), slSafe()]);
   if (sl.media && sl.mediaKey === key) return sl.media;
   if (!TS.saveImage) throw new Error('Folien als Bild speichern geht in dieser Version noch nicht');
   const cv = await renderSlide(sl, W, H, k);
@@ -388,6 +405,8 @@ function slEditProfile(base, isNew){
   draw();
 }
 $('#slProf').onchange = e => { const pr = slAllProfiles().find(x => x.id === e.target.value); if (pr) { slUseProfile(pr); toast(`Designprofil „${pr.name}“`); } };
+$('#slSubSafe').onchange = e => { P.settings.slSubSafe = e.target.checked; changed(false); slThumbs.clear(); renderSlides(); slSyncAll();
+  toast(e.target.checked ? 'Folien lassen unten Platz, Untertitel rücken dorthin' : 'Folien nutzen das ganze Bild'); };
 $('#slProfEdit').onclick = () => slEditProfile(slProfile(), false);
 $('#slProfNew').onclick = () => slEditProfile(slProfile(), true);
 
@@ -395,14 +414,14 @@ $('#slProfNew').onclick = () => slEditProfile(slProfile(), true);
 const slThumbs = new Map();
 async function slThumb(sl, img){
   const [W, H] = outSize(), tw = 320, th = Math.round(tw * H / W), k = slIdx(sl);
-  const key = JSON.stringify([sl.layout, slIsDark(sl, k), sl.kicker, sl.title, sl.text, sl.text2, sl.source, sl.img, tw, th, slProfile()]);
+  const key = JSON.stringify([sl.layout, slIsDark(sl, k), sl.kicker, sl.title, sl.text, sl.text2, sl.source, sl.img, tw, th, slProfile(), slSafe()]);
   let c = slThumbs.get(sl.id);
   if (!c || c.key !== key){ const cv = await renderSlide(sl, tw * 2, th * 2, k); c = {key, url: cv.toDataURL('image/jpeg', 0.8)}; slThumbs.set(sl.id, c); }
   if (img) img.src = c.url;
 }
 function renderSlides(){
   if (!P) return;
-  slFillProfSel();
+  slFillProfSel(); $('#slSubSafe').checked = P.settings.slSubSafe !== false;
   if (!P.slideProfile && !$('#hcModal') && $('#proj').dataset.tab === 'slides') setTimeout(() => { if (P && !P.slideProfile && !$('#hcModal')) slChooseProfile(); }, 50);
   const list = $('#slList'); list.innerHTML = '';
   if (!slCur || !P.slides.includes(slCur)) slCur = P.slides[0] || null;

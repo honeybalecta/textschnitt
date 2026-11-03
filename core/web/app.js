@@ -57,7 +57,7 @@ let tab = 'text';
 const DEF_STYLE = {enabled:true, mode:'lines', chars:32, lines:2, dur:4, size:'mittel', pos:'unten', x:0.5, y:0.88, color:'#FFFFFF', outline:true};
 const POS_Y = {oben:0.12, mitte:0.5, unten:0.88};
 const isWide = () => matchMedia('(min-width: 1000px) and (min-height: 600px)').matches;
-const studioOn = () => tab === 'studio' && !!P;
+const studioOn = () => (tab === 'studio' || tab === 'clip') && !!P;   // im Clip-Reiter läuft die Zeitleiste mit
 
 // ───────── Quellen (mehrere Videos hintereinander) ─────────
 function layoutSources(){ let o = 0; P.sources.forEach((s, k) => { s.off = r3(o); s.k = k; o += s.duration; }); srcTotal = o; }
@@ -1112,7 +1112,7 @@ $('#sideUndo').onclick = () => $('#undoBtn').click();
 $('#sideRedo').onclick = () => $('#redoBtn').click();
 $('#sideSplit').onclick = () => { if (window.splitHere) splitHere(); };
 $('#sideCutPlay').onclick = () => $('#cutPlayBtn').click();
-$('#sideSubs').onclick = () => { if (!P) return; const on = S().enabled === false; S().enabled = on; syncStyleInputs(); changed(false); toast(on ? 'Untertitel an' : 'Untertitel aus'); };
+$('#sideSubs').onclick = () => { if (!P) return; const on = S().enabled === false; S().enabled = on; syncStyleInputs(); changed(false); toast(on ? 'Untertitel an' : 'Untertitel aus'); window.slSyncAll && slSyncAll(); };
 $('#sideFont').onclick = () => { if (P) openFontSheet(); };
 function loop(){
   if (P && timeline.length && playing){
@@ -1262,7 +1262,7 @@ function placeBox(W, H){
   if (r) Object.assign(box.style, {left: (r.cx - r.w / 2) + 'px', top: (r.cy - r.h / 2) + 'px', width: r.w + 'px', height: r.h + 'px'});
 }
 // Hauptspur: Lage und Größe des ausgewählten Clips (in einer Anpassung gespeichert)
-const mainBoxOn = () => !!(window.TL && TL.sel && TL.sel.kind === 'main' && timeline[TL.sel.i] && studioOn());
+const mainBoxOn = () => !!(window.TL && TL.sel && TL.sel.kind === 'main' && timeline[TL.sel.i] && tab === 'studio');
 function mainFx(){ const g = window.TL && TL.sel && timeline[TL.sel.i]; const f = g && g.fx ? g.fx : FX_DEF; return {tx: f.tx || 0, ty: f.ty || 0, sc: f.sc || 1}; }
 function mainFxItem(g){
   let it = P.items.find(x => x.type === 'fx' && x.at <= g.in + 0.01 && x.at + x.dur >= g.out - 0.01);
@@ -2344,13 +2344,13 @@ function computedCues(){
     list[k].e = Math.min(list[k].e, total); }
   return list.filter(x => x.e - x.s > 0.05);
 }
-let cueCache = {at:-1, list:[]}, cueEls = new Map(), lastCue = null, shownCue = null;
+let cueCache = {at:-1, list:[]}, cueEls = new Map(), lastCue = null, shownCue = null, shownRange = null;
 function updateSubs(o){
   const ov = $('#subOv');
   if (!P || !P.cues.length || S().enabled === false){ ov.textContent = ''; shownCue = null; return; }
   const now = performance.now(); if (now - cueCache.at > 400) cueCache = {at:now, list:computedCues()};
   const cur = cueCache.list.find(x => o >= x.s && o < x.e);
-  if (!SubDrag.on){ ov.textContent = cur ? wrapText(cur.text) : ''; const prevSp = cueSpk(shownCue); shownCue = cur ? cur.c : null;
+  if (!SubDrag.on){ ov.textContent = cur ? wrapText(cur.text) : ''; const prevSp = cueSpk(shownCue); shownCue = cur ? cur.c : null; shownRange = cur ? [cur.s, cur.e] : null;
     if (cueSpk(shownCue) !== prevSp) styleOverlay(); else placeOverlay(); }
   const id = cur ? cur.c.id : null;
   if (id !== lastCue && tab === 'subs'){
@@ -2374,7 +2374,8 @@ function styleOverlay(){
 // Untertitel an seine Position setzen und im Bild halten
 function placeOverlay(){
   const ov = $('#subOv'), stage = $('#stage'); if (!P) return;
-  const [x, y] = SubDrag.on ? [SubDrag.x, SubDrag.y] : cueXY(shownCue);
+  let [x, y] = SubDrag.on ? [SubDrag.x, SubDrag.y] : cueXY(shownCue);
+  if (!SubDrag.on && shownCue && shownCue.x == null && shownRange && window.subSlideY){ const sy = subSlideY(shownRange[0], shownRange[1]); if (sy != null) y = sy; }
   const W = stage.clientWidth, H = stage.clientHeight, bw = ov.offsetWidth, bh = ov.offsetHeight, m = 0.02;
   const cx = clamp(x * W, bw / 2 + m * W, W - bw / 2 - m * W), cy = clamp(y * H, bh / 2 + m * H, H - bh / 2 - m * H);
   ov.style.left = (bw > W * (1 - 2 * m) ? W / 2 : cx) + 'px'; ov.style.top = cy + 'px';
@@ -2425,7 +2426,7 @@ $('#stPos').addEventListener('change', e => { const v = e.target.value; if (POS_
   const n = P.cues.filter(c => c.x != null).length;
   commit(() => { S().pos = v; S().x = 0.5; S().y = POS_Y[v]; if (n && confirm(`${n} Untertitel haben eine eigene Position. Auch diese zurücksetzen?`)) P.cues.forEach(c => { delete c.x; delete c.y; }); }, false); styleOverlay(); });
 $('#stOutline').onchange = e => { S().outline = e.target.checked; styleOverlay(); changed(false); };
-$('#subsMaster').onchange = e => { S().enabled = e.target.checked; syncStyleInputs(); changed(false); toast(e.target.checked ? 'Untertitel an' : 'Untertitel aus'); };
+$('#subsMaster').onchange = e => { S().enabled = e.target.checked; syncStyleInputs(); changed(false); toast(e.target.checked ? 'Untertitel an' : 'Untertitel aus'); window.slSyncAll && slSyncAll(); };
 function manualCount(){ return P.cues.filter(c => !c.own && ( c.text != null || c.ds || c.de || c.off || c.x != null || isFree(c))).length; }
 $('#stMode').onchange = e => {
   const n = manualCount(); if (n && !confirm(`${n} Untertitel wurden von Hand bearbeitet. Beim Umstellen gehen diese Änderungen verloren. Fortfahren?`)){ e.target.value = S().mode; return; }
@@ -2663,7 +2664,7 @@ function buildPlan(){
     aspect:+elAspect(o.x).toFixed(5), track: elTrack(o.x), vol:+(o.x.vol || 0), hasAudio: o.x.clip.hasAudio !== false && !isImg(o.x.clip),
     width:o.x.clip.width, height:o.x.clip.height, rotation:o.x.clip.rotation || 0}))
     .concat(audios.map(a => ({mode:'audio', image:false, uri:a.x.clip.uri, in:r3(a.x.in), out:r3(a.x.in + (a.end - a.at)), at:r3(a.at), track:a.x.track || 1, vol:+(a.x.vol ?? 1), hasAudio:true})));
-  const cues = S().enabled !== false && P.cues.length ? computedCues().map(x => { const [cx, cy] = cueXY(x.c), o = {start:r3(x.s), end:r3(x.e), text:wrapText(x.text), x:cx, y:cy};
+  const cues = S().enabled !== false && P.cues.length ? computedCues().map(x => { const [cx, cy0] = cueXY(x.c), sy = x.c.x == null && window.subSlideY ? subSlideY(x.s, x.e) : null, cy = sy ?? cy0, o = {start:r3(x.s), end:r3(x.e), text:wrapText(x.text), x:cx, y:cy};
     if (S().bg) o.bg = true;   // Untertitel mit Kasten (Clip-Look)
     const sp = cueSpk(x.c), st = sp && sp.st;   // Abweichungen der Person
     if (st){ if (st.color) o.color = st.color; if (st.size) o.size = SIZE_F[st.size] || 0.058; if (st.font != null) o.font = st.font; if (st.outline != null) o.outline = !!st.outline; if (sp.name) o.speaker = sp.name; }
@@ -2709,7 +2710,7 @@ function setTab(t){
   $('#proj').dataset.tab = t;
   $('#paneTrans').classList.toggle('hidden', t !== 'trans');
   $('#paneText').classList.toggle('hidden', t !== 'text'); $('#paneSubs').classList.toggle('hidden', t !== 'subs');
-  $('#paneStudio').classList.toggle('hidden', t !== 'studio'); $('#paneExport').classList.toggle('hidden', t !== 'export');
+  $('#paneStudio').classList.toggle('hidden', t !== 'studio' && t !== 'clip'); $('#paneExport').classList.toggle('hidden', t !== 'export');
   $('#paneClip').classList.toggle('hidden', t !== 'clip'); if (t === 'clip' && window.renderClip) renderClip();
   $('#paneSlides').classList.toggle('hidden', t !== 'slides'); if (t === 'slides' && window.renderSlides) renderSlides();
   $$('#tabs button[data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === t || (t === 'trans' && b.dataset.tab === 'text')));

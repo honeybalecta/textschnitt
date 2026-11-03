@@ -180,6 +180,7 @@
           <button class="btn small ghost" id="slProfNew" title="Neues Profil als Kopie des aktuellen anlegen">＋ Neues Profil</button></div>
         <span class="muted small">Im Text unten Wörter markieren und mit „→ Neue Folie“, „→ Titel“, „→ Text“ oder „→ Stichpunkt“ übernehmen. Im Studio setzt <b>N</b> an der Abspiellinie die nächste Folie ein, Umschalt+N beendet sie.</span>
         <label class="row small"><input type="checkbox" id="slGapless" checked> lückenlos: jede Folie bleibt bis zur nächsten stehen</label>
+        <label class="row small"><input type="checkbox" id="slSubSafe" checked> unten Platz für Untertitel freihalten</label>
       </div>
       <div class="sl-wrap">
         <div class="sl-list" id="slList"></div>
@@ -197,6 +198,7 @@
       <div class="card stack">
         <div class="clip-head"><h3>Clip-Studio</h3><button class="btn small" id="clipParent" title="Zurück zum Projekt, aus dem der Clip stammt">↩ Hauptprojekt</button></div>
         <span class="muted small" id="clipInfo"></span>
+        <span class="muted small">Die Zeitleiste unter dem Bild gehört nur zu diesem Clip: Schnitte, Bilder, Titel und Lautstärke hier ändern das Hauptprojekt nicht.</span>
       </div>
       <div class="card stack">
         <h4>Format</h4>
@@ -230,7 +232,7 @@
         <div class="row wrap"><button class="btn small" id="clipLevel" title="Alle Clips auf dieselbe Lautheit bringen">🔊 Lautstärke angleichen</button><button class="btn small" id="clipAutoZoom" title="An Satzanfängen abwechselnd ran- und zurückspringen – wie in viralen Clips">🔍 Auto-Zoom</button><button class="btn small" id="clipZoomHere">Zoom hier</button><button class="btn small ghost" id="clipZoomOff">Zooms entfernen</button></div>
       </div>
       <div class="card stack">
-        <div class="row wrap"><button class="btn primary" id="clipExport">Clip exportieren</button><button class="btn" id="clipStudio">Feinschnitt im Studio</button></div>
+        <div class="row wrap"><button class="btn primary" id="clipExport">Clip exportieren</button><button class="btn" id="clipStudio" title="Zeitleiste im großen Studio-Reiter – Änderungen gelten nur für diesen Clip">Großes Studio</button></div>
       </div>
     </div>
 
