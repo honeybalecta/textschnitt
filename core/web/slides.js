@@ -18,7 +18,41 @@ const SL_LBL = {kicker:'Rubrik (klein, oben)', title:'Titel', text:'Text', text2
 const SLC = {dark: {bg:'#131312', fg:'#EDE7DA', mute:'#A9A397', acc:'#E5402A', line:'#34332F', soft:'#1E1E1C'},
              light:{bg:'#EDE7DA', fg:'#131312', mute:'#5E584D', acc:'#B8301D', line:'#CFC6B0', soft:'#E2DACA'}};
 const slLayout = k => SL_LAYOUTS.find(x => x.k === k) || SL_LAYOUTS[0];
-const slIsDark = (sl, k) => sl.dark != null ? !!sl.dark : (k ?? P.slides.indexOf(sl)) % 2 === 0;
+// ───────── Designprofile: Farben, Schriften, Anordnung ─────────
+// Mitgelieferte Profile (nicht löschbar) und eigene (im Gerät gespeichert). Das gewählte Profil liegt als Kopie im
+// Projekt (P.slideProfile) – so sehen die Folien auch auf einem anderen Gerät gleich aus.
+const SL_BUILTIN = [
+  {id:'hb', name:'Honey Balecta Standard', builtin:true,
+   colors:{dark:{bg:'#131312', fg:'#EDE7DA', mute:'#A9A397', acc:'#E5402A'}, light:{bg:'#EDE7DA', fg:'#131312', mute:'#5E584D', acc:'#B8301D'}},
+   fonts:{head:'Inter', body:'Inter', serif:'Lora'}, align:'left', pad:'normal', bar:true, sourceRight:false, theme:'wechselnd', titleScale:1, textScale:1},
+  {id:'ruhig', name:'Hell & ruhig', builtin:true,
+   colors:{dark:{bg:'#1F2A24', fg:'#F4EFE6', mute:'#B9B3A6', acc:'#7FB38F'}, light:{bg:'#F4EFE6', fg:'#1F2A24', mute:'#6A675F', acc:'#3E8A55'}},
+   fonts:{head:'Lora', body:'Inter', serif:'Lora'}, align:'center', pad:'weit', bar:false, sourceRight:false, theme:'hell', titleScale:0.95, textScale:1},
+  {id:'kontrast', name:'Kontrast', builtin:true,
+   colors:{dark:{bg:'#0A0A0A', fg:'#FFFFFF', mute:'#B5B5B5', acc:'#F5D90A'}, light:{bg:'#F5D90A', fg:'#0A0A0A', mute:'#3A3A3A', acc:'#0A0A0A'}},
+   fonts:{head:'k:anton', body:'Inter', serif:'k:anton'}, align:'center', pad:'eng', bar:true, sourceRight:true, theme:'dunkel', titleScale:1.2, textScale:1.05},
+];
+const SL_PROF_KEY = 'hc-slide-profiles';
+function slUserProfiles(){ try { return JSON.parse(localStorage.getItem(SL_PROF_KEY) || '[]').filter(p => p && p.id && p.colors); } catch(_){ return []; } }
+function slSaveUserProfiles(list){ try { localStorage.setItem(SL_PROF_KEY, JSON.stringify(list)); } catch(_){} }
+function slAllProfiles(){ const own = slUserProfiles(); const pr = P && P.slideProfile;
+  const list = SL_BUILTIN.concat(own); if (pr && !list.some(x => x.id === pr.id)) list.push(pr); return list; }
+const slClone = o => JSON.parse(JSON.stringify(o));
+function slProfile(){ return (P && P.slideProfile) || SL_BUILTIN[0]; }
+// Hilfsfarben (Linien, Flächen) aus Hintergrund und Schrift gemischt
+function slMix(a, b, f){ const h = x => [1, 3, 5].map(i => parseInt(x.slice(i, i + 2), 16)); const A = h(a), B = h(b);
+  return '#' + A.map((v, i) => Math.round(v + (B[i] - v) * f).toString(16).padStart(2, '0')).join(''); }
+function slColors(pr, dark){ const c = pr.colors[dark ? 'dark' : 'light']; return {...c, line: slMix(c.bg, c.fg, 0.18), soft: slMix(c.bg, c.fg, 0.06)}; }
+// Schrift einer Rolle: 'Inter'/'Lora' (variabel, alle Stärken) oder 'k:<Schlüssel>' (mitgelieferte/eigene Schrift)
+function slFontFn(spec, w, it, scale){
+  const fam = spec === 'Lora' ? 'Lora, Georgia, serif' : spec && spec.startsWith('k:') ? `"TSF-${spec.slice(2)}", Inter, sans-serif` : 'Inter, "Segoe UI", sans-serif';
+  const wt = spec && spec.startsWith('k:') ? 400 : w;
+  const f = s => `${it ? 'italic ' : ''}${wt} ${s.toFixed(1)}px ${fam}`; f.scale = scale || 1; return f;
+}
+function slFontOptions(){
+  return [{v:'Inter', l:'Inter'}, {v:'Lora', l:'Lora (Serifen)'}].concat(FONTS.filter(f => f.key && f.key !== 'inter' && f.key !== 'lora').map(f => ({v:'k:' + f.key, l:f.label})), userFonts.map(f => ({v:'k:' + f.key, l:f.label + ' (eigene)'})));
+}
+const slIsDark = (sl, k, pr) => { if (sl.dark != null) return !!sl.dark; const t = (pr || slProfile()).theme; if (t === 'dunkel') return true; if (t === 'hell') return false; return (k ?? P.slides.indexOf(sl)) % 2 === 0; };
 let slCur = null, slSel = null, slOpen = null;   // ausgewählte Folie, Auswahl im Transkript, laufende Folie im Studio
 
 // ───────── Zeichnen ─────────
@@ -28,9 +62,11 @@ function slImg(uri){
   if (!slImgCache.has(uri)) slImgCache.set(uri, new Promise(res => { const im = new Image(); im.onload = () => res(im); im.onerror = () => res(null); im.src = MEDIA(uri); }));
   return slImgCache.get(uri);
 }
-let slFontsP = null;
-const slFonts = () => slFontsP ||= Promise.all(['400', '500', '700', '800', '900'].map(w => document.fonts.load(`${w} 40px Inter`))
+let slFontsP = null; const slFontsDone = new Set();
+const slFonts = (pr = slProfile()) => { const base = slFontsP ||= Promise.all(['400', '500', '700', '800', '900'].map(w => document.fonts.load(`${w} 40px Inter`))
   .concat([document.fonts.load('600 40px Lora'), document.fonts.load('700 40px Lora'), document.fonts.load('italic 600 40px Lora')])).catch(() => {});
+  const extra = Object.values(pr.fonts || {}).filter(f => f && f.startsWith('k:') && !slFontsDone.has(f));
+  return Promise.all([base, ...extra.map(f => document.fonts.load(`400 40px "TSF-${f.slice(2)}"`).then(() => slFontsDone.add(f)).catch(() => {}))]); };
 const INTER = w => s => `${w} ${s.toFixed(1)}px Inter, "Segoe UI", sans-serif`;
 const LORA = (w, it) => s => `${it ? 'italic ' : ''}${w} ${s.toFixed(1)}px Lora, Georgia, serif`;
 function slWrap(ctx, text, maxW){
@@ -45,6 +81,7 @@ function slWrap(ctx, text, maxW){
 }
 // Größte Schrift, bei der der Text in die Fläche passt
 function slFit(ctx, text, font, maxW, maxH, size, min, lh){
+  size *= font.scale || 1; min *= font.scale || 1;
   for (let sz = size; sz > min; sz *= 0.93){ ctx.font = font(sz); const lines = slWrap(ctx, text, maxW); if (lines.length * sz * lh <= maxH && lines.every(l => ctx.measureText(l).width <= maxW + 1)) return {lines, size: sz}; }
   ctx.font = font(min); return {lines: slWrap(ctx, text, maxW), size: min};
 }
@@ -65,24 +102,31 @@ function slImgPh(ctx, x, y, w, h, C, u){
   ctx.fillStyle = C.line; ctx.beginPath(); ctx.moveTo(cx - s * 1.6, cy + s); ctx.lineTo(cx - s * 0.4, cy - s * 0.4); ctx.lineTo(cx + s * 0.3, cy + s * 0.3); ctx.lineTo(cx + s * 0.8, cy - s * 0.1); ctx.lineTo(cx + s * 1.6, cy + s); ctx.closePath(); ctx.fill();
   ctx.fillStyle = C.acc; ctx.beginPath(); ctx.arc(cx + s * 0.9, cy - s * 0.9, s * 0.35, 0, 7); ctx.fill();
 }
-async function renderSlide(sl, W, H, k){
-  await slFonts();
+async function renderSlide(sl, W, H, k, prof){
+  const pr = prof || slProfile(); await slFonts(pr);
   const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
   const ctx = cv.getContext('2d'), port = H > W, u = Math.min(W, H) / 100;
-  const C = SLC[slIsDark(sl, k) || sl.layout === 'vollbild' ? 'dark' : 'light'];
-  const px = Math.max(6 * u, W * (port ? 0.08 : 0.065)), py = 7 * u, cw = W - 2 * px;
+  const C = slColors(pr, slIsDark(sl, k, pr) || sl.layout === 'vollbild'), CD = slColors(pr, true);
+  // Schriften des Profils: kräftige Schnitte = Überschrift, leichte = Fließtext, Lora-Stellen = Zitat/Begriff
+  const INTER = w => w >= 700 ? slFontFn(pr.fonts.head, w, false, w >= 800 ? pr.titleScale : 1) : slFontFn(pr.fonts.body, w, false, pr.textScale);
+  const LORA = (w, it) => slFontFn(pr.fonts.serif, w, it, pr.titleScale);
+  const pf = pr.pad === 'eng' ? 0.75 : pr.pad === 'weit' ? 1.4 : 1;
+  const px = Math.max(6 * u, W * (port ? 0.08 : 0.065)) * pf, py = 7 * u * pf, cw = W - 2 * px;
+  const CEN = pr.align === 'center' && ['titel', 'zahl', 'begriff', 'zitat', 'vollbild'].includes(sl.layout), AX = CEN ? W / 2 : px, AL = CEN ? 'center' : 'left';
   try { ctx.letterSpacing = '0px'; } catch(_){}
   ctx.fillStyle = C.bg; ctx.fillRect(0, 0, W, H);
   const im = (sl.layout === 'bild' || sl.layout === 'vollbild') ? await slImg(sl.img) : null;
-  const kicker = (x, y, txt, color = C.acc) => {   // roter Strich und Rubrik in Versalien
-    ctx.fillStyle = C.acc; ctx.fillRect(x, y, 6 * u, 0.8 * u);
+  const kicker = (x, y, txt, color = C.acc) => {   // Akzentstrich und Rubrik in Versalien
+    const cen = CEN && x === px, bx = cen ? W / 2 - 3 * u : x;
+    if (pr.bar !== false) ctx.fillStyle = C.acc, ctx.fillRect(bx, y, 6 * u, 0.8 * u);
     if (!txt) return y + 3 * u;
     try { ctx.letterSpacing = (0.35 * u).toFixed(1) + 'px'; } catch(_){}
-    ctx.font = INTER(700)(2.5 * u); ctx.fillStyle = color; ctx.textAlign = 'left'; ctx.fillText(String(txt).toUpperCase(), x, y + 5 * u);
+    ctx.font = slFontFn(pr.fonts.body, 700)(2.5 * u); ctx.fillStyle = color; ctx.textAlign = cen ? 'center' : 'left'; ctx.fillText(String(txt).toUpperCase(), cen ? W / 2 : x, y + 5 * u);
     try { ctx.letterSpacing = '0px'; } catch(_){}
     return y + 9 * u;
   };
-  const source = (x, y, txt, color = C.mute) => { if (!txt) return; ctx.font = INTER(500)(2.1 * u); ctx.fillStyle = color; ctx.textAlign = 'left'; ctx.fillText('Quelle: ' + txt, x, y); };
+  const source = (x, y, txt, color = C.mute) => { if (!txt) return; ctx.font = slFontFn(pr.fonts.body, 500)(2.1 * u); ctx.fillStyle = color;
+    ctx.textAlign = pr.sourceRight ? 'right' : CEN ? 'center' : 'left'; ctx.fillText('Quelle: ' + txt, pr.sourceRight ? W - px : CEN ? W / 2 : x, y); };
   const bottom = H - py - (sl.source ? 4 * u : 0);
   const L = sl.layout;
   if (L === 'titel' || L === 'begriff' || L === 'zahl'){
@@ -95,9 +139,9 @@ async function renderSlide(sl, W, H, k){
     const blockH = tf.lines.length * tf.size * (L === 'zahl' ? 1.0 : 1.08) + (sl.text ? 3.5 * u + xf.lines.length * xf.size * 1.35 : 0);
     let ty = y + Math.max(0, (area - blockH) / 2);
     ctx.font = L === 'zahl' ? INTER(900)(tf.size) : L === 'begriff' ? LORA(700)(tf.size) : INTER(800)(tf.size);
-    ty = slText(ctx, tf, px, ty, L === 'zahl' ? 1.0 : 1.08, L === 'zahl' ? C.acc : C.fg);
-    if (L === 'begriff'){ ctx.fillStyle = C.acc; ctx.fillRect(px, ty + 1.2 * u, 10 * u, 0.6 * u); ty += 1.5 * u; }
-    if (sl.text){ ctx.font = INTER(L === 'zahl' ? 500 : 400)(xf.size); slText(ctx, xf, px, ty + 2.5 * u, 1.35, L === 'zahl' ? C.fg : C.mute); }
+    ty = slText(ctx, tf, AX, ty, L === 'zahl' ? 1.0 : 1.08, L === 'zahl' ? C.acc : C.fg, AL);
+    if (L === 'begriff'){ ctx.fillStyle = C.acc; ctx.fillRect(CEN ? W / 2 - 5 * u : px, ty + 1.2 * u, 10 * u, 0.6 * u); ty += 1.5 * u; }
+    if (sl.text){ ctx.font = INTER(L === 'zahl' ? 500 : 400)(xf.size); slText(ctx, xf, AX, ty + 2.5 * u, 1.35, L === 'zahl' ? C.fg : C.mute, AL); }
   } else if (L === 'liste'){
     let y = kicker(px, py, sl.kicker);
     const tf = slFit(ctx, sl.title || '', INTER(800), cw, (bottom - y) * 0.3, 7.5 * u, 3 * u, 1.08);
@@ -110,11 +154,13 @@ async function renderSlide(sl, W, H, k){
     const gap = sz * 0.7; y += Math.max(0, (area - h) / 2.5);
     rows.forEach(r => { ctx.fillStyle = C.acc; ctx.fillRect(px, y + sz * 0.3, sz * 0.5, sz * 0.5); slText(ctx, {lines: r, size: sz}, px + 6 * u, y - sz * 0.1, 1.3, C.fg); y += r.length * sz * 1.3 + gap; });
   } else if (L === 'zitat'){
-    ctx.font = LORA(700)(30 * u); ctx.fillStyle = C.acc; ctx.textAlign = 'left'; ctx.fillText('“', px - 1.5 * u, py + 22 * u);
+    ctx.font = LORA(700)(30 * u); ctx.fillStyle = C.acc; ctx.textAlign = AL; const qa = ctx.measureText('“').actualBoundingBoxAscent || 21 * u; ctx.fillText('“', CEN ? W / 2 : px - 1.5 * u, py + 1 * u + qa);
     const top = py + 16 * u, area = bottom - top - (sl.title ? 8 * u : 0);
     const qf = slFit(ctx, sl.text || 'Zitat', LORA(600, true), port ? cw : Math.min(cw, W * 0.8), area, 9.5 * u, 2.8 * u, 1.24);
-    ctx.font = LORA(600, true)(qf.size); let y = slText(ctx, qf, px, top + Math.max(0, (area - qf.lines.length * qf.size * 1.24) / 2.5), 1.24, C.fg);
-    if (sl.title){ ctx.fillStyle = C.acc; ctx.fillRect(px, y + 3 * u, 4 * u, 0.6 * u); ctx.font = INTER(700)(2.9 * u); ctx.fillStyle = C.fg; ctx.fillText(sl.title, px + 6 * u, y + 4.1 * u); }
+    ctx.font = LORA(600, true)(qf.size); let y = slText(ctx, qf, AX, top + Math.max(0, (area - qf.lines.length * qf.size * 1.24) / 2.5), 1.24, C.fg, AL);
+    if (sl.title){ ctx.font = slFontFn(pr.fonts.body, 700)(2.9 * u); ctx.fillStyle = C.fg;
+      if (CEN){ ctx.textAlign = 'center'; ctx.fillText('— ' + sl.title, W / 2, y + 4.1 * u); }
+      else { ctx.fillStyle = C.acc; ctx.fillRect(px, y + 3 * u, 4 * u, 0.6 * u); ctx.fillStyle = C.fg; ctx.textAlign = 'left'; ctx.fillText(sl.title, px + 6 * u, y + 4.1 * u); } }
   } else if (L === 'bild'){
     const ix = port ? 0 : W * 0.52, iy = 0, iw = port ? W : W - ix, ih = port ? H * 0.46 : H;
     if (im) slCover(ctx, im, ix, iy, iw, ih); else slImgPh(ctx, ix, iy, iw, ih, C, u);
@@ -129,12 +175,12 @@ async function renderSlide(sl, W, H, k){
     if (sl.text){ ctx.font = INTER(400)(xf.size); slText(ctx, xf, tx, ty + 3 * u, 1.35, C.mute); }
   } else if (L === 'vollbild'){
     if (im) slCover(ctx, im, 0, 0, W, H); else slImgPh(ctx, 0, 0, W, H, C, u);
-    const g = ctx.createLinearGradient(0, H * 0.45, 0, H); g.addColorStop(0, 'rgba(19,19,18,0)'); g.addColorStop(1, 'rgba(19,19,18,0.92)'); ctx.fillStyle = g; ctx.fillRect(0, H * 0.4, W, H * 0.6);
+    const g = ctx.createLinearGradient(0, H * 0.45, 0, H); g.addColorStop(0, CD.bg + '00'); g.addColorStop(1, CD.bg + 'EB'); ctx.fillStyle = g; ctx.fillRect(0, H * 0.4, W, H * 0.6);
     const xf = slFit(ctx, sl.text || '', INTER(500), cw * 0.9, H * 0.12, 3 * u, 2 * u, 1.3);
     const tf = slFit(ctx, sl.title || '', INTER(800), port ? cw : cw * 0.75, H * 0.24, 6 * u, 3 * u, 1.08);
     let y = bottom - (sl.text ? xf.lines.length * xf.size * 1.3 + 2 * u : 0) - (sl.title ? tf.lines.length * tf.size * 1.08 : 0);
-    if (sl.title){ ctx.fillStyle = C.acc; ctx.fillRect(px, y - 3 * u, 6 * u, 0.8 * u); ctx.font = INTER(800)(tf.size); y = slText(ctx, tf, px, y, 1.08, '#EDE7DA') + 2 * u; }
-    if (sl.text){ ctx.font = INTER(500)(xf.size); slText(ctx, xf, px, y, 1.3, '#CFC6B0'); }
+    if (sl.title){ if (pr.bar !== false){ ctx.fillStyle = CD.acc; ctx.fillRect(CEN ? W / 2 - 3 * u : px, y - 3 * u, 6 * u, 0.8 * u); } ctx.font = INTER(800)(tf.size); y = slText(ctx, tf, AX, y, 1.08, CD.fg, AL) + 2 * u; }
+    if (sl.text){ ctx.font = INTER(500)(xf.size); slText(ctx, xf, AX, y, 1.3, CD.mute, AL); }
   } else if (L === 'zwei'){
     let y = kicker(px, py, '');
     const tf = slFit(ctx, sl.title || '', INTER(800), cw, (bottom - y) * 0.26, 6 * u, 3 * u, 1.08);
@@ -152,7 +198,7 @@ async function renderSlide(sl, W, H, k){
       ctx.font = INTER(500)(bf.size); slText(ctx, bf, x0 + ip, yy, 1.35, C.fg);
     });
   }
-  source(px, H - py + u, sl.source, L === 'vollbild' ? '#A9A397' : C.mute);
+  source(px, H - py + u, sl.source, L === 'vollbild' ? CD.mute : C.mute);
   return cv;
 }
 
@@ -184,7 +230,7 @@ function slTimes(sl){
 // Bild der Folie erzeugen und als Medium ablegen (nur neu, wenn sich etwas geändert hat)
 async function slMedia(sl){
   const [W, H] = outSize(), k = slIdx(sl);
-  const key = JSON.stringify([sl.layout, slIsDark(sl, k), sl.kicker, sl.title, sl.text, sl.text2, sl.source, sl.img, W, H]);
+  const key = JSON.stringify([sl.layout, slIsDark(sl, k), sl.kicker, sl.title, sl.text, sl.text2, sl.source, sl.img, W, H, slProfile()]);
   if (sl.media && sl.mediaKey === key) return sl.media;
   if (!TS.saveImage) throw new Error('Folien als Bild speichern geht in dieser Version noch nicht');
   const cv = await renderSlide(sl, W, H, k);
@@ -251,17 +297,113 @@ function slClose(){
   commit(() => { open.out = r3(open.in + (t - a)); }, true); seekOut(outPos, false); toast('Folie endet hier');
 }
 
+// ───────── Designprofile: Auswahl und Bearbeitung ─────────
+const SL_SAMPLE = {id:'_muster', layout:'titel', dark:true, kicker:'Rubrik', title:'So sieht eine Folie aus', text:'Ein kurzer Satz zur Erklärung.', source:'Beispielquelle', text2:'', img:null};
+function slFillProfSel(){
+  const sel = $('#slProf'); if (!sel || !P) return; const cur = slProfile();
+  sel.innerHTML = slAllProfiles().map(x => `<option value="${esc(x.id)}">${esc(x.name)}${x.builtin ? '' : ' (eigenes)'}</option>`).join('');
+  sel.value = cur.id;
+}
+// Profil fürs Projekt übernehmen: alle Vorschauen und schon eingesetzten Folien werden neu gezeichnet
+function slUseProfile(pr){
+  P.slideProfile = slClone(pr); changed(true);
+  slFillProfSel(); renderSlides(); slSyncAll();
+}
+// Eingesetzte Folien neu erzeugen, wenn Format oder Profil nicht mehr zum Bild passen (z. B. in einem Clip mit 9:16)
+let slSyncing = null;
+function slSyncAll(){
+  if (!P || !P.slides || !P.slides.length) return Promise.resolve();
+  const pid = P.id;
+  return slSyncing = (async () => {
+    for (const sl of P.slides.slice()){ if (!P || P.id !== pid) return; if (slItems(sl).length) await slRefresh(sl); }
+  })();
+}
+window.slSyncAll = slSyncAll;
+async function slProfPreview(pr, cv, sl){
+  const [W, H] = outSize(), w = cv.width = 480, h = cv.height = Math.round(w * H / W);
+  const r = await renderSlide(sl || {...SL_SAMPLE, dark: null}, w * 2, h * 2, 0, pr); cv.getContext('2d').drawImage(r, 0, 0, w, h);
+}
+// Beim ersten Öffnen des Reiters: Profil wählen
+function slChooseProfile(){
+  const list = slAllProfiles();
+  const m = hcModal(`<h3>Welches Design sollen die Folien haben?</h3><p class="muted small">Das lässt sich jederzeit oben im Reiter „Folien“ ändern. Eigene Profile legst du dort mit „＋ Neues Profil“ an.</p>
+    <div class="sl-choose">${list.map(x => `<button data-p="${esc(x.id)}"><canvas></canvas><b>${esc(x.name)}</b></button>`).join('')}</div>`);
+  m.querySelectorAll('[data-p]').forEach(b => { const pr = list.find(x => x.id === b.dataset.p); slProfPreview(pr, b.querySelector('canvas')).catch(() => {});
+    b.onclick = () => { closeHcModal(); slUseProfile(pr); toast(`Designprofil „${pr.name}“`); }; });
+}
+function slEditProfile(base, isNew){
+  const pr = slClone(base);
+  if (isNew){ pr.id = 'p' + newId(); pr.name = base.name + ' – eigene Variante'; pr.builtin = false; }
+  const opts = slFontOptions(), fsel = r => `<select data-font="${r}">${opts.map(o => `<option value="${esc(o.v)}">${esc(o.l)}</option>`).join('')}</select>`;
+  const col = (t, k, l) => `<label class="sl-col"><input type="color" data-col="${t}.${k}"><span>${l}</span></label>`;
+  const seg = (k, vals) => `<div class="seg-ctl small" data-seg="${k}">${vals.map(([v, l]) => `<button data-v="${v}">${l}</button>`).join('')}</div>`;
+  const m = hcModal(`<h3>${isNew ? 'Neues Designprofil' : 'Designprofil bearbeiten'}</h3>
+    <div class="sl-pe">
+      <canvas id="slPeCv"></canvas>
+      <div class="seg-ctl small" id="slPeSample"><button data-v="d" class="on">dunkle Folie</button><button data-v="l">helle Folie</button><button data-v="cur">aktuelle Folie</button></div>
+      <label class="field"><span>Name</span><input type="text" id="slPeName"></label>
+      <div class="field"><span>Farben dunkler Folien</span><div class="row wrap">${col('dark', 'bg', 'Hintergrund')}${col('dark', 'fg', 'Schrift')}${col('dark', 'mute', 'Nebentext')}${col('dark', 'acc', 'Akzent')}</div></div>
+      <div class="field"><span>Farben heller Folien</span><div class="row wrap">${col('light', 'bg', 'Hintergrund')}${col('light', 'fg', 'Schrift')}${col('light', 'mute', 'Nebentext')}${col('light', 'acc', 'Akzent')}</div></div>
+      <label class="field"><span>Schrift der Überschriften</span>${fsel('head')}</label>
+      <label class="field"><span>Schrift des Fließtexts</span>${fsel('body')}</label>
+      <label class="field"><span>Schrift für Zitate und Begriffe</span>${fsel('serif')}</label>
+      <div class="field"><span>Größe der Überschriften <b id="slPeTsV"></b></span><input type="range" id="slPeTs" min="70" max="140" step="5"></div>
+      <div class="field"><span>Größe des Fließtexts <b id="slPeXsV"></b></span><input type="range" id="slPeXs" min="70" max="140" step="5"></div>
+      <div class="field"><span>Ausrichtung</span>${seg('align', [['left', 'linksbündig'], ['center', 'mittig']])}</div>
+      <div class="field"><span>Rand</span>${seg('pad', [['eng', 'schmal'], ['normal', 'normal'], ['weit', 'breit']])}</div>
+      <div class="field"><span>Hintergrund der Folien</span>${seg('theme', [['wechselnd', 'abwechselnd'], ['dunkel', 'dunkel'], ['hell', 'hell']])}</div>
+      <label class="row small"><input type="checkbox" id="slPeBar"> Akzentstrich über der Rubrik</label>
+      <label class="row small"><input type="checkbox" id="slPeSrc"> Quelle rechts unten</label>
+    </div>
+    <div class="row wrap" style="margin-top:12px;justify-content:flex-end">${!isNew && !base.builtin ? '<button class="btn small ghost" id="slPeDel">Profil löschen</button>' : ''}<span style="flex:1"></span>
+      <button class="btn small" id="slPeCancel">Abbrechen</button><button class="btn small primary" id="slPeSave">${base.builtin && !isNew ? 'Als eigenes Profil speichern' : 'Speichern und verwenden'}</button></div>`);
+  m.querySelector('.hc-card').classList.add('wide');
+  const q = s => m.querySelector(s);
+  let sample = 'd', drawT = 0;
+  const draw = () => { clearTimeout(drawT); drawT = setTimeout(() => {
+    const sl = sample === 'cur' && slCur ? slCur : {...SL_SAMPLE, dark: sample === 'd'};
+    slProfPreview(pr, q('#slPeCv'), sl).catch(() => {}); }, 60); };
+  q('#slPeName').value = pr.name;
+  m.querySelectorAll('[data-col]').forEach(i => { const [t, k] = i.dataset.col.split('.'); i.value = pr.colors[t][k]; i.oninput = () => { pr.colors[t][k] = i.value; draw(); }; });
+  m.querySelectorAll('[data-font]').forEach(s => { const r = s.dataset.font; if (![...s.options].some(o => o.value === pr.fonts[r])) s.append(new Option(pr.fonts[r], pr.fonts[r])); s.value = pr.fonts[r]; s.onchange = () => { pr.fonts[r] = s.value; draw(); }; });
+  const segs = () => m.querySelectorAll('[data-seg]').forEach(g => g.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.v === pr[g.dataset.seg])));
+  m.querySelectorAll('[data-seg]').forEach(g => g.onclick = e => { const b = e.target.closest('button'); if (!b) return; pr[g.dataset.seg] = b.dataset.v; segs(); draw(); });
+  segs();
+  const rng = (id, k) => { const i = q(id), v = q(id + 'V'); i.value = Math.round((pr[k] || 1) * 100); v.textContent = i.value + ' %'; i.oninput = () => { pr[k] = i.value / 100; v.textContent = i.value + ' %'; draw(); }; };
+  rng('#slPeTs', 'titleScale'); rng('#slPeXs', 'textScale');
+  q('#slPeBar').checked = pr.bar !== false; q('#slPeBar').onchange = e => { pr.bar = e.target.checked; draw(); };
+  q('#slPeSrc').checked = !!pr.sourceRight; q('#slPeSrc').onchange = e => { pr.sourceRight = e.target.checked; draw(); };
+  q('#slPeSample').onclick = e => { const b = e.target.closest('button'); if (!b) return; sample = b.dataset.v; q('#slPeSample').querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b)); draw(); };
+  q('#slPeCancel').onclick = closeHcModal;
+  if (q('#slPeDel')) q('#slPeDel').onclick = () => { if (!confirm(`Profil „${base.name}“ löschen? Projekte, die es verwenden, behalten ihre Kopie.`)) return;
+    slSaveUserProfiles(slUserProfiles().filter(x => x.id !== base.id)); closeHcModal();
+    if (slProfile().id === base.id){ P.slideProfile = slClone(P.slideProfile); P.slideProfile.id = 'p' + newId(); } slFillProfSel(); };
+  q('#slPeSave').onclick = () => {
+    pr.name = q('#slPeName').value.trim() || 'Eigenes Profil';
+    if (pr.builtin){ pr.id = 'p' + newId(); pr.builtin = false; if (pr.name === base.name) pr.name += ' – eigene Variante'; }
+    const own = slUserProfiles(), i = own.findIndex(x => x.id === pr.id);
+    if (i >= 0) own[i] = pr; else own.push(pr); slSaveUserProfiles(own);
+    closeHcModal(); slUseProfile(pr); toast(`Designprofil „${pr.name}“ gespeichert`);
+  };
+  draw();
+}
+$('#slProf').onchange = e => { const pr = slAllProfiles().find(x => x.id === e.target.value); if (pr) { slUseProfile(pr); toast(`Designprofil „${pr.name}“`); } };
+$('#slProfEdit').onclick = () => slEditProfile(slProfile(), false);
+$('#slProfNew').onclick = () => slEditProfile(slProfile(), true);
+
 // ───────── Reiter „Folien“ ─────────
 const slThumbs = new Map();
 async function slThumb(sl, img){
   const [W, H] = outSize(), tw = 320, th = Math.round(tw * H / W), k = slIdx(sl);
-  const key = JSON.stringify([sl.layout, slIsDark(sl, k), sl.kicker, sl.title, sl.text, sl.text2, sl.source, sl.img, tw, th]);
+  const key = JSON.stringify([sl.layout, slIsDark(sl, k), sl.kicker, sl.title, sl.text, sl.text2, sl.source, sl.img, tw, th, slProfile()]);
   let c = slThumbs.get(sl.id);
   if (!c || c.key !== key){ const cv = await renderSlide(sl, tw * 2, th * 2, k); c = {key, url: cv.toDataURL('image/jpeg', 0.8)}; slThumbs.set(sl.id, c); }
   if (img) img.src = c.url;
 }
 function renderSlides(){
   if (!P) return;
+  slFillProfSel();
+  if (!P.slideProfile && !$('#hcModal') && $('#proj').dataset.tab === 'slides') setTimeout(() => { if (P && !P.slideProfile && !$('#hcModal')) slChooseProfile(); }, 50);
   const list = $('#slList'); list.innerHTML = '';
   if (!slCur || !P.slides.includes(slCur)) slCur = P.slides[0] || null;
   P.slides.forEach((sl, k) => {

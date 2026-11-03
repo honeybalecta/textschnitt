@@ -1012,7 +1012,7 @@ function makeClip(o1, o2, fmt, name){
   TS.saveProject(c.id, JSON.stringify(c));
   // Bildausschnitt: füllt das neue Format (wird nach dem Öffnen berechnet, weil er vom Format abhängt)
   const pid = c.id; closeProject(); openProject(pid);
-  const fill = () => { if (!P || P.id !== pid) return; if (P.format && !P.frame){ P.frame = clampFrame({sc: coverSc(), tx: 0, ty: 0}); changed(true); saveNow(); } setTab('clip'); seekOut(0, false); };
+  const fill = () => { if (!P || P.id !== pid) return; if (P.format && !P.frame){ P.frame = clampFrame({sc: coverSc(), tx: 0, ty: 0}); changed(true); saveNow(); } if (window.slSyncAll) slSyncAll(); setTab('clip'); seekOut(0, false); };
   let tries = 0; (function wait(){ if (P && P.id === pid) return fill(); if (++tries < 60) setTimeout(wait, 100); })();
   toast('Clip erstellt – hier Format, Ausschnitt, Untertitel und Hook einstellen');
 }
@@ -1040,7 +1040,8 @@ function renderClip(){
 function setFrame(F, quiet){ P.frame = clampFrame(F); applyMainTransform(); placeBox(); if (!quiet){ changed(false); renderClip(); } }
 $('#clipFmt').onclick = e => { const b = e.target.closest('button'); if (!b) return;
   commit(() => { P.format = b.dataset.v || null; P.frame = P.format ? clampFrame({sc: coverSc(), tx: 0, ty: 0}) : null; }, true);
-  fitStage(); setTimeout(fitStage, 50); renderExportForm(); renderClip(); seekOut(outPos, false); toast(P.format ? `Format ${P.format}` : 'Originalformat'); };
+  fitStage(); setTimeout(fitStage, 50); renderExportForm(); renderClip(); seekOut(outPos, false); toast(P.format ? `Format ${P.format}` : 'Originalformat');
+  if (window.slSyncAll) slSyncAll(); };
 $('#paneClip').addEventListener('click', e => {
   const b = e.target.closest('[data-fr],[data-look],[data-c],[data-y]'); if (!b || !P) return;
   if (b.dataset.fr){ const F = {...(P.frame || {sc:1, tx:0, ty:0})}, [wf] = fitFrac(), mx = Math.max(0, (F.sc * wf - 1) / 2);

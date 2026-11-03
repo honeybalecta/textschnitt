@@ -401,6 +401,7 @@ function openProjectNow(id, keep){
   setTab(keepTab || (P.clipOf ? 'clip' : tokens.length ? 'text' : 'trans'));
   seekOut(keepPos, false);
   busStart(); backfillEnv();
+  if (window.slSyncAll) setTimeout(() => slSyncAll(), 400);   // Folien an Format und Designprofil anpassen
 }
 // ── Vollbild-Vorschau: das ganze Projekt bildschirmfüllend ansehen ──
 let fullHide = null;
