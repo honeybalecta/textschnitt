@@ -2695,6 +2695,9 @@ function paintExportForm(){
   $$('#exFmt button').forEach(b => b.classList.toggle('on', b.dataset.v === exFmt));
   $$('#paneExport [data-fmt]').forEach(el => el.classList.toggle('hidden', !el.dataset.fmt.split(' ').includes(exFmt)));
   $('#exSubs').checked = P ? P.settings.burn !== false : true;
+  if (CAP.audioFormats){ $$('#exAudioFmt option').forEach(op => op.hidden = op.disabled = !CAP.audioFormats.includes(op.value)); if (!CAP.audioFormats.includes($('#exAudioFmt').value)) $('#exAudioFmt').value = CAP.audioFormats[0]; }
+  if (CAP.platform === 'android') $('#exNote').textContent = exFmt === 'audio' ? 'Die Tonspur (M4A) landet im Ordner „Musik/HoneyCut“. Bitte die App während des Exports geöffnet lassen.'
+    : 'Das Video landet direkt in deiner Galerie (Ordner „HoneyCut“). Bitte die App während des Exports geöffnet lassen.';
   $('#exBtn').textContent = {video:'Video exportieren', audio:'Audio exportieren', capcut:'CapCut-Projekt erstellen', concat:'Concat-Projekt erstellen'}[exFmt];
   if (P) renderExport();
 }
@@ -2748,6 +2751,93 @@ function buildPlan(){
     segments:segs, overlays:ovs, subs, burn: P.settings.burn !== false, quality: $('#exQuality').value, audioFormat: $('#exAudioFmt').value,
     capcutInstall: $('#exCapcutInstall').checked, sources:media, project:P.id};
 }
+// ───────── Transkript als Text oder Word-Datei ─────────
+function transcriptParas(o = {}){
+  const cut = o.cut !== false, out = []; let cur = null, para = -1, src = -1, lastSpk = null;
+  if (order.length !== tokens.length) computeOrder();
+  for (const i of order){
+    const t = tokens[i], added = t.type !== 'word' && P.edits[i]; if (t.type !== 'word' && !added) continue;   // auch ergänzte Wörter
+    if (cut && (deleted.has(i) || (!added && isSrcDeleted((t.ws + t.we) / 2)))) continue;
+    const w = String(added || tokText(t)).trim(); if (!w) continue;
+    const spk = t.spk || '', newSrc = t.src !== src && P.sources.length > 1;
+    if (!cur || t.p !== para || newSrc || (o.spk && spk !== lastSpk)){
+      cur = {ts: t.ws ?? t.s, spk: o.spk ? (spkOf(spk) || {}).name || '' : '', src: newSrc ? P.sources[t.src].name : '', words: []}; out.push(cur);
+      para = t.p; src = t.src; lastSpk = spk;
+    }
+    cur.words.push(w);
+  }
+  for (const p of out) p.text = p.words.join(' ').replace(/\s+([,.;:!?…»“)])/g, '$1').replace(/([„«(])\s+/g, '$1');
+  return out;
+}
+function txOpts(){ return {cut: $('#txCut').checked, spk: $('#txSpk').checked, times: $('#txTimes').checked}; }
+function transcriptPlain(o){
+  return transcriptParas(o).map(p => (p.src ? `— ${p.src} —\n` : '') + (o.times ? `[${fmtT(p.ts)}] ` : '') + (p.spk ? p.spk + ': ' : '') + p.text).join('\n\n');
+}
+async function copyText(txt){
+  if (TS.copyText){ try { if (TS.copyText(txt)) return true; } catch(_){} }
+  try { await navigator.clipboard.writeText(txt); return true; } catch(_){}
+  const ta = document.createElement('textarea'); ta.value = txt; ta.style.cssText = 'position:fixed;left:-9999px;top:0'; document.body.append(ta); ta.select();
+  let ok = false; try { ok = document.execCommand('copy'); } catch(_){} ta.remove(); return ok;
+}
+// Kleines ZIP (ohne Kompression) und eine schlichte Word-Datei daraus
+const CRC_T = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++){ let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+const crc32 = b => { let c = 0xFFFFFFFF; for (let i = 0; i < b.length; i++) c = CRC_T[(c ^ b[i]) & 0xFF] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; };
+function zipStore(files){
+  const enc = new TextEncoder(), parts = [], cen = []; let off = 0;
+  for (const [name, txt] of files){
+    const nb = enc.encode(name), db = enc.encode(txt), crc = crc32(db);
+    const h = new DataView(new ArrayBuffer(30)); h.setUint32(0, 0x04034b50, true); h.setUint16(4, 20, true); h.setUint16(6, 0x0800, true);
+    h.setUint32(14, crc, true); h.setUint32(18, db.length, true); h.setUint32(22, db.length, true); h.setUint16(26, nb.length, true);
+    parts.push(new Uint8Array(h.buffer), nb, db);
+    const c = new DataView(new ArrayBuffer(46)); c.setUint32(0, 0x02014b50, true); c.setUint16(4, 20, true); c.setUint16(6, 20, true); c.setUint16(8, 0x0800, true);
+    c.setUint32(16, crc, true); c.setUint32(20, db.length, true); c.setUint32(24, db.length, true); c.setUint16(28, nb.length, true); c.setUint32(42, off, true);
+    cen.push(new Uint8Array(c.buffer), nb); off += 30 + nb.length + db.length;
+  }
+  const clen = cen.reduce((a, b) => a + b.length, 0), e = new DataView(new ArrayBuffer(22));
+  e.setUint32(0, 0x06054b50, true); e.setUint16(8, files.length, true); e.setUint16(10, files.length, true); e.setUint32(12, clen, true); e.setUint32(16, off, true);
+  return new Blob([...parts, ...cen, new Uint8Array(e.buffer)], {type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'});
+}
+function transcriptDocx(o){
+  const x = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const run = (t, pr = '') => `<w:r>${pr ? `<w:rPr>${pr}</w:rPr>` : ''}<w:t xml:space="preserve">${x(t)}</w:t></w:r>`;
+  const par = (runs, ppr = '') => `<w:p>${ppr ? `<w:pPr>${ppr}</w:pPr>` : ''}${runs}</w:p>`;
+  let body = par(run(P.name || 'Transkript'), '<w:pStyle w:val="Title"/>');
+  body += par(run(`Transkript · ${fmtT(total)}` + (o.cut ? ' · geschnittene Fassung' : ' · vollständig'), '<w:color w:val="5E584D"/><w:sz w:val="20"/>'));
+  for (const p of transcriptParas(o)){
+    if (p.src) body += par(run(p.src, '<w:b/>'), '<w:pStyle w:val="Heading2"/>');
+    body += par((o.times ? run(`[${fmtT(p.ts)}] `, '<w:color w:val="5E584D"/>') : '') + (p.spk ? run(p.spk + ': ', '<w:b/>') : '') + run(p.text));
+  }
+  const W = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"';
+  const doc = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document ${W}><w:body>${body}<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1417" w:right="1417" w:bottom="1134" w:left="1417" w:header="708" w:footer="708" w:gutter="0"/></w:sectPr></w:body></w:document>`;
+  const styles = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles ${W}><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:cs="Calibri"/><w:sz w:val="23"/><w:lang w:val="de-DE"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="160" w:line="300" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults>
+<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style>
+<w:style w:type="paragraph" w:styleId="Title"><w:name w:val="Title"/><w:basedOn w:val="Normal"/><w:pPr><w:spacing w:after="80"/></w:pPr><w:rPr><w:b/><w:sz w:val="40"/></w:rPr></w:style>
+<w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/><w:basedOn w:val="Normal"/><w:pPr><w:keepNext/><w:spacing w:before="240"/></w:pPr><w:rPr><w:b/><w:sz w:val="26"/></w:rPr></w:style></w:styles>`;
+  return zipStore([
+    ['[Content_Types].xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/></Types>'],
+    ['_rels/.rels', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>'],
+    ['word/_rels/document.xml.rels', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>'],
+    ['word/document.xml', doc], ['word/styles.xml', styles]]);
+}
+async function saveBlob(name, blob){
+  if (TS.saveFile){
+    const b64 = await new Promise(r => { const fr = new FileReader(); fr.onload = () => r(String(fr.result).split(',')[1]); fr.readAsDataURL(blob); });
+    const m = TS.saveFile(name, blob.type, b64, 'HoneyCut'); return typeof m === 'string' ? m : 'Gespeichert';
+  }
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  return 'Heruntergeladen: ' + name;
+}
+$('#txCopy').onclick = async () => {
+  const o = txOpts(), txt = transcriptPlain(o); if (!txt){ $('#txMsg').textContent = 'Noch kein Text vorhanden.'; return; }
+  const ok = await copyText(txt), n = txt.split(/\s+/).length;
+  $('#txMsg').textContent = ok ? `${n} Wörter in der Zwischenablage.` : 'Kopieren hat nicht geklappt – bitte als Word-Datei speichern.'; toast(ok ? 'Transkript kopiert' : 'Kopieren fehlgeschlagen');
+};
+$('#txDocx').onclick = async () => {
+  const o = txOpts(); if (!transcriptParas(o).length){ $('#txMsg').textContent = 'Noch kein Text vorhanden.'; return; }
+  const name = (P.name || 'Transkript').replace(/[\\/:*?"<>|]/g, '_').slice(0, 80) + ' – Transkript.docx';
+  try { const m = await saveBlob(name, transcriptDocx(o)); if (m){ $('#txMsg').textContent = m; toast(m.split(':')[0]); } } catch(e){ $('#txMsg').textContent = 'Fehler: ' + e.message; }
+};
+$('#txChip').onclick = () => { setTab('export'); setTimeout(() => $('#txCard').scrollIntoView({block: 'center', behavior: 'smooth'}), 60); };
 function renderExport(){
   const [W, H] = outSize(), n = P.items.reduce((m, x) => (m[x.type] = (m[x.type] || 0) + 1, m), {});
   $('#exSummary').textContent = `${fmtT(total)}${exFmt === 'audio' ? '' : ` · ${W}×${H}`} · ${timeline.filter(g => g.kind === 'main').length} Abschnitte` + (P.sources.length > 1 ? ` aus ${P.sources.length} Videos` : '') +

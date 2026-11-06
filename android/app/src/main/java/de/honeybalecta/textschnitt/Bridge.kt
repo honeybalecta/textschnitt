@@ -235,19 +235,32 @@ class Bridge(private val act: MainActivity) {
         }
     }.let { }
 
+    /** Text in die Zwischenablage (zuverlässiger als navigator.clipboard in der WebView). */
+    @JavascriptInterface
+    fun copyText(text: String): Boolean = runCatching {
+        val cm = ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+        cm.setPrimaryClip(android.content.ClipData.newPlainText("HoneyCut-Transkript", text)); true
+    }.getOrDefault(false)
+
+    /** Datei in „Downloads/<Ordner>“ speichern (z. B. Transkript als Word-Datei). */
+    @JavascriptInterface
+    fun saveFile(name: String, mime: String, b64: String, folder: String): String = saveTo(name, mime, b64, folder.ifBlank { "HoneyCut" })
+
     /** Datei aus HoneyDeck (Bilder, PDF, ZIP, .honeydeck) in „Downloads/HoneyDeck“ speichern. Rückgabe: Hinweis für die Oberfläche. */
     @JavascriptInterface
-    fun saveFile(name: String, mime: String, b64: String): String = runCatching {
+    fun saveFile(name: String, mime: String, b64: String): String = saveTo(name, mime, b64, "HoneyDeck")
+
+    private fun saveTo(name: String, mime: String, b64: String, folder: String): String = runCatching {
         val data = android.util.Base64.decode(b64, android.util.Base64.DEFAULT)
         val clean = name.replace(Regex("[\\\\/:*?\"<>|]"), "_").take(120).ifBlank { "HoneyDeck" }
         val values = android.content.ContentValues().apply {
             put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, clean)
             put(android.provider.MediaStore.MediaColumns.MIME_TYPE, mime.ifBlank { "application/octet-stream" })
-            put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS + "/HoneyDeck")
+            put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS + "/" + folder.replace(Regex("[^\\p{L}\\p{N} _-]"), "_"))
         }
         val uri = ctx.contentResolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) ?: error("kein Speicherplatz")
         ctx.contentResolver.openOutputStream(uri)!!.use { it.write(data) }
-        "Gespeichert in Downloads/HoneyDeck: $clean"
+        "Gespeichert in Downloads/$folder: $clean"
     }.getOrElse { "Speichern fehlgeschlagen: ${it.message}" }
 
     @JavascriptInterface
@@ -270,7 +283,7 @@ class Bridge(private val act: MainActivity) {
     @JavascriptInterface
     fun info(): String = JSONObject().apply {
         put("platform", "android")
-        put("exportFormats", JSONArray().put("video"))
+        put("exportFormats", JSONArray().put("video").put("audio")); put("audioFormats", JSONArray().put("m4a"))
         put("version", ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName)
         put("whisper", runCatching { Whisper.systemInfo() }.getOrDefault("?"))
     }.toString()

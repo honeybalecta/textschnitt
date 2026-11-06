@@ -135,6 +135,7 @@
         <span class="chip combo"><button id="pauseBtn">Pausen kürzen auf</button><select id="pauseLen"><option value="0" selected>ganz weg</option><option value="0.1">0,1 s</option><option value="0.2">0,2 s</option><option value="0.3">0,3 s</option><option value="0.5">0,5 s</option></select></span>
         <button class="chip" id="cutPlayBtn" title="2 Sekunden vor bis 2 Sekunden nach dem letzten Schnitt abspielen">▶ Letzten Schnitt anhören</button>
         <label class="chip"><input type="checkbox" id="hideDel"> Gelöschtes ausblenden</label>
+        <button class="chip" id="txChip" title="Transkript in die Zwischenablage kopieren oder als Word-Datei speichern">📋 Text kopieren / Word</button>
         <button class="chip" onclick="addSources()">＋ Video anhängen</button>
         <button class="chip" onclick="$('#realignBtn').click()" title="Wortzeiten anhand des Lautstärkeverlaufs neu zuordnen (für Projekte aus älteren Versionen)">↻ Am Ton ausrichten</button>
       </div>
@@ -325,6 +326,15 @@
         <pre class="small files" id="exFiles"></pre>
         <div class="row hidden" id="exDone"><button class="btn" id="exShare">Teilen</button><button class="btn" id="exOpen">Ansehen</button></div>
         <p class="muted small" id="exNote"></p>
+      </div>
+      <div class="card stack" id="txCard">
+        <h3>Transkript</h3>
+        <span class="muted small">Den gesprochenen Text als Fließtext in die Zwischenablage kopieren oder als Word-Datei speichern.</span>
+        <label class="row small"><input type="checkbox" id="txCut" checked> nur der geschnittene Text (ohne Gelöschtes)</label>
+        <label class="row small"><input type="checkbox" id="txSpk" checked> Namen der Sprecher:innen</label>
+        <label class="row small"><input type="checkbox" id="txTimes"> Zeitmarken am Absatzanfang</label>
+        <div class="row wrap"><button class="btn" id="txCopy">📋 In die Zwischenablage</button><button class="btn" id="txDocx">📄 Als Word-Datei (.docx)</button></div>
+        <span class="muted small" id="txMsg"></span>
       </div>
       <div class="card stack pkg-card">
         <h3>Projekt weitergeben</h3>

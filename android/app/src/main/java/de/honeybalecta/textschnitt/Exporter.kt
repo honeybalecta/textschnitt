@@ -85,7 +85,7 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
     private val fps = plan.optDouble("fps", 30.0).let { if (it < 1 || it > 240) 30.0 else it }
 
     /** Ein Clip aus dem Plan: Video mit Ausschnitt oder Foto mit fester Dauer – plus Tempo, Lautstärke, Farbe. */
-    private fun item(o: JSONObject, inS: Double, outS: Double, removeAudio: Boolean, effects: List<Effect>): EditedMediaItem {
+    private fun item(o: JSONObject, inS: Double, outS: Double, removeAudio: Boolean, effects: List<Effect>, removeVideo: Boolean = false): EditedMediaItem {
         val b = if (o.optBoolean("image")) EditedMediaItem.Builder(
             MediaItem.Builder().setUri(Uri.parse(o.getString("uri"))).setImageDurationMs(((outS - inS) * 1000).roundToLong()).build()
         ).setFrameRate(Math.round(fps).toInt())
@@ -108,7 +108,8 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
             override fun getSpeed(timeUs: Long): Float = speed
             override fun getNextSpeedChangeTimeUs(timeUs: Long): Long = C.TIME_UNSET
         })
-        return b.setEffects(Effects(audio, fx)).build()
+        if (removeVideo) b.setRemoveVideo(true)
+        return b.setEffects(Effects(audio, if (removeVideo) listOf() else fx)).build()
     }
 
     private fun clip(uri: String, inS: Double, outS: Double): MediaItem =
@@ -118,8 +119,46 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
                 .setEndPositionMs((outS * 1000).roundToLong()).build()
         ).build()
 
+    private val audioOnly = plan.optString("format") == "audio"
+
+    /** Nur Ton: Hauptspur, hörbare Videospuren und Tonspuren gemischt als M4A (AAC). */
+    private fun startAudio(): Composition.Builder {
+        val segs = plan.getJSONArray("segments")
+        val main = EditedMediaItemSequence.Builder(setOf(C.TRACK_TYPE_AUDIO)); var n = 0
+        for (i in 0 until segs.length()) {
+            val s = segs.getJSONObject(i)
+            val inS = s.getDouble("in"); val outS = s.getDouble("out"); val sp = s.optDouble("speed", 1.0).coerceIn(0.25, 4.0)
+            if (outS - inS <= 0.01) continue
+            if (s.optBoolean("image")) { main.addGap(us((outS - inS) / sp)); continue }
+            main.addItem(item(s, inS, outS, false, emptyList(), removeVideo = true)); n++
+        }
+        require(n > 0) { "Im Schnitt ist kein Ton enthalten." }
+        val total = plan.getDouble("total")
+        val ovs = plan.optJSONArray("overlays") ?: JSONArray()
+        val hearable = (0 until ovs.length()).map { ovs.getJSONObject(it) }.filter {
+            it.optString("mode") == "audio" || (it.optDouble("vol", 0.0) > 0 && it.optBoolean("hasAudio", true) && !it.optBoolean("image")) }
+        val seqs = arrayListOf(main.build())
+        for ((_, l0) in hearable.groupBy { (if (it.optString("mode") == "audio") "a" else "v") + it.optInt("track", 1) }) {
+            val seq = EditedMediaItemSequence.Builder(setOf(C.TRACK_TYPE_AUDIO)); var cursor = 0.0; var k = 0
+            for (o in l0.sortedBy { it.getDouble("at") }) {
+                val at = maxOf(o.getDouble("at"), cursor); val inS = o.getDouble("in"); val dur = minOf(o.getDouble("out") - inS, total - at)
+                if (dur <= 0.05) continue
+                if (at - cursor > 0.01) seq.addGap(us(at - cursor))
+                val vol = o.optDouble("vol", 1.0).toFloat(); val ap = ArrayList<AudioProcessor>()
+                if (Math.abs(vol - 1f) > 0.001) ap.add(ChannelMixingAudioProcessor().apply { for (ch in 1..6) putChannelMixingMatrix(ChannelMixingMatrix.createForConstantGain(ch, ch).scaleBy(vol.coerceIn(0f, 4f))) })
+                seq.addItem(EditedMediaItem.Builder(clip(o.getString("uri"), inS, inS + dur)).setRemoveVideo(true).setEffects(Effects(ap, listOf())).build())
+                cursor = at + dur; k++
+            }
+            if (k == 0) continue
+            if (total - cursor > 0.01) seq.addGap(us(total - cursor))
+            seqs.add(seq.build())
+        }
+        return Composition.Builder(seqs)
+    }
+
     fun start() {
         job.message = "Export wird vorbereitet …"
+        if (audioOnly) { launch(startAudio()); return }
         // Hauptspur
         val segs = plan.getJSONArray("segments")
         val mainItems = ArrayList<EditedMediaItem>()
@@ -221,8 +260,11 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
         // Handyvideos sind oft HDR (HLG/HDR10). Bild-Overlays (Untertitel, Fotos) gehen in HDR nicht –
         // deshalb wird beim Export nach SDR umgerechnet; das ist auch das Format, das überall abspielbar ist.
         composition.setHdrMode(Composition.HDR_MODE_TONE_MAP_HDR_TO_SDR_USING_OPEN_GL)
+        launch(composition)
+    }
 
-        outFile = File(ctx.cacheDir, "export_${System.currentTimeMillis()}.mp4")
+    private fun launch(composition: Composition.Builder) {
+        outFile = File(ctx.cacheDir, "export_${System.currentTimeMillis()}." + (if (audioOnly) "m4a" else "mp4"))
         // Bitrate passend zur Auflösung (≈ 0,14 Bit pro Pixel), damit die Qualität dem Original nahekommt
         val bitrate = (w.toDouble() * h * fps * 0.14).coerceIn(4e6, 80e6).toInt()
         val encoders = DefaultEncoderFactory.Builder(ctx)
@@ -259,32 +301,34 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
     }
 
     private fun finish() {
-        job.message = "Speichere in der Galerie …"
+        job.message = if (audioOnly) "Speichere bei der Musik …" else "Speichere in der Galerie …"
         Thread {
             var uri: Uri? = null
             try {
                 val base = plan.optString("name", "HoneyCut").ifBlank { "HoneyCut" }
                     .replace(Regex("[\\\\/:*?\"<>|]"), "_").take(80)
                 val stamp = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.GERMANY).format(java.util.Date())
-                val name = "${base}_$stamp.mp4"
+                val name = "${base}_$stamp." + (if (audioOnly) "m4a" else "mp4")
+                val folder = if (audioOnly) "Music/HoneyCut" else "DCIM/HoneyCut"
                 val now = System.currentTimeMillis()
                 val values = ContentValues().apply {
-                    put(MediaStore.Video.Media.DISPLAY_NAME, name)
-                    put(MediaStore.Video.Media.TITLE, base)
-                    put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
-                    put(MediaStore.Video.Media.RELATIVE_PATH, "DCIM/HoneyCut")
-                    put(MediaStore.Video.Media.DATE_TAKEN, now)
-                    put(MediaStore.Video.Media.DATE_ADDED, now / 1000)
-                    put(MediaStore.Video.Media.DATE_MODIFIED, now / 1000)
-                    put(MediaStore.Video.Media.IS_PENDING, 1)
+                    put(MediaStore.MediaColumns.DISPLAY_NAME, name)
+                    put(MediaStore.MediaColumns.TITLE, base)
+                    put(MediaStore.MediaColumns.MIME_TYPE, if (audioOnly) "audio/mp4" else "video/mp4")
+                    put(MediaStore.MediaColumns.RELATIVE_PATH, folder)
+                    if (!audioOnly) put(MediaStore.Video.Media.DATE_TAKEN, now)
+                    put(MediaStore.MediaColumns.DATE_ADDED, now / 1000)
+                    put(MediaStore.MediaColumns.DATE_MODIFIED, now / 1000)
+                    put(MediaStore.MediaColumns.IS_PENDING, 1)
                 }
-                val coll = MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+                val coll = if (audioOnly) MediaStore.Audio.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+                           else MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
                 uri = ctx.contentResolver.insert(coll, values) ?: throw IllegalStateException("Galerie nicht erreichbar")
                 ctx.contentResolver.openOutputStream(uri, "w")!!.use { out -> outFile.inputStream().use { it.copyTo(out, 1 shl 20) } }
-                values.clear(); values.put(MediaStore.Video.Media.IS_PENDING, 0)
+                values.clear(); values.put(MediaStore.MediaColumns.IS_PENDING, 0)
                 ctx.contentResolver.update(uri, values, null, null)
                 outFile.delete()
-                job.done(JSONObject().put("uri", uri.toString()).put("name", name).put("folder", "DCIM/HoneyCut"))
+                job.done(JSONObject().put("uri", uri.toString()).put("name", name).put("folder", folder))
             } catch (e: Throwable) {
                 uri?.let { runCatching { ctx.contentResolver.delete(it, null, null) } }
                 job.fail(e)
