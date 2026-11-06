@@ -562,6 +562,7 @@
       for (const [k, v] of await idbAll('fonts')) if (v && v.blob) fontStore.set(k, v);
     } catch(e){ console.error(e); }
     try { hasGpu = !!(navigator.gpu && await Promise.race([navigator.gpu.requestAdapter(), new Promise(r => setTimeout(() => r(null), 1500))])); } catch(_){}
+    window.TS_DECK_BASE = '../honeydeck/';   // HoneyDeck: eigene Seite honeybalecta.github.io/honeydeck/
     await loadScript('app.js'); await loadScript('studio.js'); await loadScript('slides.js'); await loadScript('deck-host.js');
     // Hinweise auf der Startseite
     const home = $('#home .home-body');

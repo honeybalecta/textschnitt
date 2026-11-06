@@ -59,6 +59,4 @@ sw = (WEB / "sw.js").read_text().replace("__VERSION__", VERSION + "-" + subproce
     ["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, capture_output=True, text=True).stdout.strip()).replace("__SHELL__", json.dumps(shell))
 (OUT / "sw.js").write_text(sw)
 (OUT / ".nojekyll").write_text("")
-# HoneyDeck liegt als eigenes Programm unter deck/ (gleiche Herkunft – HoneyCut bettet es im Reiter „Folien“ ein)
-subprocess.run([sys.executable, str(ROOT / "deck" / "build.py"), str(OUT / "deck")], check=True)
 print(f"HoneyCut Web {VERSION} → {OUT}")

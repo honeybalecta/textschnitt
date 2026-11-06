@@ -8,10 +8,3 @@ textschnitt.log
 Textschnitt starten.bat
 daten/
 site/
-deck/dist-web/
-deck/android/app/src/main/assets/
-deck/android/.gradle/
-deck/android/app/build/
-deck/android/build/
-deck-site/
-build-deck/

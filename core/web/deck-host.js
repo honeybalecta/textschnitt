@@ -7,16 +7,18 @@
    Fehlt HoneyDeck, bleibt der eingebaute Folien-Reiter unverändert. */
 (() => {
   let frame = null, hd = null, lastApply = 0, refreshT = 0;
+  // Wo HoneyDeck liegt: Windows/Android liefern es unter deck/ aus, im Browser liegt es unter /honeydeck/ (eigene Seite, gleiche Herkunft)
+  const BASE = window.TS_DECK_BASE || 'deck/';
   const loadScript = src => new Promise((res, rej) => { const s = document.createElement('script'); s.src = src; s.onload = res; s.onerror = () => rej(new Error(src)); document.head.append(s); });
   const clone = o => JSON.parse(JSON.stringify(o));
   window.HC_DECK_ON = false;
 
   async function detect(){
     try {
-      const r = await fetch('deck/version.txt', {cache: 'no-store'});
+      const r = await fetch(BASE + 'version.txt', {cache: 'no-store'});
       if (!r.ok) return;
       const v = (await r.text()).trim(); if (!/^\d+\.\d+/.test(v)) return;
-      await loadScript('deck/deck-icons.js'); await loadScript('deck/deck-engine.js');
+      await loadScript(BASE + 'deck-icons.js'); await loadScript(BASE + 'deck-engine.js');
       if (!window.HoneyDeck) return;
       // Schriften der Folien (Lora/Inter sind in HoneyCut schon geladen, die übrigen kommen über TSF-*)
       window.HC_DECK_ON = true; window.HC_DECK_VERSION = v;
@@ -32,7 +34,7 @@
     const pane = document.getElementById('paneSlides');
     if (!frame){
       frame = document.createElement('iframe'); frame.id = 'deckFrame'; frame.className = 'deck-frame'; frame.title = 'HoneyDeck';
-      frame.src = 'deck/index.html?embed=1';
+      frame.src = BASE + 'index.html?embed=1';
       pane.prepend(frame);
     } else if (hd) hd.reload();
     return true;
