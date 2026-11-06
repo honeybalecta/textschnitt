@@ -53,7 +53,10 @@ function slFontOptions(){
   return [{v:'Inter', l:'Inter'}, {v:'Lora', l:'Lora (Serifen)'}].concat(FONTS.filter(f => f.key && f.key !== 'inter' && f.key !== 'lora').map(f => ({v:'k:' + f.key, l:f.label})), userFonts.map(f => ({v:'k:' + f.key, l:f.label + ' (eigene)'})));
 }
 const slIsDark = (sl, k, pr) => { if (sl.dark != null) return !!sl.dark; const t = (pr || slProfile()).theme; if (t === 'dunkel') return true; if (t === 'hell') return false; return (k ?? P.slides.indexOf(sl)) % 2 === 0; };
-let slCur = null, slSel = null, slOpen = null;   // ausgewählte Folie, Auswahl im Transkript, laufende Folie im Studio
+let slCur = null, slSel = null, slOpen = null;
+const slIdx = sl => P.slides.indexOf(P.slides.find(x => x.id === sl.id) || sl);
+// Alles, was das Aussehen einer Folie bestimmt (ohne die gespeicherten Bilddaten)
+const slLook = sl => { const o = {...sl}; delete o.media; delete o.mediaKey; delete o.rev; delete o.a; delete o.b; delete o.cue; return o; };   // ausgewählte Folie, Auswahl im Transkript, laufende Folie im Studio
 
 // ───────── Zeichnen ─────────
 const slImgCache = new Map();
@@ -113,6 +116,8 @@ function subSlideY(s, e){
 }
 window.subSlideY = subSlideY;
 async function renderSlide(sl, W, H, k, prof, safe){
+  // Mit HoneyDeck zeichnet dessen Engine (gleiches Ergebnis für die bisherigen Folienarten, dazu neue Arten und Symbole)
+  if (window.HC_DECK_ON) return deckRender(sl, W, H, k ?? slIdx(sl), prof || slProfile(), safe ?? slSafe());
   const pr = prof || slProfile(); await slFonts(pr);
   safe ??= slSafe();
   if (safe > 0){   // Folie in den oberen Teil setzen, darunter Fläche in Hintergrundfarbe
@@ -220,7 +225,6 @@ async function renderSlide(sl, W, H, k, prof, safe){
 }
 
 // ───────── Daten ─────────
-const slIdx = sl => P.slides.indexOf(sl);
 function newSlide(o = {}){ return {id: newId(), layout: 'titel', dark: null, kicker: '', title: '', text: '', text2: '', source: '', img: null, a: null, b: null, ...o}; }
 const slWords = (a, b) => range(a, b).filter(i => tokens[i] && isTextTok(i) && tokText(tokens[i])).map(i => tokText(tokens[i])).join(' ').replace(/\s+([.,!?;:])/g, '$1').trim();
 // Folienart aus dem markierten Text erraten
@@ -247,7 +251,7 @@ function slTimes(sl){
 // Bild der Folie erzeugen und als Medium ablegen (nur neu, wenn sich etwas geändert hat)
 async function slMedia(sl){
   const [W, H] = outSize(), k = slIdx(sl);
-  const key = JSON.stringify([sl.layout, slIsDark(sl, k), sl.kicker, sl.title, sl.text, sl.text2, sl.source, sl.img, W, H, slProfile(), slSafe()]);
+  const key = JSON.stringify([slLook(sl), slIsDark(sl, k), k % 2, W, H, slProfile(), slSafe(), !!window.HC_DECK_ON]);
   if (sl.media && sl.mediaKey === key) return sl.media;
   if (!TS.saveImage) throw new Error('Folien als Bild speichern geht in dieser Version noch nicht');
   const cv = await renderSlide(sl, W, H, k);
@@ -414,13 +418,14 @@ $('#slProfNew').onclick = () => slEditProfile(slProfile(), true);
 const slThumbs = new Map();
 async function slThumb(sl, img){
   const [W, H] = outSize(), tw = 320, th = Math.round(tw * H / W), k = slIdx(sl);
-  const key = JSON.stringify([sl.layout, slIsDark(sl, k), sl.kicker, sl.title, sl.text, sl.text2, sl.source, sl.img, tw, th, slProfile(), slSafe()]);
+  const key = JSON.stringify([slLook(sl), slIsDark(sl, k), k % 2, tw, th, slProfile(), slSafe(), !!window.HC_DECK_ON]);
   let c = slThumbs.get(sl.id);
   if (!c || c.key !== key){ const cv = await renderSlide(sl, tw * 2, th * 2, k); c = {key, url: cv.toDataURL('image/jpeg', 0.8)}; slThumbs.set(sl.id, c); }
   if (img) img.src = c.url;
 }
 function renderSlides(){
   if (!P) return;
+  if (window.deckMount && deckMount()) return;   // HoneyDeck übernimmt den Reiter
   slFillProfSel(); $('#slSubSafe').checked = P.settings.slSubSafe !== false;
   if (!P.slideProfile && !$('#hcModal') && $('#proj').dataset.tab === 'slides') setTimeout(() => { if (P && !P.slideProfile && !$('#hcModal')) slChooseProfile(); }, 50);
   const list = $('#slList'); list.innerHTML = '';

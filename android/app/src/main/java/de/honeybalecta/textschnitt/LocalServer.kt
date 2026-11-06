@@ -27,6 +27,7 @@ import java.util.concurrent.Executors
  * Liefert Oberfläche, Videos (mit Byte-Bereichen, damit der Player springen kann) und Vorschaubilder.
  */
 class LocalServer(private val ctx: Context) {
+    companion object { const val DECK_PACKAGE = "de.honeybalecta.honeydeck" }
     private val token = ByteArray(12).also { SecureRandom().nextBytes(it) }.joinToString("") { "%02x".format(it) }
     private val server = ServerSocket(0, 64, InetAddress.getByName("127.0.0.1"))
     private val pool = Executors.newCachedThreadPool()
@@ -104,6 +105,7 @@ class LocalServer(private val ctx: Context) {
                     when {
                         sub == "media" -> media(out, r)
                         sub == "thumb" -> thumb(out, r)
+                        sub.startsWith("deck/") -> deckAsset(out, sub.removePrefix("deck/").ifEmpty { "index.html" })
                         else -> asset(out, sub.ifEmpty { "index.html" })
                     }
                     out.flush()
@@ -125,6 +127,20 @@ class LocalServer(private val ctx: Context) {
 
     private fun send(out: OutputStream, code: Int, reason: String, type: String, body: ByteArray) {
         header(out, code, reason, type, body.size.toLong()); out.write(body)
+    }
+
+    // HoneyDeck: Dateien kommen aus der installierten HoneyDeck-App (fehlt sie, gibt es 404 und HoneyCut nutzt den eingebauten Folien-Reiter)
+    private fun deckAsset(out: OutputStream, path: String) {
+        if (path.contains("..")) { send(out, 404, "Not Found", "text/plain", ByteArray(0)); return }
+        val bytes = runCatching { ctx.createPackageContext(DECK_PACKAGE, 0).assets.open("deck/$path").use { it.readBytes() } }.getOrNull()
+            ?: run { send(out, 404, "Not Found", "text/plain", ByteArray(0)); return }
+        send(out, 200, "OK", typeOf(path), bytes)
+    }
+
+    private fun typeOf(path: String) = when (path.substringAfterLast('.')) {
+        "html" -> "text/html; charset=utf-8"; "js" -> "application/javascript; charset=utf-8"; "css" -> "text/css; charset=utf-8"
+        "svg" -> "image/svg+xml"; "png" -> "image/png"; "ttf" -> "font/ttf"; "otf" -> "font/otf"; "webmanifest" -> "application/manifest+json"
+        "txt", "md" -> "text/plain; charset=utf-8"; else -> "application/octet-stream"
     }
 
     private fun asset(out: OutputStream, path: String) {

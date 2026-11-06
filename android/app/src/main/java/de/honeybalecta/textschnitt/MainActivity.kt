@@ -7,6 +7,7 @@ import android.os.Build
 import android.net.Uri
 import android.os.Bundle
 import android.view.ViewGroup
+import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
@@ -38,6 +39,12 @@ class MainActivity : ComponentActivity() {
         bridge.onCreated(uri)
     }
     fun launchCreate(name: String) = createDoc.launch(name)
+
+    // Dateiauswahl über <input type=file> (HoneyDeck im Reiter „Folien“: Importe)
+    private var fileCb: ValueCallback<Array<Uri>>? = null
+    private val fileChooser = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris: List<Uri> ->
+        fileCb?.onReceiveValue(uris.toTypedArray()); fileCb = null
+    }
 
     private val notifPerm = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
     private var notifAsked = false
@@ -84,7 +91,14 @@ class MainActivity : ComponentActivity() {
         }
         bridge = Bridge(this)
         web.addJavascriptInterface(bridge, "TS")
-        web.webChromeClient = WebChromeClient()
+        web.webChromeClient = object : WebChromeClient() {
+            override fun onShowFileChooser(view: WebView, cb: ValueCallback<Array<Uri>>, params: FileChooserParams): Boolean {
+                fileCb?.onReceiveValue(null); fileCb = cb
+                val types = params.acceptTypes.filter { it.contains('/') }.toTypedArray().ifEmpty { arrayOf("*/*") }
+                return runCatching { fileChooser.launch(if (types.any { it.startsWith("image/") } && types.size == 1) types else arrayOf("*/*")); true }
+                    .getOrElse { fileCb = null; false }
+            }
+        }
         server = LocalServer(applicationContext).start()
         web.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean =

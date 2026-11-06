@@ -1,0 +1,164 @@
+name: HoneyDeck bauen (Android + Windows)
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Als Release veröffentlichen"
+        type: boolean
+        default: true
+  push:
+    branches: [main]
+    paths: ["deck/**", "core/web/fonts/**", ".github/workflows/build-deck.yml"]
+
+permissions:
+  contents: write
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      HD_VERSION_CODE: ${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Version
+        run: echo "HD_VERSION=$(cat deck/version.txt)" >> "$GITHUB_ENV"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.14.3"
+      - name: Oberfläche einbauen
+        run: python3 deck/build.py deck/android/app/src/main/assets/deck && ls deck/android/app/src/main/assets/deck
+      - name: Signaturschlüssel (derselbe wie HoneyCut)
+        env:
+          KS_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          KS_PW: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          if [ -n "$KS_B64" ]; then
+            echo "$KS_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+            {
+              echo "TS_KEYSTORE=$RUNNER_TEMP/release.jks"
+              echo "TS_KEYSTORE_PASSWORD=$KS_PW"
+              echo "TS_KEY_PASSWORD=$KS_PW"
+              echo "TS_KEY_ALIAS=textschnitt"
+              echo "TS_SIGNED=1"
+            } >> "$GITHUB_ENV"
+          else
+            echo "::warning::Kein Signaturschlüssel hinterlegt – Testbuild mit Debug-Signatur."
+          fi
+      - name: APK bauen
+        run: |
+          set -o pipefail
+          gradle -p deck/android --no-daemon --console=plain assembleRelease 2>&1 | tee build.log
+      - name: Fehlerbericht als Commit-Kommentar
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo "### HoneyDeck Android-Build fehlgeschlagen"
+            echo '```'
+            grep -E "^e: |error:|ERROR|FAILURE|What went wrong|Could not|Execution failed" build.log | head -60
+            echo "----- letzte Zeilen -----"
+            tail -30 build.log
+            echo '```'
+          } > report.md
+          gh api "repos/${{ github.repository }}/commits/${{ github.sha }}/comments" -F body=@report.md >/dev/null || true
+      - name: APK bereitstellen
+        run: |
+          mkdir -p out
+          cp deck/android/app/build/outputs/apk/release/*.apk "out/HoneyDeck-Android-$HD_VERSION.apk"
+          ls -la out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HoneyDeck-Android
+          path: out/*.apk
+      - name: Als Release veröffentlichen
+        if: env.TS_SIGNED == '1' && (github.event_name == 'push' || github.event.inputs.publish == 'true')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="deck-android-v$HD_VERSION"
+          if gh release view "$TAG" >/dev/null 2>&1; then gh release upload "$TAG" out/*.apk --clobber
+          else gh release create "$TAG" out/*.apk --latest=false --title "HoneyDeck für Android $HD_VERSION" --notes "Folien für B-Roll und Präsentationen. Android 10 und neuer. Ist HoneyDeck installiert, läuft es in HoneyCut im Reiter „Folien“."; fi
+
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Version
+        shell: pwsh
+        run: '"HD_VERSION=$((Get-Content deck/version.txt -Raw).Trim())" >> $env:GITHUB_ENV'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Oberfläche zusammenstellen
+        run: python deck/build.py deck/dist-web
+      # Eigener Bootloader wie bei HoneyCut – vermeidet Fehlalarme von Virenscannern
+      - name: Abhängigkeiten
+        shell: pwsh
+        env:
+          PYINSTALLER_COMPILE_BOOTLOADER: "1"
+        run: |
+          python -m pip install --upgrade pip
+          pip install "pywebview>=5" pythonnet
+          pip install --no-binary pyinstaller "pyinstaller==6.22.3" "pyinstaller-hooks-contrib==2026.9"
+      - name: Programm bauen (PyInstaller)
+        shell: pwsh
+        run: |
+          pyinstaller --noconfirm --clean --distpath dist --workpath build-deck deck/desktop/honeydeck.spec 2>&1 | Tee-Object -FilePath build.log
+          if (-not (Test-Path dist\HoneyDeck\HoneyDeck.exe)) { throw "PyInstaller hat keine EXE erzeugt" }
+      - name: Installer bauen (Inno Setup)
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "C:\Program Files (x86)\Inno Setup 6\ISCC.exe")) { choco install innosetup -y --no-progress }
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" deck\desktop\installer.iss
+          Get-ChildItem dist\*.exe | Format-Table Name, Length
+      - name: Virenscan mit Microsoft Defender
+        shell: pwsh
+        run: |
+          $mp = Get-ChildItem "$env:ProgramData\Microsoft\Windows Defender\Platform\*\MpCmdRun.exe" -ErrorAction SilentlyContinue | Sort-Object FullName | Select-Object -Last 1
+          if (-not $mp) { $mp = Get-Item "$env:ProgramFiles\Windows Defender\MpCmdRun.exe" -ErrorAction SilentlyContinue }
+          if (-not $mp) { Write-Host "Defender nicht verfügbar – Scan übersprungen"; exit 0 }
+          & $mp.FullName -SignatureUpdate | Out-Host
+          $bad = $false
+          foreach ($f in @("dist\HoneyDeck\HoneyDeck.exe") + (Get-ChildItem dist\HoneyDeck-Setup-*.exe | ForEach-Object FullName)) {
+            $full = (Resolve-Path $f).Path
+            $out = & $mp.FullName -Scan -ScanType 3 -File $full -DisableRemediation 2>&1 | Out-String
+            Write-Host "== $full`n$out"
+            if ($LASTEXITCODE -eq 2 -or $out -match "Threat\s") { $bad = $true }
+          }
+          if ($bad) { throw "Defender meldet eine Bedrohung – Release wird nicht veröffentlicht" }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HoneyDeck-Windows
+          path: dist/HoneyDeck-Setup-*.exe
+      - name: Als Release veröffentlichen
+        if: github.event_name == 'push' || github.event.inputs.publish == 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "deck-v$env:HD_VERSION"
+          $file = (Get-ChildItem dist\HoneyDeck-Setup-*.exe | Select-Object -First 1).FullName
+          gh release view $tag 2>$null
+          if ($LASTEXITCODE -eq 0) { gh release upload $tag $file --clobber }
+          else { gh release create $tag $file --latest=false --title "HoneyDeck $tag" --notes "Windows-Installer. Ist HoneyDeck installiert, läuft es in HoneyCut im Reiter „Folien“." }
+      - name: Fehlerbericht als Commit-Kommentar
+        if: failure()
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $r = @("### HoneyDeck Windows-Build fehlgeschlagen", '```')
+          if (Test-Path build.log) { $r += (Get-Content build.log -Tail 40) }
+          $r += '```'
+          $r -join "`n" | Out-File -Encoding utf8 report.md
+          gh api "repos/${{ github.repository }}/commits/${{ github.sha }}/comments" -F body=@report.md | Out-Null

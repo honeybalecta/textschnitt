@@ -6,6 +6,11 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- HoneyDeck erkennen und seine Oberfläche im Reiter „Folien“ einbetten -->
+    <queries>
+        <package android:name="de.honeybalecta.honeydeck" />
+    </queries>
+
     <application
         android:label="HoneyCut"
         android:icon="@mipmap/ic_launcher"

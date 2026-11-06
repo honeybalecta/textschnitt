@@ -37,7 +37,7 @@ os.environ.setdefault("HF_HUB_DISABLE_IMPLICIT_TOKEN", "1")
 import warnings  # noqa: E402
 warnings.filterwarnings("ignore", module="huggingface_hub")
 
-VERSION = "2.17.0"
+VERSION = "2.18.0"
 APP_DIR = Path(__file__).resolve().parent
 FROZEN = bool(getattr(sys, "frozen", False))          # als installierte .exe gebaut
 RES_DIR = Path(getattr(sys, "_MEIPASS", APP_DIR))      # mitgelieferte Dateien (Oberfläche, ffmpeg, Modelle)
@@ -1776,6 +1776,47 @@ def import_root() -> Path:
     return home / "HoneyCut Importe"
 
 
+# ───────── HoneyDeck (eigenes Programm für Folien) ─────────
+def deck_dir() -> Path | None:
+    """Ordner mit der Oberfläche von HoneyDeck, wenn HoneyDeck installiert ist (sonst None)."""
+    cands = []
+    if os.environ.get("HONEYDECK_DIR"):
+        cands.append(Path(os.environ["HONEYDECK_DIR"]))
+    if sys.platform == "win32":
+        try:
+            import winreg
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\HoneyBalecta\HoneyDeck") as k:
+                cands.append(Path(winreg.QueryValueEx(k, "WebDir")[0]))
+        except OSError:
+            pass
+        if os.environ.get("LOCALAPPDATA"):
+            cands.append(Path(os.environ["LOCALAPPDATA"]) / "Programs" / "HoneyDeck" / "web")
+    else:
+        cands.append(Path.home() / ".local" / "share" / "honeydeck" / "web")
+    for c in cands:
+        if (c / "deck-engine.js").is_file() and (c / "version.txt").is_file():
+            return c
+    return None
+
+
+DECK_TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8",
+              ".svg": "image/svg+xml", ".png": "image/png", ".ttf": "font/ttf", ".otf": "font/otf", ".txt": "text/plain; charset=utf-8",
+              ".md": "text/plain; charset=utf-8", ".webmanifest": "application/manifest+json", ".json": "application/json"}
+
+
+def save_any_dialog(name: str) -> str | None:
+    """Speichern-Dialog für beliebige Dateien (Bilder, PDF, ZIP, .honeydeck aus HoneyDeck)."""
+    if APP_HOOKS.get("save_any"):
+        return APP_HOOKS["save_any"](name)
+    ext = Path(name).suffix
+    code = ("import tkinter as tk, json\nfrom tkinter import filedialog\nr=tk.Tk();r.withdraw()\nr.attributes('-topmost',True)\n"
+            f"f=filedialog.asksaveasfilename(title='Speichern',initialfile={name!r},defaultextension={ext!r})\nprint(json.dumps(f or ''))")
+    res = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    if res.returncode:
+        raise RuntimeError("Kein Dateidialog verfügbar.")
+    return json.loads(res.stdout.strip() or '""') or None
+
+
 def save_dialog(name: str) -> str | None:
     if APP_HOOKS.get("save"):
         return APP_HOOKS["save"](name)
@@ -2064,7 +2105,16 @@ class Handler(BaseHTTPRequestHandler):
                 return self._file(f, "font/ttf" if f.suffix.lower() == ".ttf" else "font/otf" if f.suffix.lower() == ".otf" else "text/plain; charset=utf-8", cache=True)
             if rest == "api/fonts":
                 return self._json(fonts_list())
-            if rest in ("", "index.html", "app.js", "studio.js", "slides.js", "app.css", "bridge-http.js", "icons.js"):
+            if rest.startswith("deck/"):
+                d = deck_dir()
+                sub = rest[5:] or "index.html"
+                if not d or ".." in sub or sub.startswith(("/", "\\")):
+                    return self._json({"error": "HoneyDeck ist nicht installiert"}, 404)
+                f = (d / sub).resolve()
+                if not str(f).startswith(str(d.resolve())) or not f.is_file():
+                    return self._json({"error": "Nicht gefunden"}, 404)
+                return self._send(200, f.read_bytes(), DECK_TYPES.get(f.suffix.lower(), "application/octet-stream"))
+            if rest in ("", "index.html", "app.js", "studio.js", "slides.js", "deck-host.js", "app.css", "bridge-http.js", "icons.js"):
                 f = WEB_DIR / (rest or "index.html")
                 ctype = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
                          ".css": "text/css; charset=utf-8"}[f.suffix]
@@ -2120,6 +2170,14 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"ok": True})
             if rest is None:
                 return self._json({"error": "Nicht gefunden"}, 404)
+            if rest == "api/savefile":   # Datei aus HoneyDeck (eingebettet) speichern
+                data = json.loads(raw or b"{}")
+                name = re.sub(r'[\\/:*?"<>|]', "_", data.get("name") or "Datei")[:120]
+                dest = save_any_dialog(name)
+                if not dest:
+                    return self._json({"ok": False})
+                Path(dest).write_bytes(base64.b64decode(data.get("data") or ""))
+                return self._json({"ok": True, "path": dest})
             if rest == "api/project":
                 save_project(q.get("id", ""), raw.decode("utf-8"))
                 try:

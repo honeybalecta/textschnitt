@@ -1,13 +1,13 @@
 VSVersionInfo(
-  ffi=FixedFileInfo(filevers=(2, 17, 0, 0), prodvers=(2, 17, 0, 0), mask=0x3f, flags=0x0, OS=0x40004,
+  ffi=FixedFileInfo(filevers=(2, 18, 0, 0), prodvers=(2, 18, 0, 0), mask=0x3f, flags=0x0, OS=0x40004,
                     fileType=0x1, subtype=0x0, date=(0, 0)),
   kids=[
     StringFileInfo([StringTable('040704b0', [
       StringStruct('CompanyName', 'Honey Balecta'),
       StringStruct('FileDescription', 'HoneyCut – Videos über das Transkript schneiden'),
-      StringStruct('FileVersion', '2.17.0'),
+      StringStruct('FileVersion', '2.18.0'),
       StringStruct('ProductName', 'HoneyCut'),
-      StringStruct('ProductVersion', '2.17.0')])]),
+      StringStruct('ProductVersion', '2.18.0')])]),
     VarFileInfo([VarStruct('Translation', [0x0407, 1200])])
   ]
 )

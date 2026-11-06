@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>HoneyDeck</title>
+<meta name="theme-color" content="#131312">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="deck.css">
+</head>
+<body>
+
+<!-- ───────── Übersicht (nur eigenständig) ───────── -->
+<section id="home" class="screen hidden">
+  <header class="bar">
+    <div class="brand"><img src="icon.svg" alt="">HoneyDeck</div>
+    <span class="grow"></span>
+    <button class="btn ghost" id="homeImport" title="Text, Transkript, Word, PowerPoint, HTML-Folien, Bilder oder .honeydeck">⤓ Importieren</button>
+    <button class="btn primary" id="homeNew">＋ Neue Präsentation</button>
+  </header>
+  <div class="home-body">
+    <div id="deckList" class="deck-grid"></div>
+    <div id="homeEmpty" class="empty hidden">
+      <h2>Noch keine Präsentationen</h2>
+      <p>Lege eine neue an, füge einen fertigen Text ein oder importiere ein Transkript, ein Word-Skript, eine PowerPoint oder Folien als Bilder.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ───────── Editor ───────── -->
+<section id="ed" class="screen hidden">
+  <header class="bar ed-bar">
+    <button class="icon-btn" id="edBack" title="Zur Übersicht">‹</button>
+    <input id="edName" class="name-in" spellcheck="false" aria-label="Name der Präsentation">
+    <div class="bar-group">
+      <label class="sel-lbl" id="fmtWrap" title="Arbeitsformat – exportieren lässt sich in jedes Format"><span>Format</span><select id="edFmt"></select></label>
+      <label class="sel-lbl" title="Designprofil: Farben, Schriften, Anordnung"><span>Design</span><select id="edProf"></select></label>
+      <button class="icon-btn" id="profEdit" title="Designprofil bearbeiten">✎</button>
+      <button class="icon-btn" id="profNew" title="Neues Designprofil">＋</button>
+    </div>
+    <span class="grow"></span>
+    <span class="saved" id="saved"></span>
+    <button class="icon-btn" id="undoBtn" title="Rückgängig (Strg+Z)">↶</button>
+    <button class="icon-btn" id="redoBtn" title="Wiederholen (Strg+Umschalt+Z)">↷</button>
+    <button class="btn ghost" id="edImport" title="Text, Transkript oder Folien hinzufügen">⤓ Import</button>
+    <button class="btn" id="edExport" title="Bilder, PDF oder .honeydeck">⤒ Export</button>
+    <span class="embed-only place-wrap"><label class="chk small" title="Jede Folie bleibt stehen, bis die nächste beginnt"><input type="checkbox" id="gapless" checked> lückenlos</label>
+      <label class="chk small" title="Unten bleibt Platz für Untertitel"><input type="checkbox" id="subSafe"> Platz für Untertitel</label>
+      <button class="btn primary" id="placeBtn" title="Alle verknüpften Folien an ihrer Stelle als B-Roll einsetzen">Als B-Roll einsetzen</button></span>
+  </header>
+
+  <div class="ed-body" id="edBody">
+    <aside class="pane list-pane" id="paneList">
+      <div class="pane-head"><b>Folien</b><span class="muted small" id="slCount"></span><span class="grow"></span><button class="btn small" id="slAdd" title="Leere Folie nach der ausgewählten">＋ Folie</button></div>
+      <div id="slList" class="sl-list"></div>
+    </aside>
+
+    <main class="pane stage-pane" id="paneStage">
+      <div class="stage"><canvas id="stage"></canvas></div>
+      <div class="fmt-strip" id="fmtStrip"></div>
+      <p class="muted small fmt-note" id="fmtNote"></p>
+    </main>
+
+    <aside class="pane insp-pane" id="paneInsp">
+      <div class="tabs" id="inspTabs"><button data-t="folie" class="on">Folie</button><button data-t="elemente">Elemente</button></div>
+      <div id="inspFolie" class="insp-body"></div>
+      <div id="inspElemente" class="insp-body hidden">
+        <input type="search" id="icSearch" placeholder="Symbol suchen – z. B. Streik, Miete, Polizei">
+        <div class="chips" id="icCats"></div>
+        <p class="muted small" id="icHint"></p>
+        <div class="ic-grid" id="icGrid"></div>
+      </div>
+    </aside>
+
+    <section class="pane src-pane" id="paneSrc">
+      <div class="pane-head">
+        <b id="srcTitle">Text</b>
+        <span class="muted small sel-info" id="selInfo"></span>
+        <span class="grow"></span>
+        <button class="btn small" data-to="new" title="Aus der Markierung eine neue Folie machen">→ Neue Folie</button>
+        <button class="btn small" data-to="title" title="Markierung als Titel der ausgewählten Folie">→ Titel</button>
+        <button class="btn small" data-to="text" title="Markierung an den Text anhängen">→ Text</button>
+        <button class="btn small" data-to="bullet" title="Markierung als Stichpunkt">→ Stichpunkt</button>
+        <button class="btn small" data-to="link" title="Nur festlegen, an welcher Stelle die Folie läuft">⛓ Nur verknüpfen</button>
+        <button class="btn small" id="srcSuggest" title="Je Satz eine Folie – als Entwurf">✨ Grundlage aus dem Text</button>
+        <button class="btn small ghost standalone-only" id="srcEdit" title="Text einfügen oder ersetzen">✎ Text</button>
+      </div>
+      <div id="srcText" class="src-text"></div>
+    </section>
+  </div>
+
+  <nav class="mob-tabs" id="mobTabs">
+    <button data-p="paneList">Folien</button><button data-p="paneStage" class="on">Vorschau</button><button data-p="paneInsp">Bearbeiten</button><button data-p="paneSrc">Text</button>
+  </nav>
+</section>
+
+<div id="toast"></div>
+<input type="file" id="fileIn" class="hidden" multiple accept=".honeydeck,.json,.txt,.md,.srt,.vtt,.docx,.pptx,.html,.htm,.zip,.png,.jpg,.jpeg,.webp,.gif,.svg,image/*">
+<input type="file" id="imgIn" class="hidden" accept="image/*">
+
+<script src="deck-icons.js"></script>
+<script src="deck-engine.js"></script>
+<script src="deck-io.js"></script>
+<script src="deck-app.js"></script>
+</body>
+</html>

@@ -190,7 +190,18 @@ def main():
         except Exception as e:  # noqa: BLE001
             T.log(f"Fenster nicht geöffnet: {e!r}")
 
-    T.APP_HOOKS.update(pick=pick, focus=focus, open_files=open_files, open_window=open_window, fullscreen=fullscreen)
+    def save_any(name: str):
+        """Speichern-Dialog für Dateien aus HoneyDeck."""
+        ext = Path(name).suffix.lstrip(".") or "*"
+        try:
+            res = window.create_file_dialog(webview.SAVE_DIALOG, save_filename=name, file_types=(f"{ext.upper()}-Datei (*.{ext})", "Alle Dateien (*.*)"))
+        except Exception:
+            res = window.create_file_dialog(webview.SAVE_DIALOG, save_filename=name)
+        if not res:
+            return None
+        return res[0] if isinstance(res, (list, tuple)) else res
+
+    T.APP_HOOKS.update(pick=pick, focus=focus, open_files=open_files, open_window=open_window, fullscreen=fullscreen, save_any=save_any)
     if args:  # beim Start übergebene Dateien öffnen, sobald die Oberfläche geladen ist
         window.events.loaded += lambda: threading.Timer(0.8, T.handle_open_paths, args=(args,)).start()
 

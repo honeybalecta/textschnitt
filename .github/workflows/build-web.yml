@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: ["core/**", "web/**", ".github/workflows/build-web.yml"]
+    paths: ["core/**", "web/**", "deck/**", ".github/workflows/build-web.yml"]
 
 permissions:
   contents: write

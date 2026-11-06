@@ -235,6 +235,21 @@ class Bridge(private val act: MainActivity) {
         }
     }.let { }
 
+    /** Datei aus HoneyDeck (Bilder, PDF, ZIP, .honeydeck) in „Downloads/HoneyDeck“ speichern. Rückgabe: Hinweis für die Oberfläche. */
+    @JavascriptInterface
+    fun saveFile(name: String, mime: String, b64: String): String = runCatching {
+        val data = android.util.Base64.decode(b64, android.util.Base64.DEFAULT)
+        val clean = name.replace(Regex("[\\\\/:*?\"<>|]"), "_").take(120).ifBlank { "HoneyDeck" }
+        val values = android.content.ContentValues().apply {
+            put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, clean)
+            put(android.provider.MediaStore.MediaColumns.MIME_TYPE, mime.ifBlank { "application/octet-stream" })
+            put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS + "/HoneyDeck")
+        }
+        val uri = ctx.contentResolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) ?: error("kein Speicherplatz")
+        ctx.contentResolver.openOutputStream(uri)!!.use { it.write(data) }
+        "Gespeichert in Downloads/HoneyDeck: $clean"
+    }.getOrElse { "Speichern fehlgeschlagen: ${it.message}" }
+
     @JavascriptInterface
     fun view(uri: String) = main.post {
         runCatching {

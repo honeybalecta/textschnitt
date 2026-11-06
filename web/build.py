@@ -15,7 +15,7 @@ VERSION = (WEB / "version.txt").read_text().strip()
 shutil.rmtree(OUT, ignore_errors=True)
 (OUT / "vendor" / "ort").mkdir(parents=True)
 
-for f in ("app.js", "studio.js", "slides.js", "app.css", "icons.js"):
+for f in ("app.js", "studio.js", "slides.js", "deck-host.js", "app.css", "icons.js"):
     shutil.copy(CORE / f, OUT / f)
 shutil.copytree(CORE / "fonts", OUT / "fonts")
 for f in ("engine.js", "asr-worker.js", "web.css", "manifest.webmanifest", "icon.svg", "icon-192.png", "icon-512.png"):
@@ -24,7 +24,7 @@ for f in ("engine.js", "asr-worker.js", "web.css", "manifest.webmanifest", "icon
 
 # index.html: gleicher Aufbau wie in den Apps, nur mit der Browser-Brücke
 html = (CORE / "index.html").read_text()
-html, n = re.subn(r'<script src="bridge-http\.js"></script>\s*<script src="app\.js"></script>\s*<script src="studio\.js"></script>\s*<script src="slides\.js"></script>',
+html, n = re.subn(r'<script src="bridge-http\.js"></script>\s*<script src="app\.js"></script>\s*<script src="studio\.js"></script>\s*<script src="slides\.js"></script>\s*<script src="deck-host\.js"></script>',
                   '<script src="bridge-browser.js"></script>', html)
 assert n == 1, "Skript-Einbindung in index.html nicht gefunden"
 head = ('<meta name="description" content="Gesprochene Videos über das Transkript schneiden – direkt im Browser, ohne Upload.">\n'
@@ -53,10 +53,12 @@ for p in ort:
 print("ONNX-Runtime:", ", ".join(names) or "– (wird vom CDN geladen)")
 
 fonts = sorted("fonts/" + p.name for p in (CORE / "fonts").iterdir() if p.suffix == ".ttf")
-shell = ["./", "index.html", "app.js", "studio.js", "slides.js", "app.css", "icons.js", "web.css", "bridge-browser.js", "engine.js", "asr-worker.js",
+shell = ["./", "index.html", "app.js", "studio.js", "slides.js", "deck-host.js", "app.css", "icons.js", "web.css", "bridge-browser.js", "engine.js", "asr-worker.js",
          "manifest.webmanifest", "icon.svg", "icon-192.png", "icon-512.png", "vendor/media.js", "vendor/asr.js"] + fonts
 sw = (WEB / "sw.js").read_text().replace("__VERSION__", VERSION + "-" + subprocess.run(
     ["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, capture_output=True, text=True).stdout.strip()).replace("__SHELL__", json.dumps(shell))
 (OUT / "sw.js").write_text(sw)
 (OUT / ".nojekyll").write_text("")
+# HoneyDeck liegt als eigenes Programm unter deck/ (gleiche Herkunft – HoneyCut bettet es im Reiter „Folien“ ein)
+subprocess.run([sys.executable, str(ROOT / "deck" / "build.py"), str(OUT / "deck")], check=True)
 print(f"HoneyCut Web {VERSION} → {OUT}")
