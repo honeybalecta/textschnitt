@@ -17,6 +17,7 @@ const fmtT = t => { t = Math.max(0, t || 0); const h = Math.floor(t / 3600), m =
 const fmtS = t => { t = Math.max(0, t || 0); const m = Math.floor(t / 60), s = t - m * 60; return m + ':' + s.toFixed(1).padStart(4, '0').replace('.', ','); };
 const norm = w => w.toLowerCase().replace(/[.,!?;:…"„“”‚‘’'()\-–—]/g, '');
 const FILLER = /^(ä+h*m*|ä+m+|ö+h*m*|ö+m+|e+h+m*|e+m+|h+m+|mh+m+|m+h*m+|u+h+m*|uu+m+|erm|a+h+m+)$/i;
+const WD = {t: 0, v: -1, n: 0};   // Abspiel-Wächter (siehe playWatch)
 const newId = () => Math.random().toString(36).slice(2, 10);
 const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
 const r3 = x => +(+x).toFixed(3);
@@ -33,7 +34,7 @@ window.TSApp = {
             if (!$('#sheet').classList.contains('hidden')) { closeSheet(); return true; }
             if (!$('#modelSheet').classList.contains('hidden')) { $('#modelSheet').classList.add('hidden'); $('#sheetBack').classList.add('hidden'); return true; }
             if (!$('#proj').classList.contains('hidden')) { closeProject(); return true; } return false; },
-  onPause(){ if (P) { pausePlay(); saveNow(); } },
+  onPause(){ if (P) { pausePlay(); saveNow(); rememberOpen(); } },
   onOpenFiles(json){ const list = J(json); if (list && list.length){ if (P) closeProject(); createProject(list); } },
 };
 function pickMedia(kind){ return new Promise(res => { const id = newId(); pending.set(id, res); TS.pick(id, kind); }); }
@@ -56,7 +57,7 @@ let undo = [], redo = [], saveT = null;
 let tab = 'text';
 const DEF_STYLE = {enabled:true, mode:'lines', chars:32, lines:2, dur:4, size:'mittel', pos:'unten', x:0.5, y:0.88, color:'#FFFFFF', outline:true};
 const POS_Y = {oben:0.12, mitte:0.5, unten:0.88};
-const isWide = () => matchMedia('(min-width: 1000px) and (min-height: 600px)').matches;
+const isWide = () => matchMedia('(min-width: 760px) and (min-height: 600px)').matches;
 const studioOn = () => (tab === 'studio' || tab === 'clip') && !!P;   // im Clip-Reiter läuft die Zeitleiste mit
 
 // ───────── Quellen (mehrere Videos hintereinander) ─────────
@@ -402,7 +403,7 @@ function openProjectNow(id, keep){
   if (P.regen && tokens.length){ genCues(); delete P.regen; saveNow(); }
   setTab(keepTab || (P.clipOf ? 'clip' : tokens.length ? 'text' : 'trans'));
   seekOut(keepPos, false);
-  busStart(); backfillEnv();
+  busStart(); backfillEnv(); resumeTranscribe(); rememberOpen();
   if (window.slSyncAll) setTimeout(() => slSyncAll(), 400);   // Folien an Format und Designprofil anpassen
 }
 // ── Vollbild-Vorschau: das ganze Projekt bildschirmfüllend ansehen ──
@@ -427,7 +428,11 @@ $('#fullBtn').onclick = e => { e.stopPropagation(); setFull(!$('#proj').classLis
 document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement && $('#proj').classList.contains('full')) setFull(false); });
 $('#proj').addEventListener('pointermove', () => { if ($('#proj').classList.contains('full')) fullPoke(); });
 $('#proj').addEventListener('pointerdown', () => { if ($('#proj').classList.contains('full')) fullPoke(); }, true);
-function closeProject(){ setFull(false); pausePlay(); saveNow(); busPid = null; P = null; V.removeAttribute('src'); V.load(); vSi = -1; hideOverlay(); showHome(); }
+// Offenes Projekt merken: Lädt die Oberfläche neu (Android: auf-/zuklappen, Speicher knapp), geht es dort weiter
+const OPEN_KEY = 'hc-open';
+addEventListener('pagehide', () => rememberOpen()); document.addEventListener('visibilitychange', () => { if (document.hidden) rememberOpen(); });
+function rememberOpen(){ if (!P || document.body.classList.contains('solo')) return; try { localStorage.setItem(OPEN_KEY, JSON.stringify({id: P.id, tab, pos: outPos, at: Date.now()})); } catch(_){} }
+function closeProject(){ try { localStorage.removeItem(OPEN_KEY); } catch(_){} setFull(false); pausePlay(); saveNow(); allLayers(releaseMedia); for (const el of audLayers.values()) releaseMedia(el); audLayers.clear(); busPid = null; P = null; V.removeAttribute('src'); V.load(); vSi = -1; hideOverlay(); showHome(); }
 $('#backBtn').onclick = closeProject;
 const fillsWrap = () => isWide() || matchMedia('(orientation: landscape) and (max-height: 599px)').matches;
 // Bühne: ein 16:9-Feld. Hochformat-Videos lassen links und rechts Platz – dort sitzt zusätzliche Steuerung.
@@ -683,7 +688,7 @@ function commit(fn, rerender = true){ undo.push(snapshot()); if (undo.length > 2
 $('#undoBtn').onclick = () => { if (!undo.length || !P) return; redo.push(snapshot()); restore(undo.pop()); };
 $('#redoBtn').onclick = () => { if (!redo.length || !P) return; undo.push(snapshot()); restore(redo.pop()); };
 function changed(rerender = true){
-  recompute();
+  recompute(rerender && studioOn() && !!window.renderStudio);   // die Zeitleiste zeichnet renderStudio gleich danach – nicht doppelt
   if (rerender){ if (tab === 'subs') renderSubs(); if (studioOn() && window.renderStudio) renderStudio(); }
   else if (tab === 'subs') updateSubsList();
   cueCache.at = -1; if (!playing) updateSubs(outPos);
@@ -949,11 +954,12 @@ function computeAudios(){
 }
 const audLayers = new Map();
 function updateAudio(o){
-  for (const [id, el] of audLayers) if (!P.items.some(x => x.id === id)){ el.pause(); el.removeAttribute('src'); audLayers.delete(id); }
+  for (const [id, el] of audLayers) if (!P.items.some(x => x.id === id)){ releaseMedia(el); audLayers.delete(id); }
   for (const a of audios){
-    let el = audLayers.get(a.x.id); const on = o >= a.at && o < a.end;
-    if (!el){ if (!on) continue; el = new Audio(); el.preload = 'auto'; audLayers.set(a.x.id, el); }
-    const url = MEDIA(a.x.clip.uri); if (el.dataset.src !== url){ el.src = url; el.dataset.src = url; }
+    let el = audLayers.get(a.x.id); const on = o >= a.at && o < a.end, soon = playing && a.at > o && a.at - o < PRELOAD_S;
+    if (!on && !soon){ if (el) releaseMedia(el); continue; }
+    if (!el){ el = new Audio(); el.preload = 'auto'; audLayers.set(a.x.id, el); }
+    const url = MEDIA(a.x.clip.uri); if (el.dataset.src !== url){ el.src = url; el.dataset.src = url; if (soon) try { el.currentTime = a.x.in || 0; } catch(_){} }
     if (!on || !playing){ if (!el.paused) el.pause(); if (!on) continue; }
     setVol(el, a.x.vol ?? 1);
     const target = a.x.in + (o - a.at);
@@ -979,9 +985,9 @@ function zoomAt(src){
   }
   return {s, cx, cy};
 }
-function recompute(){
+function recompute(noTL){
   computeRanges(); computePieces(); computeOrder(); buildTimeline(); syncLinks(); computeOverlays(); computeAudios(); drawScrub();
-  if (studioOn() && window.renderTimeline) renderTimeline();
+  if (!noTL && studioOn() && window.renderTimeline) renderTimeline();
   $('#tTot').textContent = fmtT(total); $('#sideTot').textContent = fmtT(total);
 }
 // ───────── Verbundene Objekte ─────────
@@ -1052,6 +1058,7 @@ function setVSrc(si){
   $('#stage').classList.toggle('audio-only', !hasVid(s));
 }
 function seekV(si, local, play){
+  WD.v = -1; WD.t = performance.now(); WD.n = 0;
   if (vSi !== si){ setVSrc(si); vPending = local; vWantPlay = play; return; }
   if (vPending != null){ vPending = local; vWantPlay = play; return; }
   V.currentTime = local; vClock = {ct:-1, at:0}; if (play) V.play().catch(() => {}); else if (!V.paused) V.pause();
@@ -1096,6 +1103,7 @@ function setPlayIcons(on){ if (typeof fullPoke === 'function') fullPoke(); for (
 function togglePlay(){ if (V.dataset.err){ toast('Vorschau nicht abspielbar – siehe Hinweis im Bild'); return; } playing ? pausePlay() : startPlay(); }
 function startPlay(){
   if (!timeline.length) return; if (outPos >= total - 0.05) seekOut(0, false);
+  WD.v = -1; WD.t = performance.now(); WD.n = 0;
   playing = true; if (actx && actx.state === "suspended") actx.resume().catch(() => {}); setPlayIcons(true); seekOut(outPos, true); TS.keepAwake(true);
 }
 function pausePlay(){
@@ -1116,11 +1124,23 @@ $('#sideSplit').onclick = () => { if (window.splitHere) splitHere(); };
 $('#sideCutPlay').onclick = () => $('#cutPlayBtn').click();
 $('#sideSubs').onclick = () => { if (!P) return; const on = S().enabled === false; S().enabled = on; syncStyleInputs(); changed(false); toast(on ? 'Untertitel an' : 'Untertitel aus'); window.slSyncAll && slSyncAll(); };
 $('#sideFont').onclick = () => { if (P) openFontSheet(); };
+// Wächter beim Abspielen: Steht das Bild trotz „Abspielen“ still (abgebrochenes play(), hängender Ladevorgang),
+// erst erneut starten, dann die Quelle an derselben Stelle neu laden – ohne dass das Programm neu gestartet werden muss.
+function playWatch(){
+  const now = performance.now(), ct = V.currentTime;
+  if (ct !== WD.v || V.seeking && now - WD.t < 4000){ if (ct !== WD.v){ WD.v = ct; WD.t = now; WD.n = 0; } return; }
+  if (V.paused && now - WD.t > 300 && WD.n === 0){ WD.n = 1; WD.t = now; V.play().catch(() => {}); return; }
+  if (now - WD.t < 1500) return;
+  WD.t = now; WD.n++;
+  if (WD.n <= 2) { V.play().catch(() => {}); return; }
+  const si = vSi; if (si < 0) return; WD.n = 0; vSi = -1; seekV(si, ct, true);
+}
 function loop(){
   if (P && timeline.length && playing){
     const g = timeline[curSeg], el = g.kind === 'main' ? V : (isImg(g.item.clip) ? null : IV);
     if (g.kind === 'main' && vSi !== g.si) seekV(g.si, g.in - P.sources[g.si].off, true);
     if (segLocal(g) >= g.out - 0.012 || (el && el.ended && vPending == null)) advanceSeg();
+    if (g.kind === 'main' && vPending == null) playWatch();
     if (playing){
       outPos = curOut();
       if (stopAt != null && outPos >= stopAt) pausePlay();
@@ -1211,14 +1231,22 @@ function layerFor(it){
   return el;
 }
 function allLayers(fn){ for (const el of layers.values()) fn(el); }
+// Medienelement freigeben: Ohne das hält der Browser Decoder und Verbindung offen – bei vielen Einblendungen
+// reichen dann die Verbindungen nicht mehr und das Abspielen hängt nach dem Springen.
+function releaseMedia(el){ if (!el || !el.dataset.src) return; try { el.pause(); } catch(_){} el.removeAttribute('src'); delete el.dataset.src; if (el.load) try { el.load(); } catch(_){} }
+const PRELOAD_S = 2.5;   // so viele Sekunden vorher wird eine Einblendung geladen
 let curPip = null, pipTarget = null, layerOrder = '';
 function selOvlId(){ return typeof TL !== 'undefined' && TL.sel && (TL.sel.kind === 'ovl') ? TL.sel.id : null; }
 function updateOverlay(o){
   const st = $('#stage'), W = st.clientWidth, H = st.clientHeight;
   const act = overlays.filter(x => o >= x.at && o < x.end);
   const on = new Set(act.map(a => a.x.id));
-  for (const [id, el] of layers){ if (!P.items.some(x => x.id === id)){ el.remove(); layers.delete(id); continue; }
-    if (!on.has(id) && !el.classList.contains('hidden')){ if (el.pause) el.pause(); el.classList.add('hidden'); } }
+  const soon = new Set(playing ? overlays.filter(x => x.at > o && x.at - o < PRELOAD_S).map(x => x.x.id) : []);
+  for (const [id, el] of layers){ if (!P.items.some(x => x.id === id)){ releaseMedia(el); el.remove(); layers.delete(id); continue; }
+    if (!on.has(id) && !el.classList.contains('hidden')){ if (el.pause) el.pause(); el.classList.add('hidden'); }
+    if (!on.has(id) && !soon.has(id) && el.tagName === 'VIDEO') releaseMedia(el); }
+  for (const id of soon) if (!on.has(id)){ const x = overlays.find(q => q.x.id === id).x; if (isImg(x.clip)) continue;   // gleich dran: schon laden
+    const el = layerFor(x), url = MEDIA(x.clip.uri); if (el.dataset.src !== url){ el.src = url; el.dataset.src = url; try { el.currentTime = x.in || 0; } catch(_){} } }
   // Reihenfolge im DOM = Stapel (untere Spur zuerst)
   const order = act.map(a => a.x.id).join(',');
   if (order !== layerOrder){ layerOrder = order; act.forEach(a => $('#stage').insertBefore(layerFor(a.x), $('#pipBox'))); }
@@ -1568,18 +1596,27 @@ function freezeStudioCut(){
   });
 }
 let transJob = null, transCancelled = false;
-$('#transBtn').onclick = () => {
+// Laufende Transkription im Gerät merken: Wird die Oberfläche neu geladen (Android: Handy auf-/zugeklappt, App im Hintergrund
+// beendet), läuft der Vorgang weiter – beim nächsten Öffnen des Projekts holt HoneyCut das Ergebnis ab und macht weiter.
+const TJ_KEY = id => 'hc-tjob-' + id;
+const tjGet = id => { try { return J(localStorage.getItem(TJ_KEY(id))); } catch(_){ return null; } };
+const tjSet = (id, v) => { try { v ? localStorage.setItem(TJ_KEY(id), JSON.stringify(v)) : localStorage.removeItem(TJ_KEY(id)); } catch(_){} };
+$('#transBtn').onclick = () => runTranscribe(null);
+function runTranscribe(resume){
   const todo = P.sources.map((s, k) => k).filter(k => !P.sources[k].tr);
-  if (!todo.length) return;
+  const o = resume ? resume.opts : {model: $('#model').value, lang: $('#lang').value, fillers: $('#fillers').checked, startTok: tokens.length, firstTime: !tokens.length};
+  if (!resume) o.subsOnly = o.firstTime && studioCut() && $('#subsOnly').checked;
+  if (!todo.length && !resume) return;
+  const pid = P.id, P0 = P;
   $('#transBtn').disabled = true; $('#transCancel').classList.remove('hidden'); $('#transProg').classList.remove('hidden'); TS.keepAwake(true);
   transCancelled = false;
-  const model = $('#model').value, lang = $('#lang').value, fillers = $('#fillers').checked;
-  const startTok = tokens.length, firstTime = !tokens.length, subsOnly = firstTime && studioCut() && $('#subsOnly').checked;
-  if (subsOnly) freezeStudioCut();
-  let n = 0, words = 0;
-  const end = () => { $('#transBtn').disabled = false; $('#transCancel').classList.add('hidden'); TS.keepAwake(false); transJob = null; renderSources(); };
+  const {model, lang, fillers, startTok, firstTime, subsOnly} = o;
+  if (subsOnly && !resume) freezeStudioCut();
+  let n = 0, words = resume ? (resume.words || 0) : 0;
+  const alive = () => P === P0;   // Projekt inzwischen geschlossen/neu geöffnet: diese Runde endet, die neue übernimmt
+  const end = () => { if (!alive()) return; tjSet(pid, null); $('#transBtn').disabled = false; $('#transCancel').classList.add('hidden'); TS.keepAwake(false); transJob = null; renderSources(); };
   const finish = () => {
-    end(); P.language ||= lang;
+    end(); if (!alive()) return; P.language ||= lang;
     if (firstTime && !subsOnly){ deleted = new Set(); P.trims = {}; P.adj = {}; }
     const cleaned = subsOnly ? [] : autoClean(startTok);
     if (firstTime) genCues(); else genCues(startTok);
@@ -1589,29 +1626,40 @@ $('#transBtn').onclick = () => {
     toast(`${words} Wörter erkannt` + (cleaned.length ? ` · entfernt: ${cleaned.join(', ')}` : '') + (unk ? ` · ${unk}× 🗣 nicht erkannte Sprache` : ''));
   };
   const next = () => {
-    if (n >= todo.length || transCancelled) return n ? finish() : end();
+    if (!alive()) return;
+    if (n >= todo.length || transCancelled) return (n || resume) ? finish() : end();
     const k = todo[n], s = P.sources[k];
     if (s.hasAudio === false){ s.tr = true; s.noAudio = true; n++; return next(); }
     const label = todo.length > 1 ? `Video ${n + 1} von ${todo.length}: ` : '';
-    try { transJob = TS.transcribe(s.uri, model, lang, fillers); } catch(e){ end(); $('#transMsg').textContent = 'Fehler: ' + e.message; return; }
-    watchJob(transJob, j => { $('#transProg i').style.width = ((n + j.progress) / todo.length * 100).toFixed(1) + '%'; $('#transMsg').textContent = label + (j.message || ''); },
-      j => { const r = j.result || {}; if (r.env){ s.env = r.env; if (s._env) s._env = null; delete s._bursts; } if (r.padded) s.pad0 = true; if (r.lang && !P.language) P.language = r.lang;
+    let jid = null;
+    if (resume && resume.k === k && resume.id){ jid = resume.id; resume.id = null; }
+    else try { jid = TS.transcribe(s.uri, model, lang, fillers); } catch(e){ end(); $('#transMsg').textContent = 'Fehler: ' + e.message; return; }
+    transJob = jid; tjSet(pid, {id: jid, k, opts: o, words, at: Date.now()});
+    watchJob(jid, j => { if (!alive()) return; $('#transProg i').style.width = ((n + j.progress) / todo.length * 100).toFixed(1) + '%'; $('#transMsg').textContent = label + (j.message || ''); },
+      j => { if (!alive()) return; const r = j.result || {}; if (r.env){ s.env = r.env; if (s._env) s._env = null; delete s._bursts; } if (r.padded) s.pad0 = true; if (r.lang && !P.language) P.language = r.lang;
              s.asr = {v: CAP.version || '', timing: r.timing || '', chunks: r.chunks || 0, model, at: Date.now()};   // zur Fehlersuche: womit transkribiert wurde
              const base = appendSourceTokens(k, r.words || []); words += (r.words || []).length;
+             P.tokens = tokens; saveNow(); tjSet(pid, {id: null, k: -1, opts: o, words, at: Date.now()});   // Ergebnis sofort sichern
              // Stellen ohne erkannte Wörter (🗣) einzeln nachhören: meist Anläufe, die Whisper im Zusammenhang auslässt
              const gaps = TS.transcribeRanges ? tokens.filter(t => t.i >= base && t.src === k && t.type === 'unk' && t.we - t.ws >= 0.25) : [];
              if (!gaps.length || transCancelled){ n++; saveNow(); return next(); }
              let gj; try { gj = TS.transcribeRanges(s.uri, model, lang, JSON.stringify(gaps.map(t => [r3(t.ws - s.off), r3(t.we - s.off)]))); } catch(e){ n++; saveNow(); return next(); }
              transJob = gj;
-             watchJob(gj, j2 => { $('#transProg i').style.width = ((n + 0.9 + 0.1 * j2.progress) / todo.length * 100).toFixed(1) + '%'; $('#transMsg').textContent = label + `Nicht erkannte Stellen nachhören (${gaps.length}) …`; },
-               j2 => { const got = fillGaps(k, gaps, (j2.result || {}).ranges || []); words += got; n++; saveNow(); next(); },
-               () => { n++; saveNow(); next(); });
+             watchJob(gj, j2 => { if (!alive()) return; $('#transProg i').style.width = ((n + 0.9 + 0.1 * j2.progress) / todo.length * 100).toFixed(1) + '%'; $('#transMsg').textContent = label + `Nicht erkannte Stellen nachhören (${gaps.length}) …`; },
+               j2 => { if (!alive()) return; const got = fillGaps(k, gaps, (j2.result || {}).ranges || []); words += got; n++; saveNow(); next(); },
+               () => { if (!alive()) return; n++; saveNow(); next(); });
              return; },
-      j => { if (n) { transCancelled = true; finish(); $('#transMsg').textContent = 'Teilweise transkribiert.'; return; }
-             end(); $('#transMsg').textContent = j.status === 'cancelled' ? 'Abgebrochen.' : ('Fehler: ' + (j.error || 'unbekannt')); });
+      j => { if (!alive()) return; if (n || (resume && resume.words)) { transCancelled = true; finish(); $('#transMsg').textContent = 'Teilweise transkribiert.'; return; }
+             end(); $('#transMsg').textContent = j.status === 'cancelled' ? 'Abgebrochen.' : j.error === 'Job verloren' ? 'Die Transkription wurde unterbrochen (App beendet). Bitte noch einmal starten.' : ('Fehler: ' + (j.error || 'unbekannt')); });
   };
   next();
-};
+}
+// Beim Öffnen: unterbrochene Transkription fortsetzen bzw. ihr Ergebnis übernehmen
+function resumeTranscribe(){
+  const r = tjGet(P.id); if (!r) return;
+  if (r.id){ const j = J(TS.job(r.id)); if (!j){ tjSet(P.id, null); setTab('trans'); $('#transMsg').textContent = 'Die Transkription wurde unterbrochen, weil die App beendet wurde. Bitte noch einmal starten.'; return; } }
+  setTab('trans'); $('#transMsg').textContent = 'Transkription läuft weiter …'; runTranscribe(r);
+}
 $('#transCancel').onclick = () => { transCancelled = true; if (transJob) TS.cancel(transJob); };
 
 // ───────── Text ─────────
@@ -2729,7 +2777,7 @@ else if (CAP.platform !== 'android'){ $('#exShare').textContent = 'Im Ordner zei
 
 // ───────── Reiter ─────────
 function setTab(t){
-  tab = t; clearSel();
+  tab = t; clearSel(); if (P) rememberOpen();
   $('#proj').dataset.tab = t;
   $('#paneTrans').classList.toggle('hidden', t !== 'trans');
   $('#paneText').classList.toggle('hidden', t !== 'text'); $('#paneSubs').classList.toggle('hidden', t !== 'subs');
@@ -2755,7 +2803,7 @@ $('#tabs').addEventListener('click', e => { const b = e.target.closest('button')
     if (t === 'subs'){ if (studioCut()){ $('#subsOnly').checked = true; renderSources(); toast('Untertitel brauchen ein Transkript – „Nur für Untertitel“ lässt deinen Schnitt unverändert'); } else toast('Für Untertitel zuerst transkribieren'); }
     return; }
   setTab(t); });
-matchMedia('(min-width: 1000px) and (min-height: 600px)').addEventListener('change', () => { fitStage(); });
+matchMedia('(min-width: 760px) and (min-height: 600px)').addEventListener('change', () => { fitStage(); });
 
 // ───────── Modelle ─────────
 $('#modelsBtn').onclick = () => { renderModels(); $('#modelSheet').classList.remove('hidden'); $('#sheetBack').classList.remove('hidden'); };
@@ -2778,4 +2826,12 @@ function renderModels(){
 fillFontSelects(); loadUserFonts();
 showHome();
 (() => { const h = new URLSearchParams(location.hash.slice(1)); const p = h.get('p');
-  if (p){ document.body.classList.add('solo'); Promise.resolve(openProject(p)).then(() => { if (P && h.get('view')) setTab(h.get('view')); }); } })();
+  if (p){ document.body.classList.add('solo'); Promise.resolve(openProject(p)).then(() => { if (P && h.get('view')) setTab(h.get('view')); }); return; }
+  // Nach einem Neuladen (nicht nach dem Schließen) ins zuletzt offene Projekt zurück
+  if (CAP.platform === 'web') return;
+  let o = null; try { o = J(localStorage.getItem(OPEN_KEY)); } catch(_){}
+  if (!o || !o.id || Date.now() - (o.at || 0) > 12 * 3600e3) return;
+  try { if (!J(TS.loadProject(o.id))) return; } catch(_){ return; }
+  openProjectNow(o.id);
+  if (P && P.id === o.id){ if (o.tab && o.tab !== tab && !tjGet(o.id)) setTab(o.tab); if (o.pos) seekOut(o.pos, false); }
+})();

@@ -54,6 +54,18 @@ function blk(cls, o, d, pad, attrs){
   b.insertAdjacentHTML('beforeend', '<div class="h l"></div><div class="h r"></div>');
   return b;
 }
+// Vorschaubilder nur laden, wenn sie sichtbar werden, und höchstens drei gleichzeitig – sonst belegen sie alle
+// Verbindungen und das Video wartet nach dem Springen auf seine Daten.
+const THQ = {q: [], act: 0, max: 3};
+const thIO = 'IntersectionObserver' in window ? new IntersectionObserver(es => { for (const e of es) if (e.isIntersecting){ thIO.unobserve(e.target); THQ.q.push(e.target); } thPump(); }, {rootMargin: '0px 600px'}) : null;
+function thPump(){
+  while (THQ.act < THQ.max && THQ.q.length){
+    const img = THQ.q.shift(); if (!img.isConnected || !img.dataset.u || img.src) continue;
+    THQ.act++; let done = false; const fin = () => { if (done) return; done = true; THQ.act--; thPump(); };
+    img.onload = img.onerror = fin; setTimeout(fin, 8000); img.src = img.dataset.u;
+  }
+}
+function thSet(img, u){ if (!thIO || !/^(https?:|[a-z]+\?|thumb)/.test(u) || u.startsWith('data:') || u.startsWith('blob:')) { img.src = u; return; } img.dataset.u = u; thIO.observe(img); }
 function thumbs(b, uri, inS, d, aspect, speed = 1){
   const h = 60, tw = Math.max(34, Math.round(h * aspect)), w = d / speed * TL.pps, n = Math.min(400, Math.ceil(w / tw));
   const q = Math.max(0.25, tw / TL.pps / 2);
@@ -61,7 +73,7 @@ function thumbs(b, uri, inS, d, aspect, speed = 1){
   for (let i = 0; i < n; i++){
     const t = Math.round((inS + (i + 0.5) * tw / TL.pps * speed) / q) * q;
     const img = document.createElement('img'); img.loading = 'lazy'; img.decoding = 'async'; img.style.width = tw + 'px'; img.alt = '';
-    const u = THUMB(uri, Math.min(t, inS + d), 120); if (u && u.then) u.then(x => { if (x) img.src = x; }); else img.src = u; box.append(img);
+    const u = THUMB(uri, Math.min(t, inS + d), 120); if (u && u.then) u.then(x => { if (x) img.src = x; }); else thSet(img, u); box.append(img);
   }
   b.prepend(box);
 }

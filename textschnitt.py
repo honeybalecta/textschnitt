@@ -37,7 +37,7 @@ os.environ.setdefault("HF_HUB_DISABLE_IMPLICIT_TOKEN", "1")
 import warnings  # noqa: E402
 warnings.filterwarnings("ignore", module="huggingface_hub")
 
-VERSION = "2.16.0"
+VERSION = "2.17.0"
 APP_DIR = Path(__file__).resolve().parent
 FROZEN = bool(getattr(sys, "frozen", False))          # als installierte .exe gebaut
 RES_DIR = Path(getattr(sys, "_MEIPASS", APP_DIR))      # mitgelieferte Dateien (Oberfläche, ffmpeg, Modelle)
@@ -1949,6 +1949,9 @@ def handle_open_paths(paths: list[str]):
 
 # ───────────────────────────── HTTP ─────────────────────────────
 
+MEDIA_CHUNK = 8 << 20   # 8 MB je Antwort auf offene Bereichsanfragen
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "HoneyCut/2"
     protocol_version = "HTTP/1.1"
@@ -1987,7 +1990,9 @@ class Handler(BaseHTTPRequestHandler):
             if m:
                 if m.group(1):
                     start = int(m.group(1))
-                    end = int(m.group(2)) if m.group(2) else size - 1
+                    # offene Anfrage („ab hier bis Ende“) in Stücken beantworten: Die Verbindung ist schnell wieder frei,
+                    # der Browser holt den Rest bei Bedarf nach. Sonst halten pausierte Videos Verbindungen dauerhaft fest.
+                    end = int(m.group(2)) if m.group(2) else min(size - 1, start + MEDIA_CHUNK - 1)
                 else:
                     start = max(0, size - int(m.group(2)))
                 end = min(end, size - 1)
