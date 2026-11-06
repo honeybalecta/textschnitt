@@ -107,6 +107,43 @@ def selftest(out_path: str) -> int:
     return 0 if rep["ok"] else 1
 
 
+def fenster_einrichten(fenster, titel: str, maximieren: bool):
+    """Fenster mittig auf den Bildschirm setzen und auf Wunsch maximieren.
+
+    Windows legt neue Fenster sonst versetzt nach rechts unten ab. Läuft über die Win32-Funktionen,
+    damit Position und Größe bei jeder Bildschirmskalierung in denselben (physischen) Pixeln gerechnet werden."""
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        from ctypes import wintypes
+        u = ctypes.windll.user32
+        hwnd = 0
+        try:
+            hwnd = int(fenster.native.Handle.ToInt64())
+        except Exception:  # noqa: BLE001
+            hwnd = u.FindWindowW(None, titel)
+        if not hwnd:
+            return
+
+        class MONITORINFO(ctypes.Structure):
+            _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", wintypes.RECT), ("rcWork", wintypes.RECT), ("dwFlags", wintypes.DWORD)]
+
+        r = wintypes.RECT()
+        u.GetWindowRect(hwnd, ctypes.byref(r))
+        mi = MONITORINFO()
+        mi.cbSize = ctypes.sizeof(MONITORINFO)
+        u.GetMonitorInfoW(u.MonitorFromWindow(hwnd, 2), ctypes.byref(mi))   # 2 = nächster Bildschirm
+        a = mi.rcWork
+        aw, ah = a.right - a.left, a.bottom - a.top
+        w, h = min(r.right - r.left, int(aw * 0.94)), min(r.bottom - r.top, int(ah * 0.94))
+        u.SetWindowPos(hwnd, 0, a.left + (aw - w) // 2, a.top + (ah - h) // 2, w, h, 0x0004 | 0x0010)   # ohne Z-Reihenfolge/Aktivierung
+        if maximieren:
+            u.ShowWindow(hwnd, 3)   # SW_MAXIMIZE
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def main():
     if len(sys.argv) > 2 and sys.argv[1] == "--selftest":
         sys.exit(selftest(sys.argv[2]))
@@ -143,6 +180,7 @@ def main():
 
     window = webview.create_window(TITLE, T.app_url(port), width=1480, height=940,
                                    min_size=(1000, 640), background_color="#131312", text_select=False)
+    window.events.shown += lambda: fenster_einrichten(window, TITLE, True)
 
     def pick(kind: str):
         multi = kind == "videos"
@@ -185,8 +223,9 @@ def main():
 
     def open_window(url: str, label: str):
         try:
-            webview.create_window(f"{TITLE} – {label}", url, width=1280, height=860, min_size=(820, 560),
-                                  background_color="#131312", text_select=False)
+            w2 = webview.create_window(f"{TITLE} – {label}", url, width=1280, height=860, min_size=(820, 560),
+                                       background_color="#131312", text_select=False)
+            w2.events.shown += lambda: fenster_einrichten(w2, f"{TITLE} – {label}", False)
         except Exception as e:  # noqa: BLE001
             T.log(f"Fenster nicht geöffnet: {e!r}")
 

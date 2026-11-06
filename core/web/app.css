@@ -719,4 +719,4 @@ input[type=checkbox],input[type=radio]{accent-color:var(--rot)}
 
 /* HoneyDeck eingebettet im Reiter „Folien“ */
 body.has-deck #paneSlides>:not(.deck-frame){display:none!important}
-.deck-frame{display:block;width:100%;height:max(560px,calc(100dvh - 150px));border:0;border-radius:8px;background:#131312}
+.deck-frame{display:block;width:100%;height:max(320px,calc(100dvh - 150px));border:0;border-radius:8px;background:#131312}
