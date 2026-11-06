@@ -94,8 +94,11 @@ class MainActivity : ComponentActivity() {
         web.webChromeClient = object : WebChromeClient() {
             override fun onShowFileChooser(view: WebView, cb: ValueCallback<Array<Uri>>, params: FileChooserParams): Boolean {
                 fileCb?.onReceiveValue(null); fileCb = cb
-                val types = params.acceptTypes.filter { it.contains('/') }.toTypedArray().ifEmpty { arrayOf("*/*") }
-                return runCatching { fileChooser.launch(if (types.any { it.startsWith("image/") } && types.size == 1) types else arrayOf("*/*")); true }
+                // Endungen wie „.honeydeck“ kennt Android nicht als Dateityp: dann alle Dateien anbieten, sonst blieben nur Bilder sichtbar
+                val acc = params.acceptTypes.flatMap { it.split(',') }.map { it.trim() }.filter { it.isNotEmpty() }
+                val types = acc.filter { it.contains('/') }.toTypedArray()
+                val onlyImages = acc.isNotEmpty() && acc.all { it.startsWith("image/") }
+                return runCatching { fileChooser.launch(if (onlyImages) types else arrayOf("*/*")); true }
                     .getOrElse { fileCb = null; false }
             }
         }
