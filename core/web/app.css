@@ -789,3 +789,11 @@ body.has-deck #paneSlides>:not(.deck-frame){display:none!important}
 .clip-pane h4{color:var(--muted)}
 .ctx button{min-height:var(--ctl-sm)}
 @media (pointer:fine) and (min-width:760px){ .toolbar{flex-wrap:wrap;overflow:visible;mask-image:none;row-gap:8px} }
+
+/* HoneyDeck auf dem Handy: im Reiter „Folien“ bekommt HoneyDeck die ganze Fläche (es zeigt die Folie selbst) */
+@media (max-width: 759px), (max-height: 599px){
+  body.has-deck #proj[data-tab=slides] > .stage-wrap,body.has-deck #proj[data-tab=slides] > .transport{display:none!important}
+  body.has-deck #proj[data-tab=slides] .panes{overflow:hidden;padding:0 0 calc(var(--tabs-h) + var(--safe-b));display:flex;flex-direction:column}
+  body.has-deck #proj[data-tab=slides] #paneSlides:not(.hidden){flex:1;min-height:0;display:flex;flex-direction:column;padding:0;margin:0}
+  body.has-deck #proj[data-tab=slides] .deck-frame{flex:1;min-height:0;height:auto;border-radius:0}
+}
