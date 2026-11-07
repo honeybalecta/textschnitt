@@ -1239,15 +1239,16 @@ function syncKeyLayer(el, it){
   let kl = keyLayers.get(it.id);
   if (!keyOn(it.key) || !window.ChromaGL){ if (kl){ kl.canvas.remove(); kl.destroy(); keyLayers.delete(it.id); el.style.opacity = ''; } return; }
   if (!kl){ try { kl = ChromaGL.create(2, 2); } catch(_){ kl = null; } if (!kl) return; keyLayers.set(it.id, kl); }
-  el.style.opacity = '0';
   if (kl.canvas.previousSibling !== el) el.after(kl.canvas);
   kl.canvas.className = el.className + ' key'; kl.canvas.style.cssText = el.style.cssText; kl.canvas.style.opacity = '';
   drawKeyLayer(el, it, kl);
 }
 function drawKeyLayer(el, it, kl){
-  const w = el.videoWidth || el.naturalWidth, h = el.videoHeight || el.naturalHeight; if (!w || !h) return;
-  const s = Math.min(1, 960 / Math.max(w, h));
-  kl.draw(el, it.key, Math.round(w * s), Math.round(h * s));
+  const w = el.videoWidth || el.naturalWidth, h = el.videoHeight || el.naturalHeight;
+  let ok = false;
+  if (w && h && !(el.complete === false)){ const s = Math.min(1, 960 / Math.max(w, h)); ok = kl.draw(el, it.key, Math.round(w * s), Math.round(h * s)) !== false && !kl.gl.isContextLost(); }
+  // Nur ausblenden, wenn das freigestellte Bild wirklich gezeichnet wurde – sonst bleibt das Original sichtbar
+  el.style.opacity = ok ? '0' : ''; kl.canvas.style.visibility = ok ? '' : 'hidden';
 }
 function hideKeyLayer(id){ const kl = keyLayers.get(id); if (kl) kl.canvas.classList.add('hidden'); }
 function dropKeyLayer(id){ const kl = keyLayers.get(id); if (kl){ kl.canvas.remove(); kl.destroy(); keyLayers.delete(id); } }
@@ -1258,9 +1259,10 @@ function syncMainKey(){
   const g = timeline[curSeg], k = mainKeyOf(g);
   if (!k || !window.ChromaGL){ if (vKey){ vKey.canvas.remove(); vKey.destroy(); vKey = null; V.style.opacity = ''; } return; }
   if (!vKey){ try { vKey = ChromaGL.create(2, 2); } catch(_){ vKey = null; } if (!vKey) return; vKey.canvas.className = 'vkey'; V.after(vKey.canvas); }
-  V.style.opacity = '0'; vKey.canvas.style.transform = V.style.transform; vKey.canvas.style.transformOrigin = '50% 50%'; vKey.canvas.style.filter = V.style.filter;
-  const w = V.videoWidth, h = V.videoHeight; if (!w || !h) return; const s = Math.min(1, 1280 / Math.max(w, h));
-  vKey.draw(V, k, Math.round(w * s), Math.round(h * s));
+  vKey.canvas.style.transform = V.style.transform; vKey.canvas.style.transformOrigin = '50% 50%'; vKey.canvas.style.filter = V.style.filter;
+  const w = V.videoWidth, h = V.videoHeight; let ok = false;
+  if (w && h){ const s = Math.min(1, 1280 / Math.max(w, h)); ok = vKey.draw(V, k, Math.round(w * s), Math.round(h * s)) !== false && !vKey.gl.isContextLost(); }
+  V.style.opacity = ok ? '0' : ''; vKey.canvas.style.visibility = ok ? '' : 'hidden';
 }
 function drawKeyFrames(){
   for (const [id, kl] of keyLayers){ const el = layers.get(id), it = P && P.items.find(x => x.id === id); if (!el || !it || el.classList.contains('hidden')) continue; if (!keyOn(it.key)){ dropKeyLayer(id); el.style.opacity = ''; continue; } drawKeyLayer(el, it, kl); }
@@ -1290,6 +1292,75 @@ $('#stage').addEventListener('pointerdown', e => {
   const col = ChromaGL.sample(el, clamp(fx, 0, 1), clamp(fy, 0, 1)); if (col) fn(col); else toast('Hier ließ sich keine Farbe lesen');
 }, true);
 $('#stage').addEventListener('click', e => { if (keyPickAte){ keyPickAte = false; e.stopImmediatePropagation(); e.preventDefault(); } }, true);
+// ── Großansicht zum Farbwählen: aktuelles Bild bildschirmfüllend, mit Lupe, Zoom (zwei Finger / Mausrad) und Vorschau ──
+function openKeyPicker(src, api){
+  const iw = src.videoWidth || src.naturalWidth, ih = src.videoHeight || src.naturalHeight;
+  if (!iw || !ih) return toast('Das Bild ist noch nicht geladen – kurz warten und nochmal');
+  if (playing) pausePlay(); if (src.pause) try { src.pause(); } catch(_){}
+  const f = Math.min(1, 2048 / Math.max(iw, ih)), W = Math.max(2, Math.round(iw * f)), H = Math.max(2, Math.round(ih * f));
+  const base = document.createElement('canvas'); base.width = W; base.height = H; base.className = 'kp-img';
+  const bx = base.getContext('2d', {willReadFrequently: true});
+  try { bx.drawImage(src, 0, 0, W, H); bx.getImageData(0, 0, 1, 1); } catch(_){ return toast('Dieses Bild lässt sich nicht auslesen'); }
+  const m = document.createElement('div'); m.className = 'kp'; m.innerHTML = `
+    <div class="kp-top"><b>Farbe wählen</b><span class="muted small kp-hint">${FINE ? 'Klicken wählt die Farbe · Mausrad zoomt' : 'Tippen und halten zeigt die Lupe, loslassen wählt · zwei Finger zoomen'}</span>
+      <label class="kp-prev"><input type="checkbox"> Ergebnis zeigen</label><button class="btn primary kp-ok" type="button">Fertig</button></div>
+    <div class="kp-view"><div class="kp-stage"></div><div class="kp-loupe hidden"><canvas width="132" height="132"></canvas><span></span></div></div>
+    <div class="kp-bot"><div class="keycols kp-cols"></div>
+      <div class="kp-sl"><label>Toleranz <b class="kp-tolv"></b><input type="range" class="kp-tol" min="0.02" max="0.8" step="0.01"></label>
+      <label>Weicher Rand <b class="kp-softv"></b><input type="range" class="kp-soft" min="0" max="0.5" step="0.01"></label></div></div>`;
+  document.body.append(m);
+  const q = x => m.querySelector(x), stage = q('.kp-stage'), view = q('.kp-view'), loupe = q('.kp-loupe'), lc = loupe.querySelector('canvas'), lx = lc.getContext('2d');
+  stage.append(base);
+  let kgl = null; try { kgl = ChromaGL.create(W, H); } catch(_){} if (kgl){ kgl.canvas.className = 'kp-key hidden'; stage.append(kgl.canvas); }
+  // Zoom/Verschiebung der Ansicht
+  const Z = {s: 1, x: 0, y: 0};
+  const fit = () => { const r = view.getBoundingClientRect(), k = Math.min(r.width / W, r.height / H); stage.style.width = W * k + 'px'; stage.style.height = H * k + 'px'; apply(); };
+  const apply = () => { stage.style.transform = `translate(${Z.x}px, ${Z.y}px) scale(${Z.s})`; };
+  const preview = () => q('.kp-prev input').checked;
+  const redraw = () => { const k = api.get(); const on = preview() && kgl && k && k.colors && k.colors.length;
+    if (on) kgl.draw(base, {...k, bg: null}, W, H);
+    base.classList.toggle('hidden', !!on); if (kgl) kgl.canvas.classList.toggle('hidden', !on);
+    const ks = k || {colors: [], tol: KEY_DEF.tol, soft: KEY_DEF.soft};
+    q('.kp-cols').innerHTML = (ks.colors || []).map((c, i) => `<span class="keychip" style="background:${c}" title="${c}"><button type="button" data-i="${i}" title="Farbe entfernen">×</button></span>`).join('') || '<span class="muted small">Noch keine Farbe gewählt</span>';
+    q('.kp-tol').value = ks.tol; q('.kp-tolv').textContent = Math.round(ks.tol * 100) + ' %'; q('.kp-soft').value = ks.soft; q('.kp-softv').textContent = Math.round(ks.soft * 100) + ' %'; };
+  // Bildpunkt unter dem Finger/Mauszeiger
+  const at = (cx, cy) => { const r = base.classList.contains('hidden') && kgl ? kgl.canvas.getBoundingClientRect() : base.getBoundingClientRect();
+    return {x: clamp((cx - r.left) / r.width * W, 0, W - 1), y: clamp((cy - r.top) / r.height * H, 0, H - 1)}; };
+  const colorAt = p => { const x0 = Math.max(0, Math.round(p.x) - 1), y0 = Math.max(0, Math.round(p.y) - 1), d = bx.getImageData(x0, y0, Math.min(3, W - x0), Math.min(3, H - y0)).data;
+    let r = 0, g = 0, b = 0; const n = d.length / 4; for (let i = 0; i < d.length; i += 4){ r += d[i]; g += d[i + 1]; b += d[i + 2]; }
+    return '#' + [r / n, g / n, b / n].map(v => Math.round(v).toString(16).padStart(2, '0')).join(''); };
+  const showLoupe = (cx, cy) => { const p = at(cx, cy), vr = view.getBoundingClientRect(), z = 9, half = 66 / z;
+    lx.imageSmoothingEnabled = false; lx.clearRect(0, 0, 132, 132); lx.drawImage(base, p.x - half, p.y - half, half * 2, half * 2, 0, 0, 132, 132);
+    lx.strokeStyle = '#fff'; lx.lineWidth = 2; lx.strokeRect(66 - z / 2 - 1, 66 - z / 2 - 1, z + 2, z + 2); lx.strokeStyle = '#000'; lx.lineWidth = 1; lx.strokeRect(66 - z / 2 - 2.5, 66 - z / 2 - 2.5, z + 5, z + 5);
+    const col = colorAt(p); loupe.querySelector('span').style.background = col; loupe.querySelector('span').textContent = col;
+    const lyTop = cy - vr.top - 170; loupe.style.left = clamp(cx - vr.left - 70, 4, vr.width - 144) + 'px'; loupe.style.top = (lyTop < 4 ? cy - vr.top + 40 : lyTop) + 'px';
+    loupe.classList.remove('hidden'); return col; };
+  const pick = col => { api.addColor(col); redraw(); toast('Farbe ' + col + ' wird entfernt'); };
+  // Bedienung: Maus – Klick wählt, Bewegen zeigt die Lupe; Touch – halten/ziehen zeigt die Lupe, loslassen wählt; zwei Finger zoomen
+  let T = null;
+  view.addEventListener('pointermove', e => { if (e.pointerType === 'mouse' && !T) showLoupe(e.clientX, e.clientY); });
+  view.addEventListener('pointerleave', e => { if (e.pointerType === 'mouse') loupe.classList.add('hidden'); });
+  view.addEventListener('click', e => { if (e.pointerType === 'mouse' || (e.detail && FINE)) pick(colorAt(at(e.clientX, e.clientY))); });
+  view.addEventListener('wheel', e => { e.preventDefault(); const r = view.getBoundingClientRect(), mx = e.clientX - r.left - r.width / 2, my = e.clientY - r.top - r.height / 2, f2 = e.deltaY < 0 ? 1.15 : 1 / 1.15, s2 = clamp(Z.s * f2, 1, 12);
+    Z.x = mx - (mx - Z.x) * s2 / Z.s; Z.y = my - (my - Z.y) * s2 / Z.s; Z.s = s2; if (Z.s === 1){ Z.x = 0; Z.y = 0; } apply(); }, {passive: false});
+  const tp = e => { const a = e.touches[0], b = e.touches[1]; return b ? {d: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY), x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2} : {x: a.clientX, y: a.clientY}; };
+  view.addEventListener('touchstart', e => { e.preventDefault(); const p = tp(e);
+    if (e.touches.length >= 2){ loupe.classList.add('hidden'); const r = view.getBoundingClientRect(); T = {pinch: true, d0: Math.max(10, p.d), s0: Z.s, x0: Z.x, y0: Z.y, cx: p.x - r.left - r.width / 2, cy: p.y - r.top - r.height / 2, mx: p.x, my: p.y}; }
+    else { T = {pinch: false, x: p.x, y: p.y}; showLoupe(p.x, p.y); } }, {passive: false});
+  view.addEventListener('touchmove', e => { e.preventDefault(); if (!T) return; const p = tp(e);
+    if (T.pinch && e.touches.length >= 2){ const s2 = clamp(T.s0 * p.d / T.d0, 1, 12); Z.s = s2; Z.x = T.cx - (T.cx - T.x0) * s2 / T.s0 + (p.x - T.mx); Z.y = T.cy - (T.cy - T.y0) * s2 / T.s0 + (p.y - T.my); if (s2 === 1){ Z.x = 0; Z.y = 0; } apply(); }
+    else if (!T.pinch){ T.x = p.x; T.y = p.y; showLoupe(p.x, p.y); } }, {passive: false});
+  view.addEventListener('touchend', e => { e.preventDefault(); if (!T) return;
+    if (!T.pinch){ loupe.classList.add('hidden'); pick(colorAt(at(T.x, T.y))); T = null; }
+    else if (!e.touches.length) T = null; }, {passive: false});
+  q('.kp-cols').onclick = e => { const b = e.target.closest('button'); if (!b) return; api.removeColor(+b.dataset.i); redraw(); };
+  q('.kp-prev input').onchange = redraw;
+  for (const [cls, prop] of [['.kp-tol', 'tol'], ['.kp-soft', 'soft']]){ const r = q(cls);
+    r.onpointerdown = () => api.liveStart(); r.oninput = () => { api.live(prop, +r.value); if (!q('.kp-prev input').checked){ q('.kp-prev input').checked = true; } redraw(); }; r.onchange = () => api.liveEnd(); }
+  const close = () => { removeEventListener('resize', fit); if (kgl) kgl.destroy(); m.remove(); api.done(); };
+  q('.kp-ok').onclick = close;
+  addEventListener('resize', fit); requestAnimationFrame(fit); redraw();
+}
 // Bedienblock „Freistellen“ – für Einblendungen (it) und das Hauptbild (main, mit Hintergrundfarbe)
 const KEY_DEF = {on: true, colors: [], tol: 0.22, soft: 0.08, spill: true};
 function keyBlock(host, o){
@@ -1298,7 +1369,7 @@ function keyBlock(host, o){
     <label class="row"><input type="checkbox" class="keyOn"> Freistellen (Greenscreen)</label>
     <div class="keybody hidden">
       <div class="keycols"></div>
-      <div class="row wrap"><button class="btn keyPick" type="button">◎ Farbe im Bild wählen</button><label class="btn keyAddL">+ Farbe<input type="color" class="keyAdd" value="#00ff00"></label></div>
+      <div class="row wrap"><button class="btn keyPick" type="button">◎ Farbe im Bild wählen (groß)</button><label class="btn keyAddL">+ Farbe<input type="color" class="keyAdd" value="#00ff00"></label></div>
       <div class="field"><span>Toleranz <b class="keyTolV"></b></span><input type="range" class="keyTol" min="0.02" max="0.8" step="0.01"></div>
       <div class="field"><span>Weicher Rand <b class="keySoftV"></b></span><input type="range" class="keySoft" min="0" max="0.5" step="0.01"></div>
       <label class="row"><input type="checkbox" class="keySpill"> Farbsaum zurücknehmen</label>
@@ -1315,11 +1386,16 @@ function keyBlock(host, o){
     q('.keyTol').value = k.tol; q('.keyTolV').textContent = Math.round(k.tol * 100) + ' %'; q('.keySoft').value = k.soft; q('.keySoftV').textContent = Math.round(k.soft * 100) + ' %'; q('.keySpill').checked = !!k.spill; if (main) q('.keyBg').value = k.bg || '#000000'; };
   const refresh = () => { seekOut(outPos, false); drawKeyFrames(); };
   const change = (fn, live) => { let k = cur(); if (!k){ k = {...KEY_DEF, colors: []}; if (main) k.bg = '#000000'; } fn(k); o.set(k); paint(); if (!live) changed(false); refresh(); };
-  const autoColor = () => { const el = o.el(); return (el && window.ChromaGL && ChromaGL.sample(el, 0.02, 0.02)) || '#00ff00'; };
   const edit = fn => { const b = snapshot(); change(fn); undo.push(b); if (undo.length > 200) undo.shift(); redo = []; };
-  q('.keyOn').onchange = () => { const on = q('.keyOn').checked; edit(k => { k.on = on; if (on && !k.colors.length) k.colors = [autoColor()]; }); if (on) toast('Tipp: ◎ wählt die Farbe direkt im Bild'); };
+  const addColor = col => edit(k => { if (!k.colors.includes(col)) k.colors = [...k.colors, col].slice(-4); k.on = true; });
+  const picker = () => { const el = o.el(); if (!el) return toast('Das Element ist gerade nicht im Bild – Abspiellinie darauf setzen');
+    let lb = null;
+    openKeyPicker(el, {get: cur, addColor, removeColor: i => edit(k => { k.colors.splice(i, 1); }),
+      liveStart: () => { lb = snapshot(); }, live: (prop, v) => change(k => { k[prop] = v; }, true),
+      liveEnd: () => { if (lb){ undo.push(lb); redo = []; lb = null; } changed(false); }, done: () => { paint(); refresh(); }}); };
+  q('.keyOn').onchange = () => { const on = q('.keyOn').checked; edit(k => { k.on = on; }); if (on && !(cur().colors || []).length) picker(); };
   q('.keycols').onclick = e => { const b = e.target.closest('button'); if (!b) return; e.stopPropagation(); edit(k => { k.colors.splice(+b.dataset.i, 1); if (!k.colors.length) k.on = false; }); };
-  q('.keyPick').onclick = e => { e.stopPropagation(); const fn = col => edit(k => { if (!k.colors.includes(col)) k.colors = [...k.colors, col].slice(-4); k.on = true; }); fn.it = o.it || null; startKeyPick(fn); };
+  q('.keyPick').onclick = e => { e.stopPropagation(); picker(); };
   q('.keyAdd').onchange = e => { e.stopPropagation(); const col = q('.keyAdd').value; edit(k => { if (!k.colors.includes(col)) k.colors = [...k.colors, col].slice(-4); k.on = true; }); };
   for (const [cls, prop] of [['.keyTol', 'tol'], ['.keySoft', 'soft']]){ const r = q(cls);
     r.onpointerdown = () => { r._b = snapshot(); }; r.oninput = () => change(k => { k[prop] = +r.value; }, true);

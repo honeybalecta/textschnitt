@@ -28,6 +28,7 @@ class ChromaKeyEffect(private val key: JSONObject, private val opaque: Boolean) 
     private class Program(key: JSONObject, private val opaque: Boolean) : BaseGlShaderProgram(false, 1) {
         private val program: GlProgram
         private val keys = ArrayList<FloatArray>()
+        private val rgbs = ArrayList<FloatArray>()
         private val sim: Float
         private val blend: Float
         private val spill: Float
@@ -36,13 +37,13 @@ class ChromaKeyEffect(private val key: JSONObject, private val opaque: Boolean) 
 
         init {
             val cols = key.optJSONArray("colors")
-            if (cols != null) for (i in 0 until minOf(4, cols.length())) hex(cols.optString(i))?.let { keys.add(uv(it)) }
-            if (keys.isEmpty()) keys.add(uv(floatArrayOf(0f, 1f, 0f)))
+            if (cols != null) for (i in 0 until minOf(4, cols.length())) hex(cols.optString(i))?.let { keys.add(uv(it)); rgbs.add(it) }
+            if (keys.isEmpty()) { keys.add(uv(floatArrayOf(0f, 1f, 0f))); rgbs.add(floatArrayOf(0f, 1f, 0f)) }
             sim = key.optDouble("tol", 0.22).toFloat().coerceIn(0.01f, 1f)
             blend = key.optDouble("soft", 0.0).toFloat().coerceIn(0f, 1f)
-            val first = (cols?.optString(0)?.let { hex(it) }) ?: floatArrayOf(0f, 1f, 0f)
-            val mx = maxOf(first[0], first[1], first[2]); val mn = minOf(first[0], first[1], first[2])
-            dom = if (mx - mn < 0.15f) -1 else first.indexOfFirst { it == mx }
+            // Farbsaum: erste bunte Schlüsselfarbe
+            val first = rgbs.firstOrNull { isChroma(it) }
+            dom = if (first == null) -1 else { val mx = maxOf(first[0], first[1], first[2]); first.indexOfFirst { it == mx } }
             spill = if (key.optBoolean("spill") && (dom == 1 || dom == 2)) 1f else 0f
             bg = hex(key.optString("bg", "#000000")) ?: floatArrayOf(0f, 0f, 0f)
             program = GlProgram(VS, FS)
@@ -56,7 +57,8 @@ class ChromaKeyEffect(private val key: JSONObject, private val opaque: Boolean) 
             program.setSamplerTexIdUniform("uTexSampler", inputTexId, 0)
             program.bindAttributesAndUniforms()
             val u = { n: String -> program.getUniformLocation(n) }
-            for (i in 0 until 4) { val k = keys[minOf(i, keys.size - 1)]; GLES20.glUniform2f(u("uKey$i"), k[0], k[1]) }
+            for (i in 0 until 4) { val j = minOf(i, keys.size - 1); val k = keys[j]; val c = rgbs[j]
+                GLES20.glUniform2f(u("uKey$i"), k[0], k[1]); GLES20.glUniform3f(u("uRgb$i"), c[0], c[1], c[2]); GLES20.glUniform1f(u("uM$i"), if (isChroma(c)) 0f else 1f) }
             GLES20.glUniform1i(u("uN"), keys.size)
             GLES20.glUniform1f(u("uSim"), sim); GLES20.glUniform1f(u("uBlend"), blend)
             GLES20.glUniform1f(u("uSpill"), spill); GLES20.glUniform1i(u("uDom"), dom)
@@ -74,6 +76,8 @@ class ChromaKeyEffect(private val key: JSONObject, private val opaque: Boolean) 
                 val n = t.toInt(16)
                 return floatArrayOf(((n shr 16) and 255) / 255f, ((n shr 8) and 255) / 255f, (n and 255) / 255f)
             }
+            /** Bunt (Grün, Blau …) → Abstand im Farbton; unbunt (Weiß, Grau, Schwarz) → Abstand im RGB-Raum. */
+            fun isChroma(c: FloatArray) = maxOf(c[0], c[1], c[2]) - minOf(c[0], c[1], c[2]) >= 0.25f
             fun uv(c: FloatArray) = floatArrayOf(
                 (-0.1146f * c[0] - 0.3854f * c[1] + 0.5f * c[2]) * 0.8784f,
                 (0.5f * c[0] - 0.4542f * c[1] - 0.0458f * c[2]) * 0.8784f)
@@ -85,18 +89,20 @@ void main(){ gl_Position = aFramePosition; vTexSamplingCoord = aFramePosition.xy
             const val FS = """precision mediump float;
 uniform sampler2D uTexSampler;
 uniform vec2 uKey0; uniform vec2 uKey1; uniform vec2 uKey2; uniform vec2 uKey3;
+uniform vec3 uRgb0; uniform vec3 uRgb1; uniform vec3 uRgb2; uniform vec3 uRgb3;
+uniform float uM0; uniform float uM1; uniform float uM2; uniform float uM3;
 uniform int uN; uniform float uSim; uniform float uBlend; uniform float uSpill; uniform int uDom;
 uniform vec3 uBg; uniform float uOpaque;
 varying vec2 vTexSamplingCoord;
 vec2 uv(vec3 c){ return vec2(-0.1146*c.r-0.3854*c.g+0.5*c.b, 0.5*c.r-0.4542*c.g-0.0458*c.b)*0.8784; }
-float al(vec2 p, vec2 k){ float d = distance(p, k)*0.70710678; return uBlend > 0.0001 ? clamp((d-uSim)/uBlend, 0.0, 1.0) : (d > uSim ? 1.0 : 0.0); }
+float al(vec3 c, vec2 p, vec2 k, vec3 kr, float m){ float d = m > 0.5 ? distance(c, kr)*0.57735027 : distance(p, k)*0.70710678; return uBlend > 0.0001 ? clamp((d-uSim)/uBlend, 0.0, 1.0) : (d > uSim ? 1.0 : 0.0); }
 void main(){
   vec4 c = texture2D(uTexSampler, vTexSamplingCoord);
   vec2 p = uv(c.rgb);
-  float a = al(p, uKey0);
-  if (uN > 1) a = min(a, al(p, uKey1));
-  if (uN > 2) a = min(a, al(p, uKey2));
-  if (uN > 3) a = min(a, al(p, uKey3));
+  float a = al(c.rgb, p, uKey0, uRgb0, uM0);
+  if (uN > 1) a = min(a, al(c.rgb, p, uKey1, uRgb1, uM1));
+  if (uN > 2) a = min(a, al(c.rgb, p, uKey2, uRgb2, uM2));
+  if (uN > 3) a = min(a, al(c.rgb, p, uKey3, uRgb3, uM3));
   vec3 rgb = c.rgb;
   if (uSpill > 0.0) {
     if (uDom == 1) rgb.g -= max(rgb.g - (rgb.r + rgb.b) * 0.5, 0.0) * uSpill;

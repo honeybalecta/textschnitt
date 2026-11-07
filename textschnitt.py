@@ -37,7 +37,7 @@ os.environ.setdefault("HF_HUB_DISABLE_IMPLICIT_TOKEN", "1")
 import warnings  # noqa: E402
 warnings.filterwarnings("ignore", module="huggingface_hub")
 
-VERSION = "2.21.1"
+VERSION = "2.21.2"
 APP_DIR = Path(__file__).resolve().parent
 FROZEN = bool(getattr(sys, "frozen", False))          # als installierte .exe gebaut
 RES_DIR = Path(getattr(sys, "_MEIPASS", APP_DIR))      # mitgelieferte Dateien (Oberfläche, ffmpeg, Modelle)
@@ -973,30 +973,52 @@ def ovl_geom(o: dict, W: int, H: int):
     return {"anim": False, "move": False, "w": pw, "h": ph, "x": round(float(k0["x"]) * W - pw / 2), "y": round(float(k0["y"]) * H - ph / 2)}
 
 
-def chroma_chain(key: dict | None) -> str:
-    """Freistellen: je Schlüsselfarbe ein chromakey (U/V-Abstand, Ähnlichkeit, weicher Rand), danach bei Grün oder
-    Blau der Farbsaum zurück (despill). Dieselbe Rechnung steckt in der Vorschau (chroma.js) und im Android-Export."""
+def chroma_graph(key: dict | None, inl: str, outl: str, tag: str) -> list[str]:
+    """Freistellen als Filter-Teilgraph von inl nach outl (leer = kein Freistellen).
+    Je Schlüsselfarbe eine eigene Maske: bunte Farben über „chromakey“ (Abstand im Farbton), unbunte (Weiß, Grau,
+    Schwarz) über „colorkey“ (Abstand im RGB-Raum). Die Masken werden mit „darken“ vereint (Minimum) – hintereinander
+    gehängte Keyer würden die Maske des vorigen überschreiben. Danach bei Grün/Blau den Farbsaum zurück (despill).
+    Dieselbe Rechnung steckt in der Vorschau (chroma.js) und im Android-Export (ChromaKeyEffect.kt)."""
     if not key or not key.get("colors"):
-        return ""
+        return []
     cols = []
     for c in list(key["colors"])[:4]:
         c = str(c).strip().lstrip("#")
         if len(c) == 6 and all(ch in "0123456789abcdefABCDEF" for ch in c):
             cols.append(c.lower())
     if not cols:
-        return ""
+        return []
     tol = min(1.0, max(0.01, float(key.get("tol") or 0.22)))
     soft = min(1.0, max(0.0, float(key.get("soft") or 0)))
-    parts = ["format=yuva444p"] + [f"chromakey=color=0x{c}:similarity={tol:.3f}:blend={soft:.3f}" for c in cols]
-    if key.get("spill"):
-        r, g, b = (int(cols[0][i:i + 2], 16) for i in (0, 2, 4))
-        m, mn = max(r, g, b), min(r, g, b)
-        if m - mn >= 38:
-            if m == g:
-                parts.append("despill=type=green:mix=0.5")
-            elif m == b:
-                parts.append("despill=type=blue:mix=0.5")
-    return ",".join(parts)
+
+    def rgb(c):
+        return [int(c[i:i + 2], 16) for i in (0, 2, 4)]
+
+    def chroma(c):
+        v = rgb(c)
+        return max(v) - min(v) >= 64
+
+    n = len(cols)
+    parts = [f"{inl}format=yuva444p,split={n + 1}[{tag}s]" + "".join(f"[{tag}k{i}]" for i in range(n))]
+    for i, c in enumerate(cols):
+        f = (f"chromakey=color=0x{c}:similarity={tol:.3f}:blend={soft:.3f}" if chroma(c)
+             else f"format=rgba,colorkey=color=0x{c}:similarity={tol:.3f}:blend={soft:.3f}")
+        parts.append(f"[{tag}k{i}]{f},alphaextract[{tag}a{i}]")
+    cur = f"[{tag}a0]"
+    for i in range(1, n):
+        parts.append(f"{cur}[{tag}a{i}]blend=all_mode=darken[{tag}m{i}]")
+        cur = f"[{tag}m{i}]"
+    tail = ""
+    cc = next((c for c in cols if chroma(c)), None)   # Farbsaum: erste bunte Schlüsselfarbe
+    if key.get("spill") and cc:
+        r, g, b = rgb(cc)
+        m = max(r, g, b)
+        if m == g:
+            tail = ",despill=type=green:mix=0.5"
+        elif m == b:
+            tail = ",despill=type=blue:mix=0.5"
+    parts.append(f"[{tag}s]{cur}alphamerge{tail}{outl}")
+    return parts
 
 
 def video_fx_chain(fx: dict) -> str:
@@ -1065,7 +1087,7 @@ def build_graph(plan: dict, with_video: bool, ass_name: str | None):
             inputs.append(["-ss", f"{seek:.3f}", "-i", un])
             i, off = len(inputs) - 1, -seek
             if with_video:
-                ck = chroma_chain(s.get("key")) if s.get("hasVideo", True) else ""
+                ck = bool(s.get("hasVideo", True) and chroma_graph(s.get("key"), "", "", ""))
                 vfin = vlab
                 if ck:   # freigestellt: das fertige Bild wird noch über die Hintergrundfarbe gelegt
                     vlab = f"[vq{k}]"
@@ -1119,7 +1141,7 @@ def build_graph(plan: dict, with_video: bool, ass_name: str | None):
                 if ck:
                     bg = str((s.get("key") or {}).get("bg") or "#000000").lstrip("#")
                     bg = bg if len(bg) == 6 else "000000"
-                    parts.append(f"{vlab}{ck}[vk{k}]")
+                    parts += chroma_graph(s.get("key"), vlab, f"[vk{k}]", f"q{k}")
                     parts.append(f"color=c=0x{bg}:s={W}x{H}:r={fps_s}:d={d:.4f},format=yuv420p[kb{k}]")
                     parts.append(f"[kb{k}][vk{k}]overlay=shortest=1:eof_action=pass,format=yuv420p,setsar=1{vfin}")
                     vlab = vfin
@@ -1208,8 +1230,13 @@ def build_graph(plan: dict, with_video: bool, ass_name: str | None):
                 off = starts.get(norm_path(o["uri"]), 0.0)
                 src = f"[{i}:v:0]trim=start={inn + off:.4f}:end={inn + d + off:.4f},{cropf}setpts=PTS-STARTPTS+{at:.4f}/TB"
             still = bool(o.get("image")) and not (g and g["anim"])
-            ck = chroma_chain(o.get("key"))
-            parts.append(f"{src}{'' if still else f',fps={fps_s}'},{sc},{ck + ',' if ck else ''}format=yuva420p[o{k}]")
+            kg = chroma_graph(o.get("key"), f"[op{k}]", f"[ok{k}]", f"x{k}")
+            if kg:
+                parts.append(f"{src}{'' if still else f',fps={fps_s}'},{sc}[op{k}]")
+                parts += kg
+                parts.append(f"[ok{k}]format=yuva420p[o{k}]")
+            else:
+                parts.append(f"{src}{'' if still else f',fps={fps_s}'},{sc},format=yuva420p[o{k}]")
             ev = ":eval=frame" if g and (g["anim"] or g["move"]) else ""
             parts.append(f"{cur}[o{k}]overlay=x={x}:y={y}{ev}:eof_action={'repeat' if still else 'pass'}:enable='between(t,{at:.4f},{at + d:.4f})'[c{k}]")
             cur = f"[c{k}]"
