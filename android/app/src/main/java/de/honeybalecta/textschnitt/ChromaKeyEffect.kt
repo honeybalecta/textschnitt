@@ -55,7 +55,7 @@ class ChromaKeyEffect(private val key: JSONObject, private val opaque: Boolean) 
             program.use()
             program.setSamplerTexIdUniform("uTexSampler", inputTexId, 0)
             program.bindAttributesAndUniforms()
-            val u = { n: String -> GLES20.glGetUniformLocation(program.programId(), n) }
+            val u = { n: String -> program.getUniformLocation(n) }
             for (i in 0 until 4) { val k = keys[minOf(i, keys.size - 1)]; GLES20.glUniform2f(u("uKey$i"), k[0], k[1]) }
             GLES20.glUniform1i(u("uN"), keys.size)
             GLES20.glUniform1f(u("uSim"), sim); GLES20.glUniform1f(u("uBlend"), blend)
@@ -66,11 +66,6 @@ class ChromaKeyEffect(private val key: JSONObject, private val opaque: Boolean) 
         }
 
         override fun release() { super.release(); program.delete() }
-
-        private fun GlProgram.programId(): Int {
-            // GlProgram hält die Kennung privat; über glGetIntegerv nach use() ist sie das aktive Programm
-            val a = IntArray(1); GLES20.glGetIntegerv(GLES20.GL_CURRENT_PROGRAM, a, 0); return a[0]
-        }
 
         companion object {
             fun hex(s: String?): FloatArray? {
