@@ -15,7 +15,7 @@
     <button class="icon-btn" id="modelsBtn" title="Einstellungen: Whisper-Modelle und Schriften" data-ico="gear"></button>
   </header>
   <div class="home-body">
-    <div class="home-actions"><button class="btn" id="impProj" title="Projekt von einem anderen Gerät oder einer anderen Person öffnen (.honeycut)">⤓ Projekt importieren</button></div>
+    <div class="home-actions"><h2 class="home-h">Projekte</h2><button class="btn small" id="impProj" title="Projekt von einem anderen Gerät oder einer anderen Person öffnen (.honeycut)">⤓ Projekt importieren</button></div>
     <div id="projList"></div>
     <div class="empty-home hidden" id="homeEmpty">
       <h2>Noch keine Projekte</h2>
@@ -82,12 +82,12 @@
   </div>
 
   <nav class="tabs" id="tabs">
-    <button data-tab="text" class="on">Text</button>
-    <button data-tab="subs">Untertitel</button>
-    <button data-tab="slides">Folien</button>
-    <button data-tab="studio">Studio</button>
-    <button data-tab="clip" class="hidden clip-tab">Clip</button>
-    <button data-tab="export">Export</button>
+    <button data-tab="text" class="on"><i>🗣</i><span>Text</span></button>
+    <button data-tab="subs"><i>💬</i><span>Untertitel</span></button>
+    <button data-tab="slides"><i>🖼</i><span>Folien</span></button>
+    <button data-tab="studio"><i>🎞</i><span>Studio</span></button>
+    <button data-tab="clip" class="hidden clip-tab"><i>📱</i><span>Clip</span></button>
+    <button data-tab="export"><i>⤴</i><span>Export</span></button>
     <button class="detach" id="detachBtn" title="Diesen Bereich in einem eigenen Fenster öffnen (z. B. auf dem zweiten Bildschirm)">⧉</button>
   </nav>
 
@@ -126,19 +126,26 @@
     <!-- Text -->
     <div class="pane hidden" id="paneText">
       <div class="todo hidden" id="textTodo"><span><b></b> noch nicht transkribiert.</span><button class="btn primary" id="textTodoBtn">Jetzt transkribieren</button></div>
-      <div class="findrow"><input type="search" id="findIn" placeholder="Im Text suchen (Strg+F) – Enter: nächster Treffer" autocomplete="off"><span class="muted small" id="findInfo"></span><button class="chip" id="replToggle" title="Suchen und ersetzen (Strg+H)">⇄ Ersetzen</button></div>
-      <div class="findrow hidden" id="replRow"><input type="text" id="replIn" placeholder="Ersetzen durch …" autocomplete="off"><button class="chip" id="replOne">Ersetzen</button><button class="chip" id="replAll">Alle ersetzen</button><button class="chip danger" id="findDelAll">Alle Treffer löschen</button></div>
-      <div class="toolrow">
+      <div class="toolbar" id="textTools">
+        <button class="chip ico" id="findBtn" title="Suchen und ersetzen (Strg+F)">🔍</button>
         <button class="chip" id="fillerBtn">Füllwörter weg</button>
-        <button class="chip" id="volBtn" title="Lautstärke aller Clips einzeln einstellen oder mit einem Klick angleichen">🔊 Lautstärke</button>
         <button class="chip" id="repeatBtn" title="Wiederholte Anläufe finden und löschen – der letzte Versuch bleibt stehen">Wiederholungen weg</button>
-        <span class="chip combo"><button id="pauseBtn">Pausen kürzen auf</button><select id="pauseLen"><option value="0" selected>ganz weg</option><option value="0.1">0,1 s</option><option value="0.2">0,2 s</option><option value="0.3">0,3 s</option><option value="0.5">0,5 s</option></select></span>
-        <button class="chip" id="cutPlayBtn" title="2 Sekunden vor bis 2 Sekunden nach dem letzten Schnitt abspielen">▶ Letzten Schnitt anhören</button>
-        <label class="chip"><input type="checkbox" id="hideDel"> Gelöschtes ausblenden</label>
-        <button class="chip" id="txChip" title="Transkript in die Zwischenablage kopieren oder als Word-Datei speichern">📋 Text kopieren / Word</button>
-        <button class="chip" onclick="addSources()">＋ Video anhängen</button>
-        <button class="chip" onclick="$('#realignBtn').click()" title="Wortzeiten anhand des Lautstärkeverlaufs neu zuordnen (für Projekte aus älteren Versionen)">↻ Am Ton ausrichten</button>
+        <span class="chip combo"><button id="pauseBtn">Pausen kürzen</button><select id="pauseLen"><option value="0" selected>ganz weg</option><option value="0.1">0,1 s</option><option value="0.2">0,2 s</option><option value="0.3">0,3 s</option><option value="0.5">0,5 s</option></select></span>
+        <button class="chip" id="cutPlayBtn" title="2 Sekunden vor bis 2 Sekunden nach dem letzten Schnitt abspielen">▶ Letzten Schnitt</button>
+        <label class="chip" title="Gelöschte Wörter ausblenden"><input type="checkbox" id="hideDel"> Gelöschtes aus</label>
+        <button class="chip ico" id="textMore" title="Weitere Werkzeuge">⋯</button>
       </div>
+      <div class="hidden" id="textMoreBtns">
+        <button id="volBtn">Lautstärke</button>
+        <button id="txChip">Text kopieren / Word</button>
+        <button id="addSrcChip" onclick="addSources()">Video anhängen</button>
+        <button id="realignChip" onclick="$('#realignBtn').click()">Am Ton ausrichten</button>
+      </div>
+      <div class="findrow hidden" id="findRow">
+        <input type="search" id="findIn" placeholder="Im Text suchen – Enter: nächster Treffer" autocomplete="off"><span class="muted small" id="findInfo"></span>
+        <button class="chip" id="replToggle" title="Suchen und ersetzen (Strg+H)">⇄ Ersetzen</button>
+      </div>
+      <div class="findrow hidden" id="replRow"><input type="text" id="replIn" placeholder="Ersetzen durch …" autocomplete="off"><button class="chip" id="replOne">Ersetzen</button><button class="chip" id="replAll">Alle</button><button class="chip danger" id="findDelAll">Treffer löschen</button></div>
       <div class="transcript" id="transcript"></div>
     </div>
 
@@ -199,7 +206,7 @@
       <div class="card stack">
         <div class="clip-head"><h3>Clip-Studio</h3><button class="btn small" id="clipParent" title="Zurück zum Projekt, aus dem der Clip stammt">↩ Hauptprojekt</button></div>
         <span class="muted small" id="clipInfo"></span>
-        <span class="muted small">Die Zeitleiste unter dem Bild gehört nur zu diesem Clip: Schnitte, Bilder, Titel und Lautstärke hier ändern das Hauptprojekt nicht.</span>
+        <span class="muted small">Schnitte, Bilder, Titel und Lautstärke in diesem Clip lassen das Hauptprojekt unverändert.</span>
       </div>
       <div class="card stack">
         <h4>Format</h4>
@@ -207,7 +214,7 @@
       </div>
       <div class="card stack">
         <h4>Bildausschnitt</h4>
-        <span class="muted small">Im Bild ziehen verschiebt den Ausschnitt, Mausrad, zwei Finger oder Regler zoomen – beliebig weit hinein und hinaus. Einzelne Clips: auf der Zeitleiste antippen, dann den Rahmen ziehen.</span>
+        <span class="muted small">Im Bild ziehen verschiebt den Ausschnitt; Mausrad, zwei Finger oder der Regler zoomen. Einzelne Clips: auf der Zeitleiste antippen und den Rahmen ziehen.</span>
         <div class="row wrap"><button class="btn small" data-fr="l">◀ Links</button><button class="btn small" data-fr="c">Mitte</button><button class="btn small" data-fr="r">Rechts ▶</button><button class="btn small" data-fr="fit">Ganzes Bild</button><button class="btn small" data-fr="fill">Füllen</button></div>
         <label class="field"><span>Zoom <b id="clipZoomV"></b></span><input type="range" id="clipZoom" min="0" max="100" value="0"></label>
       </div>
@@ -333,7 +340,7 @@
         <label class="row small"><input type="checkbox" id="txCut" checked> nur der geschnittene Text (ohne Gelöschtes)</label>
         <label class="row small"><input type="checkbox" id="txSpk" checked> Namen der Sprecher:innen</label>
         <label class="row small"><input type="checkbox" id="txTimes"> Zeitmarken am Absatzanfang</label>
-        <div class="row wrap"><button class="btn" id="txCopy">📋 In die Zwischenablage</button><button class="btn" id="txDocx">📄 Als Word-Datei (.docx)</button></div>
+        <div class="row wrap"><button class="btn" id="txCopy">📋 In die Zwischenablage</button><button class="btn" id="txDocx">⤓ Als Word-Datei (.docx)</button></div>
         <span class="muted small" id="txMsg"></span>
       </div>
       <div class="card stack pkg-card">
@@ -345,15 +352,17 @@
   </main>
 
   <div class="selbar hidden" id="selbar">
-    <span id="selInfo"></span>
-    <button class="btn" id="selPlay" title="Ab hier abspielen">▶</button>
-    <button class="btn" id="selEdit" title="Text der markierten Wörter korrigieren, zusammenschreiben oder fehlende Wörter ergänzen">✎ Text</button>
-    <button class="btn" id="selSpk" title="Markierte Wörter einer Sprecherin oder einem Sprecher zuordnen">👤 Person</button>
-    <button class="btn" id="selClip" title="Markierten Abschnitt als eigenen Clip (z. B. 9:16) im Clip-Studio öffnen">📱 Clip</button>
-    <button class="btn" id="selSlide" title="Aus den markierten Wörtern eine Folie für den B-Roll-Generator machen">🖼 Folie</button>
-    <button class="btn hidden" id="selKeep" title="Nur den Untertitel der weggeschnittenen Wörter zeigen – der Schnitt bleibt">💬 Untertitel behalten</button>
-    <button class="btn primary" id="selDel">Löschen</button>
-    <button class="btn" id="selClose" title="Auswahl aufheben (Esc)">✕</button>
+    <div class="sel-info"><b id="selCount"></b><span id="selInfo"></span></div>
+    <div class="sel-acts">
+      <button class="sb" id="selPlay" title="Ab hier abspielen"><i>▶</i><span>Abspielen</span></button>
+      <button class="sb" id="selEdit" title="Text der markierten Wörter korrigieren oder fehlende Wörter ergänzen"><i>✎</i><span>Text</span></button>
+      <button class="sb" id="selSpk" title="Markierte Wörter einer Person zuordnen"><i>👤</i><span>Person</span></button>
+      <button class="sb" id="selClip" title="Markierten Abschnitt als eigenen Clip (z. B. 9:16) öffnen"><i>📱</i><span>Clip</span></button>
+      <button class="sb" id="selSlide" title="Aus den markierten Wörtern eine Folie machen"><i>🖼</i><span>Folie</span></button>
+      <button class="sb hidden" id="selKeep" title="Nur den Untertitel der weggeschnittenen Wörter zeigen – der Schnitt bleibt"><i>💬</i><span>Untertitel</span></button>
+    </div>
+    <button class="sb danger" id="selDel" title="Markierte Wörter löschen (Entf)"><i>🗑</i><span>Löschen</span></button>
+    <button class="sb close" id="selClose" title="Auswahl aufheben (Esc)"><i>✕</i></button>
   </div>
 </section>
 

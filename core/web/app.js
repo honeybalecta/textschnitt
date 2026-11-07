@@ -448,7 +448,7 @@ function fitStage(){
     for (const el of [$('#sideL'), $('#sideR')]) el.classList.add('hidden');
     styleOverlay(); refreshStageOverlays(); return; }
   if (fill){ wrap.style.height = ''; boxH = wrap.clientHeight || innerHeight * 0.6; }
-  else { boxH = Math.round(Math.min(availW * 9 / 16, Math.max(150, innerHeight * 0.36))); wrap.style.height = boxH + 'px'; }
+  else { boxH = Math.round(h > w ? Math.max(150, innerHeight * 0.38) : Math.min(availW * 9 / 16, Math.max(150, innerHeight * 0.36))); wrap.style.height = boxH + 'px'; }   // Hochformat: mehr Höhe, die Seiten nutzen die Steuerung
   const boxW = fill ? availW : Math.min(availW, boxH * 16 / 9);
   let W = boxW, H = W * h / w; if (H > boxH){ H = boxH; W = H * w / h; }
   st.style.width = Math.floor(W) + 'px'; st.style.height = Math.floor(H) + 'px';
@@ -1614,7 +1614,7 @@ function runTranscribe(resume){
   if (subsOnly && !resume) freezeStudioCut();
   let n = 0, words = resume ? (resume.words || 0) : 0;
   const alive = () => P === P0;   // Projekt inzwischen geschlossen/neu geöffnet: diese Runde endet, die neue übernimmt
-  const end = () => { if (!alive()) return; tjSet(pid, null); $('#transBtn').disabled = false; $('#transCancel').classList.add('hidden'); TS.keepAwake(false); transJob = null; renderSources(); };
+  const end = () => { if (!alive()) return; tjSet(pid, null); $('#transBtn').disabled = false; $('#transCancel').classList.add('hidden'); $('#transProg').classList.add('hidden'); TS.keepAwake(false); transJob = null; renderSources(); };
   const finish = () => {
     end(); if (!alive()) return; P.language ||= lang;
     if (firstTime && !subsOnly){ deleted = new Set(); P.trims = {}; P.adj = {}; }
@@ -1812,9 +1812,12 @@ function showSel(){
   $('#selbar').classList.toggle('hidden', !ids.length);
   const cutText = ids.filter(i => isTextTok(i) && isCut(i));
   $('#selKeep').classList.toggle('hidden', !cutText.length);
-  if (cutText.length){ const on = cutText.every(i => tokens[i].ks); $('#selKeep').innerHTML = `${icon('💬')} ${on ? 'Untertitel weg' : 'Untertitel behalten'}`; }
-  if (ids.length){ const allDel = ids.every(i => deleted.has(i) || (tokens[i].type === 'word' && isSrcDeleted((tokens[i].ws + tokens[i].we) / 2))); $('#selDel').textContent = allDel ? 'Wiederherstellen' : 'Löschen';
-    $('#selInfo').textContent = ids.length === 1 ? (FINE ? 'Zweites Wort anklicken – oder mit gedrückter Maustaste ziehen' : 'Zweites Wort antippen – oder gedrückt halten und ziehen') : `${ids.filter(i => tokens[i].type === 'word').length} Wörter · ${FINE ? 'Markierung ziehen' : 'gedrückt halten und ziehen'} = verschieben`; }
+  if (cutText.length){ const on = cutText.every(i => tokens[i].ks); $('#selKeep span').textContent = on ? 'Untertitel weg' : 'Untertitel'; $('#selKeep').title = on ? 'Untertitel der weggeschnittenen Wörter wieder ausblenden' : 'Nur den Untertitel der weggeschnittenen Wörter zeigen – der Schnitt bleibt'; }
+  if (ids.length){ const allDel = ids.every(i => deleted.has(i) || (tokens[i].type === 'word' && isSrcDeleted((tokens[i].ws + tokens[i].we) / 2)));
+    $('#selDel span').textContent = allDel ? 'Zurück' : 'Löschen'; $('#selDel').title = allDel ? 'Gelöschte Wörter wiederherstellen (Entf)' : 'Markierte Wörter löschen (Entf)'; $('#selDel').classList.toggle('restore', allDel);
+    const n = ids.filter(i => tokens[i].type === 'word').length;
+    $('#selCount').textContent = ids.length === 1 ? '1 Wort' : `${n} Wörter`;
+    $('#selInfo').textContent = ids.length === 1 ? (FINE ? 'Zweites Wort anklicken oder ziehen' : 'Zweites Wort antippen') : (FINE ? 'Markierung ziehen = verschieben' : 'Halten + ziehen = verschieben'); }
 }
 function clearSel(){ selA = selB = null; showSel(); }
 // ── Untertitel weggeschnittener Wörter behalten: der Schnitt bleibt, nur der Text erscheint kurz am Schnitt ──
@@ -2097,9 +2100,27 @@ function runFind(){
   finds.forEach(([a, b]) => { for (let i = a; i <= b; i++) spans[i] && spans[i].classList.add('hit'); });
   $('#findInfo').textContent = finds.length ? `${finds.length} Treffer` : 'nichts gefunden';
 }
+// Suchzeile ein-/ausklappen (Lupe, Strg+F)
+function showFind(on){
+  const r = $('#findRow'); if (on == null) on = r.classList.contains('hidden'); r.classList.toggle('hidden', !on); $('#findBtn').classList.toggle('on', on);
+  if (!on){ $('#replRow').classList.add('hidden'); if ($('#findIn').value){ $('#findIn').value = ''; runFind(); } }
+  else { $('#findIn').focus(); }
+}
+$('#findBtn').onclick = () => showFind();
+// Seitlich scrollbare Leisten: am Ende verschwindet der Verlauf am rechten Rand
+for (const el of $$('.toolbar,.sel-acts')){ const f = () => el.classList.toggle('end', el.scrollLeft + el.clientWidth >= el.scrollWidth - 2); el.addEventListener('scroll', f, {passive:true}); new ResizeObserver(f).observe(el); }
+$('#textMore').onclick = e => {
+  const r = e.currentTarget.getBoundingClientRect();
+  showMenu(Math.min(r.left, innerWidth - 230), r.bottom + 4, [
+    {icon: icon('🔊'), label: 'Lautstärke der Clips', fn: () => $('#volBtn').click()},
+    {icon: icon('📋'), label: 'Text kopieren / Word', fn: () => $('#txChip').click()},
+    {icon: icon('＋'), label: 'Video anhängen', fn: () => addSources()},
+    {icon: icon('↻'), label: 'Am Ton ausrichten', fn: () => $('#realignBtn').click()},
+  ]);
+};
 $('#findIn').addEventListener('input', runFind);
 $('#findIn').addEventListener('keydown', e => {
-  if (e.key === 'Escape'){ $('#findIn').value = ''; runFind(); $('#findIn').blur(); return; }
+  if (e.key === 'Escape'){ showFind(false); $('#findIn').blur(); return; }
   if (e.key !== 'Enter' || !finds.length) return;
   e.preventDefault(); findPos = (findPos + (e.shiftKey ? -1 : 1) + finds.length) % finds.length;
   const [a, b] = finds[findPos]; selA = a; selB = b; showSel(); spans[a].scrollIntoView({block:'center', behavior:'smooth'});
@@ -2119,7 +2140,7 @@ function replaceMatch([a, b], rep){
   ids.forEach((i, k) => { const v = words.length === ids.length ? words[k] : (k === 0 ? words.join(' ') : ''); if (v === tokens[i].text) delete P.edits[i]; else P.edits[i] = v; });
 }
 function afterTextEdit(msg){ tokens.forEach(t => paint(t.i)); runFind(); cueCache.at = -1; if (tab === 'subs') renderSubs(); if (msg) toast(msg); }
-$('#replToggle').onclick = () => { const r = $('#replRow'); r.classList.toggle('hidden'); if (!r.classList.contains('hidden')) ($('#findIn').value ? $('#replIn') : $('#findIn')).focus(); };
+$('#replToggle').onclick = () => { const r = $('#replRow'); r.classList.toggle('hidden'); $('#replToggle').classList.toggle('on', !r.classList.contains('hidden')); if (!r.classList.contains('hidden')) ($('#findIn').value ? $('#replIn') : $('#findIn')).focus(); };
 $('#replOne').onclick = () => {
   if (!finds.length) return toast('Kein Treffer');
   if (findPos < 0) findPos = 0;

@@ -1306,8 +1306,8 @@ document.addEventListener('keydown', e => {
     if (lk === 'x' && TL.sel && !txtSel){ handled(); cutSelToClip(); return; }
     if (lk === 'v' && CLIP){ handled(); pasteClip(); return; }
     if (lk === 'd' && TL.sel){ handled(); duplicateSel(); return; } }
-  if (mod && k.toLowerCase() === 'h' && tokens.length){ handled(); if (tab !== 'text') setTab('text'); $('#replRow').classList.remove('hidden'); ($('#findIn').value ? $('#replIn') : $('#findIn')).focus(); return; }
-  if (mod && k.toLowerCase() === 'f' && tokens.length){ handled(); if (tab !== 'text') setTab('text'); $('#findIn').focus(); $('#findIn').select(); return; }
+  if (mod && k.toLowerCase() === 'h' && tokens.length){ handled(); if (tab !== 'text') setTab('text'); showFind(true); $('#replRow').classList.remove('hidden'); $('#replToggle').classList.add('on'); ($('#findIn').value ? $('#replIn') : $('#findIn')).focus(); return; }
+  if (mod && k.toLowerCase() === 'f' && tokens.length){ handled(); if (tab !== 'text') setTab('text'); showFind(true); $('#findIn').select(); return; }
   if (mod && (k === '+' || k === '=')){ handled(); setPps(TL.pps * 1.4); return; }
   if (mod && k === '-'){ handled(); setPps(TL.pps / 1.4); return; }
   if (mod && k === '0'){ handled(); fitTimeline(); return; }
