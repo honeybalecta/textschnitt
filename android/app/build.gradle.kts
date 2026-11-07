@@ -60,6 +60,8 @@ dependencies {
     implementation("androidx.media3:media3-transformer:$media3")
     implementation("androidx.media3:media3-effect:$media3")
     implementation("androidx.media3:media3-common:$media3")
+    // Automatisch freistellen: Personenerkennung (Modell im Programm enthalten)
+    implementation("com.google.mlkit:segmentation-selfie:16.0.0-beta6")
     implementation("androidx.core:core-ktx:1.16.0")
     implementation("androidx.activity:activity-ktx:1.10.1")
 }

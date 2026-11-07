@@ -99,6 +99,14 @@ def selftest(out_path: str) -> int:
         model = faster_whisper.WhisperModel(T.model_ref(m), device="cpu", compute_type="int8")
         segs, info = model.transcribe(audio, language="de", word_timestamps=True)
         rep["segments"] = len(list(segs))
+        # Automatisches Freistellen: onnxruntime und das RVM-Modell müssen im Paket stecken
+        import onnxruntime
+        rep["onnxruntime"] = onnxruntime.__version__
+        rep["matte_model"] = str(T.matte_model_path() or "")
+        if not rep["matte_model"]:
+            raise RuntimeError("Modell zum Freistellen fehlt im Paket")
+        sess = onnxruntime.InferenceSession(rep["matte_model"], providers=["CPUExecutionProvider"])
+        rep["matte_inputs"] = [i.name for i in sess.get_inputs()]
         rep["ok"] = True
     except Exception:
         rep["ok"] = False

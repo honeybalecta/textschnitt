@@ -113,6 +113,19 @@ try {
   };
   await exportAs('video', 'out.mp4');
   await shot('05-export');
+
+  // Automatisch freistellen (Personenerkennung aus dem Netz, Ergebnis = Kopie mit grünem Hintergrund)
+  {
+    const t1 = Date.now();
+    const m = await ev(async () => {
+      const id = TS.autoMatte(P.sources[0].uri);
+      for (let i = 0; i < 1200; i++){ const j = JSON.parse(TS.job(id)); if (j.status !== 'running') return j; await new Promise(r => setTimeout(r, 500)); }
+      return {status: 'timeout'};
+    });
+    const r = m.result || {};
+    step('Automatisch freistellen (MediaPipe, WebCodecs)', m.status === 'done' && r.width === 1280 && r.height === 720 && r.duration > 5,
+      {status: m.status, error: m.error, secs: Math.round((Date.now() - t1) / 1000), res: r.uri ? {w: r.width, h: r.height, dur: r.duration, audio: r.hasAudio} : null});
+  }
   await exportAs('audio', 'out.mp3', 'mp3');
   await exportAs('audio', 'out.wav', 'wav');
   fs.writeFileSync(path.join(OUT, 'expected.json'), JSON.stringify({total: cut.total, title: {at: 0.4, dur: 2.5}}));

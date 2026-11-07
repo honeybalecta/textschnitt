@@ -45,6 +45,7 @@
     transcribeRanges: (uri, model, lang, ranges) => jobOf(call('POST', 'transcribe', {uri, model, lang, fillers:false, ranges: JSON.parse(ranges)})),
     exportVideo: plan => jobOf(call('POST', 'export', plan)),
     makeProxy: uri => jobOf(call('POST', 'proxy', {uri})),
+    autoMatte: uri => jobOf(call('POST', 'matte', {uri})),
     job: id => call('GET', 'job?id=' + q(id)),
     cancel: id => { call('POST', 'cancel', {id}); },
     share: path => { call('POST', 'reveal', {path}); },

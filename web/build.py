@@ -15,7 +15,7 @@ VERSION = (WEB / "version.txt").read_text().strip()
 shutil.rmtree(OUT, ignore_errors=True)
 (OUT / "vendor" / "ort").mkdir(parents=True)
 
-for f in ("app.js", "studio.js", "slides.js", "deck-host.js", "app.css", "icons.js"):
+for f in ("app.js", "studio.js", "slides.js", "deck-host.js", "app.css", "icons.js", "chroma.js"):
     shutil.copy(CORE / f, OUT / f)
 shutil.copytree(CORE / "fonts", OUT / "fonts")
 for f in ("engine.js", "asr-worker.js", "web.css", "manifest.webmanifest", "icon.svg", "icon-192.png", "icon-512.png"):
@@ -53,7 +53,7 @@ for p in ort:
 print("ONNX-Runtime:", ", ".join(names) or "– (wird vom CDN geladen)")
 
 fonts = sorted("fonts/" + p.name for p in (CORE / "fonts").iterdir() if p.suffix == ".ttf")
-shell = ["./", "index.html", "app.js", "studio.js", "slides.js", "deck-host.js", "app.css", "icons.js", "web.css", "bridge-browser.js", "engine.js", "asr-worker.js",
+shell = ["./", "index.html", "app.js", "studio.js", "slides.js", "deck-host.js", "app.css", "icons.js", "chroma.js", "web.css", "bridge-browser.js", "engine.js", "asr-worker.js",
          "manifest.webmanifest", "icon.svg", "icon-192.png", "icon-512.png", "vendor/media.js", "vendor/asr.js"] + fonts
 sw = (WEB / "sw.js").read_text().replace("__VERSION__", VERSION + "-" + subprocess.run(
     ["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, capture_output=True, text=True).stdout.strip()).replace("__SHELL__", json.dumps(shell))

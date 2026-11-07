@@ -1147,6 +1147,7 @@ function loop(){
       updateOverlay(outPos); updateZoom(); updateSubs(outPos); updateTitles(outPos); updateHead(outPos); highlightNow();
     }
   }
+  if (keyLayers.size || vKey || (P && timeline.length && mainKeyOf(timeline[curSeg]))) drawKeyFrames();
   requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);
@@ -1231,6 +1232,138 @@ function layerFor(it){
   return el;
 }
 function allLayers(fn){ for (const el of layers.values()) fn(el); }
+// ── Freistellen (Farbschlüssel) in der Vorschau: eine WebGL-Leinwand je freigestelltem Element, das Medienelement selbst wird unsichtbar ──
+const keyOn = k => !!(k && k.on !== false && k.colors && k.colors.length);
+const keyLayers = new Map();   // Element-ID → ChromaGL
+function syncKeyLayer(el, it){
+  let kl = keyLayers.get(it.id);
+  if (!keyOn(it.key) || !window.ChromaGL){ if (kl){ kl.canvas.remove(); kl.destroy(); keyLayers.delete(it.id); el.style.opacity = ''; } return; }
+  if (!kl){ try { kl = ChromaGL.create(2, 2); } catch(_){ kl = null; } if (!kl) return; keyLayers.set(it.id, kl); }
+  el.style.opacity = '0';
+  if (kl.canvas.previousSibling !== el) el.after(kl.canvas);
+  kl.canvas.className = el.className + ' key'; kl.canvas.style.cssText = el.style.cssText; kl.canvas.style.opacity = '';
+  drawKeyLayer(el, it, kl);
+}
+function drawKeyLayer(el, it, kl){
+  const w = el.videoWidth || el.naturalWidth, h = el.videoHeight || el.naturalHeight; if (!w || !h) return;
+  const s = Math.min(1, 960 / Math.max(w, h));
+  kl.draw(el, it.key, Math.round(w * s), Math.round(h * s));
+}
+function hideKeyLayer(id){ const kl = keyLayers.get(id); if (kl) kl.canvas.classList.add('hidden'); }
+function dropKeyLayer(id){ const kl = keyLayers.get(id); if (kl){ kl.canvas.remove(); kl.destroy(); keyLayers.delete(id); } }
+// Hauptbild: Leinwand über dem Video mit derselben Lage (Transformation wird je Bild übernommen)
+let vKey = null;
+function mainKeyOf(g){ const it = g && g.kind === 'main' ? fxItemOf(g) : null; const k = it && it.fx && it.fx.key; return keyOn(k) ? k : null; }
+function syncMainKey(){
+  const g = timeline[curSeg], k = mainKeyOf(g);
+  if (!k || !window.ChromaGL){ if (vKey){ vKey.canvas.remove(); vKey.destroy(); vKey = null; V.style.opacity = ''; } return; }
+  if (!vKey){ try { vKey = ChromaGL.create(2, 2); } catch(_){ vKey = null; } if (!vKey) return; vKey.canvas.className = 'vkey'; V.after(vKey.canvas); }
+  V.style.opacity = '0'; vKey.canvas.style.transform = V.style.transform; vKey.canvas.style.transformOrigin = '50% 50%'; vKey.canvas.style.filter = V.style.filter;
+  const w = V.videoWidth, h = V.videoHeight; if (!w || !h) return; const s = Math.min(1, 1280 / Math.max(w, h));
+  vKey.draw(V, k, Math.round(w * s), Math.round(h * s));
+}
+function drawKeyFrames(){
+  for (const [id, kl] of keyLayers){ const el = layers.get(id), it = P && P.items.find(x => x.id === id); if (!el || !it || el.classList.contains('hidden')) continue; if (!keyOn(it.key)){ dropKeyLayer(id); el.style.opacity = ''; continue; } drawKeyLayer(el, it, kl); }
+  if (vKey || (P && timeline.length && mainKeyOf(timeline[curSeg]))) syncMainKey();
+}
+// Schlüsselfarbe im Bild wählen: nächstes Tippen auf die Bühne liest die Farbe dort
+let keyPick = null;
+function startKeyPick(fn){ keyPick = fn; $('#stageHint').textContent = 'Ins Bild tippen oder klicken: Die Farbe an dieser Stelle wird entfernt'; $('#stageHint').classList.remove('hidden'); }
+function endKeyPick(){ keyPick = null; $('#stageHint').classList.add('hidden'); }
+// Punkt auf der Bühne → Anteil im Medienelement (Vollbild/eingepasst, frei platziert oder das Hauptbild samt Transformation)
+function stageFrac(el, px, py, cover){
+  const st = $('#stage'), R = st.getBoundingClientRect(), W = R.width, H = R.height;
+  const vw = el.videoWidth || el.naturalWidth || 16, vh = el.videoHeight || el.naturalHeight || 9;
+  if (el === V){ let q = {x: px - R.left, y: py - R.top};
+    try { const m = new DOMMatrix(getComputedStyle(V).transform).inverse(); const d = m.transformPoint(new DOMPoint(q.x - W / 2, q.y - H / 2)); q = {x: d.x + W / 2, y: d.y + H / 2}; } catch(_){}
+    const sc = Math.min(W / vw, H / vh), fw = vw * sc, fh = vh * sc; return [(q.x - (W - fw) / 2) / fw, (q.y - (H - fh) / 2) / fh]; }
+  const r = el.getBoundingClientRect();
+  if (!cover) return [(px - r.left) / r.width, (py - r.top) / r.height];
+  const sc = Math.max(r.width / vw, r.height / vh), fw = vw * sc, fh = vh * sc; return [(px - r.left - (r.width - fw) / 2) / fw, (py - r.top - (r.height - fh) / 2) / fh];
+}
+let keyPickAte = false;
+$('#stage').addEventListener('pointerdown', e => {
+  if (!keyPick) return; e.preventDefault(); e.stopPropagation(); keyPickAte = true;
+  const fn = keyPick; endKeyPick();
+  const it = fn.it, el = it ? layers.get(it.id) : V; if (!el) return;
+  const [fx, fy] = stageFrac(el, e.clientX, e.clientY, it ? !el.classList.contains('free') : false);
+  const col = ChromaGL.sample(el, clamp(fx, 0, 1), clamp(fy, 0, 1)); if (col) fn(col); else toast('Hier ließ sich keine Farbe lesen');
+}, true);
+$('#stage').addEventListener('click', e => { if (keyPickAte){ keyPickAte = false; e.stopImmediatePropagation(); e.preventDefault(); } }, true);
+// Bedienblock „Freistellen“ – für Einblendungen (it) und das Hauptbild (main, mit Hintergrundfarbe)
+const KEY_DEF = {on: true, colors: [], tol: 0.22, soft: 0.08, spill: true};
+function keyBlock(host, o){
+  const main = !!o.main;
+  host.insertAdjacentHTML('beforeend', `<div class="field keyblk">
+    <label class="row"><input type="checkbox" class="keyOn"> Freistellen (Greenscreen)</label>
+    <div class="keybody hidden">
+      <div class="keycols"></div>
+      <div class="row wrap"><button class="btn keyPick" type="button">◎ Farbe im Bild wählen</button><label class="btn keyAddL">+ Farbe<input type="color" class="keyAdd" value="#00ff00"></label></div>
+      <div class="field"><span>Toleranz <b class="keyTolV"></b></span><input type="range" class="keyTol" min="0.02" max="0.8" step="0.01"></div>
+      <div class="field"><span>Weicher Rand <b class="keySoftV"></b></span><input type="range" class="keySoft" min="0" max="0.5" step="0.01"></div>
+      <label class="row"><input type="checkbox" class="keySpill"> Farbsaum zurücknehmen</label>
+      ${main ? `<div class="field"><span>Hintergrundfarbe</span><input type="color" class="keyBg" value="#000000"></div><p class="muted small">Bild oder Video als Hintergrund: das Foto auf Spur 1 legen, das Video darüber als Vollbild-Einblendung und dort freistellen.</p>` : ''}
+    </div>
+    ${CAP.matte && o.uri ? `<div class="keyauto"><div class="row wrap"><button class="btn keyAuto" type="button">✦ Hintergrund automatisch erkennen</button><button class="btn keyOrig hidden" type="button">Original zurück</button><button class="btn keyStop hidden" type="button">Abbrechen</button></div>
+      <p class="muted small keyAutoHint">Ohne Greenscreen: Die Person wird erkannt, alles andere ersetzt. Erzeugt einmalig eine Kopie des Videos – das dauert je nach Länge einige Minuten.</p>
+      <div class="keyProg hidden"><div class="prog"><i></i></div><span class="muted small"></span></div></div>` : ''}
+    </div>`);
+  const blk = host.lastElementChild, q = s => blk.querySelector(s);
+  const cur = () => o.get();
+  const paint = () => { const k = cur(), on = !!(k && k.on !== false); q('.keyOn').checked = on; q('.keybody').classList.toggle('hidden', !on); if (!k) return;
+    q('.keycols').innerHTML = k.colors.map((c, i) => `<span class="keychip" style="background:${c}" title="${c}"><button type="button" data-i="${i}" title="Farbe entfernen">×</button></span>`).join('') || '<span class="muted small">Noch keine Farbe – im Bild wählen</span>';
+    q('.keyTol').value = k.tol; q('.keyTolV').textContent = Math.round(k.tol * 100) + ' %'; q('.keySoft').value = k.soft; q('.keySoftV').textContent = Math.round(k.soft * 100) + ' %'; q('.keySpill').checked = !!k.spill; if (main) q('.keyBg').value = k.bg || '#000000'; };
+  const refresh = () => { seekOut(outPos, false); drawKeyFrames(); };
+  const change = (fn, live) => { let k = cur(); if (!k){ k = {...KEY_DEF, colors: []}; if (main) k.bg = '#000000'; } fn(k); o.set(k); paint(); if (!live) changed(false); refresh(); };
+  const autoColor = () => { const el = o.el(); return (el && window.ChromaGL && ChromaGL.sample(el, 0.02, 0.02)) || '#00ff00'; };
+  const edit = fn => { const b = snapshot(); change(fn); undo.push(b); if (undo.length > 200) undo.shift(); redo = []; };
+  q('.keyOn').onchange = () => { const on = q('.keyOn').checked; edit(k => { k.on = on; if (on && !k.colors.length) k.colors = [autoColor()]; }); if (on) toast('Tipp: ◎ wählt die Farbe direkt im Bild'); };
+  q('.keycols').onclick = e => { const b = e.target.closest('button'); if (!b) return; e.stopPropagation(); edit(k => { k.colors.splice(+b.dataset.i, 1); if (!k.colors.length) k.on = false; }); };
+  q('.keyPick').onclick = e => { e.stopPropagation(); const fn = col => edit(k => { if (!k.colors.includes(col)) k.colors = [...k.colors, col].slice(-4); k.on = true; }); fn.it = o.it || null; startKeyPick(fn); };
+  q('.keyAdd').onchange = e => { e.stopPropagation(); const col = q('.keyAdd').value; edit(k => { if (!k.colors.includes(col)) k.colors = [...k.colors, col].slice(-4); k.on = true; }); };
+  for (const [cls, prop] of [['.keyTol', 'tol'], ['.keySoft', 'soft']]){ const r = q(cls);
+    r.onpointerdown = () => { r._b = snapshot(); }; r.oninput = () => change(k => { k[prop] = +r.value; }, true);
+    r.onchange = () => { if (r._b){ undo.push(r._b); redo = []; r._b = null; } changed(false); }; }
+  q('.keySpill').onchange = () => edit(k => { k.spill = q('.keySpill').checked; });
+  if (main){ const bg = q('.keyBg'); bg.oninput = () => change(k => { k.bg = bg.value; }, true); bg.onchange = () => edit(k => { k.bg = bg.value; }); }
+  // Automatisch: Person erkennen, Kopie mit grünem Hintergrund erzeugen, dann wie Greenscreen freistellen
+  const auto = q('.keyAuto');
+  if (auto){
+    const paintAuto = () => { const has = !!o.hasOrig(); q('.keyOrig').classList.toggle('hidden', !has); auto.textContent = has ? '✦ Erneut erkennen' : '✦ Hintergrund automatisch erkennen'; };
+    auto.onclick = e => { e.stopPropagation(); const uri = o.uri(); if (!uri) return;
+      auto.disabled = true; q('.keyStop').classList.remove('hidden'); q('.keyProg').classList.remove('hidden'); q('.keyProg span').textContent = 'Wird vorbereitet …';
+      let jid; try { jid = TS.autoMatte(uri); } catch(err){ toast('Freistellen nicht möglich: ' + err.message); auto.disabled = false; return; }
+      q('.keyStop').onclick = ev => { ev.stopPropagation(); TS.cancel(jid); };
+      const end = () => { auto.disabled = false; q('.keyStop').classList.add('hidden'); q('.keyProg').classList.add('hidden'); };
+      watchJob(jid, j => { q('.keyProg i').style.width = Math.round((j.progress || 0) * 100) + '%'; q('.keyProg span').textContent = j.message || ''; },
+        j => { end(); const m = j.result; if (!m || !m.uri){ toast('Freistellen hat nichts ergeben'); return; }
+          o.applyMatte(m); change(k => { k.on = true; k.colors = [MATTE_KEY]; k.tol = 0.3; k.soft = 0.05; k.spill = true; }); paintAuto(); toast('Hintergrund erkannt – Feinheiten über Toleranz und weichen Rand'); },
+        j => { end(); if (j.status !== 'cancelled') toast('Freistellen fehlgeschlagen: ' + (j.error || '')); }); };
+    q('.keyOrig').onclick = e => { e.stopPropagation(); o.restoreOrig(); change(k => { k.on = false; }); paintAuto(); };
+    paintAuto();
+  }
+  blk.addEventListener('click', e => { if (e.target.closest('button')) e.stopPropagation(); });
+  paint(); return {paint};
+}
+const MATTE_KEY = '#00ff00';   // Schlüsselfarbe der automatisch freigestellten Kopien (alle Plattformen)
+// Quelle der Hauptspur gegen die freigestellte Kopie tauschen (Transkript, Schnitt und Lautstärkeverlauf bleiben)
+function swapSource(si, m){
+  const s = P.sources[si]; if (!s) return;
+  if (!s.orig) s.orig = s.uri; s.uri = m.uri; delete s.proxy; s.matte = true;
+  if (vSi === si) vSi = -1;
+  changed(true); seekOut(outPos, false); if (window.renderTimeline) renderTimeline();
+}
+function restoreSource(si){ const s = P.sources[si]; if (!s || !s.orig) return; s.uri = s.orig; delete s.orig; delete s.proxy; delete s.matte; if (vSi === si) vSi = -1; changed(true); seekOut(outPos, false); if (window.renderTimeline) renderTimeline(); }
+// Einblendung: Clip gegen die freigestellte Kopie tauschen und die Kopie in die Ablage legen
+function swapClip(it, m){
+  const old = it.clip; P.media ||= [];
+  const clip = {...old, uri: m.uri, name: m.name || old.name, kind: 'video', duration: m.duration || old.duration, width: m.width || old.width, height: m.height || old.height, fps: m.fps || old.fps, hasAudio: m.hasAudio != null ? m.hasAudio : old.hasAudio, hasVideo: true, rotation: 0, orig: old.orig || old.uri};
+  delete clip.proxy;
+  it.clip = clip; if (!P.media.some(x => x.uri === clip.uri)) P.media.push(clone(clip));
+  const el = layers.get(it.id); if (el) releaseMedia(el);
+  changed(true); seekOut(outPos, false); if (window.renderBin) renderBin();
+}
+function restoreClip(it){ const c = it.clip; if (!c || !c.orig) return; const m = mediaList().find(x => x.m.uri === c.orig); it.clip = m ? clone(m.m) : {...c, uri: c.orig}; delete it.clip.orig; const el = layers.get(it.id); if (el) releaseMedia(el); changed(true); seekOut(outPos, false); }
 // Medienelement freigeben: Ohne das hält der Browser Decoder und Verbindung offen – bei vielen Einblendungen
 // reichen dann die Verbindungen nicht mehr und das Abspielen hängt nach dem Springen.
 function releaseMedia(el){ if (!el || !el.dataset.src) return; try { el.pause(); } catch(_){} el.removeAttribute('src'); delete el.dataset.src; if (el.load) try { el.load(); } catch(_){} }
@@ -1242,8 +1375,8 @@ function updateOverlay(o){
   const act = overlays.filter(x => o >= x.at && o < x.end);
   const on = new Set(act.map(a => a.x.id));
   const soon = new Set(playing ? overlays.filter(x => x.at > o && x.at - o < PRELOAD_S).map(x => x.x.id) : []);
-  for (const [id, el] of layers){ if (!P.items.some(x => x.id === id)){ releaseMedia(el); el.remove(); layers.delete(id); continue; }
-    if (!on.has(id) && !el.classList.contains('hidden')){ if (el.pause) el.pause(); el.classList.add('hidden'); }
+  for (const [id, el] of layers){ if (!P.items.some(x => x.id === id)){ releaseMedia(el); el.remove(); layers.delete(id); dropKeyLayer(id); continue; }
+    if (!on.has(id) && !el.classList.contains('hidden')){ if (el.pause) el.pause(); el.classList.add('hidden'); hideKeyLayer(id); }
     if (!on.has(id) && !soon.has(id) && el.tagName === 'VIDEO') releaseMedia(el); }
   for (const id of soon) if (!on.has(id)){ const x = overlays.find(q => q.x.id === id).x; if (isImg(x.clip)) continue;   // gleich dran: schon laden
     const el = layerFor(x), url = MEDIA(x.clip.uri); if (el.dataset.src !== url){ el.src = url; el.dataset.src = url; try { el.currentTime = x.in || 0; } catch(_){} } }
@@ -1255,7 +1388,7 @@ function updateOverlay(o){
     if (el.dataset.src !== url){ el.src = url; el.dataset.src = url; }
     el.classList.remove('hidden');
     const v = PipDrag.on && PipDrag.it === it ? PipDrag : elVals(it, o - a.at), r = elRect(it, v, W, H) || (hasCrop(it) || Crop.it === it ? elRect(it, coverVals(it), W, H) : null);
-    placeLayer(el, it, r);
+    placeLayer(el, it, r); syncKeyLayer(el, it);
     if (el.tagName !== 'VIDEO') return;
     const vol = it.vol || 0; el.muted = !(vol > 0) || !playing; setVol(el, vol);
     const target = it.in + (o - a.at);
@@ -1295,7 +1428,47 @@ function placeBox(W, H){
 // Hauptspur: Lage und Größe des ausgewählten Clips (in einer Anpassung gespeichert)
 const mainBoxOn = () => !!(typeof TL !== 'undefined' && TL.sel && TL.sel.kind === 'main' && timeline[TL.sel.i] && studioOn());
 const mainFit = () => { const g = typeof TL !== 'undefined' && TL.sel && timeline[TL.sel.i]; return fitFracOf(g && g.kind === 'main' ? P.sources[g.si] : null); };
-function mainFx(){ const g = typeof TL !== 'undefined' && TL.sel && timeline[TL.sel.i]; const f = g && g.fx ? g.fx : FX_DEF; return {tx: f.tx || 0, ty: f.ty || 0, sc: f.sc || 1}; }
+// ── Keyframes auf der Hauptspur: Lage und Größe des Hauptbilds über die Zeit ──
+// fx.kf = [{t, tx, ty, sc}], t in Sekunden der Quelle ab Beginn der Anpassung (it.at). Ohne Keyframes gelten fx.tx/ty/sc fest.
+const fxItemOf = g => g ? (P.items.find(x => x.type === 'fx' && x.at <= g.in + 0.01 && x.at + x.dur >= g.out - 0.01) || null) : null;
+function mkfAt(kf, rel){
+  const n = kf.length, V = k => ({tx: k.tx || 0, ty: k.ty || 0, sc: k.sc || 1});
+  if (rel <= kf[0].t) return V(kf[0]); if (rel >= kf[n-1].t) return V(kf[n-1]);
+  for (let i = 0; i < n - 1; i++){ const a = kf[i], b = kf[i+1]; if (rel < b.t){ const f = (rel - a.t) / Math.max(1e-6, b.t - a.t), A = V(a), B = V(b); return {tx: lerp(A.tx, B.tx, f), ty: lerp(A.ty, B.ty, f), sc: lerp(A.sc, B.sc, f)}; } }
+  return V(kf[n-1]);
+}
+const mainKf = g => { const it = fxItemOf(g); return it && it.fx && it.fx.kf && it.fx.kf.length ? it.fx.kf : null; };
+function mainFxAt(g, srcT){
+  const kf = mainKf(g); if (kf) return mkfAt(kf, srcT - fxItemOf(g).at);
+  const f = (g && g.fx) || FX_DEF; return {tx: f.tx || 0, ty: f.ty || 0, sc: f.sc || 1};
+}
+function mainFx(){ const g = typeof TL !== 'undefined' && TL.sel && timeline[TL.sel.i]; return g && g.kind === 'main' ? mainFxAt(g, outToSrcT(outPos)) : {tx: 0, ty: 0, sc: 1}; }
+// Werte setzen: mit Keyframes an der Abspiellinie (neu oder vorhandener), sonst fest
+// Anpassung so erweitern, dass sie die Quellzeit src einschließt (Keyframes dürfen über mehrere Abschnitte reichen)
+function fxCover(it, src){ const end = it.at + it.dur; if (src < it.at){ const d = it.at - src; it.at = r3(src); it.dur = r3(it.dur + d); if (it.fx.kf) it.fx.kf.forEach(k => k.t = r3(k.t + d)); } if (src > end) it.dur = r3(src - it.at); }
+function setMainVals(g, v){
+  const it = mainFxItem(g); v = {tx: r3(v.tx || 0), ty: r3(v.ty || 0), sc: r3(clamp(v.sc || 1, 0.05, 20))};
+  const kf = it.fx.kf;
+  if (kf && kf.length){ const src = outToSrcT(outPos); fxCover(it, src); const rel = r3(src - it.at), tol = 0.5 / (primary().fps || 30), k = kf.find(k => Math.abs(k.t - rel) <= tol);
+    if (k) Object.assign(k, v); else { kf.push({t: rel, ...v}); kf.sort((a, b) => a.t - b.t); } }
+  else Object.assign(it.fx, v);
+}
+const hasMainKfHere = g => { const kf = mainKf(g); if (!kf) return false; const rel = outToSrcT(outPos) - fxItemOf(g).at, tol = 0.5 / (primary().fps || 30); return kf.some(k => Math.abs(k.t - rel) <= tol); };
+function toggleMainKeyframe(g){
+  if (!g || g.kind !== 'main') return toast('Erst einen Clip der Hauptspur auswählen');
+  const gp = timeline[segAtOut(outPos)];   // Abschnitt unter der Abspiellinie – Keyframes dürfen über die Abschnitte einer Anpassung reichen
+  if (!gp || gp.kind !== 'main' || gp.si !== g.si) return toast('Abspiellinie auf einen Clip dieses Videos setzen');
+  const src = outToSrcT(outPos);
+  let added = false, n = 0;
+  commit(() => {
+    const it = fxItemOf(g) || mainFxItem(gp); it.fx = {...FX_DEF, ...(it.fx || {})}; fxCover(it, gp.in); fxCover(it, gp.out); fxCover(it, src);
+    const rel = r3(src - it.at), tol = 0.5 / (primary().fps || 30), kf = it.fx.kf || [], k = kf.find(k => Math.abs(k.t - rel) <= tol);
+    if (k){ it.fx.kf = kf.filter(x => x !== k); if (!it.fx.kf.length) delete it.fx.kf; n = (it.fx.kf || []).length; return; }
+    const v = mainFxAt(g, src); it.fx.kf = [...kf, {t: rel, tx: r3(v.tx), ty: r3(v.ty), sc: r3(v.sc)}].sort((a, b) => a.t - b.t); added = true; n = it.fx.kf.length;
+  }, false);
+  toast(added ? `Keyframe gesetzt (${n}) – Abspiellinie weiterschieben und das Hauptbild dort anders setzen` : 'Keyframe entfernt');
+  if (window.renderTimeline) renderTimeline(); seekOut(outPos, false);
+}
 function mainFxItem(g){
   let it = P.items.find(x => x.type === 'fx' && x.at <= g.in + 0.01 && x.at + x.dur >= g.out - 0.01);
   if (!it){ it = {id:newId(), type:'fx', at:r3(g.in), dur:r3(g.out - g.in), fx:{...FX_DEF}}; P.items.push(it); }
@@ -1425,8 +1598,8 @@ function endPipDrag(){
   const g = PipDrag; if (!g.on) return; g.on = false; $('#stage').classList.remove('snap-x');
   if (!g.moved){ if (g.main) applyMainTransform(); else togglePlay(); return; }
   if (g.main){ const sg = timeline[TL.sel.i];
-    commit(() => { const it = mainFxItem(sg); it.fx.tx = r3(g.tx); it.fx.ty = r3(g.ty); it.fx.sc = r3(g.sc); }, false);
-    seekOut(outPos, false); toast(`Hauptbild: ${Math.round(g.sc * 100)} %`); return; }
+    commit(() => setMainVals(sg, {tx: g.tx, ty: g.ty, sc: g.sc}), false);
+    seekOut(outPos, false); if (window.renderTimeline && mainKf(sg)) renderTimeline(); toast(`Hauptbild: ${Math.round(g.sc * 100)} %` + (mainKf(sg) ? ' · Keyframe' : '')); return; }
   const it = g.it; commit(() => setElVals(it, g.rel, {x: g.x, y: g.y, w: g.w}), false);
   seekOut(outPos, false); if (sheetItem === it) paintItem();
   toast(`Größe ${Math.round(g.w * 100)} % der Bildbreite` + (it.kf && it.kf.length ? ' · Keyframe' : ''));
@@ -1454,7 +1627,7 @@ $('#pipBox').addEventListener('pointercancel', endPipDrag);
 $('#pipBox').addEventListener('click', e => e.stopPropagation());
 $('#pipBox').addEventListener('wheel', e => {
   e.preventDefault(); if (curPip || mainBoxOn()) e.stopPropagation(); const f = e.deltaY < 0 ? 1.06 : 1 / 1.06;
-  if (!curPip){ if (!mainBoxOn()) return; const sg = timeline[TL.sel.i]; commit(() => { const it = mainFxItem(sg); it.fx.sc = r3(clamp((it.fx.sc || 1) * f, 0.05, 20)); }, false); seekOut(outPos, false); return; }
+  if (!curPip){ if (!mainBoxOn()) return; const sg = timeline[TL.sel.i], v = mainFx(); commit(() => setMainVals(sg, {...v, sc: clamp(v.sc * f, 0.05, 20)}), false); seekOut(outPos, false); if (window.renderTimeline && mainKf(sg)) renderTimeline(); return; }
   const it = curPip, rel = outPos - pipTarget.at, v = elVals(it, rel) || coverVals(it);
   commit(() => setElVals(it, rel, {x: v.x, y: v.y, w: v.w * f}), false); seekOut(outPos, false); if (sheetItem === it) paintItem();
 }, {passive:false});
@@ -1521,12 +1694,13 @@ function updateZoom(){
 // Zoom (innen) und Lage/Größe des Clips (außen), Ursprung in der Mitte
 function applyMainTransform(){
   const g = timeline[curSeg]; if (!g || g.kind !== 'main'){ V.style.transform = ''; return; }
-  const z = zoomAt(vT()), f = frameFx(PipDrag.on && PipDrag.main ? {tx: PipDrag.tx, ty: PipDrag.ty, sc: PipDrag.sc} : (g.fx || FX_DEF));
+  const z = zoomAt(vT()), f = frameFx(PipDrag.on && PipDrag.main ? {tx: PipDrag.tx, ty: PipDrag.ty, sc: PipDrag.sc} : mainFxAt(g, vT()));
   const tx = f.tx || 0, ty = f.ty || 0, sc = f.sc || 1, parts = [];
   if (tx || ty) parts.push(`translate(${(tx * 100).toFixed(3)}%, ${(ty * 100).toFixed(3)}%)`);
   if (Math.abs(sc - 1) > 1e-3) parts.push(`scale(${sc.toFixed(4)})`);
   if (z.s > 1.001) parts.push(`translate(${(-(z.cx - 0.5) * (z.s - 1) * 100).toFixed(3)}%, ${(-(z.cy - 0.5) * (z.s - 1) * 100).toFixed(3)}%) scale(${z.s.toFixed(4)})`);
   V.style.transformOrigin = '50% 50%'; V.style.transform = parts.join(' ');
+  if (vKey) vKey.canvas.style.transform = V.style.transform;
 }
 // Scrubben
 (() => { const sc = $('#scrub');
@@ -2635,6 +2809,8 @@ function openItem(id){
       <div class="field pipopt"><span>Platzieren</span><div class="seg-ctl" id="cCorner"><button data-v="ol">↖</button><button data-v="or">↗</button><button data-v="mm">Mitte</button><button data-v="ul">↙</button><button data-v="ur">↘</button><button data-v="full">Vollbild</button></div></div>
       <p class="muted small pipopt">Im Bild ziehen verschiebt, die Ecke unten rechts ändert die Größe${FINE ? ' (auch mit dem Mausrad)' : ''}. Mit Keyframes (Taste M) bewegt sich das Element über die Zeit.</p>`);
   }
+  if (it.type !== 'zoom' && it.type !== 'audio') keyBlock(body, {it, get: () => it.key || null, set: k => { it.key = k; }, el: () => layers.get(it.id) || $('#cPrev'),
+    uri: () => isImg(it.clip) ? null : it.clip.uri, hasOrig: () => !!it.clip.orig, applyMatte: m => { commit(() => swapClip(it, m), true); paintItem(); }, restoreOrig: () => { commit(() => restoreClip(it), true); paintItem(); }});
   body.insertAdjacentHTML('beforeend', `<div class="row" style="margin-top:12px"><button class="btn" id="itPlay">▶ Ansehen</button><button class="btn danger" id="itDel">Entfernen</button><button class="btn primary" id="itOk" style="margin-left:auto">Fertig</button></div>`);
   pinMode = it.type === 'zoom'; $('#stageHint').classList.toggle('hidden', !pinMode);
   openSheet(pinMode || it.type === 'pip' || it.type === 'broll');
@@ -2649,7 +2825,7 @@ function openItem(id){
   if (it.type !== 'zoom'){ const pv = $('#cPrev'); if (isImg(it.clip)){ pv.outerHTML = `<img id="cPrev" src="${MEDIA(it.clip.uri)}" style="width:100%;max-height:22vh;object-fit:contain;background:#000;border-radius:8px">`; } else { pv.src = MEDIA(it.clip.uri); pv.addEventListener('loadedmetadata', () => pv.currentTime = it.in, {once:true}); } }
   paintItem();
   body.onclick = e => {
-    const b = e.target.closest('button'); if (!b) return;
+    const b = e.target.closest('button'); if (!b || b.closest('.keyblk')) return;
     const seg = b.closest('.seg-ctl');
     if (seg){ const v = b.dataset.v;
       commit(() => { if (seg.id === 'zKind') it.kind = v; if (seg.id === 'cMode'){ it.type = v; if (v === 'insert') it.out = Math.max(it.out, Math.min(it.clip.duration, it.in + 1)); }
@@ -2706,7 +2882,7 @@ function renderExportForm(){
   $('#exCapcutDir').textContent = CAP.capcutDir ? `CapCut-Entwürfe: ${CAP.capcutDir}` : 'CapCut wurde auf diesem Computer nicht gefunden – das Projekt wird als Ordner und ZIP gespeichert.';
   $('#exCapcutInstall').disabled = !CAP.capcutDir; if (!CAP.capcutDir) $('#exCapcutInstall').checked = false;
   $('#exConcatDir').textContent = CAP.concatDir ? `Wird gespeichert in: ${CAP.concatDir}` : '';
-  $('#exQualityRow').dataset.fmt = CAP.platform === 'android' ? 'keins' : 'video';
+  $('#exQualityRow').dataset.fmt = 'video';   // Qualität gibt es auf allen Plattformen (Android: Bitrate des Encoders)
   $('#exNote').textContent = CAP.platform === 'web' ? 'Das Video wird in deinem Browser berechnet und danach heruntergeladen – nichts verlässt dein Gerät. Lass diesen Tab während des Exports geöffnet. Untertitel kommen zusätzlich als SRT-Datei mit.'
     : CAP.platform === 'android' ? 'Das Video landet direkt in deiner Galerie (Ordner „HoneyCut“). Bitte die App während des Exports geöffnet lassen.'
     : 'Die Dateien landen im Ordner „…_honeycut“ neben deinem ersten Video. Untertitel kommen zusätzlich als SRT-Datei mit.';
@@ -2740,6 +2916,8 @@ function wrapTitle(text, size, font, W, H){
     out.push(cur); }
   return out.join('\n');
 }
+// Freistellen im Plan: Farben als #rrggbb, Toleranz/weicher Rand wie ffmpeg „chromakey“ (similarity/blend), Hauptbild mit Hintergrundfarbe
+function planKey(k, main){ const n = ChromaGL.norm(k); const o = {colors: n.colors.map(c => c.toLowerCase()), tol: +n.tol.toFixed(3), soft: +n.soft.toFixed(3), spill: !!n.spill}; if (main) o.bg = (k.bg || '#000000').toLowerCase(); return o; }
 function buildPlan(){
   const [W, H] = outSize();
   const segs = timeline.map(g => {
@@ -2750,12 +2928,15 @@ function buildPlan(){
     const fx = g.fx || FX_DEF;
     return {kind:'main', src:g.si, uri:s.uri, in:r3(g.in - off), out:r3(g.out - off), zooms:zs, hasAudio: s.hasAudio !== false, hasVideo: hasVid(s),
       speed:+(fx.speed || 1), vol:+((fx.vol ?? 1) * srcVol(g.si)).toFixed(3), bright:+(fx.bright || 0), contrast:+(fx.contrast || 0), sat:+(fx.sat || 0), gray:!!fx.gray,
-      ...(f2 => ({tx:r3(f2.tx || 0), ty:r3(f2.ty || 0), sc:+(f2.sc || 1).toFixed(4)}))(frameFx({tx:+(fx.tx || 0), ty:+(fx.ty || 0), sc:+(fx.sc || 1)}))};
+      ...(f2 => ({tx:r3(f2.tx || 0), ty:r3(f2.ty || 0), sc:+(f2.sc || 1).toFixed(4)}))(frameFx({tx:+(fx.tx || 0), ty:+(fx.ty || 0), sc:+(fx.sc || 1)})),
+      ...(kf => kf ? {kf: kf.map(k => { const f2 = frameFx({tx:+(k.tx || 0), ty:+(k.ty || 0), sc:+(k.sc || 1)}); return {t:r3(fxItemOf(g).at + k.t - g.in), tx:r3(f2.tx || 0), ty:r3(f2.ty || 0), sc:+(f2.sc || 1).toFixed(4)}; })} : {})(mainKf(g)),
+      ...(k => k ? {key: planKey(k, true)} : {})(mainKeyOf(g))};
   });
   const ovs = overlays.map(o => ({mode:o.x.type, image: isImg(o.x.clip), uri:o.x.clip.uri, in:o.x.in, out:r3(o.x.in + (o.end - o.at)), at:r3(o.at), corner:o.x.corner || 'or', size:o.x.size || 0.33,
     ...(o.x.w != null || (o.x.kf && o.x.kf.length) || hasCrop(o.x) ? (() => { const v = elVals(o.x, 0) || coverVals(o.x); return {x:r3(v.x), y:r3(v.y), w:r3(v.w)}; })() : {}),
     ...(o.x.kf && o.x.kf.length ? {kf: o.x.kf.filter(k => k.t <= o.end - o.at + 0.01).map(k => ({t:k.t, x:k.x, y:k.y, w:k.w}))} : {}),
     ...(hasCrop(o.x) ? {crop: (c => ({l:r3(c.l), t:r3(c.t), r:r3(c.r), b:r3(c.b)}))(cropOf(o.x))} : {}),
+    ...(keyOn(o.x.key) ? {key: planKey(o.x.key, false)} : {}),
     aspect:+elAspect(o.x).toFixed(5), track: elTrack(o.x), vol:+(o.x.vol || 0), hasAudio: o.x.clip.hasAudio !== false && !isImg(o.x.clip),
     width:o.x.clip.width, height:o.x.clip.height, rotation:o.x.clip.rotation || 0}))
     .concat(audios.map(a => ({mode:'audio', image:false, uri:a.x.clip.uri, in:r3(a.x.in), out:r3(a.x.in + (a.end - a.at)), at:r3(a.at), track:a.x.track || 1, vol:+(a.x.vol ?? 1), hasAudio:true})));

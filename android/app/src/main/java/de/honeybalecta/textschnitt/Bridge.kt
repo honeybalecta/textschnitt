@@ -201,6 +201,13 @@ class Bridge(private val act: MainActivity) {
     }
 
     @JavascriptInterface
+    fun autoMatte(uri: String): String {
+        val job = Jobs.create()
+        main.post { try { Matte.start(ctx, uri, job); WorkService.track(ctx, job, "Freistellen") } catch (e: Throwable) { job.fail(e) } }
+        return job.id
+    }
+
+    @JavascriptInterface
     fun makeProxy(uri: String): String {
         val job = Jobs.create()
         main.post { try { Proxy.start(ctx, uri, job) } catch (e: Throwable) { job.fail(e) } }
@@ -283,7 +290,7 @@ class Bridge(private val act: MainActivity) {
     @JavascriptInterface
     fun info(): String = JSONObject().apply {
         put("platform", "android")
-        put("exportFormats", JSONArray().put("video").put("audio")); put("audioFormats", JSONArray().put("m4a"))
+        put("exportFormats", JSONArray().put("video").put("audio")); put("audioFormats", JSONArray().put("m4a")); put("matte", true)
         put("version", ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName)
         put("whisper", runCatching { Whisper.systemInfo() }.getOrDefault("?"))
     }.toString()

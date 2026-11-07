@@ -81,16 +81,23 @@ function thumbs(b, uri, inS, d, aspect, speed = 1){
 function wave(b, src, inS, d, speed = 1){
   if (src && !src.env && src.uri){ const ps = P.sources.find(x => x.uri === src.uri && x.env); if (ps) src = ps; }
   const a = src && src.env ? envArr(src) : src && envDone.get(src.uri); if (!a) return;
-  const w = Math.max(2, Math.round(d / speed * TL.pps)), h = 16, c = document.createElement('canvas'); c.className = 'wave'; c.width = w; c.height = h;
-  const ctx = c.getContext('2d');
+  // Höhe nach Block: Tonspur ganz, Hauptspur gut ein Drittel, Videospuren knapp die Hälfte; gezeichnet in Gerätepixeln (scharf am Handy)
+  const full = b.classList.contains('aud'), ovl = b.classList.contains('ovl'), cs = getComputedStyle(tlInner);
+  const bh = parseFloat(cs.getPropertyValue(full ? '--ah' : ovl ? '--oh' : '--mh')) || 60, h = full ? Math.max(14, bh - 6) : Math.max(16, Math.round(bh * (ovl ? 0.45 : 0.36)));
+  const w = Math.max(2, Math.round(d / speed * TL.pps)), dpr = Math.min(3, devicePixelRatio || 1), c = document.createElement('canvas'); c.className = 'wave';
+  c.width = Math.round(w * dpr); c.height = Math.round(h * dpr); c.style.width = w + 'px'; c.style.height = h + 'px';
+  const ctx = c.getContext('2d'); ctx.scale(dpr, dpr);
   const bs = (src && src.env && burstsOf(src)) || [];
-  for (let x = 0; x < w; x++){
-    const t0 = inS + x / TL.pps * speed, t1 = inS + (x + 1) / TL.pps * speed; let m = 0;
+  // Leicht abgedunkelter Streifen als Hintergrund, Ton als Säulen: Sprache in Orange, Übriges in Creme
+  ctx.fillStyle = full ? 'rgba(0,0,0,0)' : 'rgba(0,0,0,.42)'; ctx.fillRect(0, 0, w, h);
+  const step = 1 / dpr;
+  for (let x = 0; x < w; x += step){
+    const t0 = inS + x / TL.pps * speed, t1 = inS + (x + step) / TL.pps * speed; let m = 0;
     for (let i = Math.floor(t0 * 100); i <= Math.floor(t1 * 100) && i < a.length; i++) m = Math.max(m, a[i]);
     const v = Math.max(0, (m / 2.8 - 90 + 60) / 60);
     const sp = bs.some(x => t0 < x[1] && t1 > x[0]);
-    ctx.fillStyle = sp ? 'rgba(232,155,12,.95)' : 'rgba(255,255,255,.4)';
-    const y = Math.round(v * (h - 2)); ctx.fillRect(x, h - y, 1, y);
+    ctx.fillStyle = sp ? 'rgba(240,160,30,.95)' : 'rgba(237,231,218,.62)';
+    const y = Math.max(v > 0.02 ? 1 : 0, v * (h - 2)); ctx.fillRect(x, h - y, step, y);
   }
   b.append(c);
 }
@@ -117,7 +124,9 @@ function renderMain(pad){
       const [sw, sh] = dispSize(s); b._m = {uri: hasVid(s) ? s.uri : null, src: s, inS: g.in - s.off, d: g.out - g.in, aspect: sw / sh, speed: g.speed || 1};
       if (!hasVid(s)) b.classList.add('audio'); paintMedia(b, b._m);
       if (multi && g.si !== lastSi) lbl = `${g.si + 1} · `; lastSi = g.si;
-      const fb = fxBadges(g.fx); if (fb) b.insertAdjacentHTML('beforeend', `<span class="badge">${fb}</span>`); }
+      const fb = fxBadges(g.fx); if (fb) b.insertAdjacentHTML('beforeend', `<span class="badge">${fb}</span>`);
+      const fi = fxItemOf(g); for (const k of (fi && fi.fx && fi.fx.kf) || []){ const st = fi.at + k.t; if (st < g.in - 0.01 || st > g.out + 0.01) continue;
+        const d = document.createElement('i'); d.className = 'kf'; d.dataset.o = r3(g.o + (st - g.in) / (g.speed || 1)); d.style.left = ((st - g.in) / (g.speed || 1) * TL.pps) + 'px'; d.title = 'Keyframe – antippen springt hierher'; b.append(d); } }
     else { const c = g.item.clip; b._m = isImg(c) ? {img: c.uri, inS: 0, d: g.out - g.in} : {uri: c.uri, inS: g.in, d: g.out - g.in, aspect: (c.width && c.height) ? dispSize(c)[0] / dispSize(c)[1] : asp, src: {uri: c.uri}}; paintMedia(b, b._m); lbl = 'Einschub · '; }
     b.insertAdjacentHTML('beforeend', `<span class="lbl">${lbl}${fmtD(d)} s</span>`);
     tr.append(b);
@@ -320,7 +329,9 @@ tlInner.addEventListener('click', e => {
   if (TL.drag && TL.drag.moved) return;
   const b = e.target.closest('.blk');
   const k = b && blkKey(b);
-  if (e.target.classList.contains('kf')){ const it = P.items.find(x => x.id === b.dataset.id), a = it && ovOf(it); if (a){ if (playing) pausePlay(); seekOut(a.at + +e.target.dataset.t, false); placeHead(outPos); selectBlock(b); } return; }
+  if (e.target.classList.contains('kf')){
+    if (e.target.dataset.o != null){ if (playing) pausePlay(); seekOut(+e.target.dataset.o, false); placeHead(outPos); selectBlock(b); return; }
+    const it = P.items.find(x => x.id === b.dataset.id), a = it && ovOf(it); if (a){ if (playing) pausePlay(); seekOut(a.at + +e.target.dataset.t, false); placeHead(outPos); selectBlock(b); } return; }
   if (TL.pick){ if (k){ if (TL.pick.has(k)) TL.pick.delete(k); else TL.pick.add(k); paintLinks(); updateTools(); } return; }
   if (k && (e.ctrlKey || e.metaKey || e.shiftKey) && selKey() && selKey() !== k){ startPick(k); return; }
   if (!b){ select(null); if (TL.mode === 'move' && !e.target.closest('.ruler')){ if (playing) pausePlay(); seekOut(timeAtX(e.clientX), false); placeHead(outPos); } return; }
@@ -575,7 +586,8 @@ function toolListBase(){
   const s = TL.sel; const g = s && (s.kind === 'main' || s.kind === 'insert') ? timeline[s.i] : null;
   if (!s) return [T('📱', 'Clip ab hier …', () => clipDialog(outPos, Math.min(total, outPos + 30))), T('✂', 'Teilen', splitHere), T('⌫', 'Bis hier weg', () => cutTo('l')), T('⌦', 'Ab hier weg', () => cutTo('r')), T('＋', 'Clip', addClip), T('T', 'Titel', addTitle), T('💬', 'Untertitel', addOwnCue), T('🔍', 'Zoom', addZoom),
     ...(P.moves.length ? [T('↺', 'Reihenfolge zurück', () => { commit(() => P.moves = [], true); if (tokens.length) renderTranscript(); toast('Ursprüngliche Reihenfolge'); })] : [])];
-  if (s.kind === 'main') return [T('📱', 'Als Clip …', () => clipDialog(g.o, g.o + segDur(g))), T('✂', 'Teilen', splitHere), T('⚙', 'Anpassen', () => openFx(g)), T('🗑', 'Löschen', delSel, 'danger'), T('⇤', 'Anfang −1', () => nudge('l', -1)), T('⇥', 'Anfang +1', () => nudge('l', 1)),
+  if (s.kind === 'main') return [T('📱', 'Als Clip …', () => clipDialog(g.o, g.o + segDur(g))), T('✂', 'Teilen', splitHere), T('⚙', 'Anpassen', () => openFx(g)),
+    T('◆', hasMainKfHere(g) ? 'Keyframe weg (M)' : 'Keyframe (M)', () => toggleMainKeyframe(g)), T('🗑', 'Löschen', delSel, 'danger'), T('⇤', 'Anfang −1', () => nudge('l', -1)), T('⇥', 'Anfang +1', () => nudge('l', 1)),
     T('⇤', 'Ende −1', () => nudge('r', -1)), T('⇥', 'Ende +1', () => nudge('r', 1)), T('🔍', 'Zoom', addZoom), T('T', 'Titel', addTitle), T('＋', 'Clip', addClip)];
   const cuts = [T('⌫', 'Bis hier weg', () => cutSel('l')), T('⌦', 'Ab hier weg', () => cutSel('r'))];
   if (s.kind === 'insert') return [T('🎞', 'Ausschnitt', () => openItem(g.item.id)), T('🗑', 'Löschen', delSel, 'danger'), ...cuts, T('⇄', 'Als B-Roll', () => convert('broll'))];
@@ -692,7 +704,8 @@ function addClip(){
   body.innerHTML = `<h3>Clip einfügen an der Abspiellinie</h3><p class="muted small">Videos und Fotos – alle eingefügten Dateien liegen danach auch in der Medienablage</p><div class="choice">
     <button class="tile" data-t="broll"><b>B-Roll</b><span>Bild drüber, dein Ton läuft weiter</span></button>
     <button class="tile" data-t="insert"><b>Einschub</b><span>Hauptvideo pausiert, Clip läuft mit eigenem Ton</span></button>
-    <button class="tile" data-t="pip"><b>Einblendung</b><span>Bild oder Video frei im Bild – Größe und Lage frei wählbar</span></button></div>`;
+    <button class="tile" data-t="pip"><b>Einblendung</b><span>Bild oder Video frei im Bild – Größe und Lage frei wählbar</span></button>
+    <button class="tile" data-t="audio"><b>Nur Ton</b><span>Nur die Tonspur der Datei, auf einer Tonspur – das Bild bleibt weg</span></button></div>`;
   openSheet(false);
   body.onclick = async e => {
     const b = e.target.closest('[data-t]'); if (!b) return; const type = b.dataset.t;
@@ -704,7 +717,7 @@ function addClip(){
 // Datei als Element einfügen: type broll | insert | pip, an Zeit o (Ergebnis), auf Spur track (oder frei)
 function placeMedia(m, type, o, track, short){
   if (!m) return;
-  if (m.kind === 'audio' || m.hasVideo === false) type = 'audio';   // Tondateien kommen immer auf eine Tonspur
+  if (m.kind === 'audio' || m.hasVideo === false) type = 'audio';   // Tondateien kommen immer auf eine Tonspur; Videos auf Wunsch auch (nur Ton)
   const clip = clipOfSource(m), img = clip.kind === 'image';
   if (o == null) o = outPos; o = clamp(o, 0, Math.max(0, total - 0.1));
   const at = r3(outToSrc(o));
@@ -714,7 +727,7 @@ function placeMedia(m, type, o, track, short){
     commit(() => { computeAudios(); const busy = k => audios.some(x => (x.x.track || 1) === k && x.at < o + len - 0.01 && x.end > o + 0.01);
       it = {id:newId(), type:'audio', at, clip, in:0, out:r3(len), vol:1, track: track && !busy(track) ? track : freeATrack(o, o + len)}; P.items.push(it); }, false);
     TL.sel = {kind:'aud', id: it.id}; renderTimeline(); seekOut(outPos, false); renderBin();
-    toast('Ton eingefügt – Lautstärke über „Lautstärke & Ausschnitt“'); return;
+    toast(clip.kind === 'video' ? 'Nur der Ton des Videos eingefügt – Lautstärke über „Lautstärke & Ausschnitt“' : 'Ton eingefügt – Lautstärke über „Lautstärke & Ausschnitt“'); return;
   }
   const len = img ? 4 : type === 'insert' ? clip.duration : short ? Math.min(clip.duration, 4) : Math.min(clip.duration, Math.max(0.5, total - o));
   let it; commit(() => {
@@ -775,9 +788,10 @@ function binMenu(m, x, y){
   const o = outPos;
   if (m.kind === 'audio' || m.hasVideo === false) return showMenu(x, y, [T('♪', 'Auf eine Tonspur an der Abspiellinie', () => placeMedia(m, 'audio', o))]);
   showMenu(x, y, [T('🎞', 'B-Roll an der Abspiellinie', () => placeMedia(m, 'broll', o)), T('▣', 'Einblendung an der Abspiellinie', () => placeMedia(m, 'pip', o)),
-    T('⇄', 'Einschub an der Abspiellinie', () => placeMedia(m, 'insert', o))]);
+    T('⇄', 'Einschub an der Abspiellinie', () => placeMedia(m, 'insert', o)),
+    ...(m.hasAudio === false ? [] : [T('♪', 'Nur den Ton auf eine Tonspur', () => placeMedia(m, 'audio', o))])]);
 }
-const s0kind = (m, t) => m.kind === 'audio' || m.hasVideo === false ? 'Ton' : t.kind === 'insert' ? 'Einschub' : 'B-Roll';
+const s0kind = (m, t) => m.kind === 'audio' || m.hasVideo === false || t.kind === 'audio' ? 'Ton' : t.kind === 'insert' ? 'Einschub' : 'B-Roll';
 // Ziehen aus der Ablage auf die Zeitleiste (Maus und Touch)
 (() => {
   const grid = $('#binGrid'); let g = null;
@@ -803,7 +817,7 @@ const s0kind = (m, t) => m.kind === 'audio' || m.hasVideo === false ? 'Ton' : t.
     tlInner.querySelectorAll('.drop').forEach(x => x.classList.remove('drop'));
     const t = target(e.clientX, e.clientY); g.t = t;
     if (t && t.el) t.el.classList.add('drop');
-    if (t){ const o = timeAtX(e.clientX); $('#tlInfo').textContent = `${t.kind === 'insert' ? 'Einschub' : 'B-Roll'} bei ${fmtS(o)} – loslassen zum Einfügen`;
+    if (t){ const o = timeAtX(e.clientX); $('#tlInfo').textContent = `${t.kind === 'insert' ? 'Einschub' : t.kind === 'audio' ? 'Nur Ton' : 'B-Roll'} bei ${fmtS(o)} – loslassen zum Einfügen`;
       if (TL.mode === 'move') { seekOut(o, false); placeHead(o); } }
   });
   const end = e => {
@@ -813,7 +827,7 @@ const s0kind = (m, t) => m.kind === 'audio' || m.hasVideo === false ? 'Ton' : t.
     if (!s.moved){ binMenu(s.m, e.clientX, e.clientY); return; }
     const t = s.t; if (!t){ updateTools(); return; }
     const o = timeAtX(e.clientX);
-    const isAud = s.m.kind === 'audio' || s.m.hasVideo === false;
+    const isAud = s.m.kind === 'audio' || s.m.hasVideo === false || t.kind === 'audio';   // Video auf eine Tonspur gezogen: nur sein Ton
     placeMedia(s.m, isAud ? 'audio' : t.kind === 'insert' ? 'insert' : 'broll', o, isAud === (t.kind === 'audio') ? t.track : null);
   };
   grid.addEventListener('pointerup', end); grid.addEventListener('pointercancel', () => { if (g && g.ghost) g.ghost.remove(); g = null; });
@@ -873,7 +887,12 @@ function openFxItem(it){
     <div class="field"><span>Sättigung <b id="fxSatV"></b></span><input type="range" id="fxSat" min="-100" max="100" step="5"></div>
     <label class="row"><input type="checkbox" id="fxGray"> Schwarzweiß</label>
     <p class="muted small">Gilt für den gewählten Bereich (${fmtS(itemOutRange(it)[0])} – ${fmtS(itemOutRange(it)[1])}). Lautstärke über 100 % hört man erst im Export.</p>
+    <div id="fxKeyHost"></div>
     <div class="row" style="margin-top:12px"><button class="btn" id="fxReset">Zurücksetzen</button><button class="btn danger" id="fxDel">Entfernen</button><button class="btn primary" id="fxOk" style="margin-left:auto">Fertig</button></div>`;
+  const keySrc = () => { const g = timeline[segAtOut(Math.max(itemOutRange(it)[0], Math.min(outPos, itemOutRange(it)[1] - 0.01)))]; return g && g.kind === 'main' ? g.si : (timeline.find(x => x.kind === 'main') || {}).si; };
+  const keyUi = keyBlock($('#fxKeyHost'), {main: true, get: () => it.fx.key || null, set: k => { it.fx.key = k; }, el: () => V,
+    uri: () => { const si = keySrc(); const s = si != null && P.sources[si]; return s && hasVid(s) ? s.uri : null; }, hasOrig: () => { const si = keySrc(); return !!(si != null && P.sources[si] && P.sources[si].orig); },
+    applyMatte: m => swapSource(keySrc(), m), restoreOrig: () => restoreSource(keySrc())});
   openSheet(true);
   const before = snapshot();
   const paint = () => { const f = it.fx; $$('#fxSpeed button').forEach(b => b.classList.toggle('on', Math.abs(+b.dataset.v - f.speed) < 0.001)); $('#fxSpeedV').textContent = String(f.speed).replace('.', ',') + '×';
@@ -883,7 +902,7 @@ function openFxItem(it){
   const upd = () => { it.fx.vol = +$('#fxVol').value; it.fx.bright = +$('#fxBright').value; it.fx.contrast = +$('#fxContrast').value; it.fx.sat = +$('#fxSat').value; it.fx.gray = $('#fxGray').checked; paint(); changed(true); seekOut(outPos, false); };
   ['fxVol', 'fxBright', 'fxContrast', 'fxSat', 'fxGray'].forEach(i => $('#' + i).addEventListener('input', upd));
   $('#fxSpeed').onclick = e => { const b = e.target.closest('button'); if (!b) return; it.fx.speed = +b.dataset.v; paint(); changed(true); seekOut(outPos, false); };
-  $('#fxReset').onclick = () => { it.fx = {...FX_DEF}; paint(); changed(true); seekOut(outPos, false); };
+  $('#fxReset').onclick = () => { it.fx = {...FX_DEF}; paint(); keyUi.paint(); changed(true); seekOut(outPos, false); drawKeyFrames(); if (window.renderTimeline) renderTimeline(); };
   $('#fxDel').onclick = () => { closeSheet(); commit(() => P.items = P.items.filter(x => x !== it)); };
   $('#fxOk').onclick = () => { const same = JSON.stringify(it.fx) === JSON.stringify(FX_DEF); if (same) P.items = P.items.filter(x => x !== it); undo.push(before); redo = []; closeSheet(); changed(true); };
   body.onclick = null;
@@ -1240,7 +1259,7 @@ const KEYS = [
   ['Strg + B', 'an der Abspiellinie teilen'], ['Strg + C / X / V', 'Element kopieren / ausschneiden / an der Abspiellinie einfügen'], ['Strg + D', 'Element duplizieren (direkt dahinter)'], ['Q / W', 'links / rechts der Abspiellinie löschen (mit ausgewähltem Element: nur dessen Teil)'],
   ['Entf / Rücktaste', 'Auswahl löschen'], ['Alt + ← / →', 'Auswahl um ein Bild verschieben'],
   [', / .', 'Anfang / Ende der Auswahl zur Abspiellinie trimmen'],
-  ['M', 'Keyframe an der Abspiellinie setzen / entfernen (ausgewählte Einblendung)'], ['U', 'Untertitel weggeschnittener Wörter behalten / wieder weg (markierte Wörter oder ausgewählter Untertitel)'], ['F', 'Vollbild-Vorschau'],
+  ['M', 'Keyframe an der Abspiellinie setzen / entfernen (ausgewählter Clip oder Einblendung)'], ['U', 'Untertitel weggeschnittener Wörter behalten / wieder weg (markierte Wörter oder ausgewählter Untertitel)'], ['F', 'Vollbild-Vorschau'],
   ['Strg / Umschalt + Klick', 'Objekte zum Verbinden auswählen'], ['Umschalt + Mausrad', 'Spuren senkrecht scrollen'],
   ['Element senkrecht ziehen', 'auf eine andere Videospur legen'],
   ['T', 'Titel an der Abspiellinie'], ['E', 'Clip anpassen (Tempo, Lautstärke, Farbe)'], ['S', 'Einrasten an / aus'],
@@ -1334,7 +1353,8 @@ document.addEventListener('keydown', e => {
       return; }
     case 't': case 'T': if (studioOn()){ handled(); addTitle(); } return;
     case 'm': case 'M': if (studioOn()){ handled(); const it = TL.sel && TL.sel.kind === 'ovl' ? selItem() : (curPip || null);
-      if (!it) toast('Erst eine Einblendung auswählen, dann M setzt an der Abspiellinie einen Keyframe'); else { if (!TL.sel || TL.sel.id !== it.id) select({kind:'ovl', id:it.id}); toggleKeyframe(it); } } return;
+      if (!it && TL.sel && TL.sel.kind === 'main'){ toggleMainKeyframe(timeline[TL.sel.i]); return; }
+      if (!it) toast('Erst einen Clip oder eine Einblendung auswählen – M setzt dann an der Abspiellinie einen Keyframe'); else { if (!TL.sel || TL.sel.id !== it.id) select({kind:'ovl', id:it.id}); toggleKeyframe(it); } } return;
     case 'e': case 'E': if (studioOn()){ handled(); const g = curMainSeg(); if (g) openFx(g); } return;
     case 's': case 'S': if (studioOn()){ handled(); $('#snapBtn').click(); } return;
     case 'Delete': case 'Backspace':

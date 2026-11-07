@@ -203,7 +203,15 @@ function kfAt(kf, rel){
 }
 function segFx(s){
   return {speed: clamp(+s.speed || 1, 0.25, 4), vol: clamp(s.vol == null ? 1 : +s.vol, 0, 4), bright:+s.bright || 0, contrast:+s.contrast || 0, sat:+s.sat || 0, gray:!!s.gray,
-    tx:+s.tx || 0, ty:+s.ty || 0, sc: clamp(+s.sc || 1, 0.002, 400)};
+    tx:+s.tx || 0, ty:+s.ty || 0, sc: clamp(+s.sc || 1, 0.002, 400), kf: Array.isArray(s.kf) && s.kf.length ? s.kf.map(k => ({t:+k.t || 0, tx:+k.tx || 0, ty:+k.ty || 0, sc: clamp(+k.sc || 1, 0.002, 400)})).sort((a, b) => a.t - b.t) : null};
+}
+// Keyframes der Hauptspur: Lage/Größe zum Zeitpunkt rel (Quellsekunden ab Abschnittsbeginn)
+function mainAt(fx, rel){
+  const kf = fx.kf; if (!kf) return fx;
+  const n = kf.length; if (rel <= kf[0].t) return kf[0]; if (rel >= kf[n-1].t) return kf[n-1];
+  for (let i = 0; i < n - 1; i++){ const a = kf[i], b = kf[i+1]; if (rel < b.t){ const f = (rel - a.t) / Math.max(1e-6, b.t - a.t);
+    return {tx: a.tx + (b.tx - a.tx) * f, ty: a.ty + (b.ty - a.ty) * f, sc: a.sc + (b.sc - a.sc) * f}; } }
+  return kf[n-1];
 }
 
 // Gibt das fertige Ergebnis als Blob/File zurück; job: {cancel, progress, message}
@@ -454,7 +462,8 @@ class Renderer {
     const {ctx, W, H, fps} = this, speed = s.fx.speed;
     const file = s.hasVideo === false ? null : this.fileOf(s.uri);
     // Vergrößerter Bildausschnitt (z. B. 9:16 aus 16:9): Grundbild in höherer Auflösung holen, damit nichts unscharf hochskaliert wird
-    const kq = s.kind === 'main' && s.fx.sc > 1.001 ? Math.min(s.fx.sc, 4096 / Math.max(W, H)) : 1;
+    const scMax = s.kind === 'main' ? Math.max(s.fx.sc, ...((s.fx.kf || []).map(k => k.sc))) : 1;
+    const kq = scMax > 1.001 ? Math.min(scMax, 4096 / Math.max(W, H)) : 1;
     const BW = Math.max(2, Math.round(W * kq / 2) * 2), BH = Math.max(2, Math.round(H * kq / 2) * 2);
     if (this.base.width !== BW || this.base.height !== BH){ this.base.width = BW; this.base.height = BH; this.bctx = this.base.getContext('2d', {alpha:false}); }
     let it = null, bm = null, last = null;
@@ -474,14 +483,16 @@ class Renderer {
         // Grundbild
         const b = this.bctx; b.fillStyle = '#000'; b.fillRect(0, 0, BW, BH);
         if (bm) drawFit(b, bm, 0, 0, BW, BH, false); else if (last) b.drawImage(last, 0, 0);
+        const base = s.kind === 'main' && s.key ? this.keyed(this.base, {...s.key, bg: s.key.bg || '#000000'}, 'main', 4096) : this.base;
         ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
         const flt = s.kind === 'main' ? cssFilter(s.fx) : '';
         const z = s.kind === 'main' ? zoomAt(s.zooms, st) : {s:1};
         if (flt && this.canFilter) ctx.filter = flt;
-        const tf = s.kind === 'main' && (Math.abs(s.fx.sc - 1) > 1e-3 || s.fx.tx || s.fx.ty);
-        if (tf){ ctx.save(); ctx.translate(W / 2 + s.fx.tx * W, H / 2 + s.fx.ty * H); ctx.scale(s.fx.sc, s.fx.sc); ctx.translate(-W / 2, -H / 2); }
-        if (z.s > 1.001){ const sw = BW / z.s, sh = BH / z.s; ctx.drawImage(this.base, z.cx * BW * (1 - 1 / z.s), z.cy * BH * (1 - 1 / z.s), sw, sh, 0, 0, W, H); }
-        else ctx.drawImage(this.base, 0, 0, W, H);
+        const mf = s.kind === 'main' ? mainAt(s.fx, st - s.in) : s.fx;
+        const tf = s.kind === 'main' && (Math.abs(mf.sc - 1) > 1e-3 || mf.tx || mf.ty);
+        if (tf){ ctx.save(); ctx.translate(W / 2 + mf.tx * W, H / 2 + mf.ty * H); ctx.scale(mf.sc, mf.sc); ctx.translate(-W / 2, -H / 2); }
+        if (z.s > 1.001){ const sw = BW / z.s, sh = BH / z.s; ctx.drawImage(base, z.cx * BW * (1 - 1 / z.s), z.cy * BH * (1 - 1 / z.s), sw, sh, 0, 0, W, H); }
+        else ctx.drawImage(base, 0, 0, W, H);
         if (tf) ctx.restore();
         if (flt && this.canFilter) ctx.filter = 'none';
         if (flt && !this.canFilter) manualFx(ctx, W, H, s.fx);
@@ -523,10 +534,21 @@ class Renderer {
         }
       }
       if (st.it){ const r = await st.it.next(); if (r.value) st.last = r.value.canvas; }
-      if (cr){ const im = st.bm || st.last; if (im){ const iw = im.width, ih = im.height; ctx.drawImage(im, cl * iw, ct * ih, cw * iw, chh * ih, rect[0], rect[1], rect[2], rect[3]); } }
-      else if (st.bm) drawFit(ctx, st.bm, ...rect, true);
-      else if (st.last) ctx.drawImage(st.last, rect[0], rect[1], rect[2], rect[3]);
+      let im = st.bm || st.last;
+      if (im && o.key) im = this.keyed(im, o.key, o, 2048);   // freigestellt (Greenscreen)
+      if (!im) continue;
+      if (cr){ const iw = im.width, ih = im.height; ctx.drawImage(im, cl * iw, ct * ih, cw * iw, chh * ih, rect[0], rect[1], rect[2], rect[3]); }
+      else if (st.bm) drawFit(ctx, im, ...rect, true);
+      else ctx.drawImage(im, rect[0], rect[1], rect[2], rect[3]);
     }
+  }
+  // Freistellen per Farbschlüssel: dieselbe Rechnung wie in der Vorschau (chroma.js); liefert eine Leinwand mit dem freigestellten Bild
+  keyed(im, key, slot, cap){
+    const CG = typeof ChromaGL !== 'undefined' ? ChromaGL : (typeof window !== 'undefined' ? window.ChromaGL : null); if (!CG) return im;
+    this.keyGL ||= new Map(); let g = this.keyGL.get(slot);
+    if (!g){ try { g = CG.create(2, 2); } catch(_){ g = null; } if (!g) return im; this.keyGL.set(slot, g); }
+    const iw = im.width, ih = im.height, f = Math.min(1, cap / Math.max(iw, ih));
+    return g.draw(im, key, Math.max(2, Math.round(iw * f)), Math.max(2, Math.round(ih * f))) ? g.canvas : im;
   }
   endOverlay(o){ const st = this.ovState.get(o); if (st && st.it && !st.done){ st.done = true; st.it.return && st.it.return(); } }
   text(t){
@@ -557,7 +579,7 @@ class Renderer {
       });
     }
   }
-  close(){ for (const st of this.ovState.values()) if (st.it && !st.done && st.it.return) st.it.return(); }
+  close(){ for (const st of this.ovState.values()) if (st.it && !st.done && st.it.return) st.it.return(); if (this.keyGL){ for (const g of this.keyGL.values()) g.destroy(); this.keyGL.clear(); } }
 }
 function wrapRows(ctx, text, maxW){
   const out = [];
@@ -588,6 +610,88 @@ function manualFx(ctx, W, H, fx){
 }
 
 // ───────── Vorschau-Datei für Formate, die der Browser nicht abspielt ─────────
+// ───────── Automatisch freistellen: Person erkennen, Rest in Schlüsselgrün ─────────
+// Die Personenerkennung kommt von MediaPipe (Selfie-Segmentierung) und wird beim ersten Mal aus dem Netz geladen;
+// das Ergebnis ist ein normales Video mit grünem Hintergrund, das danach wie ein Greenscreen freigestellt wird.
+const MP_VER = '0.10.14';
+const MP_CDN = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VER}`;
+const MP_MODEL = 'https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter_landscape/float16/latest/selfie_segmenter_landscape.tflite';
+export const MATTE_BG = '#00ff00';
+let mpSeg = null;
+async function segmenter(job){
+  if (mpSeg) return mpSeg;
+  job.message = 'Lade Personenerkennung (einmalig, ca. 10 MB) …';
+  const mp = await import(/* webpackIgnore: true */ `${MP_CDN}/vision_bundle.mjs`);
+  const vision = await mp.FilesetResolver.forVisionTasks(`${MP_CDN}/wasm`);
+  const make = delegate => mp.ImageSegmenter.createFromOptions(vision, {baseOptions: {modelAssetPath: MP_MODEL, delegate}, runningMode: 'VIDEO', outputConfidenceMasks: true, outputCategoryMask: false});
+  try { mpSeg = await make('GPU'); } catch(_){ mpSeg = await make('CPU'); }
+  return mpSeg;
+}
+export async function autoMatte(file, job){
+  await ensureEncoders();
+  const v = await videoTrack(file); if (!v) throw new Error('Freistellen geht nur mit Videos.');
+  const seg = await segmenter(job);
+  const W = (await v.getDisplayWidth()) & ~1, H = (await v.getDisplayHeight()) & ~1, dur = await inputOf(file).input.computeDuration();
+  let fps = 30; try { const st = await v.computePacketStats(120); if (st.averagePacketRate > 1 && st.averagePacketRate <= 120) fps = st.averagePacketRate; } catch(_){}
+  const codec = await getFirstEncodableVideoCodec(['avc', 'vp9', 'av1'], {width: W, height: H});
+  if (!codec) throw new Error('Dieser Browser kann kein Video in dieser Größe kodieren.');
+  let handle = null, writable = null, target;
+  try { const root = await navigator.storage.getDirectory(); handle = await root.getFileHandle(`matte-${Date.now()}.mp4`, {create: true}); writable = await handle.createWritable(); target = new StreamTarget(writable, {chunked: true, chunkSize: 8 << 20}); }
+  catch(_){ handle = null; writable = null; target = new BufferTarget(); }
+  const output = new Output({format: new Mp4OutputFormat({fastStart: writable ? false : 'in-memory'}), target});
+  const canvas = document.createElement('canvas'); canvas.width = W; canvas.height = H; const ctx = canvas.getContext('2d', {alpha: false});
+  const vsrc = new CanvasSource(canvas, {codec, quality: new Quality('very_high'), keyFrameInterval: 2});
+  output.addVideoTrack(vsrc, {frameRate: fps});
+  const a = await audioTrack(file), asrc = a ? new AudioSampleSource({codec: 'aac', quality: new Quality({bitrate: 192e3})}) : null;
+  if (asrc) output.addAudioTrack(asrc);
+  await output.start();
+  // Erkennung auf verkleinertem Bild (höchstens 512 px Kante), Maske wird weich hochskaliert
+  const k = Math.min(1, 512 / Math.max(W, H)), sw = Math.max(2, Math.round(W * k)), sh = Math.max(2, Math.round(H * k));
+  const small = document.createElement('canvas'); small.width = sw; small.height = sh; const sctx = small.getContext('2d', {alpha: false, willReadFrequently: true});
+  const mask = document.createElement('canvas'); mask.width = sw; mask.height = sh; const mctx = mask.getContext('2d');
+  const mimg = mctx.createImageData(sw, sh), md = mimg.data; for (let i = 0; i < md.length; i += 4){ md[i] = md[i + 1] = md[i + 2] = 255; }
+  const off = await firstTs(file), t0 = performance.now();
+  let n = 0, last = -1;
+  try {
+    const sink = new CanvasSink(v, {width: W, height: H, fit: 'contain', poolSize: 3});
+    for await (const fr of sink.canvases()){
+      if (job.cancel) throw new Error('Abgebrochen');
+      const t = Math.max(0, fr.timestamp - off);
+      sctx.drawImage(fr.canvas, 0, 0, sw, sh);
+      const ms = Math.max(last + 1, Math.round(t * 1000)); last = ms;
+      const res = seg.segmentForVideo(small, ms);
+      try {
+        const m = res.confidenceMasks && res.confidenceMasks[0]; if (m){
+          const f = m.getAsFloat32Array(), mw = m.width, mh = m.height;
+          if (mw === sw && mh === sh){ for (let i = 0, j = 3; i < f.length; i++, j += 4) md[j] = f[i] * 255; }
+          else for (let y = 0; y < sh; y++){ const yy = Math.min(mh - 1, Math.floor(y * mh / sh)) * mw; for (let x = 0; x < sw; x++) md[(y * sw + x) * 4 + 3] = f[yy + Math.min(mw - 1, Math.floor(x * mw / sw))] * 255; }
+        }
+      } finally { if (res.close) res.close(); }
+      mctx.putImageData(mimg, 0, 0);
+      ctx.globalCompositeOperation = 'source-over'; ctx.drawImage(fr.canvas, 0, 0, W, H);
+      ctx.globalCompositeOperation = 'destination-in'; ctx.drawImage(mask, 0, 0, W, H);
+      ctx.globalCompositeOperation = 'destination-over'; ctx.fillStyle = MATTE_BG; ctx.fillRect(0, 0, W, H);
+      ctx.globalCompositeOperation = 'source-over';
+      await vsrc.add(t, fr.duration || 1 / fps);
+      n++;
+      if (n % 5 === 0){ job.progress = clamp(t / Math.max(0.1, dur), 0, 0.99); const el = (performance.now() - t0) / 1000, rest = t > 0.5 ? el / t * (dur - t) : 0;
+        job.message = `Person wird freigestellt … ${fmt(t)} von ${fmt(dur)}` + (rest > 90 ? ` · noch ca. ${fmt(rest)}` : ''); }
+    }
+    vsrc.close();
+    if (asrc){
+      const A = new AudioWriter(asrc); await segmentAudio({uri: '', in: 0, out: dur, fx: {speed: 1, vol: 1}}, Math.round(dur * SR), () => file, A, job); await A.flush(); asrc.close();
+    }
+    job.message = 'Datei wird fertiggestellt …';
+    await output.finalize();
+  } catch(e){
+    try { await output.cancel(); } catch(_){}
+    if (handle) try { (await navigator.storage.getDirectory()).removeEntry(handle.name); } catch(_){}
+    throw e;
+  }
+  const blob = handle ? await handle.getFile() : new Blob([output.target.buffer], {type: 'video/mp4'});
+  return {blob, opfsName: handle ? handle.name : null, width: W, height: H, fps: +fps.toFixed(3), duration: +(+dur).toFixed(3), hasAudio: !!a, frames: n};
+}
+
 export async function makeProxy(file, job){
   await ensureEncoders();
   let handle = null, writable = null, target;

@@ -379,6 +379,16 @@
       return {uri:id, playable:id, files: names, note: `Fertig – „${name}“ (${mb} MB) wurde heruntergeladen.`};
     });
   }
+  function autoMatte(uri){
+    const file = need(uri);
+    return newJob(async job => {
+      const eng = await E(), r = await eng.autoMatte(file, job);
+      const key = r.opfsName ? 'opfs:' + r.opfsName : 'mem:' + newId();
+      files.set(key, r.blob instanceof File ? r.blob : new File([r.blob], 'freigestellt.mp4', {type:'video/mp4'}));
+      const stem = String(file.name || 'Video').replace(/\.[^.]+$/, '');
+      return {uri: key, name: stem + ' – freigestellt', kind: 'video', duration: r.duration, width: r.width, height: r.height, rotation: 0, fps: r.fps, hasAudio: r.hasAudio, hasVideo: true, orig: uri};
+    });
+  }
   function makeProxy(uri){
     const file = need(uri);
     return newJob(async job => {
@@ -474,7 +484,7 @@
   // ───────── Schnittstelle für den Kern ─────────
   let wake = null;
   window.TS = {
-    info: () => JSON.stringify({platform:'web', version:VERSION, exportFormats:['video', 'audio'], bus: typeof BroadcastChannel !== 'undefined', gpu: hasGpu}),
+    info: () => JSON.stringify({platform:'web', version:VERSION, exportFormats:['video', 'audio'], bus: typeof BroadcastChannel !== 'undefined', gpu: hasGpu, matte: typeof VideoEncoder !== 'undefined'}),
     pick: (id, kind) => { if (kind === 'font') pickFont(id); else pick(id, kind); },
     fonts: () => JSON.stringify([...fontStore.values()].map(f => ({uri: 'font:' + f.id, name: f.name}))),
     deleteFont: uri => { const id = uri.slice(5); fontStore.delete(id); idb('fonts', 'readwrite', s => s.delete(id)).catch(() => {}); },
@@ -484,7 +494,7 @@
     deleteProject: id => { projects.delete(id); summaries.delete(id); idb('projects', 'readwrite', s => s.delete(id)).catch(() => {}); },
     models: () => JSON.stringify(modelsList()),
     downloadModel: name => newJob(async job => { await loadModel(name, job, 0, 1); return {}; }),
-    transcribe, transcribeRanges, exportVideo, makeProxy, envelope, exportPackage, importPackage,
+    transcribe, transcribeRanges, exportVideo, makeProxy, autoMatte, envelope, exportPackage, importPackage,
     // Erzeugtes Bild (Folie): sofort nutzbar, im Hintergrund dauerhaft im Browser-Speicher (OPFS) abgelegt
     saveImage(name, b64, width, height, project){
       const bin = atob(String(b64).split(',').pop()), u8 = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);

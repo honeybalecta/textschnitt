@@ -37,7 +37,7 @@ os.environ.setdefault("HF_HUB_DISABLE_IMPLICIT_TOKEN", "1")
 import warnings  # noqa: E402
 warnings.filterwarnings("ignore", module="huggingface_hub")
 
-VERSION = "2.20.1"
+VERSION = "2.21.0"
 APP_DIR = Path(__file__).resolve().parent
 FROZEN = bool(getattr(sys, "frozen", False))          # als installierte .exe gebaut
 RES_DIR = Path(getattr(sys, "_MEIPASS", APP_DIR))      # mitgelieferte Dateien (Oberfläche, ffmpeg, Modelle)
@@ -578,6 +578,124 @@ def proxy_job(job: dict, path: str):
     return {"path": allow(out)}
 
 
+# ───────────────────────────── Automatisch freistellen (Person vom Hintergrund trennen) ─────────────────────────────
+
+MATTE_MODEL = "rvm_mobilenetv3_fp32.onnx"   # Robust Video Matting (Lin et al.), MobileNetV3, ca. 15 MB
+MATTE_URL = "https://github.com/PeterL1n/RobustVideoMatting/releases/download/v1.0.0/" + MATTE_MODEL
+MATTE_BG = "00ff00"   # einheitliche Schlüsselfarbe im Ergebnis – wird danach wie ein Greenscreen entfernt
+
+
+def matte_model_path() -> Path | None:
+    for d in (MODELS_DIR, DATA_DIR / "models"):
+        if (d / MATTE_MODEL).exists():
+            return d / MATTE_MODEL
+    return None
+
+
+def matte_available() -> bool:
+    try:
+        import onnxruntime  # noqa: F401
+        import numpy  # noqa: F401
+        return True
+    except Exception:
+        return False
+
+
+def matte_job(job: dict, path: str):
+    """Erzeugt eine Kopie des Videos, in der alles außer der Person in der Schlüsselfarbe (Grün) steht.
+    Die Alphamaske rechnet RVM in verkleinerter Auflösung; zusammengesetzt wird in voller Größe mit ffmpeg."""
+    import numpy as np
+    import onnxruntime as ort
+    path = norm_path(path)
+    info = probe(path)
+    if not info["hasVideo"] or info["kind"] == "image":
+        raise ValueError("Freistellen geht nur mit Videos.")
+    out_dir = DATA_DIR / "freigestellt"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out = out_dir / (hashlib.sha1(f"{path}|{os.path.getmtime(path)}".encode("utf-8")).hexdigest()[:16] + ".mp4")
+    if out.exists() and out.stat().st_size > 0:
+        return {**probe(str(out)), "name": Path(path).stem + " – freigestellt", "orig": path}
+    model = matte_model_path()
+    if model is None:
+        job["message"] = "Lade Modell zum Freistellen (einmalig, ca. 15 MB) …"
+        import urllib.request
+        dst = DATA_DIR / "models" / MATTE_MODEL
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        tmp = dst.with_suffix(".part")
+        with urllib.request.urlopen(MATTE_URL, timeout=60) as r, open(tmp, "wb") as f:
+            total = int(r.headers.get("Content-Length") or 0)
+            got = 0
+            while True:
+                chunk = r.read(1 << 20)
+                if not chunk:
+                    break
+                f.write(chunk)
+                got += len(chunk)
+                if total:
+                    job["message"] = f"Lade Modell zum Freistellen (einmalig): {got / 1e6:.0f} von {total / 1e6:.0f} MB"
+                if job["cancel"]:
+                    raise RuntimeError("Abgebrochen")
+        tmp.replace(dst)
+        model = dst
+    W, H, fps, dur = info["width"], info["height"], float(info["fps"]), float(info["duration"])
+    # Modellauflösung: höchstens 960 px Kante; downsample_ratio so, dass das grobe Netz um 384 px rechnet
+    k = min(1.0, 960 / max(W, H))
+    mw, mh = max(2, int(W * k) // 2 * 2), max(2, int(H * k) // 2 * 2)
+    ratio = float(min(1.0, max(0.2, 384 / max(mw, mh))))
+    fps_s = f"{fps:.3f}".rstrip("0").rstrip(".")
+    so = ort.SessionOptions()
+    so.intra_op_num_threads = max(1, (os.cpu_count() or 4) - 1)
+    sess = ort.InferenceSession(str(model), so, providers=["CPUExecutionProvider"])
+    job["message"] = "Person wird erkannt und freigestellt …"
+    dec = subprocess.Popen([FFMPEG, "-v", "error", "-nostdin", "-i", path, "-vf", f"fps={fps_s},scale={mw}:{mh}", "-an",
+                            "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, **NOWIN)
+    tmp_out = out.with_suffix(".tmp.mp4")
+    enc_args = [FFMPEG, "-v", "error", "-y", "-i", path, "-f", "rawvideo", "-pix_fmt", "gray", "-s", f"{mw}x{mh}", "-framerate", fps_s, "-i", "pipe:0",
+                "-filter_complex", f"[0:v]fps={fps_s}[v];[1:v]scale={W}:{H}:flags=bicubic[a];[v][a]alphamerge[fg];"
+                                   f"color=c=0x{MATTE_BG}:s={W}x{H}:r={fps_s}[bg];[bg][fg]overlay=shortest=1:format=auto,format=yuv420p[out]",
+                "-map", "[out]"] + (["-map", "0:a:0", "-c:a", "aac", "-b:a", "192k"] if info["hasAudio"] else []) + \
+               ["-c:v", "libx264", "-preset", "fast", "-crf", "16", "-movflags", "+faststart", "-shortest", str(tmp_out)]
+    enc = subprocess.Popen(enc_args, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, **NOWIN)
+    rec = [np.zeros([1, 1, 1, 1], np.float32) for _ in range(4)]
+    dsr = np.array([ratio], np.float32)
+    n, nbytes = 0, mw * mh * 3
+    t0 = time.time()
+    try:
+        while True:
+            buf = dec.stdout.read(nbytes)
+            if len(buf) < nbytes:
+                break
+            src = np.frombuffer(buf, np.uint8).reshape(1, mh, mw, 3).transpose(0, 3, 1, 2).astype(np.float32) / 255.0
+            fgr, pha, *rec = sess.run(None, {"src": np.ascontiguousarray(src), "r1i": rec[0], "r2i": rec[1], "r3i": rec[2], "r4i": rec[3], "downsample_ratio": dsr})
+            enc.stdin.write((np.clip(pha[0, 0], 0, 1) * 255).astype(np.uint8).tobytes())
+            n += 1
+            if n % 5 == 0:
+                done = n / fps
+                job["progress"] = min(0.99, done / max(0.1, dur))
+                left = (time.time() - t0) / n * max(0.0, dur * fps - n)
+                job["message"] = f"Person wird freigestellt … {done:.0f} von {dur:.0f} s (noch etwa {left / 60:.0f} min)" if left > 90 else f"Person wird freigestellt … {done:.0f} von {dur:.0f} s"
+            if job["cancel"]:
+                raise RuntimeError("Abgebrochen")
+    finally:
+        try:
+            dec.stdout.close()
+            dec.terminate()
+        except Exception:
+            pass
+        try:
+            enc.stdin.close()
+        except Exception:
+            pass
+        if job["cancel"]:
+            enc.terminate()
+    err = enc.stderr.read().decode("utf-8", "replace")
+    if enc.wait() != 0 or not tmp_out.exists():
+        raise RuntimeError("Freistellen fehlgeschlagen: " + err.strip()[-300:])
+    tmp_out.replace(out)
+    log(f"Freigestellt: {path} → {out} ({n} Bilder, {time.time() - t0:.0f} s)")
+    return {**probe(str(out)), "name": Path(path).stem + " – freigestellt", "orig": path}
+
+
 # ───────────────────────────── Vorschaubilder ─────────────────────────────
 
 _thumb_sem = threading.Semaphore(3)
@@ -749,6 +867,46 @@ def zoom_expr(zooms: list[dict], seg_in: float):
     return zx, cx, cy
 
 
+def kf_expr(pts: list[tuple[float, float]], var: str = "it") -> str:
+    """Stückweise lineare Funktion (Keyframes) als ffmpeg-Ausdruck in der Variablen var."""
+    return pw_expr(pts).replace("t,", f"{var},").replace("(t-", f"({var}-")
+
+
+def kf_filter(kf: list[dict], zooms: list[dict], seg_in: float, sp: float, W: int, H: int, fps_s: str) -> str:
+    """Lage und Größe der Hauptspur über die Zeit (Keyframes), zusammen mit Zooms, als ein zoompan-Filter.
+
+    Das eingepasste Bild (W×H) wird so weit gepolstert, dass jeder Ausschnitt hineinpasst; zoompan wählt je Bild
+    den Ausschnitt: Mitte/Größe aus den Keyframes (linear), darüber der Zoom um seinen Mittelpunkt."""
+    ks = sorted(kf, key=lambda k: float(k["t"]))
+    def win(k):
+        sc = max(0.05, float(k.get("sc") or 1)); tx = float(k.get("tx") or 0); ty = float(k.get("ty") or 0)
+        return (W / 2 - tx * W / sc - W / (2 * sc), H / 2 - ty * H / sc - H / (2 * sc), W / sc, H / sc)
+    wins = [win(k) for k in ks]
+    left, top = min(w[0] for w in wins), min(w[1] for w in wins)
+    right, bottom = max(w[0] + w[2] for w in wins), max(w[1] + w[3] for w in wins)
+    pl, pt = max(0.0, -left), max(0.0, -top)
+    pr, pb = max(0.0, right - W), max(0.0, bottom - H)
+    K = min(6.0, max((W + pl + pr) / W, (H + pt + pb) / H, 1.0))   # Polsterung begrenzen (sehr kleine Bilder: Rand wird abgeschnitten)
+    PW, PH = max(2, round(W * K / 2) * 2), max(2, round(H * K / 2) * 2)
+    ox = pl + max(0.0, (PW - (W + pl + pr)) / 2)
+    oy = pt + max(0.0, (PH - (H + pt + pb)) / 2)
+    # Keyframe-Zeiten: Quellsekunden ab Abschnittsbeginn; zoompan rechnet in it (Sekunden des beschleunigten Bilds)
+    var = f"(it*{sp:.4f})" if abs(sp - 1) > 1e-3 else "it"
+    scx = kf_expr([(float(k["t"]), max(0.05, float(k.get("sc") or 1))) for k in ks], var)
+    txx = kf_expr([(float(k["t"]), float(k.get("tx") or 0)) for k in ks], var)
+    tyx = kf_expr([(float(k["t"]), float(k.get("ty") or 0)) for k in ks], var)
+    zs, cx, cy = ("1", "0.5", "0.5")
+    if zooms:
+        zs, cx, cy = zoom_expr(zooms, seg_in)
+        if abs(sp - 1) > 1e-3:
+            zs, cx, cy = (e.replace("it", var) for e in (zs, cx, cy))
+    # Ausschnitt im gepolsterten Bild: links/oben aus den Keyframes, dann der Zoom um (cx, cy) des sichtbaren Bilds
+    zoom = f"({scx})*({PW}/{W})*({zs})"
+    x = f"{ox:.3f}+{W}/2-({txx})*{W}/({scx})-{W}/(2*({scx}))+({cx})*{W}*(1-1/({zs}))/({scx})"
+    y = f"{oy:.3f}+{H}/2-({tyx})*{H}/({scx})-{H}/(2*({scx}))+({cy})*{H}*(1-1/({zs}))/({scx})"
+    return (f",pad={PW}:{PH}:{round(ox)}:{round(oy)}:black,zoompan=z='{zoom}':x='{x}':y='{y}':d=1:s={W}x{H}:fps={fps_s}")
+
+
 def cover_window(s: dict, plan: dict, W: int, H: int, fx: dict) -> str | None:
     """Ausschnitt in Quellpixeln (crop=w:h:x:y), wenn der vergrößerte Clip das Bild vollständig füllt, sonst None."""
     if fx["sc"] <= 1.001:
@@ -813,6 +971,32 @@ def ovl_geom(o: dict, W: int, H: int):
     pw = max(2, round(W * float(k0["w"]) / 2) * 2)
     ph = max(2, round(pw / a / 2) * 2)
     return {"anim": False, "move": False, "w": pw, "h": ph, "x": round(float(k0["x"]) * W - pw / 2), "y": round(float(k0["y"]) * H - ph / 2)}
+
+
+def chroma_chain(key: dict | None) -> str:
+    """Freistellen: je Schlüsselfarbe ein chromakey (U/V-Abstand, Ähnlichkeit, weicher Rand), danach bei Grün oder
+    Blau der Farbsaum zurück (despill). Dieselbe Rechnung steckt in der Vorschau (chroma.js) und im Android-Export."""
+    if not key or not key.get("colors"):
+        return ""
+    cols = []
+    for c in list(key["colors"])[:4]:
+        c = str(c).strip().lstrip("#")
+        if len(c) == 6 and all(ch in "0123456789abcdefABCDEF" for ch in c):
+            cols.append(c.lower())
+    if not cols:
+        return ""
+    tol = min(1.0, max(0.01, float(key.get("tol") or 0.22)))
+    soft = min(1.0, max(0.0, float(key.get("soft") or 0)))
+    parts = ["format=yuva444p"] + [f"chromakey=color=0x{c}:similarity={tol:.3f}:blend={soft:.3f}" for c in cols]
+    if key.get("spill"):
+        r, g, b = (int(cols[0][i:i + 2], 16) for i in (0, 2, 4))
+        m, mn = max(r, g, b), min(r, g, b)
+        if m - mn >= 38:
+            if m == g:
+                parts.append("despill=type=green:mix=0.5")
+            elif m == b:
+                parts.append("despill=type=blue:mix=0.5")
+    return ",".join(parts)
 
 
 def video_fx_chain(fx: dict) -> str:
@@ -881,7 +1065,20 @@ def build_graph(plan: dict, with_video: bool, ass_name: str | None):
             inputs.append(["-ss", f"{seek:.3f}", "-i", un])
             i, off = len(inputs) - 1, -seek
             if with_video:
-                if s.get("hasVideo", True):
+                ck = chroma_chain(s.get("key")) if s.get("hasVideo", True) else ""
+                vfin = vlab
+                if ck:   # freigestellt: das fertige Bild wird noch über die Hintergrundfarbe gelegt
+                    vlab = f"[vq{k}]"
+                kf = [k for k in (s.get("kf") or []) if isinstance(k, dict)]
+                if len(kf) == 1:   # ein Keyframe = feste Werte
+                    fx = {**fx, "sc": max(0.05, float(kf[0].get("sc") or 1)), "tx": float(kf[0].get("tx") or 0), "ty": float(kf[0].get("ty") or 0)}
+                    kf = []
+                if s.get("hasVideo", True) and len(kf) >= 2:
+                    # Keyframes: Lage und Größe ändern sich über die Zeit – eingepasstes Bild, dann zoompan je Bild
+                    spv = f"setpts=(PTS-STARTPTS)/{sp:.4f}" if abs(sp - 1) > 1e-3 else "setpts=PTS-STARTPTS"
+                    z = kf_filter(kf, s.get("zooms") or [], a0, sp, W, H, fps_s)
+                    parts.append(f"[{i}:v:0]trim=start={a0 + off:.4f}:end={b0 + off:.4f},{spv},{fit},fps={fps_s}{z}{video_fx_chain(fx)},format=yuv420p{vlab}")
+                elif s.get("hasVideo", True):
                     z = ""
                     # Vergrößerter Ausschnitt, der das Bild ganz füllt (z. B. 9:16 aus 16:9): direkt aus der Quelle
                     # ausschneiden statt das verkleinerte Bild hochzuskalieren – bleibt scharf und spart Rechenzeit
@@ -919,6 +1116,13 @@ def build_graph(plan: dict, with_video: bool, ass_name: str | None):
                             parts.append(f"[vb{k}][vs{k}]overlay=x={round(vx0)}:y={round(vy0)}:shortest=1:eof_action=pass,format=yuv420p,setsar=1{vlab}")
                 else:
                     parts.append(f"color=c=black:s={W}x{H}:r={fps_s},trim=duration={d:.4f},format=yuv420p,setsar=1{vlab}")
+                if ck:
+                    bg = str((s.get("key") or {}).get("bg") or "#000000").lstrip("#")
+                    bg = bg if len(bg) == 6 else "000000"
+                    parts.append(f"{vlab}{ck}[vk{k}]")
+                    parts.append(f"color=c=0x{bg}:s={W}x{H}:r={fps_s}:d={d:.4f},format=yuv420p[kb{k}]")
+                    parts.append(f"[kb{k}][vk{k}]overlay=shortest=1:eof_action=pass,format=yuv420p,setsar=1{vfin}")
+                    vlab = vfin
             if s.get("hasAudio", True):
                 f = min(0.008, d / 4)
                 spa = atempo_chain(sp) if abs(sp - 1) > 1e-3 else ""
@@ -1004,7 +1208,8 @@ def build_graph(plan: dict, with_video: bool, ass_name: str | None):
                 off = starts.get(norm_path(o["uri"]), 0.0)
                 src = f"[{i}:v:0]trim=start={inn + off:.4f}:end={inn + d + off:.4f},{cropf}setpts=PTS-STARTPTS+{at:.4f}/TB"
             still = bool(o.get("image")) and not (g and g["anim"])
-            parts.append(f"{src}{'' if still else f',fps={fps_s}'},{sc},format=yuva420p[o{k}]")
+            ck = chroma_chain(o.get("key"))
+            parts.append(f"{src}{'' if still else f',fps={fps_s}'},{sc},{ck + ',' if ck else ''}format=yuva420p[o{k}]")
             ev = ":eval=frame" if g and (g["anim"] or g["move"]) else ""
             parts.append(f"{cur}[o{k}]overlay=x={x}:y={y}{ev}:eof_action={'repeat' if still else 'pass'}:enable='between(t,{at:.4f},{at + d:.4f})'[c{k}]")
             cur = f"[c{k}]"
@@ -1166,6 +1371,47 @@ def split_zooms(seg: dict):
     return out
 
 
+def main_kf_samples(seg: dict) -> list[tuple[float, float, float, float]]:
+    """Keyframes der Hauptspur samt Zooms als Stützstellen [(t_quelle, scale, tx, ty)] in CapCut-Maßen
+    (Skalierung, Lage in halben Bildbreiten/-höhen)."""
+    kf = sorted([k for k in (seg.get("kf") or []) if isinstance(k, dict)], key=lambda k: float(k["t"]))
+    a0 = float(seg["in"])
+    if len(kf) < 2:
+        return []
+    def at(rel):
+        pts = [(float(k["t"]), float(k.get("tx") or 0), float(k.get("ty") or 0), max(0.05, float(k.get("sc") or 1))) for k in kf]
+        if rel <= pts[0][0]:
+            return pts[0][1:]
+        if rel >= pts[-1][0]:
+            return pts[-1][1:]
+        for (t0, x0, y0, s0), (t1, x1, y1, s1) in zip(pts, pts[1:]):
+            if rel < t1:
+                f = (rel - t0) / max(1e-6, t1 - t0)
+                return (x0 + (x1 - x0) * f, y0 + (y1 - y0) * f, s0 + (s1 - s0) * f)
+        return pts[-1][1:]
+    def zoom(t):
+        zs, cx, cy = 1.0, 0.5, 0.5
+        for z in seg.get("zooms") or []:
+            if t < z["at"] or t > z["at"] + z["dur"]:
+                continue
+            p = min(1.0, max(0.0, (t - z["at"]) / max(0.05, z["dur"]))); e = p * p * (3 - 2 * p)
+            st = float(z["strength"])
+            zs = st if z["kind"] == "punch" else (st + (1 - st) * e if z["kind"] == "out" else 1 + (st - 1) * e)
+            cx, cy = float(z["cx"]), float(z["cy"])
+        return zs, cx, cy
+    times = {a0 + float(k["t"]) for k in kf}
+    for z in seg.get("zooms") or []:
+        for q in (0.0, 0.001, 0.25, 0.5, 0.75, 0.999, 1.0):
+            times.add(z["at"] + q * z["dur"])
+    out = []
+    for t in sorted(x for x in times if a0 - 1e-6 <= x <= float(seg["out"]) + 1e-6):
+        tx, ty, sc = at(t - a0)
+        zs, cx, cy = zoom(t)
+        ztx, zty = (2 * (cx - 0.5) * (1 - zs), 2 * (cy - 0.5) * (zs - 1)) if zs > 1.001 else (0.0, 0.0)
+        out.append((t, round(zs * sc, 4), round(ztx * sc + 2 * tx, 4), round(zty * sc - 2 * ty, 4)))
+    return out
+
+
 def cover_factor(cw: float, ch: float, W: float, H: float) -> float:
     if not cw or not ch:
         return 1.0
@@ -1259,6 +1505,9 @@ def write_concat(plan: dict, name: str, cues: list[dict], style: dict) -> Path:
                  "sourceStart": round(0.0 if img else a, 6), "speed": round(fx["speed"], 4), "volume": round(fx["vol"], 3)}
             if sc > 1.001:
                 c.update(scale=round(sc, 4), offsetX=round((cx - 0.5) * (1 - sc), 4), offsetY=round((cy - 0.5) * (1 - sc), 4))
+            kf0 = sorted([k for k in (s.get("kf") or []) if isinstance(k, dict)], key=lambda k: float(k["t"]))
+            if kf0:
+                fx = {**fx, "sc": max(0.05, float(kf0[0].get("sc") or 1)), "tx": float(kf0[0].get("tx") or 0), "ty": float(kf0[0].get("ty") or 0)}
             if abs(fx["sc"] - 1) > 1e-3 or fx["tx"] or fx["ty"]:
                 c.update(scale=round(c["scale"] * fx["sc"], 4), offsetX=round(c["offsetX"] * fx["sc"] + fx["tx"], 4), offsetY=round(c["offsetY"] * fx["sc"] + fx["ty"], 4))
             clips.append(c)
@@ -1450,7 +1699,8 @@ def write_capcut(plan: dict, root: Path, name: str, cues: list[dict], style: dic
     for s in plan["segments"]:
         img = bool(s.get("image"))
         mid, kind, _ = material(s["uri"], img)
-        pieces = [(float(s["in"]), float(s["out"]), 1.0, 0.5, 0.5)] if img else split_zooms(s)
+        samples = [] if img else main_kf_samples(s)
+        pieces = [(float(s["in"]), float(s["out"]), 1.0, 0.5, 0.5)] if (img or samples) else split_zooms(s)
         fx = seg_fx(s) if s.get("kind") == "main" else seg_fx({"vol": s.get("vol", 1)})
         for a, b, sc, cx, cy in pieces:
             d = (b - a) / fx["speed"]
@@ -1459,7 +1709,15 @@ def write_capcut(plan: dict, root: Path, name: str, cues: list[dict], style: dic
             tx, ty = (2 * (cx - 0.5) * (1 - sc), 2 * (cy - 0.5) * (sc - 1)) if sc > 1.001 else (0.0, 0.0)
             # Lage/Größe des Clips: zuerst Zoom, dann skaliert um die Mitte und verschoben
             tx, ty, sc = tx * fx["sc"] + 2 * fx["tx"], ty * fx["sc"] - 2 * fx["ty"], sc * fx["sc"]
+            if samples:   # Keyframes der Hauptspur: erste Stützstelle fest, Verlauf als CapCut-Keyframes
+                sc, tx, ty = samples[0][1], samples[0][2], samples[0][3]
             seg = segment(mid, kind, cursor, 0.0 if img else a, d, volume=round(fx["vol"], 3), scale=round(sc, 4), tx=round(tx, 4), ty=round(ty, 4), speed=round(fx["speed"], 4))
+            if samples and kind == "video":
+                props = {"KFTypePositionX": 2, "KFTypePositionY": 3, "KFTypeScaleX": 1, "KFTypeScaleY": 1}
+                seg["common_keyframes"] = [{"id": uuid.uuid4().hex, "material_id": "", "property_type": prop, "keyframe_list": [
+                    {"curveType": "Line", "graphID": "", "id": uuid.uuid4().hex, "left_control": {"x": 0.0, "y": 0.0}, "right_control": {"x": 0.0, "y": 0.0},
+                     "time_offset": int(round((t - a) / fx["speed"] * 1_000_000)), "values": [smp[idx]]} for smp in samples for t in [smp[0]]]}
+                    for prop, idx in props.items()]
             (main_segs if kind == "video" else audio_segs).append(seg)
             cursor += d
     tracks = []
@@ -1970,7 +2228,7 @@ def open_file(path: str):
 
 def app_info() -> dict:
     cc = capcut_drafts_dir()
-    return {"platform": "desktop", "version": VERSION, "exportFormats": ["video", "audio", "capcut", "concat"], "bus": True,
+    return {"platform": "desktop", "version": VERSION, "exportFormats": ["video", "audio", "capcut", "concat"], "bus": True, "matte": matte_available(),
             "capcutDir": str(cc) if cc else None, "concatDir": str(concat_root()),
             "whisper": whisper_available(), "os": platform.system()}
 
@@ -2114,7 +2372,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not str(f).startswith(str(d.resolve())) or not f.is_file():
                     return self._json({"error": "Nicht gefunden"}, 404)
                 return self._send(200, f.read_bytes(), DECK_TYPES.get(f.suffix.lower(), "application/octet-stream"))
-            if rest in ("", "index.html", "app.js", "studio.js", "slides.js", "deck-host.js", "app.css", "bridge-http.js", "icons.js"):
+            if rest in ("", "index.html", "app.js", "studio.js", "slides.js", "deck-host.js", "app.css", "bridge-http.js", "icons.js", "chroma.js"):
                 f = WEB_DIR / (rest or "index.html")
                 ctype = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
                          ".css": "text/css; charset=utf-8"}[f.suffix]
@@ -2242,6 +2500,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"url": url})
             if rest == "api/proxy":
                 job = run_job(new_job("proxy"), proxy_job, data["uri"])
+                return self._json({"job": job["id"]})
+            if rest == "api/matte":
+                if not matte_available():
+                    raise ValueError("Automatisches Freistellen braucht onnxruntime (in der installierten Version enthalten).")
+                job = run_job(new_job("matte"), matte_job, data["uri"])
                 return self._json({"job": job["id"]})
             if rest == "api/cancel":
                 job = JOBS.get(data.get("id", ""))

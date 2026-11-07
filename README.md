@@ -28,6 +28,9 @@ Die Plattformen stellen dem Kern dieselbe Schnittstelle `window.TS` bereit (Date
 - **Aufräumen**: „Füllwörter weg“, „Wiederholungen weg“ (wiederholte Anläufe – der letzte Versuch bleibt stehen) und „Pausen kürzen auf …“ bis „ganz weg“ – auf Wunsch automatisch direkt nach der Transkription. Wird Text gelöscht, verschwinden Pausen, die danach leer stehen bleiben würden, gleich mit (z. B. am Videoanfang).
 - **Saubere Schnitte**: Bei der Transkription wird zusätzlich der Lautstärkeverlauf gespeichert und das Transkript daran ausgerichtet: Wiederholte Anläufe („ich wollte – ich wollte heute …“) bekommen je ihren eigenen Sprachabschnitt, und Sprache, zu der Whisper kein Wort geliefert hat (ausgelassene Anläufe), erscheint im Text als **🗣**-Eintrag, den du anhören und löschen kannst. Jede Schnittkante wird an die Grenzen der Sprachabschnitte gelegt. „▶ Letzten Schnitt anhören“ spielt die Stelle zur Kontrolle ab; im Studio zeigt ein Lautstärkeband unter den Clips, wo gesprochen wird.
 - **Studio**: dunkles Bearbeitungsfeld mit Werkzeugleiste und Spurköpfen (Video · B-Roll/PiP · Zoom/Effekte · Titel · Untertitel). Teilen, trimmen, Clips per Ziehen umsortieren (mit Einrasten an Kanten und Zeiger), B-Roll, Einschub, Bild-im-Bild, Fotos, Zoom-Sprünge und -Fahrten, **Titel** (frei im Bild platzierbar, Größe/Farbe/Hintergrund) und **Anpassen** pro Clip: Tempo 0,5–3×, Lautstärke, Helligkeit, Kontrast, Sättigung, Schwarzweiß – alles in der Vorschau sichtbar und in Video-, CapCut- und Concat-Export enthalten (Farbanpassungen nur im Video-Export). Rechtsklick öffnet die Werkzeuge des Clips. Der Zeiger läuft am Desktop über die Spur und springt am Rand weiter („⇥“ schaltet auf den festen Zeiger in der Mitte um, wie am Handy).
+- **Lage, Größe, Keyframes**: Jedes Medium lässt sich im Bild frei verschieben, vergrößern und zuschneiden – auch das Hauptbild. Mit Keyframes (Taste `M`) bewegt es sich über die Zeit (Hauptspur, B-Roll und Bild-im-Bild); Rauten auf dem Clip zeigen sie an.
+- **Freistellen (Greenscreen)**: In „Anpassen“ (Hauptspur) oder im Clip-Blatt (Einblendung) eine oder mehrere Schlüsselfarben wählen – direkt im Bild antippen – mit Toleranz, weichem Rand und Farbsaum-Korrektur. **Hintergrund automatisch erkennen** kommt ohne Greenscreen aus: Die Person wird erkannt (Windows: Robust Video Matting, Android: ML Kit, Browser: MediaPipe), alles andere ersetzt. Für ein Bild als Hintergrund: Foto auf Spur 1, das freigestellte Video als Vollbild-Einblendung darüber. Vorschau, Video-Export und alle Plattformen rechnen mit derselben Formel (wie ffmpeg „chromakey“).
+- **Nur Ton**: Von einem importierten Video lässt sich auch nur die Tonspur auf eine Tonspur legen (Ablage → ♪ „Nur den Ton“, oder das Video auf „Ton 1“ ziehen).
 - **Fenster**: Text, Untertitel, Studio und Export sind eigene Reiter; am Desktop lässt sich jeder mit ⧉ in ein eigenes Fenster abdocken (z. B. für einen zweiten Bildschirm). Alle Fenster bleiben synchron.
 - **Untertitel**: Aufteilung in Zeilen oder ein Wort pro Untertitel, Text bearbeiten, Stil wählen. **Direkt im Bild ziehen**, um sie zu platzieren – alle gemeinsam oder (im Studio ausgewählt) einzeln.
 - Tastenkürzel wie in CapCut (`⌨` in der Kopfzeile zeigt alle): `Leertaste`, `←/→` bildweise, `Strg+B` teilen, `Q/W` links/rechts löschen, `Entf`, `Strg+Z`.
@@ -37,14 +40,14 @@ Die Plattformen stellen dem Kern dieselbe Schnittstelle `window.TS` bereit (Date
 | Format | Windows | Android |
 |---|---|---|
 | Video (MP4, Originalauflösung, Untertitel eingebrannt) | ✓ Ordner `…_textschnitt` neben dem ersten Video | ✓ direkt in die Galerie (Ordner „Textschnitt“) |
-| Audio (WAV, MP3, M4A, FLAC) | ✓ | – |
+| Audio (WAV, MP3, M4A, FLAC) | ✓ | ✓ M4A (Ordner „Musik/HoneyCut“) |
 | CapCut-Entwurf (Schnitte, Clips, Bild-im-Bild, Zooms, Untertitel an ihrer Position) | ✓ | – |
 | Concat-Projekt (`Desktop\Concat`) | ✓ | – |
 | SRT-Untertitel | ✓ zu jedem Export | – |
 
 Im Browser: Video (MP4) und Audio (WAV, MP3, M4A, FLAC) samt SRT als Download.
 
-Weiche Zoomfahrten werden in CapCut und Concat als Zoom-Sprung angelegt. HDR-Videos vom Handy werden beim Video-Export nach SDR umgerechnet.
+Weiche Zoomfahrten werden in CapCut und Concat als Zoom-Sprung angelegt; Freistellen (Greenscreen) ist nur im Video-Export enthalten. HDR-Videos vom Handy werden beim Video-Export nach SDR umgerechnet.
 
 ## Entwickeln
 

@@ -85,12 +85,12 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
     private val fps = plan.optDouble("fps", 30.0).let { if (it < 1 || it > 240) 30.0 else it }
 
     /** Ein Clip aus dem Plan: Video mit Ausschnitt oder Foto mit fester Dauer – plus Tempo, Lautstärke, Farbe. */
-    private fun item(o: JSONObject, inS: Double, outS: Double, removeAudio: Boolean, effects: List<Effect>, removeVideo: Boolean = false): EditedMediaItem {
+    private fun item(o: JSONObject, inS: Double, outS: Double, removeAudio: Boolean, effects: List<Effect>, removeVideo: Boolean = false, pre: List<Effect> = emptyList()): EditedMediaItem {
         val b = if (o.optBoolean("image")) EditedMediaItem.Builder(
             MediaItem.Builder().setUri(Uri.parse(o.getString("uri"))).setImageDurationMs(((outS - inS) * 1000).roundToLong()).build()
         ).setFrameRate(Math.round(fps).toInt())
         else EditedMediaItem.Builder(clip(o.getString("uri"), inS, outS)).setRemoveAudio(removeAudio)
-        val fx = ArrayList<Effect>()
+        val fx = ArrayList<Effect>(pre)   // Freistellen zuerst – auf dem unveränderten Bild, wie in der Vorschau
         val bright = o.optDouble("bright", 0.0).toFloat(); if (Math.abs(bright) > 0.001) fx.add(Brightness(bright.coerceIn(-1f, 1f)))
         val contrast = o.optDouble("contrast", 0.0).toFloat(); if (Math.abs(contrast) > 0.001) fx.add(Contrast(contrast.coerceIn(-1f, 1f)))
         val sat = o.optDouble("sat", 0.0).toFloat(); if (Math.abs(sat) > 0.01) fx.add(HslAdjustment.Builder().adjustSaturation(sat.coerceIn(-100f, 100f)).build())
@@ -166,9 +166,15 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
             val s = segs.getJSONObject(i)
             val fx = ArrayList<Effect>()
             var zooms = s.optJSONArray("zooms")
-            val sc = s.optDouble("sc", 1.0); val tx = s.optDouble("tx", 0.0); val ty = s.optDouble("ty", 0.0)
+            var sc = s.optDouble("sc", 1.0); var tx = s.optDouble("tx", 0.0); var ty = s.optDouble("ty", 0.0)
+            // Keyframes: Lage und Größe ändern sich über die Zeit (ein Keyframe = feste Werte)
+            val kfA = s.optJSONArray("kf")
+            val kfs = if (kfA == null) emptyList() else (0 until kfA.length()).map { kfA.getJSONObject(it) }
+                .map { doubleArrayOf(it.optDouble("t", 0.0), it.optDouble("tx", 0.0), it.optDouble("ty", 0.0), it.optDouble("sc", 1.0).coerceIn(0.05, 20.0)) }.sortedBy { it[0] }
+            if (kfs.size == 1) { tx = kfs[0][1]; ty = kfs[0][2]; sc = kfs[0][3] }
+            val animated = kfs.size >= 2
             // Vergrößerter Ausschnitt, der das Bild füllt (z. B. 9:16 aus 16:9): direkt aus der Quelle ausschneiden (bleibt scharf)
-            val win = coverWindow(s, sc, tx, ty)
+            val win = if (animated) null else coverWindow(s, sc, tx, ty)
             if (win != null) {
                 fx.add(androidx.media3.effect.Crop(win[0], win[1], win[2], win[3]))
                 if (zooms != null) zooms = JSONArray().also { a -> for (k in 0 until zooms!!.length()) a.put(JSONObject(zooms!!.getJSONObject(k).toString()).apply {
@@ -177,8 +183,11 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
             if (zooms != null && zooms.length() > 0) fx.add(ZoomEffect(s.getDouble("in"), zooms))
             fx.add(Presentation.createForWidthAndHeight(w, h, Presentation.LAYOUT_SCALE_TO_FIT))
             // Lage und Größe des Clips (Mitte verschieben, um die Mitte skalieren)
-            if (win == null && (Math.abs(sc - 1) > 1e-3 || Math.abs(tx) > 1e-4 || Math.abs(ty) > 1e-4)) fx.add(TransformEffect(sc.toFloat(), tx.toFloat(), ty.toFloat()))
-            mainItems.add(item(s, s.getDouble("in"), s.getDouble("out"), false, fx))
+            if (animated) fx.add(KeyframeEffect(kfs, s.optDouble("speed", 1.0).coerceIn(0.25, 4.0)))
+            else if (win == null && (Math.abs(sc - 1) > 1e-3 || Math.abs(tx) > 1e-4 || Math.abs(ty) > 1e-4)) fx.add(TransformEffect(sc.toFloat(), tx.toFloat(), ty.toFloat()))
+            val key = s.optJSONObject("key")
+            mainItems.add(item(s, s.getDouble("in"), s.getDouble("out"), false, fx,
+                pre = if (key != null && s.optBoolean("hasVideo", true)) listOf(ChromaKeyEffect(key, true)) else emptyList()))
         }
         require(mainItems.isNotEmpty()) { "Nach dem Schnitt bleibt nichts übrig." }
         // Ton und Bild ausdrücklich: Einschübe ohne Tonspur bekommen so Stille statt eines Fehlers
@@ -238,7 +247,9 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
                     val cl = cr.optDouble("l", 0.0).toFloat(); val ct = cr.optDouble("t", 0.0).toFloat(); val crr = cr.optDouble("r", 0.0).toFloat(); val cb = cr.optDouble("b", 0.0).toFloat()
                     listOf(androidx.media3.effect.Crop(-1f + 2f * cl, 1f - 2f * crr, -1f + 2f * cb, 1f - 2f * ct))
                 }
-                seq.addItem(item(o2, inS, inS + dur, !withAudio || o.optBoolean("image"), cropFx + listOf(Presentation.createForWidthAndHeight(pw, ph, Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP))))
+                val key = o.optJSONObject("key")
+                seq.addItem(item(o2, inS, inS + dur, !withAudio || o.optBoolean("image"), cropFx + listOf(Presentation.createForWidthAndHeight(pw, ph, Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP)),
+                    pre = if (key != null) listOf(ChromaKeyEffect(key, false)) else emptyList()))
                 spans.add(OvSpan(at, at + dur, o.getString("mode"), o.optString("corner", "or"), o.optDouble("size", 0.33).toFloat(),
                     free, o.optDouble("x", 0.5).toFloat(), o.optDouble("y", 0.5).toFloat(), o.optDouble("w", 1.0).toFloat(), (baseW * texR).toFloat(), kf))
                 cursor = at + dur
@@ -265,8 +276,9 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
 
     private fun launch(composition: Composition.Builder) {
         outFile = File(ctx.cacheDir, "export_${System.currentTimeMillis()}." + (if (audioOnly) "m4a" else "mp4"))
-        // Bitrate passend zur Auflösung (≈ 0,14 Bit pro Pixel), damit die Qualität dem Original nahekommt
-        val bitrate = (w.toDouble() * h * fps * 0.14).coerceIn(4e6, 80e6).toInt()
+        // Bitrate passend zur Auflösung (Bit pro Pixel je Qualitätsstufe), damit die Qualität dem Original nahekommt
+        val bpp = when (plan.optString("quality", "standard")) { "hoch" -> 0.22; "klein" -> 0.08; else -> 0.14 }
+        val bitrate = (w.toDouble() * h * fps * bpp).coerceIn(3e6, 90e6).toInt()
         val encoders = DefaultEncoderFactory.Builder(ctx)
             .setRequestedVideoEncoderSettings(VideoEncoderSettings.Builder().setBitrate(bitrate).build())
             .setEnableFallback(true).build()
@@ -383,6 +395,26 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
     // ── Lage und Größe eines Hauptspur-Clips ──
     class TransformEffect(private val sc: Float, private val tx: Float, private val ty: Float) : MatrixTransformation {
         override fun getMatrix(presentationTimeUs: Long): Matrix = Matrix().apply { setScale(sc, sc); postTranslate(2 * tx, -2 * ty) }
+    }
+
+    // ── Keyframes der Hauptspur: Lage/Größe stückweise linear; t = Quellsekunden ab Abschnittsbeginn ──
+    class KeyframeEffect(private val kf: List<DoubleArray>, private val speed: Double) : MatrixTransformation {
+        private var first = Long.MIN_VALUE
+        override fun getMatrix(presentationTimeUs: Long): Matrix {
+            if (first == Long.MIN_VALUE) first = presentationTimeUs
+            val rel = (presentationTimeUs - first) / 1e6 * speed
+            var tx = kf[0][1]; var ty = kf[0][2]; var sc = kf[0][3]
+            when {
+                rel <= kf[0][0] -> {}
+                rel >= kf.last()[0] -> { tx = kf.last()[1]; ty = kf.last()[2]; sc = kf.last()[3] }
+                else -> for (i in 0 until kf.size - 1) if (rel < kf[i + 1][0]) {
+                    val f = (rel - kf[i][0]) / maxOf(1e-6, kf[i + 1][0] - kf[i][0])
+                    tx = kf[i][1] + (kf[i + 1][1] - kf[i][1]) * f; ty = kf[i][2] + (kf[i + 1][2] - kf[i][2]) * f; sc = kf[i][3] + (kf[i + 1][3] - kf[i][3]) * f
+                    break
+                }
+            }
+            return Matrix().apply { setScale(sc.toFloat(), sc.toFloat()); postTranslate((2 * tx).toFloat(), (-2 * ty).toFloat()) }
+        }
     }
 
     // ── Zoom (Sprung oder Fahrt) – Zeiten in Sekunden der Quelle ──
