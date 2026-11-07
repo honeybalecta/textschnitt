@@ -640,7 +640,7 @@ export async function autoMatte(file, job){
   catch(_){ handle = null; writable = null; target = new BufferTarget(); }
   const output = new Output({format: new Mp4OutputFormat({fastStart: writable ? false : 'in-memory'}), target});
   const canvas = document.createElement('canvas'); canvas.width = W; canvas.height = H; const ctx = canvas.getContext('2d', {alpha: false});
-  const vsrc = new CanvasSource(canvas, {codec, quality: new Quality('very_high'), keyFrameInterval: 2});
+  const vsrc = new CanvasSource(canvas, {codec, quality: new Quality('very-high'), keyFrameInterval: 2});
   output.addVideoTrack(vsrc, {frameRate: fps});
   const a = await audioTrack(file), asrc = a ? new AudioSampleSource({codec: 'aac', quality: new Quality({bitrate: 192e3})}) : null;
   if (asrc) output.addAudioTrack(asrc);
