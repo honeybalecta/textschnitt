@@ -1568,7 +1568,7 @@ function resetCrop(){ if (Crop.it){ Crop.cur = {l:0, t:0, r:0, b:0}; Crop.ratio 
 const PipDrag = {on:false};
 $('#pipBox').addEventListener('pointerdown', e => {
   if (!curPip && !mainBoxOn()) return; e.preventDefault(); e.stopPropagation(); $('#pipBox').setPointerCapture(e.pointerId);
-  if (playing) pausePlay(); PipDrag.pid = e.pointerId; PipDrag.p1 = {x: e.clientX, y: e.clientY}; PipDrag.p2 = null; PipDrag.pinch = null;
+  if (playing) pausePlay(); if (PipDrag.pinchT) return;
   const st = $('#stage').getBoundingClientRect(), W = st.width, H = st.height, mode = e.target.classList.contains('pip-h') ? 'size' : 'move';
   if (!curPip){ const f = mainFx(); Object.assign(PipDrag, {on:true, main:true, it:null, moved:false, mode, x0:e.clientX, y0:e.clientY, stx:f.tx, sty:f.ty, ssc:f.sc, tx:f.tx, ty:f.ty, sc:f.sc}); return; }
   const it = curPip, rel = outPos - pipTarget.at, v = elVals(it, rel) || coverVals(it), r = elRect(it, v, W, H) || {cx: W / 2, cy: H / 2, w: v.w * W, h: v.w * W / elAspect(it)};
@@ -1576,7 +1576,7 @@ $('#pipBox').addEventListener('pointerdown', e => {
     sx: r.cx / W, sy: r.cy / H, sw: r.w / W, left: r.cx - r.w / 2, top: r.cy - r.h / 2, x: r.cx / W, y: r.cy / H, w: r.w / W, clip: it.clip});
 });
 $('#pipBox').addEventListener('pointermove', e => {
-  const g = PipDrag; if (!g.on) return; const st = $('#stage').getBoundingClientRect(), W = st.width, H = st.height;
+  const g = PipDrag; if (!g.on || g.pinchT) return; const st = $('#stage').getBoundingClientRect(), W = st.width, H = st.height;
   const dx = e.clientX - g.x0, dy = e.clientY - g.y0; if (Math.abs(dx) + Math.abs(dy) > 3) g.moved = true;
   if (g.main){
     if (g.mode === 'move'){ let tx = g.stx + dx / W, ty = g.sty + dy / H; if (Math.abs(tx) < 0.015) tx = 0; if (Math.abs(ty) < 0.015) ty = 0; g.tx = tx; g.ty = ty; }
@@ -1595,7 +1595,7 @@ $('#pipBox').addEventListener('pointermove', e => {
   updateOverlay(outPos);
 });
 function endPipDrag(){
-  const g = PipDrag; if (!g.on) return; g.on = false; $('#stage').classList.remove('snap-x');
+  const g = PipDrag; if (!g.on || g.pinchT) return; g.on = false; $('#stage').classList.remove('snap-x');
   if (!g.moved){ if (g.main) applyMainTransform(); else togglePlay(); return; }
   if (g.main){ const sg = timeline[TL.sel.i];
     commit(() => setMainVals(sg, {tx: g.tx, ty: g.ty, sc: g.sc}), false);
@@ -1604,23 +1604,32 @@ function endPipDrag(){
   seekOut(outPos, false); if (sheetItem === it) paintItem();
   toast(`Größe ${Math.round(g.w * 100)} % der Bildbreite` + (it.kf && it.kf.length ? ' · Keyframe' : ''));
 }
-// Zwei Finger auf dem Bild: ausgewähltes Element (oder Hauptbild) zoomen
-(() => { const st = $('#stage'), dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
-  st.addEventListener('pointerdown', e => {
-    const g = PipDrag; if (!g.on || e.pointerId === g.pid || g.p2) return; e.stopPropagation(); e.preventDefault();
-    g.p2 = {id: e.pointerId, x: e.clientX, y: e.clientY}; g.pinch = {d0: Math.max(10, dist(g.p1, g.p2)), sc: g.sc, w: g.w}; g.moved = true;
-    try { st.setPointerCapture(e.pointerId); } catch(_){}
-  }, true);
-  st.addEventListener('pointermove', e => {
-    const g = PipDrag; if (!g.on) return;
-    if (e.pointerId === g.pid) g.p1 = {x: e.clientX, y: e.clientY}; else if (g.p2 && e.pointerId === g.p2.id) Object.assign(g.p2, {x: e.clientX, y: e.clientY}); else return;
-    if (!g.pinch) return; e.stopPropagation();
-    const r = dist(g.p1, g.p2) / g.pinch.d0;
-    if (g.main){ g.sc = clamp(g.pinch.sc * r, 0.05, 20); applyMainTransform(); placeBox(); }
-    else { g.w = clamp(g.pinch.w * r, 0.03, 20); updateOverlay(outPos); }
-  }, true);
-  const up = e => { const g = PipDrag; if (g.p2 && e.pointerId === g.p2.id){ g.p2 = null; e.stopPropagation(); } };
-  st.addEventListener('pointerup', up, true); st.addEventListener('pointercancel', up, true);
+// Zwei Finger auf dem Bild: ausgewähltes Element (oder das Hauptbild) zoomen und verschieben.
+// Läuft über Touch-Ereignisse (nicht Pointer), damit die beiden Finger überall auf der Bühne liegen dürfen und
+// der Browser keine eigene Geste (Wischen, Seitenzoom) daraus macht.
+let Pinch = null;
+(() => { const st = $('#stage');
+  const pt = e => { const a = e.touches[0], b = e.touches[1]; return {d: Math.max(10, Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY)), x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2}; };
+  st.addEventListener('touchstart', e => {
+    if (e.touches.length !== 2 || keyPick || Crop.it || pinMode) return;
+    const main = !curPip; if (main && !mainBoxOn()) return;
+    e.preventDefault(); if (playing) pausePlay();
+    const g = PipDrag, R = st.getBoundingClientRect(), W = R.width, H = R.height, p = pt(e);
+    if (main){ const f = g.on && g.main ? {tx: g.tx, ty: g.ty, sc: g.sc} : mainFx();
+      Object.assign(g, {on:true, main:true, it:null, moved:true, mode:'pinch', pinchT:true, tx:f.tx, ty:f.ty, sc:f.sc});
+      Pinch = {main:true, d0:p.d, x0:p.x, y0:p.y, W, H, base:{...f}}; }
+    else { const it = curPip, rel = outPos - pipTarget.at, v = g.on && g.it === it ? {x:g.x, y:g.y, w:g.w} : (elVals(it, rel) || coverVals(it));
+      Object.assign(g, {on:true, main:false, it, rel, moved:true, mode:'pinch', pinchT:true, x:v.x, y:v.y, w:v.w, clip:it.clip});
+      Pinch = {main:false, d0:p.d, x0:p.x, y0:p.y, W, H, base:{...v}}; }
+  }, {passive:false});
+  st.addEventListener('touchmove', e => {
+    if (!Pinch || e.touches.length < 2) return; e.preventDefault();
+    const g = PipDrag, q = Pinch, p = pt(e), r = p.d / q.d0, dx = (p.x - q.x0) / q.W, dy = (p.y - q.y0) / q.H;
+    if (q.main){ g.sc = clamp(q.base.sc * r, 0.05, 20); g.tx = q.base.tx + dx; g.ty = q.base.ty + dy; if (Math.abs(g.sc - 1) < 0.02) g.sc = 1; applyMainTransform(); placeBox(); }
+    else { g.w = clamp(q.base.w * r, 0.03, 20); g.x = q.base.x + dx; g.y = q.base.y + dy; updateOverlay(outPos); }
+  }, {passive:false});
+  const end = e => { if (!Pinch || e.touches.length >= 2) return; Pinch = null; PipDrag.pinchT = false; endPipDrag(); };
+  st.addEventListener('touchend', end); st.addEventListener('touchcancel', end);
 })();
 $('#pipBox').addEventListener('pointerup', endPipDrag);
 $('#pipBox').addEventListener('pointercancel', endPipDrag);

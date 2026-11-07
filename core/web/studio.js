@@ -330,8 +330,9 @@ tlInner.addEventListener('click', e => {
   const b = e.target.closest('.blk');
   const k = b && blkKey(b);
   if (e.target.classList.contains('kf')){
-    if (e.target.dataset.o != null){ if (playing) pausePlay(); seekOut(+e.target.dataset.o, false); placeHead(outPos); selectBlock(b); return; }
-    const it = P.items.find(x => x.id === b.dataset.id), a = it && ovOf(it); if (a){ if (playing) pausePlay(); seekOut(a.at + +e.target.dataset.t, false); placeHead(outPos); selectBlock(b); } return; }
+    const go = o => { if (playing) pausePlay(); seekOut(o, false); if (TL.mode === 'center') syncScroll(outPos, true); else placeHead(outPos); selectBlock(b); };
+    if (e.target.dataset.o != null){ go(+e.target.dataset.o); return; }
+    const it = P.items.find(x => x.id === b.dataset.id), a = it && ovOf(it); if (a) go(a.at + +e.target.dataset.t); return; }
   if (TL.pick){ if (k){ if (TL.pick.has(k)) TL.pick.delete(k); else TL.pick.add(k); paintLinks(); updateTools(); } return; }
   if (k && (e.ctrlKey || e.metaKey || e.shiftKey) && selKey() && selKey() !== k){ startPick(k); return; }
   if (!b){ select(null); if (TL.mode === 'move' && !e.target.closest('.ruler')){ if (playing) pausePlay(); seekOut(timeAtX(e.clientX), false); placeHead(outPos); } return; }
@@ -341,6 +342,7 @@ tlInner.addEventListener('click', e => {
 // Rechtsklick: Menü mit den Werkzeugen der Auswahl
 tlInner.addEventListener('contextmenu', e => {
   const b = e.target.closest('.blk'); e.preventDefault();
+  if (TL.touchDrag || TL.drag) return;
   if (b) selectBlock(b); else select(null);
   showMenu(e.clientX, e.clientY, toolList());
 });
@@ -396,12 +398,26 @@ tlInner.addEventListener('pointerdown', e => {
     const nb = e.target.closest('.blk'); if (!nb) return; selectBlock(nb); TL.justSelected = true; b = selBlock(); if (!b) return; }
   if (!b) return;
   const h = e.target.closest('.h');
-  e.preventDefault(); b.setPointerCapture(e.pointerId);
   const s = TL.sel, it = s.kind === 'ovl' || s.kind === 'aud' || s.kind === 'zoom' || s.kind === 'fx' || s.kind === 'title' ? selItem() : null;
-  TL.drag = {b, side: h ? (h.classList.contains('l') ? 'l' : 'r') : 'm', x0: e.clientX, sl0: tlEl.scrollLeft, left0: parseFloat(b.style.left), w0: parseFloat(b.style.width), moved: false, d: 0, pts: snapPoints(it)};
-  if (playing) pausePlay();
-  dragEdgeScroll();
+  const start = () => {
+    TL.drag = {b, side: h ? (h.classList.contains('l') ? 'l' : 'r') : 'm', x0: e.clientX, sl0: tlEl.scrollLeft, left0: parseFloat(b.style.left), w0: parseFloat(b.style.width), moved: false, d: 0, pts: snapPoints(it)};
+    if (playing) pausePlay();
+    dragEdgeScroll();
+  };
+  if (e.pointerType === 'touch' && !h){
+    // Am Handy: der Clip-Körper wird erst nach kurzem Halten gegriffen – ein Wischen scrollt die Spur wie gewohnt
+    clearTimeout(TL.holdT); TL.hold = {b, x: e.clientX, y: e.clientY, pid: e.pointerId};
+    TL.holdT = setTimeout(() => { if (!TL.hold || TL.hold.b !== b) return; TL.hold = null; TL.touchDrag = true;
+      try { b.setPointerCapture(e.pointerId); } catch(_){} if (navigator.vibrate) navigator.vibrate(12); b.classList.add('lift'); start(); }, 360);
+    return;
+  }
+  e.preventDefault(); b.setPointerCapture(e.pointerId);
+  start();
 });
+// Halten abbrechen, sobald der Finger wischt (dann scrollt der Browser); während des Ziehens kein Scrollen
+tlInner.addEventListener('pointermove', e => { const h = TL.hold; if (h && e.pointerId === h.pid && Math.hypot(e.clientX - h.x, e.clientY - h.y) > 8){ TL.hold = null; clearTimeout(TL.holdT); } });
+tlInner.addEventListener('touchmove', e => { if (TL.touchDrag) e.preventDefault(); }, {passive:false});
+tlInner.addEventListener('contextmenu', e => { if (TL.touchDrag || TL.hold) e.preventDefault(); }, true);
 // Am Rand der sichtbaren Spur weiterscrollen, solange gezogen wird
 function dragEdgeScroll(){
   const g = TL.drag; if (!g) return;
@@ -445,6 +461,8 @@ function dragMoveAt(e){
   $('#tlInfo').textContent = (g.side === 'm' ? 'Verschieben ' : g.side === 'l' ? 'Anfang ' : 'Ende ') + (d >= 0 ? '+' : '−') + fmtD(Math.abs(d)) + ' s' + (isMain ? ` (${Math.round(Math.abs(d) * fps())} Bilder)` : '');
 }
 function endDrag(){
+  TL.hold = null; clearTimeout(TL.holdT);
+  if (TL.touchDrag){ TL.touchDrag = false; tlInner.querySelectorAll('.blk.lift').forEach(x => x.classList.remove('lift')); }
   const g = TL.drag; if (!g) return; cancelAnimationFrame(g.raf);
   setTimeout(() => { TL.drag = null; }, 0);
   tlInner.querySelectorAll('.t-ovl.drop').forEach(x => x.classList.remove('drop'));
@@ -616,9 +634,9 @@ function updateTools(){
   $('#selLbl').textContent = !s ? 'Abspiellinie' : s.kind === 'main' ? 'Clip' : s.kind === 'insert' ? 'Einschub' : s.kind === 'cue' ? 'Untertitel' : TYPE_LBL[(selItem() || {}).type] || '';
   const info = $('#tlInfo');
   if (!s) info.textContent = FINE ? 'Klick in die Spur setzt den Zeiger · Clip anklicken oder ziehen · Rechtsklick für Werkzeuge · ⌨ zeigt alle Tastenkürzel' : 'Wische zum Spulen · zwei Finger zoomen · Clip antippen zum Bearbeiten';
-  else if (g) info.textContent = `${fmtS(g.o)} – ${fmtS(g.o + segDur(g))} (${fmtD(segDur(g))} s)${g.fx && fxBadges(g.fx) ? ' · ' + fxBadges(g.fx) : ''} · Griffe ziehen zum Trimmen · Clip ziehen zum Umsortieren`;
+  else if (g) info.textContent = `${fmtS(g.o)} – ${fmtS(g.o + segDur(g))} (${fmtD(segDur(g))} s)${g.fx && fxBadges(g.fx) ? ' · ' + fxBadges(g.fx) : ''} · Griffe ziehen zum Trimmen · Clip ${FINE ? 'ziehen' : 'halten und ziehen'} zum Umsortieren`;
   else if (s.kind === 'cue'){ const c = selCue(), t = c && cueTimes(c); info.textContent = t ? `${fmtS(t.s)} – ${fmtS(t.e)}${isFree(c) ? ' · Zeit frei gesetzt' : ''} · ziehen verschiebt, Griffe ändern Anfang/Ende – der Schnitt bleibt gleich · im Bild ziehen setzt die Position nur für diesen` : 'Untertitel'; }
-  else { const it = selItem(); if (it){ const [a, e] = itemOutRange(it); info.textContent = `${fmtS(a)} – ${fmtS(e)} · ziehen zum Verschieben, Griffe zum Trimmen${it.type === 'title' ? ' · im Bild ziehen zum Platzieren, Doppelklick zum Bearbeiten' : ''}`; } }
+  else { const it = selItem(); if (it){ const [a, e] = itemOutRange(it); info.textContent = `${fmtS(a)} – ${fmtS(e)} · ${FINE ? 'ziehen' : 'halten und ziehen'} zum Verschieben, Griffe zum Trimmen${it.type === 'title' ? ' · im Bild ziehen zum Platzieren, Doppelklick zum Bearbeiten' : ''}`; } }
 }
 function paintBar(){
   $('#modeBtn').classList.toggle('on', TL.mode === 'move'); $('#modeBtn').title = TL.mode === 'move' ? 'Zeiger läuft über die Spur (klicken: fester Zeiger in der Mitte)' : 'Fester Zeiger, Spur bewegt sich (klicken: laufender Zeiger)';
