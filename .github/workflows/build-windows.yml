@@ -80,6 +80,25 @@ jobs:
           Invoke-WebRequest "https://github.com/PeterL1n/RobustVideoMatting/releases/download/v1.0.0/rvm_mobilenetv3_fp32.onnx" -OutFile build/models/rvm_mobilenetv3_fp32.onnx
           Get-ChildItem build/models
 
+      - name: Übersetzungsmodell zwischenspeichern
+        uses: actions/cache@v4
+        with:
+          path: build/models/opus-mt-de-en
+          key: opus-mt-de-en-ct2-int8-v1
+
+      - name: Übersetzungsmodell (OPUS-MT Deutsch → Englisch) umwandeln
+        shell: pwsh
+        run: |
+          if (Test-Path build/models/opus-mt-de-en/model.bin) { Get-ChildItem build/models/opus-mt-de-en; exit 0 }
+          # eigene Umgebung, damit torch/transformers nicht im Installer landen
+          python -m venv "$env:RUNNER_TEMP\conv"
+          & "$env:RUNNER_TEMP\conv\Scripts\python.exe" -m pip install --quiet --upgrade pip
+          & "$env:RUNNER_TEMP\conv\Scripts\python.exe" -m pip install --quiet torch --index-url https://download.pytorch.org/whl/cpu
+          & "$env:RUNNER_TEMP\conv\Scripts\python.exe" -m pip install --quiet ctranslate2 "transformers<5" sentencepiece sacremoses
+          & "$env:RUNNER_TEMP\conv\Scripts\ct2-transformers-converter.exe" --model Helsinki-NLP/opus-mt-de-en --quantization int8 --output_dir build/models/opus-mt-de-en --copy_files source.spm target.spm
+          Get-ChildItem build/models/opus-mt-de-en
+          if (-not (Test-Path build/models/opus-mt-de-en/model.bin)) { throw "Umwandlung fehlgeschlagen" }
+
       - name: App bauen (PyInstaller)
         shell: pwsh
         run: |

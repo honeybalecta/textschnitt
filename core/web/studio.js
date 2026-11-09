@@ -268,12 +268,27 @@ tlEl.classList.toggle('mode-move', TL.mode === 'move');
 // Zeit unter einem Bildschirm-X
 const timeAtX = clientX => clamp((clientX - tlInner.getBoundingClientRect().left - padL()) / TL.pps, 0, total);
 // Zeiger greifen und ziehen (bewegter Modus)
-playline.addEventListener('pointerdown', e => {
-  if (TL.mode !== 'move') return; e.preventDefault(); e.stopPropagation(); playline.setPointerCapture(e.pointerId);
-  const was = playing; if (was) pausePlay(); TL.headDrag = true;
-  const mv = ev => { seekOut(timeAtX(ev.clientX), false); placeHead(outPos); };
-  playline.onpointermove = mv; playline.onpointerup = () => { playline.onpointermove = null; playline.onpointerup = null; TL.headDrag = false; };
-});
+// Hält man den Zeiger über den linken oder rechten Rand hinaus, läuft die Spur in diese Richtung weiter (je weiter draußen, desto schneller)
+function headDrag(e, el){
+  e.preventDefault(); e.stopPropagation(); try { el.setPointerCapture(e.pointerId); } catch(_){}
+  if (playing) pausePlay(); TL.headDrag = true;
+  let x = e.clientX, raf = 0;
+  const at = () => { const r = tlEl.getBoundingClientRect(); return clamp(x, r.left + 2, r.right - 2); };
+  const go = () => { seekOut(timeAtX(at()), false); placeHead(outPos); };
+  const tick = () => {
+    const r = tlEl.getBoundingClientRect(), edge = 36; let v = 0;
+    if (x > r.right - edge) v = Math.min(60, Math.ceil((x - (r.right - edge)) / 2) + 3); else if (x < r.left + edge) v = -Math.min(60, Math.ceil(((r.left + edge) - x) / 2) + 3);
+    if (v){ const before = tlEl.scrollLeft; tlEl.scrollLeft = before + v; if (tlEl.scrollLeft !== before){ TL.expect = tlEl.scrollLeft; go(); } }
+    raf = requestAnimationFrame(tick);
+  };
+  const mv = ev => { x = ev.clientX; go(); };
+  const up = () => { cancelAnimationFrame(raf); el.removeEventListener('pointermove', mv); el.removeEventListener('pointerup', up); el.removeEventListener('pointercancel', up); TL.headDrag = false; };
+  el.addEventListener('pointermove', mv); el.addEventListener('pointerup', up); el.addEventListener('pointercancel', up);
+  go(); raf = requestAnimationFrame(tick);
+}
+playline.addEventListener('pointerdown', e => { if (TL.mode !== 'move') return; headDrag(e, playline); });
+// Auf der Zeitskala ziehen = Abspiellinie ziehen (bewegter Modus; im Mitte-Modus scrollt man die Spur selbst)
+$('#ruler').addEventListener('pointerdown', e => { if (TL.mode !== 'move' || e.button > 0) return; headDrag(e, $('#ruler')); });
 
 // ───────── Auswahl ─────────
 function selBlock(){
@@ -723,14 +738,51 @@ function addClip(){
     <button class="tile" data-t="broll"><b>B-Roll</b><span>Bild drüber, dein Ton läuft weiter</span></button>
     <button class="tile" data-t="insert"><b>Einschub</b><span>Hauptvideo pausiert, Clip läuft mit eigenem Ton</span></button>
     <button class="tile" data-t="pip"><b>Einblendung</b><span>Bild oder Video frei im Bild – Größe und Lage frei wählbar</span></button>
-    <button class="tile" data-t="audio"><b>Nur Ton</b><span>Nur die Tonspur der Datei, auf einer Tonspur – das Bild bleibt weg</span></button></div>`;
+    <button class="tile" data-t="audio"><b>Nur Ton</b><span>Nur die Tonspur der Datei, auf einer Tonspur – das Bild bleibt weg</span></button>
+    <button class="tile" data-t="wm"><b>Wasserzeichen</b><span>${P.watermark ? 'Logo bearbeiten – liegt über dem ganzen Video' : 'Logo oder Bild, das die ganze Zeit im Bild liegt – ohne eigene Spur'}</span></button></div>`;
   openSheet(false);
   body.onclick = async e => {
     const b = e.target.closest('[data-t]'); if (!b) return; const type = b.dataset.t;
+    if (type === 'wm') return openWatermark();
     $('#sheet').classList.add('hidden'); $('#sheetBack').classList.add('hidden');
     const o = outPos, clip = await pickMedia('clip'); if (!clip) return;
     placeMedia(clip, type, o, null, true);
   };
+}
+// Wasserzeichen einstellen: Bild, Ecke, Größe, Abstand zum Rand, Deckkraft
+async function pickWatermark(){
+  const m = await pickMedia('clip'); if (!m) return false;
+  if (m.kind !== 'image'){ toast('Bitte ein Bild wählen – am besten ein PNG mit durchsichtigem Hintergrund'); return false; }
+  commit(() => { P.watermark = {...WM_DEF, ...(P.watermark || {}), clip: clipOfSource(m), on: true}; }, true);
+  return true;
+}
+async function openWatermark(){
+  if (!P.watermark && !(await pickWatermark())) return;
+  const body = $('#sheetBody'), POS = [['ol','↖'],['om','↑'],['or','↗'],['ml','←'],['mm','•'],['mr','→'],['ul','↙'],['um','↓'],['ur','↘']];
+  body.innerHTML = `<h3>Wasserzeichen</h3>
+    <div class="row" style="gap:12px;align-items:center"><img class="wm-prev" id="wmPrev" alt=""><div class="col" style="gap:6px"><label class="row"><input type="checkbox" id="wmOn"> Anzeigen</label><button class="btn" id="wmRepl">Bild ersetzen</button></div></div>
+    <div class="field"><span>Lage</span><div class="wm-pos" id="wmPos">${POS.map(([k, a]) => `<button data-p="${k}" title="${k}">${a}</button>`).join('')}</div></div>
+    <div class="field"><span>Größe <b id="wmSizeV"></b></span><input type="range" id="wmSize" min="0.04" max="0.6" step="0.005"></div>
+    <div class="field"><span>Abstand zum Rand <b id="wmMarV"></b></span><input type="range" id="wmMar" min="0" max="0.15" step="0.005"></div>
+    <div class="field"><span>Deckkraft <b id="wmOpV"></b></span><input type="range" id="wmOp" min="0.1" max="1" step="0.01"></div>
+    <p class="muted small">Liegt über allen Clips und unter den Untertiteln, in jedem Export und in allen Clips, die du aus diesem Projekt erstellst.</p>
+    <div class="row" style="margin-top:12px"><button class="btn danger" id="wmDel">Entfernen</button><button class="btn primary" id="wmOk" style="margin-left:auto">Fertig</button></div>`;
+  openSheet(true);
+  const w = () => P.watermark, view = () => { seekOut(outPos, false); };
+  const paint = () => { const x = {...WM_DEF, ...w()}; $('#wmPrev').src = MEDIA(x.clip.uri); $('#wmOn').checked = x.on !== false;
+    $('#wmPos').querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.p === x.pos));
+    $('#wmSize').value = x.size; $('#wmSizeV').textContent = Math.round(x.size * 100) + ' %'; $('#wmMar').value = x.margin; $('#wmMarV').textContent = Math.round(x.margin * 100) + ' %';
+    $('#wmOp').value = x.op; $('#wmOpV').textContent = Math.round(x.op * 100) + ' %'; };
+  const set = (k, v) => { commit(() => { P.watermark[k] = v; }, false); paint(); view(); };
+  $('#wmOn').onchange = () => set('on', $('#wmOn').checked);
+  $('#wmPos').onclick = e => { const b = e.target.closest('button'); if (b) set('pos', b.dataset.p); };
+  for (const [id, k] of [['#wmSize', 'size'], ['#wmMar', 'margin'], ['#wmOp', 'op']]){ const r = $(id);
+    r.onpointerdown = () => { r._b = snapshot(); }; r.oninput = () => { P.watermark[k] = +r.value; paint(); view(); };
+    r.onchange = () => { if (r._b){ undo.push(r._b); redo = []; r._b = null; } changed(false); }; }
+  $('#wmRepl').onclick = async () => { if (await pickWatermark()){ paint(); view(); } };
+  $('#wmDel').onclick = () => { commit(() => { delete P.watermark; }, true); closeSheet(); view(); toast('Wasserzeichen entfernt'); };
+  $('#wmOk').onclick = closeSheet;
+  paint(); view();
 }
 // Datei als Element einfügen: type broll | insert | pip, an Zeit o (Ergebnis), auf Spur track (oder frei)
 function placeMedia(m, type, o, track, short){

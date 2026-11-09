@@ -379,6 +379,22 @@
       return {uri:id, playable:id, files: names, note: `Fertig – „${name}“ (${mb} MB) wurde heruntergeladen.`};
     });
   }
+  // Untertitel übersetzen mit der eingebauten Übersetzung des Browsers (Chrome/Edge am PC, ab Version 138)
+  function translate(textsJson, src, tgt){
+    const texts = JSON.parse(textsJson);
+    return newJob(async job => {
+      if (typeof Translator === 'undefined') throw new Error('Dieser Browser kann noch nicht selbst übersetzen – in Chrome oder Edge am PC (aktuelle Version) oder in der Windows-/Android-App geht es.');
+      const opt = {sourceLanguage: src || 'de', targetLanguage: tgt || 'en'};
+      const av = await Translator.availability(opt); if (av === 'unavailable') throw new Error('Dieses Sprachpaar bietet der Browser nicht an.');
+      job.message = 'Lade Sprachpaket des Browsers …';
+      const tr = await Translator.create({...opt, monitor(m){ m.addEventListener('downloadprogress', e => { job.progress = e.loaded * 0.3; }); }});
+      const out = [];
+      for (let i = 0; i < texts.length; i++){ if (job.cancel) throw new Error('Abgebrochen'); const t = String(texts[i] || '').trim(); out.push(t ? await tr.translate(t) : '');
+        job.progress = 0.3 + 0.69 * (i + 1) / texts.length; job.message = `Übersetze … ${i + 1} von ${texts.length}`; }
+      try { tr.destroy(); } catch(_){}
+      return {texts: out};
+    });
+  }
   function autoMatte(uri){
     const file = need(uri);
     return newJob(async job => {
@@ -484,7 +500,7 @@
   // ───────── Schnittstelle für den Kern ─────────
   let wake = null;
   window.TS = {
-    info: () => JSON.stringify({platform:'web', version:VERSION, exportFormats:['video', 'audio'], bus: typeof BroadcastChannel !== 'undefined', gpu: hasGpu, matte: typeof VideoEncoder !== 'undefined'}),
+    info: () => JSON.stringify({platform:'web', version:VERSION, exportFormats:['video', 'audio'], bus: typeof BroadcastChannel !== 'undefined', gpu: hasGpu, matte: typeof VideoEncoder !== 'undefined', translate: typeof Translator !== 'undefined'}),
     pick: (id, kind) => { if (kind === 'font') pickFont(id); else pick(id, kind); },
     fonts: () => JSON.stringify([...fontStore.values()].map(f => ({uri: 'font:' + f.id, name: f.name}))),
     deleteFont: uri => { const id = uri.slice(5); fontStore.delete(id); idb('fonts', 'readwrite', s => s.delete(id)).catch(() => {}); },
@@ -494,7 +510,7 @@
     deleteProject: id => { projects.delete(id); summaries.delete(id); idb('projects', 'readwrite', s => s.delete(id)).catch(() => {}); },
     models: () => JSON.stringify(modelsList()),
     downloadModel: name => newJob(async job => { await loadModel(name, job, 0, 1); return {}; }),
-    transcribe, transcribeRanges, exportVideo, makeProxy, autoMatte, envelope, exportPackage, importPackage,
+    transcribe, transcribeRanges, exportVideo, makeProxy, autoMatte, translate, envelope, exportPackage, importPackage,
     // Erzeugtes Bild (Folie): sofort nutzbar, im Hintergrund dauerhaft im Browser-Speicher (OPFS) abgelegt
     saveImage(name, b64, width, height, project){
       const bin = atob(String(b64).split(',').pop()), u8 = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);

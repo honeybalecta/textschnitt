@@ -46,6 +46,7 @@
     exportVideo: plan => jobOf(call('POST', 'export', plan)),
     makeProxy: uri => jobOf(call('POST', 'proxy', {uri})),
     autoMatte: uri => jobOf(call('POST', 'matte', {uri})),
+    translate: (texts, src, tgt) => jobOf(call('POST', 'translate', {texts: JSON.parse(texts), src, tgt})),
     job: id => call('GET', 'job?id=' + q(id)),
     cancel: id => { call('POST', 'cancel', {id}); },
     share: path => { call('POST', 'reveal', {path}); },

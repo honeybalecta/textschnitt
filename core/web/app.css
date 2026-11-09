@@ -834,3 +834,9 @@ body.has-deck #paneSlides>:not(.deck-frame){display:none!important}
 .kp-sl{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .kp-sl label{display:flex;flex-direction:column;gap:4px;font-size:13px}
 @media (max-width:520px){ .kp-sl{grid-template-columns:1fr} }
+.stage .wm{position:absolute;z-index:3;pointer-events:none;object-fit:fill}
+.wm-pos{display:grid;grid-template-columns:repeat(3,42px);gap:6px}
+.wm-pos button{height:34px;border-radius:7px;border:1px solid var(--line);background:var(--surface-2);color:var(--creme);cursor:pointer;font-size:15px}
+.wm-pos button.on{background:var(--rot);border-color:var(--rot)}
+.wm-prev{max-width:140px;max-height:80px;border-radius:6px;background:repeating-conic-gradient(#2a2a27 0 25%,#1f1f1d 0 50%) 50%/14px 14px;padding:4px}
+.cue textarea.cue-tr{margin-top:4px;font-style:italic;border-style:dashed;color:var(--sand)}

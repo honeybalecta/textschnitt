@@ -10,7 +10,7 @@ for sub in ("ffmpeg", "models"):
     if src.exists():
         datas.append((str(src), sub))
 binaries, hiddenimports = [], ["textschnitt", "textschnitt_app"]
-for pkg in ("faster_whisper", "ctranslate2", "webview", "clr_loader", "pythonnet", "av", "tokenizers", "onnxruntime", "numpy"):
+for pkg in ("faster_whisper", "ctranslate2", "webview", "clr_loader", "pythonnet", "av", "tokenizers", "onnxruntime", "numpy", "sentencepiece"):
     d, b, h = collect_all(pkg)
     datas += d; binaries += b; hiddenimports += h
 

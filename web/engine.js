@@ -202,7 +202,7 @@ function kfAt(kf, rel){
   return kf[n-1];
 }
 function segFx(s){
-  return {speed: clamp(+s.speed || 1, 0.25, 4), vol: clamp(s.vol == null ? 1 : +s.vol, 0, 4), bright:+s.bright || 0, contrast:+s.contrast || 0, sat:+s.sat || 0, gray:!!s.gray,
+  return {speed: clamp(+s.speed || 1, 0.25, 4), vol: clamp(s.vol == null ? 1 : +s.vol, 0, 8), bright:+s.bright || 0, contrast:+s.contrast || 0, sat:+s.sat || 0, gray:!!s.gray,
     tx:+s.tx || 0, ty:+s.ty || 0, sc: clamp(+s.sc || 1, 0.002, 400), kf: Array.isArray(s.kf) && s.kf.length ? s.kf.map(k => ({t:+k.t || 0, tx:+k.tx || 0, ty:+k.ty || 0, sc: clamp(+k.sc || 1, 0.002, 400)})).sort((a, b) => a.t - b.t) : null};
 }
 // Keyframes der Hauptspur: Lage/Größe zum Zeitpunkt rel (Quellsekunden ab Abschnittsbeginn)
@@ -220,7 +220,7 @@ export async function render(plan, fileOf, job){
   const video = plan.format !== 'audio';
   const W = Math.max(2, (plan.width | 0) & ~1), H = Math.max(2, (plan.height | 0) & ~1);
   const fps = clamp(+plan.fps || 30, 1, 120);
-  const segs = (plan.segments || []).map(s => { const fx = s.kind === 'main' ? segFx(s) : {...FX_DEF, vol: clamp(s.vol == null ? 1 : +s.vol, 0, 4)};
+  const segs = (plan.segments || []).map(s => { const fx = s.kind === 'main' ? segFx(s) : {...FX_DEF, vol: clamp(s.vol == null ? 1 : +s.vol, 0, 8)};
     return {...s, fx, d: Math.max(0.04, (s.out - s.in) / fx.speed)}; });
   const total = segs.reduce((a, s) => a + s.d, 0);
   const af = video ? null : (AUDIO_FMT[plan.audioFormat] || AUDIO_FMT.wav);
@@ -537,9 +537,11 @@ class Renderer {
       let im = st.bm || st.last;
       if (im && o.key) im = this.keyed(im, o.key, o, 2048);   // freigestellt (Greenscreen)
       if (!im) continue;
+      const op = o.opacity != null ? +o.opacity : 1; if (op < 0.999) ctx.globalAlpha = Math.max(0, op);
       if (cr){ const iw = im.width, ih = im.height; ctx.drawImage(im, cl * iw, ct * ih, cw * iw, chh * ih, rect[0], rect[1], rect[2], rect[3]); }
       else if (st.bm) drawFit(ctx, im, ...rect, true);
       else ctx.drawImage(im, rect[0], rect[1], rect[2], rect[3]);
+      ctx.globalAlpha = 1;
     }
   }
   // Freistellen per Farbschlüssel: dieselbe Rechnung wie in der Vorschau (chroma.js); liefert eine Leinwand mit dem freigestellten Bild

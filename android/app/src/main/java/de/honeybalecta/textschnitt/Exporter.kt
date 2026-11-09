@@ -100,7 +100,7 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
         val vol = o.optDouble("vol", 1.0).toFloat()
         if (!removeAudio && Math.abs(vol - 1f) > 0.001) {
             val mix = ChannelMixingAudioProcessor()
-            for (ch in 1..6) mix.putChannelMixingMatrix(ChannelMixingMatrix.createForConstantGain(ch, ch).scaleBy(vol.coerceIn(0f, 4f)))
+            for (ch in 1..6) mix.putChannelMixingMatrix(ChannelMixingMatrix.createForConstantGain(ch, ch).scaleBy(vol.coerceIn(0f, 8f)))
             audio.add(mix)
         }
         val speed = o.optDouble("speed", 1.0).toFloat().coerceIn(0.25f, 4f)
@@ -145,7 +145,7 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
                 if (dur <= 0.05) continue
                 if (at - cursor > 0.01) seq.addGap(us(at - cursor))
                 val vol = o.optDouble("vol", 1.0).toFloat(); val ap = ArrayList<AudioProcessor>()
-                if (Math.abs(vol - 1f) > 0.001) ap.add(ChannelMixingAudioProcessor().apply { for (ch in 1..6) putChannelMixingMatrix(ChannelMixingMatrix.createForConstantGain(ch, ch).scaleBy(vol.coerceIn(0f, 4f))) })
+                if (Math.abs(vol - 1f) > 0.001) ap.add(ChannelMixingAudioProcessor().apply { for (ch in 1..6) putChannelMixingMatrix(ChannelMixingMatrix.createForConstantGain(ch, ch).scaleBy(vol.coerceIn(0f, 8f))) })
                 seq.addItem(EditedMediaItem.Builder(clip(o.getString("uri"), inS, inS + dur)).setRemoveVideo(true).setEffects(Effects(ap, listOf())).build())
                 cursor = at + dur; k++
             }
@@ -208,7 +208,7 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
                 if (dur <= 0.05) continue
                 if (at - cursor > 0.01) seq.addGap(us(at - cursor))
                 val vol = o.optDouble("vol", 1.0).toFloat(); val ap = ArrayList<AudioProcessor>()
-                if (Math.abs(vol - 1f) > 0.001) ap.add(ChannelMixingAudioProcessor().apply { for (ch in 1..6) putChannelMixingMatrix(ChannelMixingMatrix.createForConstantGain(ch, ch).scaleBy(vol.coerceIn(0f, 4f))) })
+                if (Math.abs(vol - 1f) > 0.001) ap.add(ChannelMixingAudioProcessor().apply { for (ch in 1..6) putChannelMixingMatrix(ChannelMixingMatrix.createForConstantGain(ch, ch).scaleBy(vol.coerceIn(0f, 8f))) })
                 seq.addItem(EditedMediaItem.Builder(clip(o.getString("uri"), inS, inS + dur)).setRemoveVideo(true).setEffects(Effects(ap, listOf())).build())
                 cursor = at + dur; n++
             }
@@ -251,7 +251,8 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
                 seq.addItem(item(o2, inS, inS + dur, !withAudio || o.optBoolean("image"), cropFx + listOf(Presentation.createForWidthAndHeight(pw, ph, Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP)),
                     pre = if (key != null) listOf(ChromaKeyEffect(key, false)) else emptyList()))
                 spans.add(OvSpan(at, at + dur, o.getString("mode"), o.optString("corner", "or"), o.optDouble("size", 0.33).toFloat(),
-                    free, o.optDouble("x", 0.5).toFloat(), o.optDouble("y", 0.5).toFloat(), o.optDouble("w", 1.0).toFloat(), (baseW * texR).toFloat(), kf))
+                    free, o.optDouble("x", 0.5).toFloat(), o.optDouble("y", 0.5).toFloat(), o.optDouble("w", 1.0).toFloat(), (baseW * texR).toFloat(), kf,
+                    o.optDouble("opacity", 1.0).toFloat().coerceIn(0f, 1f)))
                 cursor = at + dur
             }
             if (spans.isEmpty()) continue
@@ -351,7 +352,7 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
     // ── Overlay-Steuerung ──
     data class OvSpan(val a: Double, val b: Double, val mode: String, val corner: String, val size: Float,
                       val free: Boolean = false, val x: Float = 0.5f, val y: Float = 0.5f, val wf: Float = 1f, val baseW: Float = 1f,
-                      val kf: List<FloatArray> = emptyList())
+                      val kf: List<FloatArray> = emptyList(), val alpha: Float = 1f)
 
     class OvSettings(private val w: Int, private val h: Int, private val tracks: List<List<OvSpan>>) : VideoCompositorSettings {
         private val hidden = StaticOverlaySettings.Builder().setAlphaScale(0f).build()
@@ -377,7 +378,7 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
                     }
                 }
                 val sc = wf / s.baseW
-                return StaticOverlaySettings.Builder().setScale(sc, sc)
+                return StaticOverlaySettings.Builder().setScale(sc, sc).setAlphaScale(s.alpha)
                     .setOverlayFrameAnchor(0f, 0f).setBackgroundFrameAnchor(x * 2 - 1, 1 - y * 2).build()
             }
             if (s.mode != "pip") return full

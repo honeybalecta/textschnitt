@@ -107,6 +107,12 @@ def selftest(out_path: str) -> int:
             raise RuntimeError("Modell zum Freistellen fehlt im Paket")
         sess = onnxruntime.InferenceSession(rep["matte_model"], providers=["CPUExecutionProvider"])
         rep["matte_inputs"] = [i.name for i in sess.get_inputs()]
+        # Übersetzen: Modell im Paket und ein Probesatz
+        rep["translate_pairs"] = T.translate_pairs()
+        job = {"cancel": False, "progress": 0, "message": ""}
+        rep["translate_probe"] = T.translate_job(job, ["Die Mieten sind stark gestiegen."], "de", "en")["texts"][0]
+        if not rep["translate_probe"]:
+            raise RuntimeError("Übersetzung liefert nichts")
         rep["ok"] = True
     except Exception:
         rep["ok"] = False

@@ -55,6 +55,7 @@
       <video id="iv" playsinline preload="auto" class="hidden"></video>
       <img id="oi" class="hidden" alt="">
       <img id="ii" class="hidden" alt="">
+      <img id="wm" class="wm hidden" alt="">
       <div class="audio-note">♪</div>
       <div class="snap-guide"></div>
       <div class="subov" id="subOv" title="Ziehen, um die Untertitel zu verschieben"></div>
@@ -172,6 +173,16 @@
         <p class="muted small">Im Text Wörter markieren und mit „👤 Person“ zuordnen. Hier bekommt jede Person ihre eigenen Untertitel – alles auf „wie alle“ folgt der Grundeinstellung oben, so bleibt das Bild einheitlich und nur z. B. die Farbe wechselt.</p>
         <div id="spkList"></div>
         <div class="row"><button class="btn" id="spkAdd">＋ Person</button><button class="btn" id="spkSame" title="Alle Abweichungen entfernen – alle Personen sehen wieder gleich aus">Alle angleichen</button></div>
+      </div>
+      <div class="card stack" id="trCard">
+        <h3>Übersetzung</h3>
+        <p class="muted small" id="trInfo">Wenn die Untertitel fertig sind: Übersetzung erzeugen. Sie erscheint unter dem Original oder ersetzt es – in der Vorschau und in jedem Export. Die Übersetzung lässt sich unten bei jedem Untertitel nachbessern.</p>
+        <div class="grid2">
+          <label>Sprache <select id="trLang"><option value="en">Englisch</option></select></label>
+          <label>Anzeige <select id="trMode"><option value="both">Original und Übersetzung</option><option value="only">Nur Übersetzung</option><option value="off">Nur Original</option></select></label>
+        </div>
+        <div class="row wrap"><button class="btn primary" id="trBtn">Übersetzung erzeugen</button><button class="btn hidden" id="trStop">Abbrechen</button><span class="muted small" id="trMsg"></span></div>
+        <div class="keyProg hidden" id="trProg"><div class="prog"><i></i></div></div>
       </div>
       <div id="cueList"></div>
     </div>
@@ -314,6 +325,7 @@
         <div class="seg-ctl" id="exFmt"></div>
         <label class="row" data-fmt="video">Auflösung <select id="exRes"><option value="0" selected>Original</option><option value="1080">1080p</option><option value="720">720p</option></select></label>
         <label class="row" data-fmt="video" id="exQualityRow">Qualität <select id="exQuality"><option value="hoch">hoch</option><option value="standard" selected>standard</option><option value="klein">kleine Datei</option></select></label>
+        <label class="row" data-fmt="video audio capcut" title="Sprache aller Clips auf dieselbe Lautheit bringen und das Ganze auf eine für Social Media übliche Lautstärke (−14 LUFS) heben – Musik und B-Roll behalten ihr Verhältnis"><input type="checkbox" id="exLevel" checked> Lautstärke vereinheitlichen</label>
         <label class="row" data-fmt="video"><input type="checkbox" id="exSubs" checked> Untertitel ins Video einbrennen</label>
         <label class="row" data-fmt="audio">Format <select id="exAudioFmt"><option value="wav">WAV</option><option value="mp3">MP3</option><option value="m4a">M4A</option><option value="flac">FLAC</option></select></label>
         <div data-fmt="capcut" class="stack">

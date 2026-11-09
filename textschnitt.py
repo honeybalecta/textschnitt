@@ -37,7 +37,7 @@ os.environ.setdefault("HF_HUB_DISABLE_IMPLICIT_TOKEN", "1")
 import warnings  # noqa: E402
 warnings.filterwarnings("ignore", module="huggingface_hub")
 
-VERSION = "2.21.2"
+VERSION = "2.22.0"
 APP_DIR = Path(__file__).resolve().parent
 FROZEN = bool(getattr(sys, "frozen", False))          # als installierte .exe gebaut
 RES_DIR = Path(getattr(sys, "_MEIPASS", APP_DIR))      # mitgelieferte Dateien (Oberfläche, ffmpeg, Modelle)
@@ -696,6 +696,70 @@ def matte_job(job: dict, path: str):
     return {**probe(str(out)), "name": Path(path).stem + " – freigestellt", "orig": path}
 
 
+# ───────────────────────────── Übersetzen (Untertitel) ─────────────────────────────
+# OPUS-MT (Helsinki-NLP), mit CTranslate2 auf int8 umgewandelt und im Installer enthalten (Ordner models/opus-mt-<von>-<nach>).
+# Läuft ganz auf dem Rechner. Weitere Sprachpaare: Ordner gleichen Namens danebenlegen.
+
+def translate_model_dir(src: str, tgt: str) -> Path | None:
+    name = f"opus-mt-{src}-{tgt}"
+    for d in (MODELS_DIR, DATA_DIR / "models"):
+        if (d / name / "model.bin").exists() and (d / name / "source.spm").exists():
+            return d / name
+    return None
+
+
+def translate_pairs() -> list[str]:
+    out = []
+    for d in (MODELS_DIR, DATA_DIR / "models"):
+        if d.exists():
+            out += [p.name[8:] for p in d.glob("opus-mt-*") if (p / "model.bin").exists()]
+    return sorted(set(out))
+
+
+def translate_available() -> bool:
+    try:
+        import ctranslate2  # noqa: F401
+        import sentencepiece  # noqa: F401
+    except Exception:
+        return False
+    return bool(translate_pairs())
+
+
+_tr_cache: dict = {}
+
+
+def translate_job(job: dict, texts: list, src: str, tgt: str):
+    import ctranslate2
+    import sentencepiece as spm
+    src, tgt = (src or "de").lower()[:2], (tgt or "en").lower()[:2]
+    if src == tgt:
+        return {"texts": list(texts)}
+    d = translate_model_dir(src, tgt)
+    if d is None:
+        raise ValueError(f"Für {src.upper()} → {tgt.upper()} ist noch kein Übersetzungsmodell enthalten (vorhanden: {', '.join(translate_pairs()) or 'keins'}).")
+    key = str(d)
+    if key not in _tr_cache:
+        job["message"] = "Übersetzung wird vorbereitet …"
+        _tr_cache[key] = (ctranslate2.Translator(str(d), device="cpu", compute_type="int8", inter_threads=1, intra_threads=max(1, (os.cpu_count() or 4) - 1)),
+                          spm.SentencePieceProcessor(model_file=str(d / "source.spm")),
+                          spm.SentencePieceProcessor(model_file=str(d / "target.spm")))
+    tr, sp_s, sp_t = _tr_cache[key]
+    out = []
+    n = len(texts)
+    for i in range(0, n, 16):
+        if job["cancel"]:
+            raise RuntimeError("Abgebrochen")
+        batch = [str(t or "").strip() for t in texts[i:i + 16]]
+        toks = [sp_s.encode(t, out_type=str) + ["</s>"] if t else ["</s>"] for t in batch]
+        res = tr.translate_batch(toks, beam_size=4, max_decoding_length=256)
+        for t, r in zip(batch, res):
+            hyp = [x for x in r.hypotheses[0] if x not in ("</s>", "<pad>")]
+            out.append(sp_t.decode(hyp).strip() if t else "")
+        job["progress"] = min(0.99, len(out) / max(1, n))
+        job["message"] = f"Übersetze … {len(out)} von {n}"
+    return {"texts": out}
+
+
 # ───────────────────────────── Vorschaubilder ─────────────────────────────
 
 _thumb_sem = threading.Semaphore(3)
@@ -930,7 +994,7 @@ def cover_window(s: dict, plan: dict, W: int, H: int, fx: dict) -> str | None:
 
 
 def seg_fx(s: dict) -> dict:
-    return {"speed": max(0.25, min(4.0, float(s.get("speed") or 1))), "vol": max(0.0, min(4.0, float(s.get("vol", 1) if s.get("vol") is not None else 1))),
+    return {"speed": max(0.25, min(4.0, float(s.get("speed") or 1))), "vol": max(0.0, min(8.0, float(s.get("vol", 1) if s.get("vol") is not None else 1))),
             "bright": float(s.get("bright") or 0), "contrast": float(s.get("contrast") or 0), "sat": float(s.get("sat") or 0), "gray": bool(s.get("gray")),
             "tx": float(s.get("tx") or 0), "ty": float(s.get("ty") or 0), "sc": max(0.05, float(s.get("sc") or 1))}
 
@@ -1171,10 +1235,13 @@ def build_graph(plan: dict, with_video: bool, ass_name: str | None):
         parts.append(f"[{i}:a:0]atrim=start={inn + off:.4f}:end={inn + d + off:.4f},asetpts=PTS-STARTPTS,aresample=48000,"
                      f"aformat=sample_fmts=fltp:channel_layouts=stereo,volume={vol:.3f},afade=t=in:st=0:d=0.01,adelay={ms}|{ms}[oa{k}]")
         oa.append(f"[oa{k}]")
-    amain = "[amain]" if oa else "[aout]"
+    afin = "[apre]" if plan.get("level") else "[aout]"   # Lautstärke vereinheitlicht: Spitzen zum Schluss begrenzen
+    amain = "[amain]" if oa else afin
     parts.append("".join(labels) + f"concat=n={n}:v={int(with_video)}:a=1" + ("[base]" if with_video else "") + amain)
     if oa:
-        parts.append("[amain]" + "".join(oa) + f"amix=inputs={len(oa) + 1}:normalize=0:duration=first:dropout_transition=0[aout]")
+        parts.append("[amain]" + "".join(oa) + f"amix=inputs={len(oa) + 1}:normalize=0:duration=first:dropout_transition=0{afin}")
+    if plan.get("level"):
+        parts.append("[apre]alimiter=limit=0.89:attack=5:release=60:level=false[aout]")
     if with_video:
         cur = "[base]"
         for k, o in enumerate(ovs):
@@ -1230,13 +1297,15 @@ def build_graph(plan: dict, with_video: bool, ass_name: str | None):
                 off = starts.get(norm_path(o["uri"]), 0.0)
                 src = f"[{i}:v:0]trim=start={inn + off:.4f}:end={inn + d + off:.4f},{cropf}setpts=PTS-STARTPTS+{at:.4f}/TB"
             still = bool(o.get("image")) and not (g and g["anim"])
+            op = min(1.0, max(0.0, float(o.get("opacity", 1) if o.get("opacity") is not None else 1)))
+            opf = f",colorchannelmixer=aa={op:.3f}" if op < 0.999 else ""   # Deckkraft (z. B. Wasserzeichen)
             kg = chroma_graph(o.get("key"), f"[op{k}]", f"[ok{k}]", f"x{k}")
             if kg:
                 parts.append(f"{src}{'' if still else f',fps={fps_s}'},{sc}[op{k}]")
                 parts += kg
-                parts.append(f"[ok{k}]format=yuva420p[o{k}]")
+                parts.append(f"[ok{k}]format=yuva420p{opf}[o{k}]")
             else:
-                parts.append(f"{src}{'' if still else f',fps={fps_s}'},{sc},format=yuva420p[o{k}]")
+                parts.append(f"{src}{'' if still else f',fps={fps_s}'},{sc},format=yuva420p{opf}[o{k}]")
             ev = ":eval=frame" if g and (g["anim"] or g["move"]) else ""
             parts.append(f"{cur}[o{k}]overlay=x={x}:y={y}{ev}:eof_action={'repeat' if still else 'pass'}:enable='between(t,{at:.4f},{at + d:.4f})'[c{k}]")
             cur = f"[c{k}]"
@@ -1703,7 +1772,7 @@ def write_capcut(plan: dict, root: Path, name: str, cues: list[dict], style: dic
         mats[key] = (mid, kind, info)
         return mats[key]
 
-    def segment(mid: str, kind: str, target: float, src: float | None, d: float, volume=1.0, scale=1.0, tx=0.0, ty=0.0, render=0, speed=1.0):
+    def segment(mid: str, kind: str, target: float, src: float | None, d: float, volume=1.0, scale=1.0, tx=0.0, ty=0.0, render=0, speed=1.0, alpha=1.0):
         speed_id = uuid.uuid4().hex
         materials["speeds"].append({"curve_speed": None, "id": speed_id, "mode": 0, "speed": speed, "type": "speed"})
         seg = {"last_nonzero_volume": 1.0, "reverse": False, "track_attribute": 0, "track_render_index": 0,
@@ -1713,7 +1782,7 @@ def write_capcut(plan: dict, root: Path, name: str, cues: list[dict], style: dic
                "extra_material_refs": [speed_id], "is_tone_modify": False}
         if kind == "video":
             seg.update(VISUAL)
-            seg.update({"clip": {"alpha": 1.0, "flip": {"horizontal": False, "vertical": False}, "rotation": 0.0,
+            seg.update({"clip": {"alpha": alpha, "flip": {"horizontal": False, "vertical": False}, "rotation": 0.0,
                                  "scale": {"x": scale, "y": scale}, "transform": {"x": tx, "y": ty}},
                         "uniform_scale": {"on": True, "value": 1.0},
                         "hdr_settings": {"intensity": 1.0, "mode": 1, "nits": 1000}, "render_index": render})
@@ -1768,7 +1837,8 @@ def write_capcut(plan: dict, root: Path, name: str, cues: list[dict], style: dic
         if o.get("mode") == "pip" or o.get("w") is not None:
             x, y = pip_center(o, W, H)
             seg = segment(mid, "video", float(o["at"]), 0.0 if img else float(o["in"]), d, volume=vol,
-                          scale=pip_scale(o, W, H), tx=round((x - 0.5) * 2, 4), ty=round((0.5 - y) * 2, 4), render=trk)
+                          scale=pip_scale(o, W, H), tx=round((x - 0.5) * 2, 4), ty=round((0.5 - y) * 2, 4), render=trk,
+                          alpha=round(float(o.get("opacity") if o.get("opacity") is not None else 1), 3))
             seg["common_keyframes"] = capcut_keyframes(o, W, H)
         else:
             seg = segment(mid, "video", float(o["at"]), 0.0 if img else float(o["in"]), d, volume=vol,
@@ -2255,7 +2325,7 @@ def open_file(path: str):
 
 def app_info() -> dict:
     cc = capcut_drafts_dir()
-    return {"platform": "desktop", "version": VERSION, "exportFormats": ["video", "audio", "capcut", "concat"], "bus": True, "matte": matte_available(),
+    return {"platform": "desktop", "version": VERSION, "exportFormats": ["video", "audio", "capcut", "concat"], "bus": True, "matte": matte_available(), "translate": translate_available(), "translatePairs": translate_pairs(),
             "capcutDir": str(cc) if cc else None, "concatDir": str(concat_root()),
             "whisper": whisper_available(), "os": platform.system()}
 
@@ -2527,6 +2597,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"url": url})
             if rest == "api/proxy":
                 job = run_job(new_job("proxy"), proxy_job, data["uri"])
+                return self._json({"job": job["id"]})
+            if rest == "api/translate":
+                if not translate_available():
+                    raise ValueError("Übersetzen braucht das Übersetzungsmodell aus dem Installer (ab Version 2.22).")
+                job = run_job(new_job("translate"), translate_job, list(data.get("texts") or []), data.get("src") or "de", data.get("tgt") or "en")
                 return self._json({"job": job["id"]})
             if rest == "api/matte":
                 if not matte_available():
