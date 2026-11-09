@@ -37,7 +37,7 @@ os.environ.setdefault("HF_HUB_DISABLE_IMPLICIT_TOKEN", "1")
 import warnings  # noqa: E402
 warnings.filterwarnings("ignore", module="huggingface_hub")
 
-VERSION = "2.22.0"
+VERSION = "2.22.1"
 APP_DIR = Path(__file__).resolve().parent
 FROZEN = bool(getattr(sys, "frozen", False))          # als installierte .exe gebaut
 RES_DIR = Path(getattr(sys, "_MEIPASS", APP_DIR))      # mitgelieferte Dateien (Oberfläche, ffmpeg, Modelle)
@@ -312,7 +312,7 @@ MODEL_REPO = {"large-v3-turbo": "mobiuslabsgmbh/faster-whisper-large-v3-turbo"}
 
 def bundled_models() -> list[str]:
     try:
-        return sorted(d.name for d in MODELS_DIR.iterdir() if (d / "model.bin").exists())
+        return sorted(d.name for d in MODELS_DIR.iterdir() if (d / "model.bin").exists() and not d.name.startswith("opus-mt-"))   # Übersetzungsmodelle zählen nicht
     except OSError:
         return []
 
