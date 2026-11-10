@@ -683,7 +683,7 @@ function snapshot(){ return JSON.stringify({d:[...deleted], t:P.trims, c:P.cues,
 function restore(s){ const o = JSON.parse(s); deleted = new Set(o.d); P.trims = o.t; P.cues = o.c; P.items = o.i; P.adj = o.a; P.dels = o.x || []; P.splits = o.y || [];
   if (o.s) P.sub_style = o.s; P.edits = o.e || {}; P.moves = o.m || [];
   if (o.f) P.slides = o.f; if (o.k) P.speakers = o.k;
-  if ('wm' in o){ if (o.wm) P.watermark = o.wm; else delete P.watermark; } if ('tr' in o){ if (o.tr) P.trans = o.tr; else delete P.trans; } if (o.w){ for (const t of tokens){ const m = o.w[t.i]; if (m){ if (m[0]) t.spk = m[0]; else delete t.spk; if (m[1]) t.ks = true; else delete t.ks; } else { delete t.spk; delete t.ks; } } }
+  if ('wm' in o){ if (o.wm) P.watermark = o.wm; else delete P.watermark; } if ('tr' in o){ if (o.tr) P.trans = o.tr; else delete P.trans; trMemo.list = null; } if (o.w){ for (const t of tokens){ const m = o.w[t.i]; if (m){ if (m[0]) t.spk = m[0]; else delete t.spk; if (m[1]) t.ks = true; else delete t.ks; } else { delete t.spk; delete t.ks; } } }
   const reorder = JSON.stringify(P.moves) !== lastOrderKey; syncStyleInputs(); changed(true);
   if (reorder && tokens.length) renderTranscript(); else tokens.forEach(t => paint(t.i)); }
 function commit(fn, rerender = true){ undo.push(snapshot()); if (undo.length > 200) undo.shift(); redo = []; fn(); changed(rerender); }
@@ -2660,14 +2660,45 @@ function genCues(startTok = 0){
 }
 // ── Übersetzung der Untertitel: P.trans = {lang, mode: both|only|off, map: {Originaltext: Übersetzung}} ──
 const trKey = t => String(t || '').replace(/\s+/g, ' ').trim();
-function trOf(text){ const t = P && P.trans; if (!t || !t.map || t.mode === 'off') return null; const v = t.map[trKey(text)]; return v == null || !v.trim() ? null : v; }
+// Übersetzung je Untertitel: satzweise gespeichert (P.trans.sent: Satz des Originals → übersetzter Satz) und erst beim
+// Anzeigen auf die Untertitel des Satzes verteilt. Bei „1 Wort pro Untertitel“ gleichmäßig nach Anzahl: Hat die Übersetzung
+// weniger Wörter, bleibt ein Wort stehen; hat sie mehr, erscheinen zwei Wörter zugleich. Einzelne Verbesserungen je Untertitel
+// (Zeilen-Modus) liegen in P.trans.map und gehen vor.
+const trMemo = {list: null, out: null};
+function trTexts(list){
+  if (trMemo.list === list) return trMemo.out;
+  const t = P && P.trans, out = new Array(list.length).fill(null);
+  if (t && t.mode !== 'off'){
+    const word = S().mode === 'word', idx = new Map(list.map((x, i) => [x, i]));
+    for (const g of trGroups(list)){
+      const sent = trSent(t.sent, trGroupKey(g)), parts = sent ? (word ? trEven(g.length, sent) : trSpread(g, sent)) : null;
+      g.forEach((x, i) => { const ov = t.map && t.map[trKey(x.text)], v = word ? (parts ? parts[i] : ov) : (ov ?? (parts ? parts[i] : null)); out[idx.get(x)] = v && String(v).trim() ? v : null; });
+    }
+  }
+  trMemo.list = list; trMemo.out = out; return out;
+}
+const trGroupKey = g => trKey(g.map(x => x.text).join(' '));
+// Satz suchen – auch wenn die Untertitel inzwischen anders gebündelt sind (z. B. nach dem Wechsel zu „1 Wort pro Untertitel“)
+const trSplitS = t => (t.match(/[^.!?…]+(?:[.!?…]+["»«”“')\]]*|$)/g) || []).map(x => x.trim()).filter(Boolean);
+function trSent(sent, gk){
+  if (!sent) return null; if (sent[gk]) return sent[gk];
+  const keys = Object.keys(sent);
+  for (const k of keys) if (k.includes(gk)){ const a = trSplitS(k), b = trSplitS(sent[k]), i = a.findIndex(x => trKey(x) === gk);
+    if (i >= 0 && a.length === b.length) return b[i];
+    { const pos = k.indexOf(gk) / k.length, end = (k.indexOf(gk) + gk.length) / k.length, w = sent[k].split(/\s+/); return w.slice(Math.round(pos * w.length), Math.max(Math.round(pos * w.length) + 1, Math.round(end * w.length))).join(' '); } }
+  const inner = keys.filter(k => gk.includes(k)).sort((x, y) => gk.indexOf(x) - gk.indexOf(y));
+  return inner.length && inner.reduce((n, k) => n + k.length, 0) > gk.length * 0.6 ? inner.map(k => sent[k]).join(' ') : null;
+}
+function trEven(n, tr){ const w = tr.split(/\s+/).filter(Boolean), m = w.length; if (!m) return new Array(n).fill(null);
+  return Array.from({length: n}, (_, i) => { const a = Math.floor(i * m / n), b = Math.floor((i + 1) * m / n); return b > a ? w.slice(a, b).join(' ') : w[Math.min(a, m - 1)]; }); }
+const trHas = () => !!(P && P.trans && ((P.trans.sent && Object.keys(P.trans.sent).length) || (P.trans.map && Object.keys(P.trans.map).length)));
 // Eigener Stil der Übersetzung (P.trans.style): Schrift, Farbe, Größe, Umrandung, Kasten, Lage unter/über dem Original
 const TR_STYLE = {font: null, color: '#CFC6B0', size: 'klein', outline: true, bg: false, pos: 'unter'};
 function trStyle(){ const st = S(), t = (P.trans && P.trans.style) || {}; return {...TR_STYLE, font: st.font || '', outline: st.outline !== false, ...t}; }
 const escH = t => String(t).replace(/[&<>]/g, c => ({'&':'&amp;', '<':'&lt;', '>':'&gt;'}[c]));
 // Vorschau: Original und Übersetzung als zwei Blöcke im selben Untertitel – die Übersetzung mit eigenem Stil
-function subHtml(text, base){
-  const tr = trOf(text); if (tr == null) return null;
+function subHtml(text, tr, base){
+  if (tr == null) return null;
   const ts = trStyle(), rel = (SIZE_F[ts.size] || 0.045) / (SIZE_F[base.size] || 0.058), stage = $('#stage'), px = subPx(stage.clientWidth || 1, stage.clientHeight || 1, base) * rel, o = Math.max(1, px / 14);
   const sh = ts.outline ? [[-1,-1],[1,-1],[-1,1],[1,1],[0,-1.4],[0,1.4],[-1.4,0],[1.4,0]].map(([x, y]) => `${(x*o).toFixed(1)}px ${(y*o).toFixed(1)}px 0 #000`).join(',') : `0 ${(px/20).toFixed(1)}px ${(px/10).toFixed(1)}px rgba(0,0,0,.8)`;
   const trCss = `display:block;color:${ts.color};font-size:${rel.toFixed(3)}em;font-family:${fontCss(ts.font).replace(/"/g, "'")};font-weight:${fontWeight(ts.font)};text-shadow:${sh}` + (ts.bg ? `;background:rgba(0,0,0,.6);border-radius:${(px*0.18).toFixed(1)}px;padding:${(px*0.1).toFixed(1)}px ${(px*0.3).toFixed(1)}px;width:fit-content;margin:auto` : '');
@@ -2685,8 +2716,8 @@ function trWrap(tr){
   if (cur) out.push(cur); return out.join('\n');
 }
 // Export: Original und Übersetzung als zwei Untertitel, als Block um die Untertitel-Position gesetzt und im Bild gehalten
-function trCues(o, text, W, H, base){
-  const tr = trOf(text); if (tr == null) return [o];
+function trCues(o, tr, W, H, base){
+  if (tr == null) return [o];
   const ts = trStyle(), port = H > W ? 1.25 : 1, fT = SIZE_F[ts.size] || 0.045, tx = trWrap(tr);
   const t = {...o, text: tx, color: ts.color, size: fT, outline: !!ts.outline, font: ts.font || ''}; if (ts.bg) t.bg = true; else delete t.bg;
   if (P.trans.mode === 'only') return [t];
@@ -2698,7 +2729,7 @@ function trCues(o, text, W, H, base){
 }
 function paintTrStyle(){ if (!P) return; const ts = trStyle(); fillFontSelects(); $('#trFont').value = ts.font || ''; $('#trColor').value = ts.color.toLowerCase(); $('#trSize').value = ts.size;
   $('#trPos').value = ts.pos; $('#trOutline').checked = !!ts.outline; $('#trBg').checked = !!ts.bg; }
-function setTrStyle(k, v){ if (!P) return; commit(() => { P.trans ||= {lang: 'en', mode: 'both', map: {}}; P.trans.style = {...(P.trans.style || {}), [k]: v}; }, false); cueCache.at = -1; shownCue = null; updateSubs(outPos); }
+function setTrStyle(k, v){ if (!P) return; commit(() => { P.trans ||= {lang: 'en', mode: 'both', map: {}, sent: {}}; P.trans.style = {...(P.trans.style || {}), [k]: v}; }, false); cueCache.at = -1; shownCue = null; updateSubs(outPos); }
 $('#trFont').onchange = async () => { if ($('#trFont').value === '__import'){ const f = await importFont(); fillFontSelects(); if (f) setTrStyle('font', f.key); paintTrStyle(); return; } setTrStyle('font', $('#trFont').value); };
 $('#trColor').oninput = () => setTrStyle('color', $('#trColor').value.toUpperCase());
 $('#trSize').onchange = () => setTrStyle('size', $('#trSize').value);
@@ -2707,8 +2738,8 @@ $('#trOutline').onchange = () => setTrStyle('outline', $('#trOutline').checked);
 $('#trBg').onchange = () => setTrStyle('bg', $('#trBg').checked);
 $('#trStyleSame').onclick = () => { const st = S(); commit(() => { P.trans ||= {lang: 'en', mode: 'both', map: {}}; P.trans.style = {font: st.font || '', color: st.color, size: st.size, outline: st.outline !== false, bg: !!st.bg, pos: trStyle().pos}; }, false); paintTrStyle(); cueCache.at = -1; shownCue = null; updateSubs(outPos); };
 // Text, wie er im Bild steht (Vorschau und Export)
-function subDisplay(text){
-  const tr = trOf(text); if (tr == null) return wrapText(text);
+function subDisplay(text, tr){
+  if (tr == null) return wrapText(text);
   if (P.trans.mode === 'only') return wrapText(tr);
   const st = S(), max = Math.max(+st.chars || 32, 24);
   return wrapText(text) + '\n' + (tr.length > max * 1.15 ? (() => { const mid = tr.length / 2; let b = -1; for (let i = 0; i < tr.length; i++) if (tr[i] === ' ' && (b < 0 || Math.abs(i - mid) < Math.abs(b - mid))) b = i; return b < 0 ? tr : tr.slice(0, b) + '\n' + tr.slice(b + 1); })() : tr);
@@ -2718,7 +2749,7 @@ function subDisplay(text){
 function trGroups(list){
   const out = []; let cur = [];
   list.forEach((x, k) => { cur.push(x); const n = list[k + 1], txt = trKey(x.text);
-    if (!n || /[.!?…:;]["»«”“')\]]*$/.test(txt) || n.s - x.e > 1.2 || cur.length >= 6){ out.push(cur); cur = []; } });
+    if (!n || /[.!?…:;]["»«”“')\]]*$/.test(txt) || n.s - x.e > 1.2 || cur.length >= (S().mode === 'word' ? 40 : 6)){ out.push(cur); cur = []; } });
   return out;
 }
 function trSpread(group, tr){
@@ -2743,23 +2774,65 @@ function runTranslate(){
   const end = () => { $('#trBtn').disabled = false; $('#trStop').classList.add('hidden'); $('#trProg').classList.add('hidden'); };
   watchJob(jid, j => { $('#trProg i').style.width = Math.round((j.progress || 0) * 100) + '%'; $('#trMsg').textContent = j.message || ''; },
     j => { end(); const res = (j.result && j.result.texts) || [];
-      commit(() => { const map = {}; groups.forEach((g, k) => { const parts = trSpread(g, String(res[k] || '').trim()); g.forEach((x, i) => { if (parts[i]) map[trKey(x.text)] = parts[i]; }); });
-        P.trans = {lang, mode: (P.trans && P.trans.mode !== 'off' && P.trans.mode) || 'both', map}; }, false);
-      paintTrans(); cueCache.at = -1; seekOut(outPos, false); if (tab === 'subs') renderSubs();
-      $('#trMsg').textContent = `${Object.keys(P.trans.map).length} Untertitel übersetzt`; toast('Übersetzung fertig – unten bei jedem Untertitel nachbessern'); },
+      setTranslation(groups, groups.map((g, k) => String(res[k] || '').trim()), lang);
+      toast('Übersetzung fertig – unten bei jedem Untertitel nachbessern'); },
     j => { end(); $('#trMsg').textContent = j.status === 'cancelled' ? 'Abgebrochen' : 'Fehlgeschlagen: ' + (j.error || ''); });
 }
+// Übersetzung satzweise übernehmen (aus der eingebauten Übersetzung oder von außen eingefügt)
+function setTranslation(groups, texts, lang){
+  commit(() => { const sent = {}; groups.forEach((g, k) => { if (texts[k]) sent[trGroupKey(g)] = texts[k]; });
+    P.trans = {lang, mode: (P.trans && P.trans.mode !== 'off' && P.trans.mode) || 'both', style: P.trans && P.trans.style, sent, map: {}}; if (!P.trans.style) delete P.trans.style; }, false);
+  cueCache.at = -1; trMemo.list = null; shownCue = null; paintTrans(); seekOut(outPos, false); if (tab === 'subs') renderSubs();
+}
 function paintTrans(){
-  if (!P) return; paintTrStyle(); const t = P.trans, n = t && t.map ? Object.keys(t.map).length : 0;
+  if (!P) return; paintTrStyle(); const t = P.trans, n = trHas() ? 1 : 0;
   $('#trMode').value = t ? t.mode || 'both' : 'both'; $('#trMode').disabled = !n;
   if (t && t.lang) $('#trLang').value = t.lang;
   $('#trBtn').textContent = n ? 'Neu übersetzen' : 'Übersetzung erzeugen';
   if (!$('#trProg').classList.contains('hidden')) return;
-  const missing = n ? computedCues().filter(x => trOf(x.text) == null).length : 0;
-  $('#trMsg').textContent = !n ? '' : missing ? `${missing} Untertitel noch ohne Übersetzung (geändert?) – „Neu übersetzen“ oder unten ergänzen` : `${n} Untertitel übersetzt`;
+  const list = n ? computedCues() : [], trs = n ? trTexts(list) : [], missing = trs.filter(v => v == null).length;
+  $('#trMsg').textContent = !n ? '' : missing ? `${missing} von ${list.length} Untertiteln ohne Übersetzung (geändert?) – „Neu übersetzen“, neu einfügen oder unten ergänzen` : `Alle ${list.length} Untertitel übersetzt`;
 }
-$('#trBtn').onclick = () => { if (P && P.trans && P.trans.map && Object.keys(P.trans.map).length && !confirm('Die Übersetzung neu erzeugen? Eigene Verbesserungen gehen dabei verloren.')) return; runTranslate(); };
-$('#trMode').onchange = () => { if (!P || !P.trans) return; commit(() => { P.trans.mode = $('#trMode').value; }, false); cueCache.at = -1; seekOut(outPos, false); paintTrans(); if (tab === 'subs') renderSubs(); };
+$('#trBtn').onclick = () => { if (trHas() && !confirm('Die Übersetzung neu erzeugen? Eigene Verbesserungen gehen dabei verloren.')) return; runTranslate(); };
+// Text für eine Übersetzung außerhalb: ein Satz pro Zeile (genau so wieder einfügen = sichere Zuordnung)
+$('#trExport').onclick = async () => {
+  if (!P) return; const g = trGroups(computedCues()); if (!g.length) return toast('Noch keine Untertitel');
+  const txt = g.map(x => x.map(y => trKey(y.text)).join(' ')).join('\n') + '\n';
+  try { await copyText(txt); } catch(_){}
+  saveBlob((P.name || 'Untertitel').replace(/[\\/:*?"<>|]/g, '_') + ' – zum Übersetzen.txt', new Blob([txt], {type: 'text/plain;charset=utf-8'}));
+  toast(`${g.length} Sätze kopiert und als Textdatei gespeichert – ein Satz pro Zeile`);
+};
+// Übersetzung von außen einfügen: Zeile für Zeile, sonst Satz für Satz, sonst nach Länge verteilt; SRT wird erkannt
+function trAlign(raw, groups){
+  let text = String(raw || '').replace(/\r/g, '');
+  if (/-->/.test(text)) text = text.split(/\n\s*\n/).map(b => b.split('\n').filter(l => l.trim() && !/^\d+$/.test(l.trim()) && !/-->/.test(l)).join(' ')).filter(Boolean).join('\n');
+  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+  if (lines.length === groups.length) return {texts: lines, how: 'Zeile für Zeile'};
+  const flat = text.replace(/\s+/g, ' ').trim(), sents = (flat.match(/[^.!?…]+(?:[.!?…]+["»«”“')\]]*|$)/g) || []).map(x => x.trim()).filter(Boolean);
+  if (sents.length === groups.length) return {texts: sents, how: 'Satz für Satz'};
+  return {texts: trSpread(groups.map(g => ({text: g.map(x => x.text).join(' ')})), flat), how: 'nach Länge verteilt – bitte prüfen', loose: true};
+}
+$('#trImport').onclick = () => {
+  if (!P) return; const groups = trGroups(computedCues()); if (!groups.length) return toast('Noch keine Untertitel');
+  const body = $('#sheetBody');
+  body.innerHTML = `<h3>Übersetzung einfügen</h3>
+    <p class="muted small">Am sichersten: mit „Text exportieren“ einen Satz pro Zeile ausgeben, übersetzen lassen und die Übersetzung wieder Zeile für Zeile hier einfügen (${groups.length} Zeilen). Anderer Text wird Satz für Satz oder nach Länge zugeordnet; SRT-Dateien gehen auch. Bei „1 Wort pro Untertitel“ springt die Übersetzung mit jedem Wort des Originals mit – bei weniger Wörtern bleibt ein Wort stehen, bei mehr erscheinen zwei.</p>
+    <label class="field"><span>Sprache</span><select id="tiLang"><option value="en">Englisch</option><option value="fr">Französisch</option><option value="es">Spanisch</option><option value="it">Italienisch</option><option value="tr">Türkisch</option><option value="ar">Arabisch</option><option value="uk">Ukrainisch</option><option value="pl">Polnisch</option><option value="xx">andere</option></select></label>
+    <textarea id="tiText" rows="10" placeholder="Übersetzung hier einfügen …" style="width:100%"></textarea>
+    <div class="row wrap"><label class="btn">Textdatei laden (.txt, .srt)<input type="file" id="tiFile" accept=".txt,.srt,text/plain" hidden></label><span class="muted small" id="tiInfo"></span></div>
+    <div class="row" style="margin-top:12px"><button class="btn" id="tiCancel">Abbrechen</button><button class="btn primary" id="tiOk" style="margin-left:auto">Einsetzen</button></div>`;
+  openSheet(false);
+  $('#tiLang').value = (P.trans && P.trans.lang) || 'en';
+  const info = () => { const v = $('#tiText').value; if (!v.trim()){ $('#tiInfo').textContent = ''; return; } const a = trAlign(v, groups); $('#tiInfo').textContent = `Zuordnung: ${a.how}`; };
+  $('#tiText').oninput = info;
+  $('#tiFile').onchange = async () => { const f = $('#tiFile').files[0]; if (!f) return; $('#tiText').value = await f.text(); info(); };
+  $('#tiCancel').onclick = closeSheet;
+  $('#tiOk').onclick = () => { const v = $('#tiText').value; if (!v.trim()) return toast('Erst die Übersetzung einfügen');
+    const a = trAlign(v, groups), lang = $('#tiLang').value;
+    if (![...$('#trLang').options].some(o => o.value === lang)) $('#trLang').insertAdjacentHTML('beforeend', `<option value="${lang}">${$('#tiLang').selectedOptions[0].textContent}</option>`);
+    closeSheet(); setTranslation(groups, a.texts, lang); toast(`Übersetzung eingesetzt – ${a.how}`); };
+};
+$('#trMode').onchange = () => { if (!P || !P.trans) return; commit(() => { P.trans.mode = $('#trMode').value; }, false); cueCache.at = -1; trMemo.list = null; seekOut(outPos, false); paintTrans(); if (tab === 'subs') renderSubs(); };
 function wrapText(text){
   const st = S(), max = +st.chars || 32, lines = +st.lines || 2;
   text = text.replace(/[ \t]+/g, ' ').trim();
@@ -2851,7 +2924,8 @@ function updateSubs(o){
   if (!P || !P.cues.length || S().enabled === false){ ov.textContent = ''; shownCue = null; return; }
   const now = performance.now(); if (now - cueCache.at > 400) cueCache = {at:now, list:computedCues()};
   const cur = cueCache.list.find(x => o >= x.s && o < x.e);
-  if (!SubDrag.on){ const html = cur ? subHtml(cur.text, cueStyle(cur.c)) : null; if (html != null){ if (ov.innerHTML !== html) ov.innerHTML = html; } else ov.textContent = cur ? subDisplay(cur.text) : ''; const prevSp = cueSpk(shownCue); shownCue = cur ? cur.c : null; shownRange = cur ? [cur.s, cur.e] : null;
+  if (!SubDrag.on){ const tr = cur ? trTexts(cueCache.list)[cueCache.list.indexOf(cur)] : null, html = cur ? subHtml(cur.text, tr, cueStyle(cur.c)) : null;
+    if (html != null){ if (ov.innerHTML !== html) ov.innerHTML = html; } else ov.textContent = cur ? subDisplay(cur.text, tr) : ''; const prevSp = cueSpk(shownCue); shownCue = cur ? cur.c : null; shownRange = cur ? [cur.s, cur.e] : null;
     if (cueSpk(shownCue) !== prevSp) styleOverlay(); else placeOverlay(); }
   const id = cur ? cur.c.id : null;
   if (id !== lastCue && tab === 'subs'){
@@ -2944,15 +3018,15 @@ function renderSubs(){
       <button data-a="keep" class="hidden"></button><select class="cue-spk hidden" title="Person dieses Untertitels"></select>
       <button data-a="auto" class="hidden">↺ auto</button><button data-a="pos" class="hidden">↺ Position</button><button data-a="time" class="hidden">↺ Zeit</button><button data-a="s-">Start −</button><button data-a="s+">Start +</button><button data-a="e-">Ende −</button><button data-a="e+">Ende +</button></div>`;
     if (idx === P.cues.length - 1) el.querySelector('[data-a=merge]').disabled = true;
-    if (P.trans && P.trans.map && P.trans.mode !== 'off'){ el.querySelector('textarea').insertAdjacentHTML('afterend', `<textarea rows="1" class="cue-tr" placeholder="${(P.trans.lang || 'en').toUpperCase()} – Übersetzung"></textarea>`);
-      const tt = el.querySelector('.cue-tr'); tt.value = P.trans.map[trKey(cueText(c))] || '';
+    if (trHas() && P.trans.mode !== 'off' && S().mode !== 'word'){ el.querySelector('textarea').insertAdjacentHTML('afterend', `<textarea rows="1" class="cue-tr" placeholder="${(P.trans.lang || 'en').toUpperCase()} – Übersetzung"></textarea>`);
+      const tt = el.querySelector('.cue-tr'), cl = computedCues(), k0 = cl.findIndex(x => x.c === c); tt.value = k0 >= 0 ? trTexts(cl)[k0] || '' : '';
       tt.addEventListener('focus', () => tt._b = snapshot());
-      tt.addEventListener('input', () => { const k = trKey(cueText(c)); if (tt.value.trim()) P.trans.map[k] = tt.value.trim(); else delete P.trans.map[k]; cueCache.at = -1; clearTimeout(saveT); saveT = setTimeout(saveNow, 800); });
+      tt.addEventListener('input', () => { P.trans.map ||= {}; const k = trKey(cueText(c)); if (tt.value.trim()) P.trans.map[k] = tt.value.trim(); else delete P.trans.map[k]; cueCache.at = -1; trMemo.list = null; clearTimeout(saveT); saveT = setTimeout(saveNow, 800); });
       tt.addEventListener('blur', () => { if (tt._b && tt._b !== snapshot()){ undo.push(tt._b); redo = []; } tt._b = null; paintTrans(); }); }
     const ta = el.querySelector('textarea'); ta.value = cueText(c);
     ta.addEventListener('focus', () => ta._b = snapshot());
     ta.addEventListener('input', () => { const k0 = trKey(cueText(c)); c.text = c.own ? ta.value : ta.value.trim() === autoText(c) ? null : ta.value;
-      if (P.trans && P.trans.map && P.trans.map[k0] != null){ const k1 = trKey(cueText(c)); if (k1 !== k0){ P.trans.map[k1] = P.trans.map[k0]; delete P.trans.map[k0]; } }
+      if (P.trans && P.trans.map && P.trans.map[k0] != null){ trMemo.list = null; const k1 = trKey(cueText(c)); if (k1 !== k0){ P.trans.map[k1] = P.trans.map[k0]; delete P.trans.map[k0]; } }
       paintCue(c, true); cueCache.at = -1; clearTimeout(saveT); saveT = setTimeout(saveNow, 800); });
     ta.addEventListener('blur', () => { if (ta._b && ta._b !== snapshot()){ undo.push(ta._b); redo = []; } ta._b = null; });
     frag.append(el); cueEls.set(c.id, el);
@@ -3185,11 +3259,12 @@ function buildPlan(){
     width:o.x.clip.width, height:o.x.clip.height, rotation:o.x.clip.rotation || 0}))
     .concat(wmPlan(W, H))
     .concat(audios.map(a => ({mode:'audio', image:false, uri:a.x.clip.uri, in:r3(a.x.in), out:r3(a.x.in + (a.end - a.at)), at:r3(a.at), track:a.x.track || 1, vol:+(a.x.vol ?? 1), hasAudio:true})));
-  const cues = S().enabled !== false && P.cues.length ? computedCues().map(x => { const [cx, cy0] = cueXY(x.c), sy = x.c.x == null && window.subSlideY ? subSlideY(x.s, x.e) : null, cy = sy ?? cy0, o = {start:r3(x.s), end:r3(x.e), text:subDisplay(x.text), x:cx, y:cy};
+  const cl = S().enabled !== false && P.cues.length ? computedCues() : [], ctr = trTexts(cl);
+  const cues = cl.length ? cl.map((x, k) => { const [cx, cy0] = cueXY(x.c), sy = x.c.x == null && window.subSlideY ? subSlideY(x.s, x.e) : null, cy = sy ?? cy0, o = {start:r3(x.s), end:r3(x.e), text:wrapText(x.text), x:cx, y:cy};
     if (S().bg) o.bg = true;   // Untertitel mit Kasten (Clip-Look)
     const sp = cueSpk(x.c), st = sp && sp.st;   // Abweichungen der Person
     if (st){ if (st.color) o.color = st.color; if (st.size) o.size = SIZE_F[st.size] || 0.058; if (st.font != null) o.font = st.font; if (st.outline != null) o.outline = !!st.outline; if (sp.name) o.speaker = sp.name; }
-    if (trOf(x.text) != null){ o.text = wrapText(x.text); return trCues(o, x.text, W, H, cueStyle(x.c)); }
+    if (ctr[k] != null) return trCues(o, ctr[k], W, H, cueStyle(x.c));
     return [o]; }).flat() : [];
   for (const t of P.items.filter(x => x.type === 'title' && (x.text || '').trim())){ const a = srcToOut(snapSrc(t.at)); if (a >= total) continue;
     cues.push({start:r3(a), end:r3(Math.min(total, a + t.dur)), text:wrapTitle(t.text.trim(), (SIZE_F[t.size] || 0.058) * (t.scale || 1), t.font, W, H), x:t.x, y:t.y, size:+((SIZE_F[t.size] || 0.058) * (t.scale || 1)).toFixed(4), color:t.color || '#FFFFFF', outline:t.outline !== false, bg:!!t.bg, title:true, font:t.font || ''}); }
