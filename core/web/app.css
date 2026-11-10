@@ -840,3 +840,16 @@ body.has-deck #paneSlides>:not(.deck-frame){display:none!important}
 .wm-pos button.on{background:var(--rot);border-color:var(--rot)}
 .wm-prev{max-width:140px;max-height:80px;border-radius:6px;background:repeating-conic-gradient(#2a2a27 0 25%,#1f1f1d 0 50%) 50%/14px 14px;padding:4px}
 .cue textarea.cue-tr{margin-top:4px;font-style:italic;border-style:dashed;color:var(--sand)}
+/* Leinwand bearbeiten: ganzes Ausgangsbild, Leinwand als heller Rahmen, außen abgedunkelt */
+.stage.cv-edit > :not(video):not(#canvasBox):not(canvas.vkey){visibility:hidden}
+.stage.cv-edit{overflow:visible}
+.stage-wrap:has(.cv-edit){overflow:hidden}
+.cv-box{position:absolute;z-index:8;border:2px solid var(--creme);box-shadow:0 0 0 9999px rgba(19,19,18,.62);cursor:move;touch-action:none;outline:1px dashed rgba(0,0,0,.6);outline-offset:-4px}
+.cv-h{position:absolute;width:18px;height:18px;background:var(--rot);border:2px solid var(--creme);border-radius:50%;margin:-10px;touch-action:none}
+.cv-h.tl{left:0;top:0;cursor:nwse-resize}.cv-h.tr{right:0;top:0;margin-right:-10px;cursor:nesw-resize}
+.cv-h.bl{left:0;bottom:0;margin-bottom:-10px;cursor:nesw-resize}.cv-h.br{right:0;bottom:0;margin:0 -10px -10px 0;cursor:nwse-resize}
+@media (pointer:coarse){ .cv-h{width:28px;height:28px;margin:-15px} .cv-h.tr{margin-right:-15px} .cv-h.bl{margin-bottom:-15px} .cv-h.br{margin:0 -15px -15px 0} }
+.cv-lbl{position:absolute;left:6px;top:6px;font:600 11px/1 var(--ui);color:var(--anthrazit);background:var(--creme);padding:3px 6px;border-radius:4px}
+.tr-style{border:1px solid var(--line);border-radius:8px;padding:6px 10px}
+.tr-style summary{cursor:pointer;font-size:13px;color:var(--sand);padding:4px 0}
+.tr-style[open] summary{margin-bottom:8px}

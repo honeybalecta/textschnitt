@@ -56,6 +56,7 @@
       <img id="oi" class="hidden" alt="">
       <img id="ii" class="hidden" alt="">
       <img id="wm" class="wm hidden" alt="">
+      <div id="canvasBox" class="cv-box hidden"><i class="cv-h tl"></i><i class="cv-h tr"></i><i class="cv-h bl"></i><i class="cv-h br"></i><span class="cv-lbl"></span></div>
       <div class="audio-note">♪</div>
       <div class="snap-guide"></div>
       <div class="subov" id="subOv" title="Ziehen, um die Untertitel zu verschieben"></div>
@@ -181,6 +182,17 @@
           <label>Sprache <select id="trLang"><option value="en">Englisch</option></select></label>
           <label>Anzeige <select id="trMode"><option value="both">Original und Übersetzung</option><option value="only">Nur Übersetzung</option><option value="off">Nur Original</option></select></label>
         </div>
+        <details class="tr-style" id="trStyleBox"><summary>Stil der Übersetzung</summary>
+          <div class="grid2">
+            <label>Schrift <select id="trFont" class="font-sel"></select></label>
+            <label>Farbe <input type="color" id="trColor" value="#cfc6b0"></label>
+            <label>Größe <select id="trSize"><option>klein</option><option>mittel</option><option>groß</option></select></label>
+            <label>Lage <select id="trPos"><option value="unter">unter dem Original</option><option value="über">über dem Original</option></select></label>
+            <label class="row"><input type="checkbox" id="trOutline"> Umrandung</label>
+            <label class="row"><input type="checkbox" id="trBg"> Kasten dahinter</label>
+          </div>
+          <div class="row"><button class="btn small" id="trStyleSame">Wie das Original</button></div>
+        </details>
         <div class="row wrap"><button class="btn primary" id="trBtn">Übersetzung erzeugen</button><button class="btn hidden" id="trStop">Abbrechen</button><span class="muted small" id="trMsg"></span></div>
         <div class="keyProg hidden" id="trProg"><div class="prog"><i></i></div></div>
       </div>
@@ -226,7 +238,7 @@
       <div class="card stack">
         <h4>Bildausschnitt</h4>
         <span class="muted small">Im Bild ziehen verschiebt den Ausschnitt; Mausrad, zwei Finger oder der Regler zoomen. Einzelne Clips: auf der Zeitleiste antippen und den Rahmen ziehen.</span>
-        <div class="row wrap"><button class="btn small" data-fr="l">◀ Links</button><button class="btn small" data-fr="c">Mitte</button><button class="btn small" data-fr="r">Rechts ▶</button><button class="btn small" data-fr="fit">Ganzes Bild</button><button class="btn small" data-fr="fill">Füllen</button></div>
+        <div class="row wrap"><button class="btn small" data-fr="l">◀ Links</button><button class="btn small" data-fr="c">Mitte</button><button class="btn small" data-fr="r">Rechts ▶</button><button class="btn small" data-fr="fit">Ganzes Bild</button><button class="btn small" data-fr="fill">Füllen</button><button class="btn small" id="clipCanvas">▭ Rahmen im Gesamtbild</button></div>
         <label class="field"><span>Zoom <b id="clipZoomV"></b></span><input type="range" id="clipZoom" min="0" max="100" value="0"></label>
       </div>
       <div class="card stack">

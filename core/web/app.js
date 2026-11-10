@@ -438,7 +438,7 @@ const fillsWrap = () => isWide() || matchMedia('(orientation: landscape) and (ma
 // Bühne: ein 16:9-Feld. Hochformat-Videos lassen links und rechts Platz – dort sitzt zusätzliche Steuerung.
 function fitStage(){
   if (!P) return;
-  const [w, h] = baseDims(), wrap = $('.stage-wrap'), st = $('#stage');
+  const [w, h] = CanvasEdit ? dispSize(primary()) : baseDims(), wrap = $('.stage-wrap'), st = $('#stage');
   const full = $('#proj').classList.contains('full');
   const fill = fillsWrap(), availW = full ? innerWidth : wrap.clientWidth || innerWidth;
   let boxH;
@@ -451,6 +451,7 @@ function fitStage(){
   else { boxH = Math.round(h > w ? Math.max(150, innerHeight * 0.38) : Math.min(availW * 9 / 16, Math.max(150, innerHeight * 0.36))); wrap.style.height = boxH + 'px'; }   // Hochformat: mehr Höhe, die Seiten nutzen die Steuerung
   const boxW = fill ? availW : Math.min(availW, boxH * 16 / 9);
   let W = boxW, H = W * h / w; if (H > boxH){ H = boxH; W = H * w / h; }
+  if (CanvasEdit){ W *= 0.8; H *= 0.8; }   // Rand lassen, damit der Leinwand-Rahmen auch über das Bild hinausragen kann
   st.style.width = Math.floor(W) + 'px'; st.style.height = Math.floor(H) + 'px';
   const side = Math.floor((availW - W) / 2), show = side >= 64;
   for (const el of [$('#sideL'), $('#sideR')]){ el.classList.toggle('hidden', !show); el.style.width = show ? Math.min(side, 170) + 'px' : ''; el.style.height = Math.floor(fill ? H : boxH) + 'px'; }
@@ -1822,8 +1823,10 @@ function updateZoom(){
   applyMainTransform();
 }
 // Zoom (innen) und Lage/Größe des Clips (außen), Ursprung in der Mitte
+// Leinwand bearbeiten: Die Bühne zeigt das ganze Ausgangsbild, die Leinwand liegt als verschiebbarer Rahmen darüber
+let CanvasEdit = false;
 function applyMainTransform(){
-  const g = timeline[curSeg]; if (!g || g.kind !== 'main'){ V.style.transform = ''; return; }
+  const g = timeline[curSeg]; if (!g || g.kind !== 'main' || CanvasEdit){ V.style.transform = ''; if (vKey) vKey.canvas.style.transform = ''; return; }
   const z = zoomAt(vT()), f = frameFx(PipDrag.on && PipDrag.main ? {tx: PipDrag.tx, ty: PipDrag.ty, sc: PipDrag.sc} : mainFxAt(g, vT()));
   const tx = f.tx || 0, ty = f.ty || 0, sc = f.sc || 1, parts = [];
   if (tx || ty) parts.push(`translate(${(tx * 100).toFixed(3)}%, ${(ty * 100).toFixed(3)}%)`);
@@ -2658,6 +2661,51 @@ function genCues(startTok = 0){
 // ── Übersetzung der Untertitel: P.trans = {lang, mode: both|only|off, map: {Originaltext: Übersetzung}} ──
 const trKey = t => String(t || '').replace(/\s+/g, ' ').trim();
 function trOf(text){ const t = P && P.trans; if (!t || !t.map || t.mode === 'off') return null; const v = t.map[trKey(text)]; return v == null || !v.trim() ? null : v; }
+// Eigener Stil der Übersetzung (P.trans.style): Schrift, Farbe, Größe, Umrandung, Kasten, Lage unter/über dem Original
+const TR_STYLE = {font: null, color: '#CFC6B0', size: 'klein', outline: true, bg: false, pos: 'unter'};
+function trStyle(){ const st = S(), t = (P.trans && P.trans.style) || {}; return {...TR_STYLE, font: st.font || '', outline: st.outline !== false, ...t}; }
+const escH = t => String(t).replace(/[&<>]/g, c => ({'&':'&amp;', '<':'&lt;', '>':'&gt;'}[c]));
+// Vorschau: Original und Übersetzung als zwei Blöcke im selben Untertitel – die Übersetzung mit eigenem Stil
+function subHtml(text, base){
+  const tr = trOf(text); if (tr == null) return null;
+  const ts = trStyle(), rel = (SIZE_F[ts.size] || 0.045) / (SIZE_F[base.size] || 0.058), stage = $('#stage'), px = subPx(stage.clientWidth || 1, stage.clientHeight || 1, base) * rel, o = Math.max(1, px / 14);
+  const sh = ts.outline ? [[-1,-1],[1,-1],[-1,1],[1,1],[0,-1.4],[0,1.4],[-1.4,0],[1.4,0]].map(([x, y]) => `${(x*o).toFixed(1)}px ${(y*o).toFixed(1)}px 0 #000`).join(',') : `0 ${(px/20).toFixed(1)}px ${(px/10).toFixed(1)}px rgba(0,0,0,.8)`;
+  const trCss = `display:block;color:${ts.color};font-size:${rel.toFixed(3)}em;font-family:${fontCss(ts.font).replace(/"/g, "'")};font-weight:${fontWeight(ts.font)};text-shadow:${sh}` + (ts.bg ? `;background:rgba(0,0,0,.6);border-radius:${(px*0.18).toFixed(1)}px;padding:${(px*0.1).toFixed(1)}px ${(px*0.3).toFixed(1)}px;width:fit-content;margin:auto` : '');
+  const tb = `<span style="${trCss}">${escH(trWrap(tr))}</span>`;
+  if (P.trans.mode === 'only') return tb;
+  const ob = `<span style="display:block">${escH(wrapText(text))}</span>`;
+  return ts.pos === 'über' ? tb + ob : ob + tb;
+}
+function trWrap(tr){
+  // Zeilenlänge wie beim Original, umgerechnet auf die Schriftgröße der Übersetzung; Zeilen möglichst gleich lang
+  const ts = trStyle(), max = Math.max(12, Math.round((+S().chars || 32) * (SIZE_F[S().size] || 0.058) / (SIZE_F[ts.size] || 0.045)));
+  if (tr.length <= max) return tr;
+  const words = tr.split(/\s+/).filter(Boolean), n = Math.ceil(tr.length / max), per = tr.length / n, out = []; let cur = '';
+  for (const w of words){ const t = cur ? cur + ' ' + w : w; if (cur && (t.length > max || (cur.length >= per && out.length < n - 1))){ out.push(cur); cur = w; } else cur = t; }
+  if (cur) out.push(cur); return out.join('\n');
+}
+// Export: Original und Übersetzung als zwei Untertitel, als Block um die Untertitel-Position gesetzt und im Bild gehalten
+function trCues(o, text, W, H, base){
+  const tr = trOf(text); if (tr == null) return [o];
+  const ts = trStyle(), port = H > W ? 1.25 : 1, fT = SIZE_F[ts.size] || 0.045, tx = trWrap(tr);
+  const t = {...o, text: tx, color: ts.color, size: fT, outline: !!ts.outline, font: ts.font || ''}; if (ts.bg) t.bg = true; else delete t.bg;
+  if (P.trans.mode === 'only') return [t];
+  const fO = o.size || SIZE_F[base.size] || 0.058, hO = o.text.split('\n').length * fO * Math.min(W, H) * port * 1.15 / H, hT = tx.split('\n').length * fT * Math.min(W, H) * port * 1.15 / H;
+  const gap = fO * Math.min(W, H) * port * 0.2 / H, tot = hO + gap + hT, m = 0.02, top = clamp(o.y - tot / 2, m, Math.max(m, 1 - m - tot));
+  const up = ts.pos === 'über';
+  o = {...o, y: +(up ? top + hT + gap + hO / 2 : top + hO / 2).toFixed(4)}; t.y = +(up ? top + hT / 2 : top + hO + gap + hT / 2).toFixed(4);
+  return up ? [t, o] : [o, t];
+}
+function paintTrStyle(){ if (!P) return; const ts = trStyle(); fillFontSelects(); $('#trFont').value = ts.font || ''; $('#trColor').value = ts.color.toLowerCase(); $('#trSize').value = ts.size;
+  $('#trPos').value = ts.pos; $('#trOutline').checked = !!ts.outline; $('#trBg').checked = !!ts.bg; }
+function setTrStyle(k, v){ if (!P) return; commit(() => { P.trans ||= {lang: 'en', mode: 'both', map: {}}; P.trans.style = {...(P.trans.style || {}), [k]: v}; }, false); cueCache.at = -1; shownCue = null; updateSubs(outPos); }
+$('#trFont').onchange = async () => { if ($('#trFont').value === '__import'){ const f = await importFont(); fillFontSelects(); if (f) setTrStyle('font', f.key); paintTrStyle(); return; } setTrStyle('font', $('#trFont').value); };
+$('#trColor').oninput = () => setTrStyle('color', $('#trColor').value.toUpperCase());
+$('#trSize').onchange = () => setTrStyle('size', $('#trSize').value);
+$('#trPos').onchange = () => setTrStyle('pos', $('#trPos').value);
+$('#trOutline').onchange = () => setTrStyle('outline', $('#trOutline').checked);
+$('#trBg').onchange = () => setTrStyle('bg', $('#trBg').checked);
+$('#trStyleSame').onclick = () => { const st = S(); commit(() => { P.trans ||= {lang: 'en', mode: 'both', map: {}}; P.trans.style = {font: st.font || '', color: st.color, size: st.size, outline: st.outline !== false, bg: !!st.bg, pos: trStyle().pos}; }, false); paintTrStyle(); cueCache.at = -1; shownCue = null; updateSubs(outPos); };
 // Text, wie er im Bild steht (Vorschau und Export)
 function subDisplay(text){
   const tr = trOf(text); if (tr == null) return wrapText(text);
@@ -2702,7 +2750,7 @@ function runTranslate(){
     j => { end(); $('#trMsg').textContent = j.status === 'cancelled' ? 'Abgebrochen' : 'Fehlgeschlagen: ' + (j.error || ''); });
 }
 function paintTrans(){
-  if (!P) return; const t = P.trans, n = t && t.map ? Object.keys(t.map).length : 0;
+  if (!P) return; paintTrStyle(); const t = P.trans, n = t && t.map ? Object.keys(t.map).length : 0;
   $('#trMode').value = t ? t.mode || 'both' : 'both'; $('#trMode').disabled = !n;
   if (t && t.lang) $('#trLang').value = t.lang;
   $('#trBtn').textContent = n ? 'Neu übersetzen' : 'Übersetzung erzeugen';
@@ -2803,7 +2851,7 @@ function updateSubs(o){
   if (!P || !P.cues.length || S().enabled === false){ ov.textContent = ''; shownCue = null; return; }
   const now = performance.now(); if (now - cueCache.at > 400) cueCache = {at:now, list:computedCues()};
   const cur = cueCache.list.find(x => o >= x.s && o < x.e);
-  if (!SubDrag.on){ ov.textContent = cur ? subDisplay(cur.text) : ''; const prevSp = cueSpk(shownCue); shownCue = cur ? cur.c : null; shownRange = cur ? [cur.s, cur.e] : null;
+  if (!SubDrag.on){ const html = cur ? subHtml(cur.text, cueStyle(cur.c)) : null; if (html != null){ if (ov.innerHTML !== html) ov.innerHTML = html; } else ov.textContent = cur ? subDisplay(cur.text) : ''; const prevSp = cueSpk(shownCue); shownCue = cur ? cur.c : null; shownRange = cur ? [cur.s, cur.e] : null;
     if (cueSpk(shownCue) !== prevSp) styleOverlay(); else placeOverlay(); }
   const id = cur ? cur.c.id : null;
   if (id !== lastCue && tab === 'subs'){
@@ -3056,7 +3104,8 @@ function paintItem(){
   updateZoomPreview();
 }
 function updateZoomPreview(){ if (sheetItem && sheetItem.type === 'zoom' && !playing){ const z = sheetItem, s = z.kind === 'in' ? 1 : z.strength; V.style.transformOrigin = '50% 50%'; V.style.transform = `translate(${(-(z.cx - 0.5) * (s - 1) * 100).toFixed(3)}%, ${(-(z.cy - 0.5) * (s - 1) * 100).toFixed(3)}%) scale(${s})`; } }
-function closeSheet(){ $('#sheet').classList.add('hidden'); $('#sheetBack').classList.add('hidden'); $('#pin').classList.add('hidden'); $('#stageHint').classList.add('hidden');
+let sheetOnClose = null;   // einmaliger Rückruf, wenn das Blatt schließt (z. B. Leinwand-Modus beenden)
+function closeSheet(){ if (sheetOnClose){ const f = sheetOnClose; sheetOnClose = null; try { f(); } catch(_){} } $('#sheet').classList.add('hidden'); $('#sheetBack').classList.add('hidden'); $('#pin').classList.add('hidden'); $('#stageHint').classList.add('hidden');
   const pv = $('#cPrev'); if (pv && pv.pause){ pv.pause(); pv.removeAttribute('src'); } sheetItem = null; pinMode = false; updateZoom(); if (window.renderStudio) renderStudio(); }
 $('#sheetBack').onclick = closeSheet;
 $('#stage').addEventListener('click', e => {
@@ -3140,7 +3189,8 @@ function buildPlan(){
     if (S().bg) o.bg = true;   // Untertitel mit Kasten (Clip-Look)
     const sp = cueSpk(x.c), st = sp && sp.st;   // Abweichungen der Person
     if (st){ if (st.color) o.color = st.color; if (st.size) o.size = SIZE_F[st.size] || 0.058; if (st.font != null) o.font = st.font; if (st.outline != null) o.outline = !!st.outline; if (sp.name) o.speaker = sp.name; }
-    return o; }) : [];
+    if (trOf(x.text) != null){ o.text = wrapText(x.text); return trCues(o, x.text, W, H, cueStyle(x.c)); }
+    return [o]; }).flat() : [];
   for (const t of P.items.filter(x => x.type === 'title' && (x.text || '').trim())){ const a = srcToOut(snapSrc(t.at)); if (a >= total) continue;
     cues.push({start:r3(a), end:r3(Math.min(total, a + t.dur)), text:wrapTitle(t.text.trim(), (SIZE_F[t.size] || 0.058) * (t.scale || 1), t.font, W, H), x:t.x, y:t.y, size:+((SIZE_F[t.size] || 0.058) * (t.scale || 1)).toFixed(4), color:t.color || '#FFFFFF', outline:t.outline !== false, bg:!!t.bg, title:true, font:t.font || ''}); }
   const subs = cues.length ? {cues, style:S(), fonts: planFonts([S().font, ...cues.map(c => c.font)])} : null;

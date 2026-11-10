@@ -617,7 +617,7 @@ function linkTools(){
 }
 function toolListBase(){
   const s = TL.sel; const g = s && (s.kind === 'main' || s.kind === 'insert') ? timeline[s.i] : null;
-  if (!s) return [T('📱', 'Clip ab hier …', () => clipDialog(outPos, Math.min(total, outPos + 30))), T('✂', 'Teilen', splitHere), T('⌫', 'Bis hier weg', () => cutTo('l')), T('⌦', 'Ab hier weg', () => cutTo('r')), T('＋', 'Clip', addClip), T('T', 'Titel', addTitle), T('💬', 'Untertitel', addOwnCue), T('🔍', 'Zoom', addZoom),
+  if (!s) return [T('📱', 'Clip ab hier …', () => clipDialog(outPos, Math.min(total, outPos + 30))), T('▭', 'Leinwand', openCanvas), T('✂', 'Teilen', splitHere), T('⌫', 'Bis hier weg', () => cutTo('l')), T('⌦', 'Ab hier weg', () => cutTo('r')), T('＋', 'Clip', addClip), T('T', 'Titel', addTitle), T('💬', 'Untertitel', addOwnCue), T('🔍', 'Zoom', addZoom),
     ...(P.moves.length ? [T('↺', 'Reihenfolge zurück', () => { commit(() => P.moves = [], true); if (tokens.length) renderTranscript(); toast('Ursprüngliche Reihenfolge'); })] : [])];
   if (s.kind === 'main') return [T('📱', 'Als Clip …', () => clipDialog(g.o, g.o + segDur(g))), T('✂', 'Teilen', splitHere), T('⚙', 'Anpassen', () => openFx(g)),
     T('◆', hasMainKfHere(g) ? 'Keyframe weg (M)' : 'Keyframe (M)', () => toggleMainKeyframe(g)), T('🗑', 'Löschen', delSel, 'danger'), T('⇤', 'Anfang −1', () => nudge('l', -1)), T('⇥', 'Anfang +1', () => nudge('l', 1)),
@@ -1204,6 +1204,82 @@ $('#clipZoom').onchange = () => { if ($('#clipZoom')._b){ undo.push($('#clipZoom
   st.addEventListener('click', e => { if (st.dataset.noclick){ e.stopImmediatePropagation(); } }, true);
   st.addEventListener('wheel', e => { if (!P || tab !== 'clip' || !P.format) return; e.preventDefault(); const F = {...(P.frame || {sc:1, tx:0, ty:0})}; F.sc = F.sc * (e.deltaY < 0 ? 1.05 : 1 / 1.05); setFrame(F); }, {passive:false});
 })();
+// ── Leinwand (Seitenverhältnis) im Studio: ein Format für das ganze Video, der Ausschnitt gilt für alle Schnitte ──
+// Rahmenrechnung: Leinwand W×H, Video darin eingepasst (Anteil wf/hf), vergrößert um F.sc, verschoben um F.tx/F.ty (Anteil von W/H).
+// Im Ausgangsbild (0…1) ist die Leinwand dann 1/(wf·sc) breit, 1/(hf·sc) hoch, Mitte bei 0,5 − tx/(wf·sc) bzw. 0,5 − ty/(hf·sc).
+function cvRect(){ const F = P.frame || {sc:1, tx:0, ty:0}, [wf, hf] = fitFrac(), k = F.sc || 1;
+  const w = 1 / (wf * k), h = 1 / (hf * k); return {w, h, x: 0.5 - (F.tx || 0) / (wf * k) - w / 2, y: 0.5 - (F.ty || 0) / (hf * k) - h / 2}; }
+function cvFromRect(r){ const [wf, hf] = fitFrac(), k = 1 / (wf * r.w); return clampFrame({sc: k, tx: (0.5 - (r.x + r.w / 2)) * wf * k, ty: (0.5 - (r.y + r.h / 2)) * hf * k}); }
+function placeCanvasBox(){
+  const b = $('#canvasBox'); if (!CanvasEdit || !P.format){ b.classList.add('hidden'); return; }
+  const r = cvRect(); Object.assign(b.style, {left: r.x * 100 + '%', top: r.y * 100 + '%', width: r.w * 100 + '%', height: r.h * 100 + '%'});
+  b.querySelector('.cv-lbl').textContent = P.format; b.classList.remove('hidden');
+}
+function setCanvasEdit(on){
+  CanvasEdit = !!on && !!P.format; $('#stage').classList.toggle('cv-edit', CanvasEdit);
+  if (playing && CanvasEdit) pausePlay();
+  fitStage(); setTimeout(fitStage, 50); applyMainTransform(); placeCanvasBox(); seekOut(outPos, false);
+}
+function openCanvas(){
+  const body = $('#sheetBody'), FMTS = [['', 'Original'], ['9:16', '9:16'], ['4:5', '4:5'], ['1:1', '1:1'], ['16:9', '16:9'], ['4:3', '4:3']];
+  body.innerHTML = `<h3>Leinwand</h3>
+    <p class="muted small">Seitenverhältnis für das ganze Video. Der helle Rahmen zeigt, welcher Teil des Bildes auf der Leinwand landet – ziehen verschiebt ihn, die Ecken ändern die Größe. Das gilt für alle Schnitte auf einmal; einzelne Abschnitte lassen sich wie gewohnt über „Anpassen“ zusätzlich verschieben.</p>
+    <div class="seg-ctl" id="cvFmt">${FMTS.map(([v, l]) => `<button data-v="${v}">${l}</button>`).join('')}</div>
+    <div class="row wrap" id="cvBtns" style="margin-top:8px"><button class="btn small" data-fr="fill">Füllen</button><button class="btn small" data-fr="fit">Ganzes Bild</button><button class="btn small" data-fr="c">Mittig</button></div>
+    <label class="field"><span>Größe des Ausschnitts <b id="cvZoomV"></b></span><input type="range" id="cvZoom" min="0" max="100"></label>
+    <p class="muted small" id="cvNote"></p>
+    <div class="row" style="margin-top:12px"><button class="btn primary" id="cvOk" style="margin-left:auto">Fertig</button></div>`;
+  openSheet(true);
+  const paint = () => { $$('#cvFmt button').forEach(b => b.classList.toggle('on', (b.dataset.v || null) === (P.format || null)));
+    const on = !!P.format; $('#cvBtns').classList.toggle('hidden', !on); $('#cvZoom').closest('label').classList.toggle('hidden', !on);
+    const F = P.frame || {sc:1}; $('#cvZoom').value = Math.round(zoomToSl(F.sc || 1)); $('#cvZoomV').textContent = Math.round((F.sc || 1) * 100) + ' %';
+    $('#cvNote').textContent = on ? 'Vorschau: ganzes Ausgangsbild mit Rahmen. „Fertig“ zeigt wieder das Ergebnis.' : 'Originalformat: Das Video behält sein eigenes Seitenverhältnis.';
+    placeCanvasBox(); };
+  $('#cvFmt').onclick = e => { const b = e.target.closest('button'); if (!b) return;
+    commit(() => { P.format = b.dataset.v || null; P.frame = P.format ? clampFrame({sc: coverSc(), tx: 0, ty: 0}) : null; }, true);
+    renderExportForm(); if (window.slSyncAll) slSyncAll(); setCanvasEdit(true); paint(); toast(P.format ? `Leinwand ${P.format}` : 'Originalformat'); };
+  $('#cvBtns').onclick = e => { const b = e.target.closest('[data-fr]'); if (!b) return; const F = {...(P.frame || {sc:1, tx:0, ty:0})};
+    if (b.dataset.fr === 'fit') Object.assign(F, {sc:1, tx:0, ty:0}); else if (b.dataset.fr === 'fill') Object.assign(F, {sc: coverSc(), tx:0, ty:0}); else Object.assign(F, {tx:0, ty:0});
+    commit(() => { P.frame = clampFrame(F); }, false); paint(); };
+  const z = $('#cvZoom');
+  z.onpointerdown = () => { z._b = snapshot(); };
+  z.oninput = () => { const F = {...(P.frame || {sc:1, tx:0, ty:0})}; let sc = slToZoom(+z.value); if (Math.abs(sc - coverSc()) < 0.04 * coverSc()) sc = coverSc(); if (Math.abs(sc - 1) < 0.03) sc = 1; F.sc = sc; P.frame = clampFrame(F); paint(); };
+  z.onchange = () => { if (z._b){ undo.push(z._b); redo = []; z._b = null; } changed(false); };
+  $('#cvOk').onclick = closeSheet;
+  sheetOnClose = () => { setCanvasEdit(false); if (tab === 'clip') renderClip(); };
+  setCanvasEdit(true); paint();
+}
+// Rahmen ziehen (verschieben) und an den Ecken greifen (Größe, Seitenverhältnis bleibt); Mausrad und zwei Finger zoomen
+(() => {
+  const b = $('#canvasBox'); let g = null; const pts = new Map();
+  b.addEventListener('pointerdown', e => {
+    e.preventDefault(); e.stopPropagation(); try { b.setPointerCapture(e.pointerId); } catch(_){}
+    pts.set(e.pointerId, {x: e.clientX, y: e.clientY});
+    const R = $('#stage').getBoundingClientRect(), r0 = cvRect();
+    if (pts.size === 2 && g){ const [p, q] = [...pts.values()]; g.pinch = {d0: Math.max(10, Math.hypot(p.x - q.x, p.y - q.y)), r0}; return; }
+    const h = e.target.closest('.cv-h'); g = {x0: e.clientX, y0: e.clientY, R, r0, h: h ? [...h.classList].find(c => c.length === 2) : null, b: snapshot(), moved: false};
+  });
+  b.addEventListener('pointermove', e => {
+    if (!g) return; if (pts.has(e.pointerId)) pts.set(e.pointerId, {x: e.clientX, y: e.clientY});
+    const {R, r0} = g; let r;
+    if (g.pinch && pts.size >= 2){ const [p, q] = [...pts.values()], f = g.pinch.d0 / Math.max(10, Math.hypot(p.x - q.x, p.y - q.y)), a = g.pinch.r0;
+      r = {w: a.w * f, h: a.h * f, x: a.x + a.w * (1 - f) / 2, y: a.y + a.h * (1 - f) / 2}; }
+    else if (g.pinch) return;
+    else { const dx = (e.clientX - g.x0) / R.width, dy = (e.clientY - g.y0) / R.height;
+      if (!g.h) r = {...r0, x: r0.x + dx, y: r0.y + dy};
+      else { // Ecke: gegenüberliegende Ecke bleibt stehen, Seitenverhältnis bleibt
+        const ax = g.h[1] === 'l' ? r0.x + r0.w : r0.x, ay = g.h[0] === 't' ? r0.y + r0.h : r0.y, sx = g.h[1] === 'l' ? -1 : 1;
+        const wNew = Math.max(0.05, r0.w + sx * dx), f = wNew / r0.w, hNew = r0.h * f;
+        r = {w: wNew, h: hNew, x: g.h[1] === 'l' ? ax - wNew : ax, y: g.h[0] === 't' ? ay - hNew : ay}; } }
+    g.moved = true; P.frame = cvFromRect(r); placeCanvasBox();
+    const F = P.frame; if ($('#cvZoom')){ $('#cvZoom').value = Math.round(zoomToSl(F.sc)); $('#cvZoomV').textContent = Math.round(F.sc * 100) + ' %'; }
+  });
+  const end = e => { pts.delete(e.pointerId); if (pts.size || !g) return; if (g.moved){ undo.push(g.b); redo = []; changed(false); } g = null; };
+  b.addEventListener('pointerup', end); b.addEventListener('pointercancel', end);
+  $('#stage').addEventListener('wheel', e => { if (!CanvasEdit) return; e.preventDefault(); const r = cvRect(), f = e.deltaY < 0 ? 1 / 1.05 : 1.05;
+    P.frame = cvFromRect({w: r.w * f, h: r.h * f, x: r.x + r.w * (1 - f) / 2, y: r.y + r.h * (1 - f) / 2}); placeCanvasBox(); clearTimeout(b._wt); b._wt = setTimeout(() => changed(false), 400); }, {passive: false});
+})();
+$('#clipCanvas').onclick = () => { if (!P.format) return toast('Erst ein Format wählen'); openCanvas(); };
 // Hook: Titel am Anfang
 $('#clipHookSet').onclick = () => {
   const text = $('#clipHook').value.trim(); if (!text) return toast('Erst einen Text eingeben');
