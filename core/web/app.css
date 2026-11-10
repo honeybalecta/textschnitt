@@ -853,3 +853,7 @@ body.has-deck #paneSlides>:not(.deck-frame){display:none!important}
 .tr-style{border:1px solid var(--line);border-radius:8px;padding:6px 10px}
 .tr-style summary{cursor:pointer;font-size:13px;color:var(--sand);padding:4px 0}
 .tr-style[open] summary{margin-bottom:8px}
+/* Auswahlleiste: alle Knöpfe immer sichtbar – reicht der Platz nicht, brechen sie in eine zweite Reihe um (vorher wurden sie abgeschnitten) */
+.selbar{flex-wrap:wrap;row-gap:4px}
+.sel-acts{flex-wrap:wrap;overflow:visible;mask-image:none!important;flex:1 1 auto}
+.sel-acts .sb{flex:0 0 auto}
