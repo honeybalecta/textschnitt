@@ -857,3 +857,9 @@ body.has-deck #paneSlides>:not(.deck-frame){display:none!important}
 .selbar{flex-wrap:wrap;row-gap:4px}
 .sel-acts{flex-wrap:wrap;overflow:visible;mask-image:none!important;flex:1 1 auto}
 .sel-acts .sb{flex:0 0 auto}
+.colfav{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:4px 0}
+.fav-chip{position:relative;width:28px;height:28px;border-radius:7px;border:1px solid var(--line);cursor:pointer;box-shadow:inset 0 0 0 1px rgba(255,255,255,.2)}
+.fav-chip button{position:absolute;right:-6px;top:-6px;width:16px;height:16px;border-radius:50%;border:0;background:var(--anthrazit);color:var(--creme);font:11px/16px var(--ui);padding:0;cursor:pointer;display:none}
+.fav-chip:hover button{display:block}
+@media (pointer:coarse){ .fav-chip button{display:block} .fav-chip{width:34px;height:34px} }
+input[type=color]:disabled{opacity:.35}

@@ -443,7 +443,7 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
 
     // ── Untertitel als Bild-Overlay in Ausgabegröße, an freier Position (x/y = Mittelpunkt, 0…1) ──
     class SubtitleOverlay(ctx: Context, private val w: Int, private val h: Int, cues: JSONArray, style: JSONObject, fonts: JSONObject?) : BitmapOverlay() {
-        private data class Cue(val s: Double, val e: Double, val text: String, val x: Float, val y: Float, val size: Float, val color: Int, val outline: Boolean, val bg: Boolean, val face: Typeface)
+        private data class Cue(val s: Double, val e: Double, val text: String, val x: Float, val y: Float, val size: Float, val color: Int, val outline: Boolean, val bg: Boolean, val face: Typeface, val stroke: Int)
         private val faces = HashMap<String, Typeface>()
         private val bold = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
         // Mitgelieferte Schriften liegen in den Assets (web/fonts), eigene im App-Verzeichnis
@@ -463,6 +463,7 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
         private val baseSize = (when (style.optString("size", "mittel")) { "klein" -> 0.045; "groß" -> 0.075; else -> 0.058 } * minOf(w, h) * (if (h > w) 1.25 else 1.0)).toFloat()
         private val baseColor = runCatching { Color.parseColor(style.optString("color", "#FFFFFF")) }.getOrDefault(Color.WHITE)
         private val baseOutline = style.optBoolean("outline", true)
+        private val baseStroke = runCatching { Color.parseColor(style.optString("outlineColor", "#000000").ifEmpty { "#000000" }) }.getOrDefault(Color.BLACK)
         private val list = (0 until cues.length()).map { cues.getJSONObject(it) }.map {
             val isTitle = it.optBoolean("title")
             Cue(it.getDouble("start"), it.getDouble("end"), it.getString("text"),
@@ -472,7 +473,8 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
                 if (it.isNull("color")) baseColor else runCatching { Color.parseColor(it.getString("color")) }.getOrDefault(baseColor),
                 if (it.has("outline") && !it.isNull("outline")) it.optBoolean("outline", true) else baseOutline,
                 it.optBoolean("bg"),
-                if (isTitle || it.has("font")) faceOf(it.optString("font", "")) else baseFace)
+                if (isTitle || it.has("font")) faceOf(it.optString("font", "")) else baseFace,
+                if (it.has("outlineColor") && !it.isNull("outlineColor")) runCatching { Color.parseColor(it.getString("outlineColor")) }.getOrDefault(baseStroke) else if (isTitle) Color.BLACK else baseStroke)
         }
         // Ein einziges Bild, das bei jedem Wechsel neu bemalt wird (spart bei 4K viel Speicher)
         private val bmp: Bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
@@ -513,7 +515,7 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
             }
             c.save(); c.translate(cx - width / 2f, top)
             if (cue.outline && !cue.bg) {
-                val sp = TextPaint(paint).apply { style = Paint.Style.STROKE; strokeWidth = size / 7f; strokeJoin = Paint.Join.ROUND; color = Color.BLACK }
+                val sp = TextPaint(paint).apply { style = Paint.Style.STROKE; strokeWidth = size / 7f; strokeJoin = Paint.Join.ROUND; color = cue.stroke }
                 layout(sp).draw(c)
             } else {
                 paint.setShadowLayer(size / 10f, 0f, size / 20f, Color.argb(200, 0, 0, 0))

@@ -37,7 +37,7 @@ os.environ.setdefault("HF_HUB_DISABLE_IMPLICIT_TOKEN", "1")
 import warnings  # noqa: E402
 warnings.filterwarnings("ignore", module="huggingface_hub")
 
-VERSION = "2.24.1"
+VERSION = "2.24.2"
 APP_DIR = Path(__file__).resolve().parent
 FROZEN = bool(getattr(sys, "frozen", False))          # als installierte .exe gebaut
 RES_DIR = Path(getattr(sys, "_MEIPASS", APP_DIR))      # mitgelieferte Dateien (Oberfläche, ffmpeg, Modelle)
@@ -811,12 +811,19 @@ def clean_cues(raw) -> list[dict]:
         except (KeyError, TypeError, ValueError):
             continue
         if txt and e - s > 0.05:
-            cues.append({"start": max(0.0, s), "end": e, "text": txt.replace("\r", ""),
-                         "x": float(c.get("x", 0.5) if c.get("x") is not None else 0.5),
-                         "y": float(c.get("y", 0.88) if c.get("y") is not None else 0.88),
-                         "size": float(c["size"]) if c.get("size") else None, "color": c.get("color"),
-                         "outline": c.get("outline"), "bg": bool(c.get("bg")), "title": bool(c.get("title")),
-                         "font": str(c.get("font") or "")})
+            o = {"start": max(0.0, s), "end": e, "text": txt.replace("\r", ""),
+                 "x": float(c.get("x", 0.5) if c.get("x") is not None else 0.5),
+                 "y": float(c.get("y", 0.88) if c.get("y") is not None else 0.88),
+                 "size": float(c["size"]) if c.get("size") else None, "color": c.get("color"),
+                 "outline": c.get("outline"), "bg": bool(c.get("bg")), "title": bool(c.get("title"))}
+            # Schrift nur übernehmen, wenn der Untertitel eine eigene hat (Titel, Person, Übersetzung). Früher stand hier
+            # immer ein (leerer) Eintrag – damit galt jeder Untertitel als „eigene Schrift: Standard“, und die im Stil
+            # gewählte Schrift kam im eingebrannten Video nie an.
+            if "font" in c and c["font"] is not None:
+                o["font"] = str(c["font"])
+            if c.get("outlineColor"):
+                o["outlineColor"] = str(c["outlineColor"])
+            cues.append(o)
     cues.sort(key=lambda c: c["start"])
     return cues
 
@@ -832,6 +839,42 @@ def sub_px(style: dict, w: int, h: int) -> float:
     return SUB_SIZES.get(style.get("size", "mittel"), 0.058) * min(w, h) * (1.25 if h > w else 1.0)
 
 
+def font_names(path: Path) -> tuple[str, bool]:
+    """Familienname und Fettschnitt aus der Schriftdatei (TTF/OTF, Tabellen „name“ und „OS/2“).
+    libass sucht im fontsdir nach dem Namen, der in der Datei steht – der Anzeigename der Oberfläche
+    (z. B. „TS Anton“) passt nicht, dann nahm ffmpeg stillschweigend die Standardschrift."""
+    import struct
+    data = path.read_bytes()
+    n = struct.unpack(">H", data[4:6])[0]
+    tabs = {}
+    for i in range(n):
+        tag, _cs, off, ln = struct.unpack(">4sIII", data[12 + 16 * i:28 + 16 * i])
+        tabs[tag] = (off, ln)
+    names = {}
+    if b"name" in tabs:
+        off, _ = tabs[b"name"]
+        _fmt, cnt, so = struct.unpack(">HHH", data[off:off + 6])
+        for i in range(cnt):
+            pid, eid, lid, nid, ln, o = struct.unpack(">HHHHHH", data[off + 6 + 12 * i:off + 18 + 12 * i])
+            if nid not in (1, 2, 16, 17):
+                continue
+            raw = data[off + so + o:off + so + o + ln]
+            try:
+                txt = raw.decode("utf-16-be") if pid in (0, 3) else raw.decode("mac_roman")
+            except Exception:  # noqa: BLE001
+                continue
+            pri = 2 if (pid == 3 and lid == 0x409) else 1 if pid in (0, 3) else 0
+            if nid not in names or pri > names[nid][1]:
+                names[nid] = (txt.strip(), pri)
+    fam = names.get(1, ("", 0))[0]
+    sub = names.get(2, ("", 0))[0].lower()
+    weight = 400
+    if b"OS/2" in tabs:
+        off, _ = tabs[b"OS/2"]
+        weight = struct.unpack(">H", data[off + 4:off + 6])[0]
+    return fam, ("bold" in sub) or (weight >= 600 and sub in ("", "regular"))
+
+
 def collect_fonts(fonts: dict, dest: Path) -> dict:
     """Benötigte Schriftdateien in den Export-Ordner kopieren; liefert {Schlüssel: Familienname}."""
     names = {}
@@ -843,7 +886,12 @@ def collect_fonts(fonts: dict, dest: Path) -> dict:
                 continue
             dest.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(src, dest / f"{key}{src.suffix.lower()}")
-            names[key] = (str(f.get("family") or "").replace(",", " "), bool(f.get("bold")))
+            try:
+                fam, bold = font_names(src)
+            except Exception as e:  # noqa: BLE001
+                log(f"Schriftname {src.name}: {e}")
+                fam, bold = "", False
+            names[key] = ((fam or str(f.get("family") or "")).replace(",", " "), bold if fam else bool(f.get("bold")))
         except Exception as e:  # noqa: BLE001
             log(f"Schrift {key}: {e}")
     return names
@@ -857,6 +905,7 @@ def write_ass(cues: list[dict], style: dict, out: Path, w: int, h: int, fonts: d
     r, g, b = hex_rgb(style.get("color", "#FFFFFF"))
     outline = max(1.0, size / 14) if style.get("outline", True) else 0
     shadow = 0 if style.get("outline", True) else max(1.0, size / 20)
+    orr, og, ob = hex_rgb(style.get("outlineColor") or "#000000")
 
     def ts(t):
         cs = int(round(t * 100))
@@ -869,7 +918,7 @@ def write_ass(cues: list[dict], style: dict, out: Path, w: int, h: int, fonts: d
              "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, "
              "Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, "
              "Alignment, MarginL, MarginR, MarginV, Encoding",
-             f"Style: Default,{fam or 'Arial'},{size:.0f},&H00{b:02X}{g:02X}{r:02X},&H00FFFFFF,&H00000000,&H96000000,"
+             f"Style: Default,{fam or 'Arial'},{size:.0f},&H00{b:02X}{g:02X}{r:02X},&H00FFFFFF,&H00{ob:02X}{og:02X}{orr:02X},&H96000000,"
              f"{-1 if fbold or not fam else 0},0,0,0,100,100,0,0,1,{outline:.1f},{shadow:.1f},5,0,0,0,1",
              # Kasten hinter dem Text (BorderStyle 3: deckender Kasten in OutlineColour)
              f"Style: Box,{fam or 'Arial'},{size:.0f},&H00{b:02X}{g:02X}{r:02X},&H00FFFFFF,&H64000000,&H64000000,"
@@ -896,6 +945,9 @@ def write_ass(cues: list[dict], style: dict, out: Path, w: int, h: int, fonts: d
         if c.get("color"):
             cr, cg, cb = hex_rgb(c["color"])
             ov += f"\\1c&H{cb:02X}{cg:02X}{cr:02X}&"
+        if c.get("outlineColor"):
+            qr, qg, qb = hex_rgb(c["outlineColor"])
+            ov += f"\\3c&H{qb:02X}{qg:02X}{qr:02X}&"
         if c.get("outline") is not None:
             ov += f"\\bord{max(1.0, csize / 14):.1f}\\shad0" if c["outline"] else ("\\bord0\\shad1" if c.get("title") else f"\\bord0\\shad{max(1.0, csize / 20):.1f}")
         sty = "Default"
@@ -1642,7 +1694,7 @@ def write_concat(plan: dict, name: str, cues: list[dict], style: dict) -> Path:
                       "text": {"content": cu["text"], "fontSize": round(cu["size"] * 0.78, 4) if cu.get("size") else CONCAT_SIZES.get(style.get("size", "mittel"), 0.045),
                                "fontWeight": 700, "italic": False, "color": (cu.get("color") or style.get("color") or "#FFFFFF").lower(),
                                "align": "center", "opacity": 1.0, "strokeWidth": 0.0045 if outline else 0.0,
-                               "strokeColor": "#000000", "shadow": bool(outline), "background": "", "lineHeight": 1.2,
+                               "strokeColor": str(style.get("outlineColor") or "#000000"), "shadow": bool(outline), "background": "", "lineHeight": 1.2,
                                "tracking": 0.0, "maxWidth": 0.9, "maxHeight": 0.0}})
     for c in clips:   # nicht benötigte Felder bei Textclips entfernen
         if c["kind"] == "text":
@@ -1706,12 +1758,13 @@ def capcut_text(text: str, style: dict, cue: dict | None = None) -> tuple[dict, 
     cue = cue or {}
     r, g, b = hex_rgb(cue.get("color") or style.get("color", "#FFFFFF"))
     outline = cue["outline"] if cue.get("outline") is not None else style.get("outline", True)
+    sr, sg, sb = hex_rgb(cue.get("outlineColor") or ("" if cue.get("title") else style.get("outlineColor")) or "#000000")
     content = {"styles": [{
         "fill": {"alpha": 1.0, "content": {"render_type": "solid", "solid": {"alpha": 1.0, "color": [r / 255, g / 255, b / 255]}}},
         "range": [0, len(text.encode("utf-16-le")) // 2],
         "size": round(cue["size"] / 0.058 * 8.0, 2) if cue.get("size") else CAPCUT_SIZES.get(style.get("size", "mittel"), 8.0),
         "bold": False, "italic": False, "underline": False,
-        "strokes": [{"content": {"solid": {"alpha": 1.0, "color": [0, 0, 0]}}, "width": 0.08}] if outline else [],
+        "strokes": [{"content": {"solid": {"alpha": 1.0, "color": [sr / 255, sg / 255, sb / 255]}}, "width": 0.08}] if outline else [],
     }], "text": text}
     mid = uuid.uuid4().hex
     material = {"id": mid, "content": json.dumps(content, ensure_ascii=False), "typesetting": 0, "alignment": 1,

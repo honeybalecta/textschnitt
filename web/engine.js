@@ -574,7 +574,7 @@ class Renderer {
       }
       rows.forEach((row, k) => {
         const y = cy - bh / 2 + lh * (k + 0.5);
-        if (outline){ ctx.lineJoin = 'round'; ctx.miterLimit = 2; ctx.lineWidth = 2 * Math.max(1, size / 14); ctx.strokeStyle = '#000'; ctx.strokeText(row, cx, y); }
+        if (outline){ ctx.lineJoin = 'round'; ctx.miterLimit = 2; ctx.lineWidth = 2 * Math.max(1, size / 14); ctx.strokeStyle = c.outlineColor || (c.title ? '#000' : st.outlineColor) || '#000'; ctx.strokeText(row, cx, y); }
         else if (!c.title){ ctx.shadowColor = 'rgba(0,0,0,.8)'; ctx.shadowBlur = size / 10; ctx.shadowOffsetY = size / 20; }
         ctx.fillStyle = color; ctx.fillText(row, cx, y);
         ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;

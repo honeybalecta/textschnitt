@@ -2693,14 +2693,14 @@ function trEven(n, tr){ const w = tr.split(/\s+/).filter(Boolean), m = w.length;
   return Array.from({length: n}, (_, i) => { const a = Math.floor(i * m / n), b = Math.floor((i + 1) * m / n); return b > a ? w.slice(a, b).join(' ') : w[Math.min(a, m - 1)]; }); }
 const trHas = () => !!(P && P.trans && ((P.trans.sent && Object.keys(P.trans.sent).length) || (P.trans.map && Object.keys(P.trans.map).length)));
 // Eigener Stil der Übersetzung (P.trans.style): Schrift, Farbe, Größe, Umrandung, Kasten, Lage unter/über dem Original
-const TR_STYLE = {font: null, color: '#CFC6B0', size: 'klein', outline: true, bg: false, pos: 'unter'};
-function trStyle(){ const st = S(), t = (P.trans && P.trans.style) || {}; return {...TR_STYLE, font: st.font || '', outline: st.outline !== false, ...t}; }
+const TR_STYLE = {font: null, color: '#CFC6B0', size: 'klein', outline: true, bg: false, pos: 'unter', outlineColor: null};
+function trStyle(){ const st = S(), t = (P.trans && P.trans.style) || {}; const r = {...TR_STYLE, font: st.font || '', outline: st.outline !== false, ...t}; r.outlineColor ||= st.outlineColor || '#000000'; return r; }
 const escH = t => String(t).replace(/[&<>]/g, c => ({'&':'&amp;', '<':'&lt;', '>':'&gt;'}[c]));
 // Vorschau: Original und Übersetzung als zwei Blöcke im selben Untertitel – die Übersetzung mit eigenem Stil
 function subHtml(text, tr, base){
   if (tr == null) return null;
   const ts = trStyle(), rel = (SIZE_F[ts.size] || 0.045) / (SIZE_F[base.size] || 0.058), stage = $('#stage'), px = subPx(stage.clientWidth || 1, stage.clientHeight || 1, base) * rel, o = Math.max(1, px / 14);
-  const sh = ts.outline ? [[-1,-1],[1,-1],[-1,1],[1,1],[0,-1.4],[0,1.4],[-1.4,0],[1.4,0]].map(([x, y]) => `${(x*o).toFixed(1)}px ${(y*o).toFixed(1)}px 0 #000`).join(',') : `0 ${(px/20).toFixed(1)}px ${(px/10).toFixed(1)}px rgba(0,0,0,.8)`;
+  const sh = ts.outline ? [[-1,-1],[1,-1],[-1,1],[1,1],[0,-1.4],[0,1.4],[-1.4,0],[1.4,0]].map(([x, y]) => `${(x*o).toFixed(1)}px ${(y*o).toFixed(1)}px 0 ${ts.outlineColor}`).join(',') : `0 ${(px/20).toFixed(1)}px ${(px/10).toFixed(1)}px rgba(0,0,0,.8)`;
   const trCss = `display:block;color:${ts.color};font-size:${rel.toFixed(3)}em;font-family:${fontCss(ts.font).replace(/"/g, "'")};font-weight:${fontWeight(ts.font)};text-shadow:${sh}` + (ts.bg ? `;background:rgba(0,0,0,.6);border-radius:${(px*0.18).toFixed(1)}px;padding:${(px*0.1).toFixed(1)}px ${(px*0.3).toFixed(1)}px;width:fit-content;margin:auto` : '');
   const tb = `<span style="${trCss}">${escH(trWrap(tr))}</span>`;
   if (P.trans.mode === 'only') return tb;
@@ -2719,7 +2719,7 @@ function trWrap(tr){
 function trCues(o, tr, W, H, base){
   if (tr == null) return [o];
   const ts = trStyle(), port = H > W ? 1.25 : 1, fT = SIZE_F[ts.size] || 0.045, tx = trWrap(tr);
-  const t = {...o, text: tx, color: ts.color, size: fT, outline: !!ts.outline, font: ts.font || ''}; if (ts.bg) t.bg = true; else delete t.bg;
+  const t = {...o, text: tx, color: ts.color, size: fT, outline: !!ts.outline, font: ts.font || '', outlineColor: ts.outlineColor}; if (ts.bg) t.bg = true; else delete t.bg;
   if (P.trans.mode === 'only') return [t];
   const fO = o.size || SIZE_F[base.size] || 0.058, hO = o.text.split('\n').length * fO * Math.min(W, H) * port * 1.15 / H, hT = tx.split('\n').length * fT * Math.min(W, H) * port * 1.15 / H;
   const gap = fO * Math.min(W, H) * port * 0.2 / H, tot = hO + gap + hT, m = 0.02, top = clamp(o.y - tot / 2, m, Math.max(m, 1 - m - tot));
@@ -2728,7 +2728,7 @@ function trCues(o, tr, W, H, base){
   return up ? [t, o] : [o, t];
 }
 function paintTrStyle(){ if (!P) return; const ts = trStyle(); fillFontSelects(); $('#trFont').value = ts.font || ''; $('#trColor').value = ts.color.toLowerCase(); $('#trSize').value = ts.size;
-  $('#trPos').value = ts.pos; $('#trOutline').checked = !!ts.outline; $('#trBg').checked = !!ts.bg; }
+  $('#trPos').value = ts.pos; $('#trOutline').checked = !!ts.outline; $('#trBg').checked = !!ts.bg; $('#trOutlineColor').value = ts.outlineColor.toLowerCase(); $('#trOutlineColor').disabled = !ts.outline; }
 function setTrStyle(k, v){ if (!P) return; commit(() => { P.trans ||= {lang: 'en', mode: 'both', map: {}, sent: {}}; P.trans.style = {...(P.trans.style || {}), [k]: v}; }, false); cueCache.at = -1; shownCue = null; updateSubs(outPos); }
 $('#trFont').onchange = async () => { if ($('#trFont').value === '__import'){ const f = await importFont(); fillFontSelects(); if (f) setTrStyle('font', f.key); paintTrStyle(); return; } setTrStyle('font', $('#trFont').value); };
 $('#trColor').oninput = () => setTrStyle('color', $('#trColor').value.toUpperCase());
@@ -2736,7 +2736,8 @@ $('#trSize').onchange = () => setTrStyle('size', $('#trSize').value);
 $('#trPos').onchange = () => setTrStyle('pos', $('#trPos').value);
 $('#trOutline').onchange = () => setTrStyle('outline', $('#trOutline').checked);
 $('#trBg').onchange = () => setTrStyle('bg', $('#trBg').checked);
-$('#trStyleSame').onclick = () => { const st = S(); commit(() => { P.trans ||= {lang: 'en', mode: 'both', map: {}}; P.trans.style = {font: st.font || '', color: st.color, size: st.size, outline: st.outline !== false, bg: !!st.bg, pos: trStyle().pos}; }, false); paintTrStyle(); cueCache.at = -1; shownCue = null; updateSubs(outPos); };
+$('#trOutlineColor').oninput = () => setTrStyle('outlineColor', $('#trOutlineColor').value.toUpperCase());
+$('#trStyleSame').onclick = () => { const st = S(); commit(() => { P.trans ||= {lang: 'en', mode: 'both', map: {}}; P.trans.style = {font: st.font || '', color: st.color, size: st.size, outline: st.outline !== false, bg: !!st.bg, pos: trStyle().pos, outlineColor: st.outlineColor || '#000000'}; }, false); paintTrStyle(); cueCache.at = -1; shownCue = null; updateSubs(outPos); };
 // Text, wie er im Bild steht (Vorschau und Export)
 function subDisplay(text, tr){
   if (tr == null) return wrapText(text);
@@ -2943,7 +2944,7 @@ function styleOverlay(){
   const px = subPx(stage.clientWidth || 1, stage.clientHeight || 1, st), o = Math.max(1, px / 14);
   ov.style.background = st.bg ? 'rgba(0,0,0,.6)' : ''; ov.style.borderRadius = st.bg ? (px * 0.18).toFixed(1) + 'px' : ''; ov.style.padding = st.bg ? `${(px * 0.1).toFixed(1)}px ${(px * 0.3).toFixed(1)}px` : '';
   ov.style.color = st.color; ov.style.fontSize = px.toFixed(1) + 'px'; ov.style.fontFamily = fontCss(st.font); ov.style.fontWeight = fontWeight(st.font);
-  ov.style.textShadow = st.outline ? [[-1,-1],[1,-1],[-1,1],[1,1],[0,-1.4],[0,1.4],[-1.4,0],[1.4,0]].map(([x, y]) => `${(x*o).toFixed(1)}px ${(y*o).toFixed(1)}px 0 #000`).join(',') : `0 ${(px/20).toFixed(1)}px ${(px/10).toFixed(1)}px rgba(0,0,0,.8)`;
+  ov.style.textShadow = st.outline ? [[-1,-1],[1,-1],[-1,1],[1,1],[0,-1.4],[0,1.4],[-1.4,0],[1.4,0]].map(([x, y]) => `${(x*o).toFixed(1)}px ${(y*o).toFixed(1)}px 0 ${st.outlineColor || '#000'}`).join(',') : `0 ${(px/20).toFixed(1)}px ${(px/10).toFixed(1)}px rgba(0,0,0,.8)`;
   placeOverlay();
 }
 // Untertitel an seine Position setzen und im Bild halten
@@ -2990,6 +2991,7 @@ function syncStyleInputs(){
   const st = S(); $('#stChars').value = st.chars; $('#stLines').value = String(st.lines); $('#stDur').value = st.dur; $('#stSize').value = st.size;
   $('#stPos').value = POS_Y[st.pos] != null && st.x === 0.5 && st.y === POS_Y[st.pos] ? st.pos : 'frei';
   $('#stColor').value = st.color.toLowerCase(); $('#stOutline').checked = !!st.outline; $('#stMode').value = st.mode;
+  $('#stOutlineColor').value = (st.outlineColor || '#000000').toLowerCase(); $('#stOutlineColor').disabled = !st.outline;
   $('#sideSubs').classList.toggle('on', st.enabled !== false); fillFontSelects();
   $('#subsMaster').checked = st.enabled !== false; $('#subsMasterLbl').textContent = st.enabled !== false ? 'Untertitel an' : 'Untertitel aus';
   $('#paneSubs').classList.toggle('subs-off', st.enabled === false); $('#paneSubs').classList.toggle('word-mode', st.mode === 'word');
@@ -3000,7 +3002,39 @@ function syncStyleInputs(){
 $('#stPos').addEventListener('change', e => { const v = e.target.value; if (POS_Y[v] == null) return;
   const n = P.cues.filter(c => c.x != null).length;
   commit(() => { S().pos = v; S().x = 0.5; S().y = POS_Y[v]; if (n && confirm(`${n} Untertitel haben eine eigene Position. Auch diese zurücksetzen?`)) P.cues.forEach(c => { delete c.x; delete c.y; }); }, false); styleOverlay(); });
-$('#stOutline').onchange = e => { S().outline = e.target.checked; styleOverlay(); changed(false); };
+$('#stOutline').onchange = e => { S().outline = e.target.checked; $('#stOutlineColor').disabled = !S().outline; styleOverlay(); changed(false); };
+$('#stOutlineColor').addEventListener('input', e => { S().outlineColor = e.target.value.toUpperCase(); styleOverlay(); });
+$('#stOutlineColor').addEventListener('change', () => changed(false));
+// ── Farbfavoriten: gelten in allen Projekten; antippen setzt die Farbe im zuletzt benutzten Farbfeld,
+// ★ speichert dessen Farbe, × entfernt sie. Zusätzlich als Vorschläge im Farbwähler (datalist). ──
+const FAV_KEY = 'hc-colfav';
+let favCols = (() => { try { return JSON.parse(localStorage.getItem(FAV_KEY)) || []; } catch(_){ return []; } })();
+let favTarget = null;
+document.addEventListener('focusin', e => { if (e.target.matches && e.target.matches('input[type=color]')) favTarget = e.target; });
+document.addEventListener('pointerdown', e => { if (e.target.matches && e.target.matches('input[type=color]')) favTarget = e.target; }, true);
+function saveFavs(){ try { localStorage.setItem(FAV_KEY, JSON.stringify(favCols)); } catch(_){} if (TS.setPref) try { TS.setPref(FAV_KEY, JSON.stringify(favCols)); } catch(_){} renderFavs(); }
+function renderFavs(){
+  let dl = $('#colFavList'); if (!dl){ dl = document.createElement('datalist'); dl.id = 'colFavList'; document.body.append(dl); }
+  dl.innerHTML = favCols.map(c => `<option value="${c.toLowerCase()}"></option>`).join('');
+  document.querySelectorAll('input[type=color]').forEach(i => i.setAttribute('list', 'colFavList'));
+  document.querySelectorAll('.colfav').forEach(box => {
+    box.innerHTML = `<span class="muted small">Favoriten</span>` + favCols.map((c, i) => `<span class="fav-chip" style="background:${c}" data-c="${c}" title="${c} – antippen: übernehmen"><button type="button" data-del="${i}" title="Aus den Favoriten entfernen">×</button></span>`).join('')
+      + `<button type="button" class="btn small fav-add" title="Farbe des zuletzt gewählten Farbfelds als Favorit speichern">★ Farbe merken</button>`;
+  });
+}
+document.addEventListener('click', e => {
+  const box = e.target.closest && e.target.closest('.colfav'); if (!box) return;
+  const del = e.target.closest('[data-del]'); if (del){ e.stopPropagation(); favCols.splice(+del.dataset.del, 1); saveFavs(); return; }
+  const card = box.closest('.card, details, .sheet') || document;
+  const target = favTarget && document.contains(favTarget) && !favTarget.disabled ? favTarget : card.querySelector('input[type=color]:not(:disabled)');
+  if (e.target.closest('.fav-add')){ if (!target) return toast('Erst ein Farbfeld antippen'); const c = target.value.toUpperCase(); if (!favCols.includes(c)){ favCols = [c, ...favCols].slice(0, 16); saveFavs(); toast('Farbe gemerkt'); } return; }
+  const chip = e.target.closest('.fav-chip'); if (!chip) return;
+  if (!target) return toast('Erst ein Farbfeld antippen');
+  target.value = chip.dataset.c.toLowerCase(); target.dispatchEvent(new Event('input', {bubbles: true})); target.dispatchEvent(new Event('change', {bubbles: true}));
+});
+renderFavs();
+if (TS.getPref) try { const v = TS.getPref(FAV_KEY); if (v){ favCols = JSON.parse(v) || favCols; renderFavs(); } } catch(_){}
+new MutationObserver(() => { document.querySelectorAll('input[type=color]:not([list])').forEach(i => i.setAttribute('list', 'colFavList')); }).observe(document.body, {childList: true, subtree: true});
 $('#subsMaster').onchange = e => { S().enabled = e.target.checked; syncStyleInputs(); changed(false); toast(e.target.checked ? 'Untertitel an' : 'Untertitel aus'); window.slSyncAll && slSyncAll(); };
 function manualCount(){ return P.cues.filter(c => !c.own && ( c.text != null || c.ds || c.de || c.off || c.x != null || isFree(c))).length; }
 $('#stMode').onchange = e => {

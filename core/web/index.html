@@ -165,7 +165,9 @@
           <label>Schrift <select id="stFont"></select></label>
           <label>Farbe <input type="color" id="stColor" value="#ffffff"></label>
           <label class="row"><input type="checkbox" id="stOutline" checked> Umrandung</label>
+          <label>Farbe der Umrandung <input type="color" id="stOutlineColor" value="#000000"></label>
         </div>
+        <div class="colfav" title="Farbfavoriten: antippen setzt die Farbe im zuletzt gewählten Farbfeld"></div>
         <p class="muted small">Tipp: Untertitel lassen sich direkt im Bild an jede Stelle ziehen. Ein einzelner Untertitel bekommt eine eigene Position, wenn er im Studio ausgewählt ist.</p>
         <div class="row"><button class="btn" id="fontBtn">Aa Schriften …</button><button class="btn" id="regenBtn">Neu aufteilen</button><span class="muted small" id="subCount"></span></div>
       </div>
@@ -189,8 +191,10 @@
             <label>Größe <select id="trSize"><option>klein</option><option>mittel</option><option>groß</option></select></label>
             <label>Lage <select id="trPos"><option value="unter">unter dem Original</option><option value="über">über dem Original</option></select></label>
             <label class="row"><input type="checkbox" id="trOutline"> Umrandung</label>
+            <label>Farbe der Umrandung <input type="color" id="trOutlineColor" value="#000000"></label>
             <label class="row"><input type="checkbox" id="trBg"> Kasten dahinter</label>
           </div>
+          <div class="colfav"></div>
           <div class="row"><button class="btn small" id="trStyleSame">Wie das Original</button></div>
         </details>
         <div class="row wrap"><button class="btn primary" id="trBtn">Übersetzung erzeugen</button><button class="btn hidden" id="trStop">Abbrechen</button><button class="btn" id="trExport" title="Ein Satz pro Zeile – zum Übersetzen außerhalb">Text exportieren</button><button class="btn" id="trImport">Übersetzung einfügen …</button><span class="muted small" id="trMsg"></span></div>
