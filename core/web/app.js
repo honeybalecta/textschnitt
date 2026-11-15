@@ -802,6 +802,10 @@ function hcModal(html){
   m.innerHTML = `<div class="hc-card">${html}</div>`; document.body.append(m); return m;
 }
 function closeHcModal(){ const m = $('#hcModal'); if (m) m.remove(); }
+// Kein Dateipfad, sondern Inhalt, der direkt im Projekt steht (z. B. ein Folienbild als „data:…“) oder eine Adresse: bleibt im
+// Projekt, wie er ist. Früher wurde er wie eine Datei behandelt – unter Windows brach das Weitergeben daran ab
+// („stat: path too long for Windows“).
+const inlineUri = u => /^(data:|blob:|https?:)/i.test(u) || u.length > 2000;
 function packageSpec(proj, withMedia){
   const p = JSON.parse(JSON.stringify(proj)), files = [], hfiles = [], byUri = new Map();
   const fileFor = (m, kind) => {
@@ -813,10 +817,11 @@ function packageSpec(proj, withMedia){
     return n;
   };
   const walk = o => { if (Array.isArray(o)) o.forEach(walk);
-    else if (o && typeof o === 'object'){ if (typeof o.uri === 'string' && o.uri && !o.uri.startsWith('@hc')) o.uri = '@hc:' + fileFor(o, 'media');
+    else if (o && typeof o === 'object'){ if (typeof o.uri === 'string' && o.uri && !o.uri.startsWith('@hc') && !inlineUri(o.uri)) o.uri = '@hc:' + fileFor(o, 'media');
       delete o.proxy; for (const k in o) if (o[k] && typeof o[k] === 'object') walk(o[k]); } };
   walk(p.sources); walk(p.items); walk(p.media || []); walk(p.slides || []);
-  for (const sl of p.slides || []) if (sl.img && !String(sl.img).startsWith('@hc')) sl.img = '@hc:' + fileFor({uri: sl.img, name: String(sl.img).split(/[\\/]/).pop() || 'bild.png', kind: 'image'}, 'media');
+  if (p.watermark) walk(p.watermark);   // das Wasserzeichen fehlte bisher im Paket
+  for (const sl of p.slides || []) if (typeof sl.img === 'string' && sl.img && !sl.img.startsWith('@hc') && !inlineUri(sl.img)) sl.img = '@hc:' + fileFor({uri: sl.img, name: sl.img.split(/[\\/]/).pop() || 'bild.png', kind: 'image'}, 'media');
   // eigene Schriften (Untertitel, Titel)
   const fontKey = key => { const f = key && userFonts.find(x => x.key === key); return f ? '@hcf:' + fileFor({uri: f.uri, name: (f.uri.split(/[\\/]/).pop() || f.label + '.ttf')}, 'font') : key; };
   if (p.sub_style && p.sub_style.font) p.sub_style.font = fontKey(p.sub_style.font);
@@ -870,7 +875,7 @@ async function finishImport(res){
   // frühere Fassung desselben Projekts auf diesem Gerät: deren Dateien wiederverwenden
   const old = J(TS.loadProject(proj.id) || 'null');
   const local = [];
-  if (old){ const add = x => { if (x && x.uri && !x.uri.startsWith('@hc')) local.push(x); }; (old.sources || []).forEach(add); (old.items || []).forEach(x => add(x.clip)); (old.media || []).forEach(add); }
+  if (old){ const add = x => { if (x && x.uri && !x.uri.startsWith('@hc')) local.push(x); }; (old.sources || []).forEach(add); (old.items || []).forEach(x => add(x.clip)); (old.media || []).forEach(add); if (old.watermark) add(old.watermark.clip); }
   const resolved = {}, missing = [];
   const media = n => { if (n in resolved) return resolved[n];
     let u = map[n]; const h = info(n);

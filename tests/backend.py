@@ -85,6 +85,7 @@ T.APP_HOOKS["save_any"] = lambda name: (pick("save_any") or [None])[0]
 T.APP_HOOKS["save"] = lambda name: (pick("save") or [None])[0]
 webbrowser.open = lambda url, *a, **k: note(url)
 T.open_data_dir = lambda: note("DATENORDNER")
+T.import_root = lambda: WORK / "importe"          # importierte Projektpakete landen im Arbeitsordner, nicht in „Dokumente“
 T._http_get = fake_http_get
 T.whisper_available = lambda: True
 T.models_list = lambda: [{"name": "small", "label": "small – schnell", "sizeMb": 480, "installed": True, "bundled": True, "recommended": True}]

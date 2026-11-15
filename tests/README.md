@@ -17,10 +17,11 @@ Gebraucht werden python3 mit numpy, ffmpeg, Node und Google Chrome (`HC_CHROME=/
 
 | Datei | Inhalt |
 |---|---|
-| `backend_test.py` | Backend ohne Browser: sicheres Speichern, frühere Fassungen, Papierkorb, Speicher verwalten, alle Projekte sichern und einspielen (auch in einen anderen Datenordner), Hinweis auf neue Versionen, Fehlerbericht |
+| `backend_test.py` | Backend ohne Browser: sicheres Speichern, frühere Fassungen, Papierkorb, Speicher verwalten, alle Projekte sichern und einspielen (auch in einen anderen Datenordner), Projekt weitergeben mit eingebetteten Bildern (das Verhalten von Windows bei überlangen Pfaden ist nachgestellt), Hinweis auf neue Versionen, Fehlerbericht |
 | `p_umbenennen.mjs` | Projekte umbenennen in der Liste und im offenen Projekt |
 | `p_fassungen.mjs` | Frühere Fassungen und Papierkorb in der Oberfläche, auch mit dem Projekt in einem zweiten Fenster |
 | `p_verwaltung.mjs` | Einstellungen: Speicher, Sicherung, Fehlerbericht, Hinweis auf neue Versionen |
+| `p_paket.mjs` | Projekt weitergeben: Paket schreiben und wieder einlesen, mit eingebettetem Folienbild und Wasserzeichen |
 | `p_schutz.mjs` | Rückgängig für Format, Ausschnitt und Lautstärke; Abgleich mehrerer Fenster; sichtbare Speicherfehler |
 | `p_stand.mjs` | Bearbeiten im Stand: Die Abspiellinie bleibt auf demselben Bild (zwölf Fälle je Projekt) |
 | `p_wiedergabe.mjs` | Bearbeiten beim Abspielen: Die Wiedergabe läuft weiter (achtzehn Fälle je Projekt) |

@@ -2,6 +2,11 @@
 
 Was sich mit jeder Version von HoneyCut ändert. Die Windows-App zeigt diese Stichpunkte an, sobald eine neuere Version bereitsteht.
 
+## 2.26.1 · Projekt weitergeben
+- „Projekt weitergeben“ läuft auch, wenn ein Bild direkt im Projekt steckt, etwa ein Folienbild aus HoneyDeck. Unter Windows brach es bisher mit „path too long“ ab
+- Das Wasserzeichen kommt im Projektpaket mit
+- Ein Projekt mit eingebetteten Bildern gibt beim Öffnen alle seine Dateien für die Vorschau frei
+
 ## 2.26.0 · Projekte, Sicherheit, Speicher
 - Projekte umbenennen: mit dem Stift in der Projektliste oder per Klick auf den Namen im offenen Projekt
 - Frühere Fassungen eines Projekts ansehen, als Kopie öffnen oder zurückholen (Uhr in der Projektliste)

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Prüfungen des Backends ohne Browser: sicheres Speichern, frühere Fassungen, Papierkorb, Speicher verwalten,
-alle Projekte sichern und einspielen, Hinweis auf neue Versionen, Fehlerbericht.
+alle Projekte sichern und einspielen, Projekt weitergeben, Hinweis auf neue Versionen, Fehlerbericht.
 Läuft in einem frischen Datenordner; nichts verlässt den Rechner (GitHub ist nachgestellt).
 Aufruf: python3 tests/backend_test.py"""
 import gzip
@@ -266,6 +266,75 @@ def sicherung():
         print("FEHLER Einspielen im anderen Datenordner lief nicht durch:", out.stderr[-600:])
 
 
+def projektpakete():
+    """Projekt weitergeben (.honeycut): Was kein Dateipfad ist – etwa ein Bild, das direkt im Projekt steht –, darf weder das
+    Paket noch das Freigeben der übrigen Dateien aufhalten. Windows meldet bei mehr als 32 767 Zeichen „stat: path too long
+    for Windows“ (ein ValueError); das wird hier nachgestellt, weil andere Systeme an dieser Stelle anders reagieren."""
+    import pathlib
+    real_resolve = pathlib.Path.resolve
+
+    def win_resolve(self, strict=False):
+        if len(str(self)) > 32767:
+            raise ValueError("stat: path too long for Windows")
+        return real_resolve(self, strict=strict)
+    pathlib.Path.resolve = win_resolve
+    os.environ["HOME"] = str(TMP / "heim")
+    try:
+        inline = "data:image/png;base64," + "iVBORw0KGgo/" * 4000          # 48 000 Zeichen, mit Schrägstrichen wie in echten Bilddaten
+        try:
+            got = T.norm_path(inline)
+        except ValueError as e:
+            got = f"Abbruch: {e}"
+        chk("eingebettete Bilddaten gelten nicht als Dateipfad und bleiben unverändert", got == inline, got[:60])
+        vid, logo = TMP / "paket" / "video.mp4", TMP / "paket" / "logo.png"
+        mk(vid, b"v" * 5000)
+        mk(logo, b"l" * 700)
+        obj = {"id": "pk1", "name": "Paket", "sources": [{"uri": inline}, {"uri": str(vid)}], "items": [{"clip": {"uri": str(logo)}}, {"clip": {"uri": inline}}]}
+        T.ALLOWED.clear()
+        T.allow_all(obj)
+        chk("beim Laden werden alle echten Dateien freigegeben, auch wenn daneben eingebettete Daten stehen",
+            T.norm_path(str(vid)) in T.ALLOWED and T.norm_path(str(logo)) in T.ALLOWED and inline not in T.ALLOWED, len(T.ALLOWED))
+        dest = str(TMP / "paket" / "projekt.honeycut")
+        spec = {"name": "Paket", "header": {"format": "honeycut-projekt", "v": 1, "name": "Paket",
+                                             "project": {"id": "pk1", "name": "Paket", "slides": [{"id": "s1", "img": inline}]},
+                                             "files": [{"n": "m0", "kind": "media", "name": "video.mp4"}, {"n": "m1", "kind": "media", "name": "Datei1"},
+                                                       {"n": "m2", "kind": "media", "name": "logo.png"}, {"n": "m3", "kind": "media", "name": "fehlt.mp4"}]},
+                "files": [{"n": "m0", "uri": str(vid), "include": True}, {"n": "m1", "uri": inline, "include": True},
+                          {"n": "m2", "uri": str(logo), "include": True}, {"n": "m3", "uri": str(TMP / "paket" / "fehlt.mp4"), "include": True}]}
+        try:
+            res = T.package_export_job(job(), spec, dest)
+            err = ""
+        except Exception as e:  # noqa: BLE001
+            res, err = {}, repr(e)
+        hf = {h["n"]: h for h in spec["header"]["files"]}
+        chk("das Paket entsteht, auch wenn ein Eintrag eingebettete Daten statt eines Pfads nennt", not err and Path(dest).is_file(), err)
+        chk("echte Dateien stecken im Paket, der eingebettete Eintrag und die fehlende Datei zählen als nicht mitgeschickt",
+            hf["m0"].get("included") is True and hf["m2"].get("included") is True and hf["m1"].get("included") is False and hf["m3"].get("included") is False
+            and hf["m0"].get("size") == 5000 and hf["m2"].get("size") == 700, {k: (v.get("included"), v.get("size")) for k, v in hf.items()})
+        chk("neben dem Paket bleibt keine halbfertige Datei liegen", not Path(dest + ".part").exists())
+        try:
+            back = T.package_import_job(job(), dest)
+            err = ""
+        except Exception as e:  # noqa: BLE001
+            back, err = {}, repr(e)
+        mp = back.get("map") or {}
+        chk("das Paket lässt sich wieder einlesen: beide Dateien liegen im Importordner, das eingebettete Bild steht weiter im Projekt",
+            not err and set(mp) == {"m0", "m2"} and Path(mp["m0"]).read_bytes() == b"v" * 5000 and Path(mp["m2"]).read_bytes() == b"l" * 700
+            and back["header"]["project"]["slides"][0]["img"] == inline and str(TMP / "heim") in mp["m0"], err or sorted(mp))
+        # Auch kurze Angaben, die das System nicht als Pfad annimmt, führen zu keinem Abbruch
+
+        def bad_resolve(self, strict=False):
+            raise ValueError("stat: embedded null character in path")
+        pathlib.Path.resolve = bad_resolve
+        try:
+            got = T.norm_path("C:/Videos/kaputt.mp4")
+        except ValueError as e:
+            got = f"Abbruch: {e}"
+        chk("lässt sich eine Angabe nicht als Pfad auflösen, bleibt sie unverändert statt den Vorgang abzubrechen", got == "C:/Videos/kaputt.mp4", got)
+    finally:
+        pathlib.Path.resolve = real_resolve
+
+
 def umzug():
     a = json.loads((TMP / "umzug.json").read_text())
     mk(T.FONT_DIR / "Zweite.otf", b"ANDERE-SCHRIFT")      # gleicher Name, anderer Inhalt
@@ -367,7 +436,7 @@ def bericht_und_protokoll():
 if MODE == "umzug":
     umzug()
     sys.exit(1 if BAD else 0)
-for part in (speichern_und_fassungen, speicher, sicherung, neue_versionen, bericht_und_protokoll):
+for part in (speichern_und_fassungen, speicher, sicherung, projektpakete, neue_versionen, bericht_und_protokoll):
     print(f"── {part.__name__.replace('_', ' ')} ──", flush=True)
     part()
 print(f"ERGEBNIS Backend ohne Browser: {N} geprüft, {BAD} Fehler")

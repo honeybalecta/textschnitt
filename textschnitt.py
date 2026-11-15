@@ -37,7 +37,7 @@ os.environ.setdefault("HF_HUB_DISABLE_IMPLICIT_TOKEN", "1")
 import warnings  # noqa: E402
 warnings.filterwarnings("ignore", module="huggingface_hub")
 
-VERSION = "2.26.0"
+VERSION = "2.26.1"
 APP_DIR = Path(__file__).resolve().parent
 FROZEN = bool(getattr(sys, "frozen", False))          # als installierte .exe gebaut
 RES_DIR = Path(getattr(sys, "_MEIPASS", APP_DIR))      # mitgelieferte Dateien (Oberfläche, ffmpeg, Modelle)
@@ -90,13 +90,29 @@ def log(msg: str) -> None:
         pass
 
 
+def not_a_path(p: str) -> bool:
+    """Eingebettete Daten statt eines Dateipfads – z. B. ein Folienbild, das als „data:…“ direkt im Projekt steht."""
+    return len(p) > 4096 or p[:5].lower() in ("data:", "blob:")
+
+
 def norm_path(p: str) -> str:
-    return str(Path(p).expanduser().resolve())
+    """Pfad in einheitlicher Schreibweise. Was kein Pfad ist, bleibt, wie es ist: Unter Windows bricht Path.resolve() bei mehr
+    als 32 767 Zeichen mit „stat: path too long for Windows“ ab (ein ValueError, kein OSError). Daran scheiterte „Projekt
+    weitergeben“, sobald ein Bild direkt im Projekt eingebettet war; beim Laden und Speichern eines solchen Projekts wurden
+    außerdem die übrigen Dateien nicht mehr freigegeben."""
+    p = str(p)
+    if not_a_path(p):
+        return p
+    try:
+        return str(Path(p).expanduser().resolve())
+    except (OSError, ValueError, RuntimeError):
+        return p
 
 
 def allow(p: str | Path) -> str:
     s = norm_path(str(p))
-    ALLOWED.add(s)
+    if not not_a_path(s):
+        ALLOWED.add(s)
     return s
 
 
@@ -2153,6 +2169,21 @@ def collect_uris(obj, out: set):
             collect_uris(v, out)
 
 
+def allow_all(obj) -> None:
+    """Alle Dateien eines Projekts für die Oberfläche freigeben. Jede für sich: Früher brach die Schleife beim ersten Eintrag
+    ab, der sich nicht als Pfad lesen ließ, und alle weiteren Dateien blieben gesperrt."""
+    uris: set = set()
+    try:
+        collect_uris(obj, uris)
+    except Exception:  # noqa: BLE001
+        return
+    for u in uris:
+        try:
+            allow(u)
+        except Exception:  # noqa: BLE001
+            pass
+
+
 def project_summary(p: dict) -> dict:
     srcs = p.get("sources") or ([p["main"]] if p.get("main") else [])
     return {"id": p["id"], "name": p.get("name", ""), "updated": p.get("updated", 0),
@@ -2298,13 +2329,7 @@ def load_project(pid: str) -> str:
         except Exception as e:  # noqa: BLE001
             log(f"Wiederhergestellte Fassung ließ sich nicht zurückschreiben: {e!r}")
         log(f"Projekt {f.name} war unlesbar – frühere Fassung {rec[1]} wiederhergestellt.")
-    try:
-        uris: set = set()
-        collect_uris(obj, uris)
-        for u in uris:
-            allow(u)
-    except Exception:
-        pass
+    allow_all(obj)
     return txt
 
 
@@ -3501,12 +3526,15 @@ def package_export_job(job: dict, spec: dict, dest: str):
     for h in header.get("files", []):
         f = srcs.get(h["n"])
         size = 0
-        if f and f.get("include", True):
-            p = norm_path(f["uri"])
-            ok = p in ALLOWED or norm_path(str(Path(p).parent)) == font_dir
-            if ok and os.path.isfile(p):
-                size = os.path.getsize(p)
-                plan.append((p, size))
+        if f and f.get("include", True) and not not_a_path(str(f.get("uri") or "")):
+            try:   # eine Datei, die sich nicht lesen lässt, fehlt im Paket – das Paket selbst entsteht trotzdem
+                p = norm_path(f["uri"])
+                ok = p in ALLOWED or norm_path(str(Path(p).parent)) == font_dir
+                if ok and os.path.isfile(p):
+                    size = os.path.getsize(p)
+                    plan.append((p, size))
+            except (OSError, ValueError) as e:
+                log(f"Projektpaket: {h.get('name') or h.get('n')} übersprungen ({e!r})")
         h["size"], h["included"] = size, size > 0
     head = json.dumps(header, ensure_ascii=False).encode("utf-8")
     total = sum(n for _, n in plan)
@@ -3847,13 +3875,7 @@ class Handler(BaseHTTPRequestHandler):
                 except ValueError:
                     raise ValueError("Der Projektstand kam unvollständig an und wurde nicht gespeichert.")
                 save_project(q.get("id", ""), txt, obj)
-                try:
-                    uris: set = set()
-                    collect_uris(obj, uris)
-                    for x in uris:
-                        allow(x)
-                except Exception:
-                    pass
+                allow_all(obj)
                 return self._text('"ok"')
             if rest == "api/log":   # Meldungen der Oberfläche (unerwartete Fehler, Auffälligkeiten beim Abspielen) für die Fehlersuche
                 log("Oberfläche: " + raw.decode("utf-8", "replace")[:800].replace("\n", " ⏎ "))
