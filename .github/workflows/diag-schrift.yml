@@ -1,0 +1,50 @@
+name: Diagnose Schrift im Export (Windows)
+
+# Nur auf dem Testzweig: prüft mit demselben ffmpeg wie im Installer, ob die gewählte Untertitel-Schrift im Video ankommt.
+# Veröffentlicht nichts. Das Ergebnis wird als Datei in diesen Zweig geschrieben (diag/ergebnis.txt und Bildausschnitte).
+on:
+  push:
+    branches: [diag-schrift-windows]
+    paths: ["tests/diag_schrift.py", ".github/workflows/diag-schrift.yml"]
+
+permissions:
+  contents: write
+
+jobs:
+  diag:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: ffmpeg holen (dieselbe Fassung wie im Installer)
+        shell: pwsh
+        run: |
+          $zip = "$env:RUNNER_TEMP\ffmpeg.zip"
+          Invoke-WebRequest "https://github.com/GyanD/codexffmpeg/releases/download/7.1/ffmpeg-7.1-essentials_build.zip" -OutFile $zip
+          Expand-Archive $zip "$env:RUNNER_TEMP\ffmpeg"
+          New-Item -ItemType Directory -Force build\ffmpeg | Out-Null
+          Get-ChildItem "$env:RUNNER_TEMP\ffmpeg" -Recurse -Include ffmpeg.exe,ffprobe.exe | Copy-Item -Destination build\ffmpeg
+          build\ffmpeg\ffmpeg.exe -hide_banner -version | Select-Object -First 1
+
+      - name: Diagnose
+        shell: pwsh
+        run: |
+          pip install --quiet numpy
+          python tests\diag_schrift.py
+
+      - name: Ergebnis in den Zweig schreiben
+        if: always()
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -f diag
+          git commit -m "Diagnose: Ergebnis vom Windows-Lauf"
+          git push origin HEAD:diag-schrift-windows
