@@ -1,0 +1,16 @@
+[
+ {"name":"standard","js":""},
+ {"name":"poppins","js":"S().font = 'poppins';"},
+ {"name":"anton","js":"S().font = 'anton';"},
+ {"name":"playfair","js":"S().font = 'playfair';"},
+ {"name":"inter","js":"S().font = 'inter';"},
+ {"name":"robotocondensed","js":"S().font = 'robotocondensed';"},
+ {"name":"archivo","js":"S().font = 'archivo';"},
+ {"name":"bebas","js":"S().font = 'bebas';"},
+ {"name":"kasten","js":"Object.assign(S(), {font:'poppins', bg:true});"},
+ {"name":"standard_kasten","js":"Object.assign(S(), {bg:true});"},
+ {"name":"titel","times":[3],"js":"S().font='montserrat'; P.items.push({id:newId(), type:'title', at:0.5, dur:10, text:'Mieten runter\\nLöhne rauf', x:0.5, y:0.25, size:'groß', scale:1, color:'#FFFFFF', outline:true, bg:false, font:'anton'}); P.items.push({id:newId(), type:'title', at:0.5, dur:10, text:'Titel mit Kasten', x:0.3, y:0.55, size:'mittel', scale:1, color:'#FFD23F', outline:false, bg:true, font:'playfair'}); P.textline = {text:'@honeybalecta · V. i. S. d. P.: Vorname Nachname', pos:'ul', size:0.028, margin:0.035, color:'#FFFFFF', outline:true, bg:false, font:'poppins', on:true, safe:true};"},
+ {"name":"hoch_standard","js":"P.format = '9:16'; P.frame = clampFrame({sc: coverSc(), tx: 0, ty: 0});"},
+ {"name":"hoch_poppins","js":"P.format = '9:16'; P.frame = clampFrame({sc: coverSc(), tx: 0, ty: 0}); S().font = 'poppins';"},
+ {"name":"hoch_kasten","js":"P.format = '9:16'; P.frame = clampFrame({sc: coverSc(), tx: 0, ty: 0}); Object.assign(S(), {font:'anton', bg:true, size:'groß'});"}
+]

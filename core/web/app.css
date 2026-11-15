@@ -1011,3 +1011,73 @@ input[type=color]:disabled{opacity:.35}
 #chapWarn{color:var(--sand)}
 .cover-prev{display:block;max-width:100%;max-height:36vh;margin:0 auto 10px;border-radius:8px;background:#000}
 @media (max-width:759px){ .cover-prev{max-height:22vh} }
+
+/* ── 2.28 · Quellen und Belege ── */
+label.col{display:flex;flex-direction:column;gap:4px;font-size:13px;margin:8px 0}
+label.col input{width:100%}
+.hc-card label.row{margin:8px 0}
+.chip.warn{border-color:var(--sand);color:var(--sand)}
+.tk.rf{text-decoration:underline dotted var(--sand);text-decoration-thickness:1.5px;text-underline-offset:4px}
+.tk.rf.need{text-decoration-line:underline;text-decoration-style:wavy;text-decoration-color:var(--rot);text-decoration-thickness:1px}
+.tk.rf.okd{text-decoration-color:var(--muted)}
+.tk.rf.del{text-decoration-line:underline line-through}
+.ref-pin{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:6px;background:var(--sand);color:var(--anthrazit);vertical-align:-4px;cursor:pointer}
+.ref-pin .ico{width:14px;height:14px}
+.ref-pin.need{background:var(--rot);color:var(--on-accent)}
+.ref-pin.okd{background:transparent;color:var(--muted);box-shadow:inset 0 0 0 1px var(--line)}
+.ref-q{margin:0 0 10px;padding:8px 10px;border-left:3px solid var(--sand);background:var(--surface-2);border-radius:0 8px 8px 0;font:italic 14px/1.4 var(--serif,Lora,Georgia,serif);color:var(--creme);max-height:6.5em;overflow:auto}
+.rf-row .mk-go{align-items:flex-start}
+.rf-row .mk-t{display:flex;flex-direction:column;gap:2px;min-width:0}
+.mk-t b{font-weight:600;overflow-wrap:anywhere}
+.mk-t i{font-style:normal;color:var(--muted);font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rf-row.done .mk-t i{text-decoration:line-through}
+#rfSheet h4,#lwSheet h4{margin:14px 0 4px}
+#rfSheet .tr-style{margin-top:14px}
+#rfSheet .grid2 .field,#lwSheet .grid2 .field{margin:0}
+.ex-notes.warn{border-left-color:var(--rot)}
+#refText{white-space:pre-wrap;word-break:break-word;color:var(--creme)}
+#refWarn{color:var(--sand)}
+/* Barrierefreiheit */
+.a11y{display:flex;flex-direction:column;gap:6px}
+.a11y-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:13px;padding:8px 10px;border:1px solid var(--line);border-left:3px solid var(--sand);border-radius:8px}
+.a11y-row span{flex:1;min-width:200px}
+.a11y-ok{display:flex;align-items:center;gap:8px;margin:0;color:var(--muted)}
+.a11y-ok .ico{width:16px;height:16px;flex:none;color:var(--gruen)}
+/* Bauchbinden */
+.lower-ov{position:absolute;inset:0;z-index:3;pointer-events:none}
+.lower-ov img{position:absolute;display:block;max-width:none}
+.spk-lt{margin-bottom:8px}
+.blk.title.lt{background:var(--sand)}
+.lt-auto{position:absolute;top:0;bottom:0;border-radius:6px;box-sizing:border-box;border:1.5px dashed var(--sand);color:var(--sand);font:11px/1 var(--ui);padding:0 6px;display:flex;align-items:center;white-space:nowrap;overflow:hidden;cursor:pointer;opacity:.85}
+.lt-auto:hover{opacity:1;background:rgba(207,198,176,.08)}
+
+/* ── 2.28 · Schnitt-Zeitleiste im Text-Reiter: Zeitskala, Hauptspur und die Wörter darunter, nur für Schnitte ── */
+.t-words,.g-words{display:none}
+#proj[data-tab=text] .tl-fold{display:flex}
+#proj[data-tab=text].tl-min .tl-fold i{transform:rotate(-90deg)}
+#proj[data-tab=text].tl-min #paneStudio > :not(.tl-fold){display:none !important}
+#proj[data-tab=text] #paneStudio{height:auto;min-height:0}
+#proj[data-tab=text] .full-only,#proj[data-tab=text] #gOvl,#proj[data-tab=text] #gAud,#proj[data-tab=text] .g-fx,#proj[data-tab=text] .g-title,#proj[data-tab=text] .g-txt,
+#proj[data-tab=text] #trOvlBox,#proj[data-tab=text] #trAudBox,#proj[data-tab=text] .t-fx,#proj[data-tab=text] .t-title,#proj[data-tab=text] .t-txt{display:none !important}
+#proj[data-tab=text] .tl-body{flex:none;overflow:hidden}
+#proj[data-tab=text] .t-main{top:calc(var(--rh) + 6px) !important}
+#proj[data-tab=text] .t-words{display:block;top:calc(var(--rh) + var(--mh) + 10px);height:22px;border-top:0}
+#proj[data-tab=text] .g-words{display:flex;height:28px}
+#proj[data-tab=text] .tl-inner{height:calc(var(--rh) + var(--mh) + 40px) !important}
+#proj[data-tab=text] .blk.main{cursor:pointer}
+.t-words .wd{position:absolute;top:1px;height:20px;box-sizing:border-box;padding:0 3px;border-left:1px solid var(--sline);font:11px/20px var(--ui);color:var(--stext);white-space:nowrap;overflow:hidden;text-overflow:clip;cursor:pointer;border-radius:0 4px 4px 0}
+.t-words .wd:hover{background:rgba(255,255,255,.08)}
+.t-words .wd.part{background:rgba(229,64,42,.28);border-left-color:var(--rot);color:#fff}
+.t-words .wd.gone{color:var(--smuted);text-decoration:line-through;background:rgba(229,64,42,.14)}
+.t-words.far::after{content:'Zum Lesen der Wörter die Zeitleiste vergrößern';position:sticky;left:10px;font:11px/22px var(--ui);color:var(--smuted);white-space:nowrap}
+@media (min-width: 760px) and (min-height: 600px){
+  /* Text: Zeitleiste unter dem Bild, der Text bleibt rechts in voller Höhe */
+  #proj[data-tab=text]{grid-template-rows:auto auto minmax(0,1fr) auto auto;grid-template-areas:"bar bar" "tabs tabs" "stage side" "transport side" "tl side"}
+  #proj[data-tab=text] #paneStudio{grid-area:tl;border-left:0;padding-bottom:0}
+}
+@media (max-width: 759px), (max-height: 599px){
+  /* schmale Bildschirme: Zeitleiste über dem Text, der Text scrollt darunter */
+  #proj[data-tab=text] .panes:has(#paneStudio:not(.hidden)) #paneStudio{order:-1;flex:none;height:auto}
+  #proj[data-tab=text] .panes:has(#paneStudio:not(.hidden)) #paneText{flex:1;min-height:0;overflow:auto}
+}
+@media (max-width: 759px), (max-height: 599px){ #proj[data-tab=text] .tl-info{display:none} }

@@ -1,61 +1,18 @@
-name: Diagnose Schrift im Export (Windows, installierte App)
+name: Diagnose Schrift im Export (Windows, neuer Stand)
 
-# Nur auf dem Testzweig. Veröffentlicht nichts. Zwei Prüfungen:
-#   installiert – der veröffentlichte Installer wird wie bei Nutzer:innen installiert, die App gestartet und exportiert
-#   gebaut      – die App wird wie für den Installer gebaut; das Prüfskript läuft in der gebauten App
-# Die Ergebnisse werden als Dateien in diesen Zweig geschrieben (diag2/ und diag3/).
+# Nur auf dem Testzweig. Veröffentlicht nichts. Die App wird wie für den Installer gebaut (ohne Modelle) und gestartet;
+# geprüft werden die Schriftprobe des Selbsttests und der Vergleich Vorschau ↔ Export am fertigen Bild.
+# Das Ergebnis wird als Dateien in diesen Zweig geschrieben (diag4/).
 on:
   push:
     branches: [diag-schrift-windows]
-    paths: ["tests/diag_app.py", "tests/diag_ui.mjs", "tests/diag_schrift.py", "packaging/app_entry.py", ".github/workflows/diag-app.yml"]
+    paths: ["tests/diag_wys.py", "tests/diag_wys.mjs", "tests/diag_wys.json", "tests/diag_probe.py", "textschnitt.py", "packaging/app_entry.py", ".github/workflows/diag-app.yml"]
 
 permissions:
   contents: write
 
 jobs:
-  installiert:
-    runs-on: windows-latest
-    timeout-minutes: 45
-    env:
-      PYTHONUTF8: "1"
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Veröffentlichten Installer holen und installieren
-        shell: pwsh
-        run: |
-          curl.exe -L --fail --silent --show-error -o "$env:RUNNER_TEMP\setup.exe" "https://github.com/honeybalecta/textschnitt/releases/download/v2.27.0/HoneyCut-Setup-2.27.0.exe"
-          "{0:N0} Bytes" -f (Get-Item "$env:RUNNER_TEMP\setup.exe").Length
-          $p = Start-Process "$env:RUNNER_TEMP\setup.exe" -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-" -Wait -PassThru
-          "Installer beendet mit $($p.ExitCode)"
-          Get-ChildItem "$env:LOCALAPPDATA\Programs\HoneyCut" | Select-Object -First 6 | Format-Table Name, Length
-
-      - name: Browser-Steuerung
-        shell: pwsh
-        run: |
-          npm install --no-save --silent playwright-core
-          node --version
-
-      - name: Diagnose
-        shell: pwsh
-        run: python tests\diag_app.py
-
-      - name: Ergebnis in den Zweig schreiben
-        if: always()
-        shell: pwsh
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -f diag2
-          git commit -m "Diagnose: Ergebnis der installierten App"
-          git pull --rebase origin diag-schrift-windows
-          git push origin HEAD:diag-schrift-windows
-
-  gebaut:
+  neu:
     runs-on: windows-latest
     timeout-minutes: 45
     env:
@@ -70,7 +27,7 @@ jobs:
       - name: Abhängigkeiten installieren
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -r requirements.txt pillow numpy
 
       - name: PyInstaller mit eigenem Bootloader bauen
         shell: pwsh
@@ -90,17 +47,16 @@ jobs:
       - name: App bauen (PyInstaller, ohne Modelle)
         shell: pwsh
         run: |
-          pyinstaller --noconfirm --clean packaging/textschnitt.spec 2>&1 | Select-Object -Last 5
+          pyinstaller --noconfirm --clean packaging/textschnitt.spec 2>&1 | Select-Object -Last 3
           if (-not (Test-Path dist\HoneyCut\HoneyCut.exe)) { throw "PyInstaller hat keine EXE erzeugt" }
 
-      - name: Diagnose in der gebauten App
+      - name: Browser-Steuerung
         shell: pwsh
-        run: |
-          $env:DIAG_OUT = "diag3"
-          $p = Start-Process dist\HoneyCut\HoneyCut.exe -ArgumentList "--diag", "$pwd\tests\diag_schrift.py" -Wait -PassThru
-          "Ende: $($p.ExitCode)"
-          if (Test-Path diag_fehler.txt) { Get-Content diag_fehler.txt; New-Item -ItemType Directory -Force diag3 | Out-Null; Copy-Item diag_fehler.txt diag3\ }
-          if (Test-Path diag3\ergebnis.txt) { Get-Content diag3\ergebnis.txt | Select-Object -First 60 }
+        run: npm install --no-save --silent playwright-core
+
+      - name: Diagnose
+        shell: pwsh
+        run: python tests\diag_wys.py
 
       - name: Ergebnis in den Zweig schreiben
         if: always()
@@ -108,8 +64,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git checkout -- packaging 2>$null
-          git add -f diag3
-          git commit -m "Diagnose: Ergebnis der gebauten App"
+          git add -f diag4
+          git commit -m "Diagnose: Ergebnis des neuen Stands unter Windows"
           git pull --rebase origin diag-schrift-windows
           git push origin HEAD:diag-schrift-windows

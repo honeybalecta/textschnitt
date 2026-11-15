@@ -85,6 +85,11 @@ const DEF_STYLE = {enabled:true, mode:'lines', chars:32, lines:2, dur:4, size:'m
 const POS_Y = {oben:0.12, mitte:0.5, unten:0.88};
 const isWide = () => matchMedia('(min-width: 760px) and (min-height: 600px)').matches;
 const studioOn = () => (tab === 'studio' || tab === 'clip') && !!P;   // im Clip-Reiter läuft die Zeitleiste mit
+// Schnitt-Zeitleiste im Text-Reiter: dieselbe Zeitleiste, aber nur mit der Hauptspur und nur für Schnitte (teilen, Kanten ziehen, löschen).
+const tlLite = () => tab === 'text';
+const tlOn = () => studioOn() || (tab === 'text' && !!P && !$('#proj').classList.contains('tl-min'));
+// Nach einem Sprung (Wort angeklickt, Marke, Quelle, nächster Schnitt): Die Zeitleiste rückt die Abspiellinie ins Bild, wenn sie zu sehen ist
+const tlReveal = () => { if (!tlOn()) return; if (window.revealHead) revealHead(outPos); else if (window.syncScroll) syncScroll(outPos, true); };
 
 // ───────── Quellen (mehrere Videos hintereinander) ─────────
 function layoutSources(){ let o = 0; P.sources.forEach((s, k) => { s.off = r3(o); s.k = k; o += s.duration; }); srcTotal = o; }
@@ -474,7 +479,7 @@ function openProjectNow(id, keep){
   if (!np || typeof np !== 'object') return toast('Projekt konnte nicht geladen werden');   // das offene Projekt bleibt dabei unberührt
   P = np; clearTimeout(saveRetryT); saveFails = 0; $('#saved').classList.remove('err'); $('#saved').textContent = '';
   if (!P.sources){ P.sources = [P.main]; P.sources[0].tr = !!(P.tokens || []).length; delete P.main; }   // altes Format (ein Video)
-  P.adj ||= {}; P.speakers ||= []; P.slides ||= []; P.items ||= []; P.marks ||= []; P.dels ||= []; P.splits ||= []; P.edits ||= {}; P.moves ||= []; P.trims ||= {}; P.settings ||= {pad:0.06}; P.cues ||= [];
+  P.adj ||= {}; P.speakers ||= []; P.slides ||= []; P.items ||= []; P.marks ||= []; if (!Array.isArray(P.refs)) P.refs = []; P.dels ||= []; P.splits ||= []; P.edits ||= {}; P.moves ||= []; P.trims ||= {}; P.settings ||= {pad:0.06}; P.cues ||= [];
   if (P.settings.burn == null) P.settings.burn = true;
   P.sub_style = {...DEF_STYLE, ...(P.sub_style || {})}; if (P.sub_style.y == null) P.sub_style.y = POS_Y[P.sub_style.pos] ?? 0.88;
   tokens = P.tokens || []; tokens.forEach(t => { if (t.src == null) t.src = 0; });
@@ -827,7 +832,7 @@ function fitStage(){
 }
 // Einblendungen und Titel nach einer Größenänderung der Bühne neu setzen
 function refreshStageOverlays(){ if (!P || typeof outPos === 'undefined') return; try { updateOverlay(outPos); updateTitles(outPos); } catch(_){} }
-addEventListener('resize', () => { fitStage(); if (P && studioOn() && window.renderTimeline) renderTimeline(); });
+addEventListener('resize', () => { fitStage(); if (P && tlOn() && window.renderTimeline) renderTimeline(); });
 addEventListener('orientationchange', () => setTimeout(fitStage, 200));
 
 // Alte Projekte ohne Lautstärke-Hüllkurve: im Hintergrund nachberechnen, damit Schnitte in Pausen landen
@@ -1068,7 +1073,7 @@ function busApply(m){
   else if (m.t === 'name' && m.name){ const old = P.name; P.name = m.name; projNameEl.textContent = m.name; if ($('#exName').value === old + '_geschnitten') $('#exName').value = m.name + '_geschnitten'; }
   else if (m.t === 'pos'){
     if (m.playing && playing) pausePlay();
-    if (!playing && Math.abs(m.o - outPos) > 0.03){ posSent = {o: m.o, at: performance.now()}; seekOut(m.o, false); if (studioOn() && window.syncScroll) syncScroll(m.o, true); }
+    if (!playing && Math.abs(m.o - outPos) > 0.03){ posSent = {o: m.o, at: performance.now()}; seekOut(m.o, false); if (tlOn() && window.syncScroll) syncScroll(m.o, true); }
   }
 }
 // Abspielposition an die anderen Fenster melden (höchstens alle 200 ms)
@@ -1082,7 +1087,7 @@ function tokMarks(){ const o = {}; for (const t of tokens) if (t.spk || t.ks) o[
 // Zum Stand gehören auch Format, Bildausschnitt und die Lautstärke der Hauptvideos (fm, fr, sv). Sie fehlten: „Rückgängig“
 // nach einem Formatwechsel, nach dem Verschieben des Ausschnitts oder nach „Alle angleichen“ tat nichts bzw. nur die Hälfte.
 function snapshot(){ return JSON.stringify({d:[...deleted], t:P.trims, c:P.cues, i:P.items, a:P.adj, x:P.dels, y:P.splits, s:P.sub_style, e:P.edits, m:P.moves, k:P.speakers, w:tokMarks(), f:P.slides, wm:P.watermark || null, tr:P.trans || null,
-  fm:P.format || null, fr:P.frame || null, sv:P.sources.map(x => x.vol == null ? null : x.vol), mk:P.marks || [], tl:P.textline || null}); }
+  fm:P.format || null, fr:P.frame || null, sv:P.sources.map(x => x.vol == null ? null : x.vol), mk:P.marks || [], tl:P.textline || null, rf:P.refs || [], ss:P.srcStyle || null, lw:P.lower || null}); }
 function restore(s){ const o = JSON.parse(s); deleted = new Set(o.d); P.trims = o.t; P.cues = o.c; P.items = o.i; P.adj = o.a; P.dels = o.x || []; P.splits = o.y || [];
   if (o.s) P.sub_style = o.s; P.edits = o.e || {}; P.moves = o.m || [];
   const fmCh = 'fm' in o && (P.format || null) !== (o.fm || null), frCh = 'fr' in o && JSON.stringify(P.frame || null) !== JSON.stringify(o.fr || null);
@@ -1091,10 +1096,16 @@ function restore(s){ const o = JSON.parse(s); deleted = new Set(o.d); P.trims = 
   const mkCh = 'mk' in o && JSON.stringify(P.marks || []) !== JSON.stringify(o.mk || []);
   if ('mk' in o) P.marks = o.mk || [];
   if ('tl' in o){ if (o.tl) P.textline = o.tl; else delete P.textline; viewTextline(); }
+  const rfCh = 'rf' in o && JSON.stringify(P.refs || []) !== JSON.stringify(o.rf || []);
+  if ('rf' in o) P.refs = o.rf || [];
+  if ('ss' in o){ if (o.ss) P.srcStyle = o.ss; else delete P.srcStyle; }
+  if ('lw' in o){ if (o.lw) P.lower = o.lw; else delete P.lower; }
   if (o.f) P.slides = o.f; if (o.k) P.speakers = o.k;
   if ('wm' in o){ if (o.wm) P.watermark = o.wm; else delete P.watermark; } if ('tr' in o){ if (o.tr) P.trans = o.tr; else delete P.trans; trMemo.list = null; } if (o.w){ for (const t of tokens){ const m = o.w[t.i]; if (m){ if (m[0]) t.spk = m[0]; else delete t.spk; if (m[1]) t.ks = true; else delete t.ks; } else { delete t.spk; delete t.ks; } } }
   const reorder = JSON.stringify(P.moves) !== lastOrderKey; syncStyleInputs(); changed(true);
-  if ((reorder || mkCh) && tokens.length) renderTranscript(); else tokens.forEach(t => paint(t.i));
+  if ((reorder || mkCh || rfCh) && tokens.length) renderTranscript(); else tokens.forEach(t => paint(t.i));
+  if (rfCh) paintRefsBtn(); if (refsSheetOpen()) renderRefsSheet();
+  if (lowerSheetOpen()) paintLowerSheet(); if (tab === 'subs') renderSpeakers();
   if (mkCh){ paintMarksBtn(); if (marksSheetOpen()) renderMarksSheet(); }
   if (fmCh || frCh) frameRestored(fmCh); }
 // Format oder Bildausschnitt kamen mit einem früheren Stand zurück: Bühne, Export-Angaben, Clip-Reiter und Folien nachziehen
@@ -1146,9 +1157,9 @@ function resyncPlay(a){
     : o === outPos && (isImg(g.item.clip) ? !hid(II) && II.dataset.src === MEDIA(g.uri) : !hid(IV) && IV.dataset.src === MEDIA(g.uri) && Math.abs(IV.currentTime - want) < 0.05);
   // Die neue Stelle wird den anderen Fenstern nicht eigens gemeldet: Sie bekommen die Änderung selbst und rücken dabei
   // genauso nach. (Eine Positionsmeldung, die vor der Änderung ankäme, würde dort noch auf den alten Schnitt angewendet.)
-  if (!shown){ seekOut(o, false); posSent = {o: outPos, at: performance.now()}; if (studioOn() && window.syncScroll) syncScroll(outPos, true); return; }
+  if (!shown){ seekOut(o, false); posSent = {o: outPos, at: performance.now()}; if (tlOn() && window.syncScroll) syncScroll(outPos, true); return; }
   curSeg = k;
-  if (o !== outPos){ outPos = o; posSent = {o, at: performance.now()}; updateOverlay(o); updateZoom(); updateSubs(o); updateTitles(o); updateHead(o); if (studioOn() && window.syncScroll) syncScroll(o, true); }
+  if (o !== outPos){ outPos = o; posSent = {o, at: performance.now()}; updateOverlay(o); updateZoom(); updateSubs(o); updateTitles(o); updateHead(o); if (tlOn() && window.syncScroll) syncScroll(o, true); }
 }
 // Regler und Textfelder in den Dialogen (Anpassung, Titel, Lautstärke): Während des Ziehens bzw. Tippens folgen Bild und Ton
 // sofort; die Zeitleiste wird erst nach einer kurzen Pause neu gezeichnet. Vorher wurde sie bei jedem Reglerschritt und
@@ -1156,18 +1167,18 @@ function resyncPlay(a){
 let tlHold = false, tlLateT = 0;
 function changedLive(){
   tlHold = true; try { changed(false); } finally { tlHold = false; }
-  clearTimeout(tlLateT); tlLateT = setTimeout(() => { if (P && studioOn() && window.renderStudio) renderStudio(); }, 220);
+  clearTimeout(tlLateT); tlLateT = setTimeout(() => { if (P && tlOn() && window.renderStudio) renderStudio(); }, 220);
 }
 function changed(rerender = true){
   if (!tlHold) clearTimeout(tlLateT);
   const anchor = liveAnchor();
-  recompute(rerender && studioOn() && !!window.renderStudio);   // die Zeitleiste zeichnet renderStudio gleich danach – nicht doppelt
+  recompute(rerender && tlOn() && !!window.renderStudio);   // die Zeitleiste zeichnet renderStudio gleich danach – nicht doppelt
   resyncPlay(anchor);
-  if (rerender){ if (tab === 'subs') renderSubs(); if (studioOn() && window.renderStudio) renderStudio(); }
+  if (rerender){ if (tab === 'subs') renderSubs(); if (tlOn() && window.renderStudio) renderStudio(); }
   else if (tab === 'subs') updateSubsList();
-  cueCache.at = -1; if (!playing) updateSubs(outPos);
-  if (tab === 'export') renderExport(); else if (tab === 'clip') renderLenLights();
-  textLater();
+  cueCache.at = -1; if (!playing){ updateSubs(outPos); viewSrcLine(); viewLower(); }   // Quellenzeile und Bauchbinde folgen dem Schnitt
+  if (tab === 'export') renderExport(); else if (tab === 'clip') renderLenLights(); else if (tab === 'subs') a11yLater();
+  textLater(); if (refsAll().length || lowerSheetOpen()) refsLater();
   clearTimeout(saveT); $('#saved').textContent = '…'; saveT = setTimeout(saveNow, 700);
   if (!applyingRemote && busOn()){ clearTimeout(busT); busT = setTimeout(() => { if (busOn()) busSend({t:'state', snap: snapshot()}); }, 120); }
 }
@@ -1478,7 +1489,8 @@ function zoomAt(src){
 }
 function recompute(noTL){
   computeRanges(); computePieces(); computeOrder(); buildTimeline(); syncLinks(); computeOverlays(); computeAudios(); drawScrub();
-  if (!noTL && !tlHold && studioOn() && window.renderTimeline) renderTimeline();
+  refMemo = null; lowerMemo = null; lowerRects.clear();   // Quellenzeilen und Bauchbinden folgen dem Schnitt
+  if (!noTL && !tlHold && tlOn() && window.renderTimeline) renderTimeline();
   setText($('#tTot'), fmtT(total)); setText($('#sideTot'), fmtT(total));
 }
 // ───────── Verbundene Objekte ─────────
@@ -1614,8 +1626,8 @@ $('#sidePlay').onclick = togglePlay;
 $('#sideBack').onclick = () => window.stepFrames && stepFrames(-1);
 $('#sideFwd').onclick = () => window.stepFrames && stepFrames(1);
 const cutEdges = () => [...new Set(timeline.map(g => r3(g.o)).concat([0, r3(total)]))].sort((a, b) => a - b);
-$('#sidePrevCut').onclick = () => { if (playing) pausePlay(); const e = cutEdges().filter(x => x < outPos - 0.05); seekOut(e.length ? e[e.length-1] : 0, false); if (window.syncScroll) syncScroll(outPos, true); };
-$('#sideNextCut').onclick = () => { if (playing) pausePlay(); const e = cutEdges().find(x => x > outPos + 0.05); seekOut(e != null ? e : total, false); if (window.syncScroll) syncScroll(outPos, true); };
+$('#sidePrevCut').onclick = () => { if (playing) pausePlay(); const e = cutEdges().filter(x => x < outPos - 0.05); seekOut(e.length ? e[e.length-1] : 0, false); tlReveal(); };
+$('#sideNextCut').onclick = () => { if (playing) pausePlay(); const e = cutEdges().find(x => x > outPos + 0.05); seekOut(e != null ? e : total, false); tlReveal(); };
 $('#sideUndo').onclick = () => $('#undoBtn').click();
 $('#sideRedo').onclick = () => $('#redoBtn').click();
 $('#sideSplit').onclick = () => { if (window.splitHere) splitHere(); };
@@ -2002,9 +2014,10 @@ const tlineText = () => String(P.textline.text || '').replace(/\s+/g, ' ').trim(
 const tlinePx = (t, W, H) => t.size * Math.min(W, H) * (H > W ? 1.25 : 1);
 // Maße im Bild W × H: Randabstände je Seite (mit Schutzzonen mindestens bis zur freien Fläche), Schriftgröße (so weit verkleinert,
 // dass die Zeile zwischen die Ränder passt) und Textbreite. Vorschau und Export rechnen damit gleich.
-function tlineLayout(W, H){
-  const t = {...TLINE_DEF, ...P.textline}, text = tlineText(), m = t.margin * Math.min(W, H), p = t.pos || 'ul', z = t.safe !== false ? safeZone() : null;
-  const mT = Math.max(m, z ? z.t * H : 0), mB = Math.max(m, z ? z.b * H : 0), mL = Math.max(m, z ? z.l * W : 0);
+// minV: Mindestabstand zum oberen bzw. unteren Rand – damit rückt eine zweite Zeile in derselben Ecke unter bzw. über die erste.
+function lineLayout(t, text, W, H, minV = 0){
+  const m = t.margin * Math.min(W, H), p = t.pos || 'ul', z = t.safe !== false ? safeZone() : null;
+  const mT = Math.max(m, z ? z.t * H : 0, p[0] === 'o' ? minV : 0), mB = Math.max(m, z ? z.b * H : 0, p[0] === 'u' ? minV : 0), mL = Math.max(m, z ? z.l * W : 0);
   const mR = Math.max(m, z ? (p[0] === 'u' ? Math.max(z.r, z.cw) : z.r) * W : 0);   // unten reicht die Knopfspalte bis an die freie Fläche heran
   wrapCtx ||= document.createElement('canvas').getContext('2d');
   const fam = fontCss(t.font).replace('var(--ui)', getComputedStyle(document.body).fontFamily || 'sans-serif'), wt = fontWeight(t.font, 800);
@@ -2015,11 +2028,15 @@ function tlineLayout(W, H){
   if (fit < 1){ px *= fit; tw = measure(px); }
   return {t, text, p, px, tw, fit, mT, mB, mL, mR, padX: t.bg ? px * 0.3 : 0, padY: t.bg ? px * 0.1 : 0};
 }
+const tlineLayout = (W, H) => lineLayout({...TLINE_DEF, ...P.textline}, tlineText(), W, H);
 const viewTextline = () => { const st = $('#stage'); placeTextline(st.clientWidth, st.clientHeight); };   // Textzeile auf der Bühne nachziehen
 function placeTextline(W, H){
   const el = $('#tline'); if (!tlineOn()){ if (!el.classList.contains('hidden')) el.classList.add('hidden'); return; }
   const key = W + '×' + H + JSON.stringify(P.textline) + (P.settings.safe || '') + (document.fonts ? document.fonts.status : ''); if (el.dataset.k === key && !el.classList.contains('hidden')) return; el.dataset.k = key;   // beim Abspielen: nur bei Änderungen neu setzen
-  const L = tlineLayout(W, H), {t, p, px} = L, ol = Math.max(1, px / 14), cs = v => v.toFixed(1) + 'px';
+  paintLine(el, tlineLayout(W, H));
+}
+function paintLine(el, L){
+  const {t, p, px} = L, ol = Math.max(1, px / 14), cs = v => v.toFixed(1) + 'px';
   setText(el, L.text); el.classList.toggle('bg', !!t.bg);
   Object.assign(el.style, {fontSize: px.toFixed(2) + 'px', color: t.color || '#FFFFFF', fontFamily: fontCss(t.font), fontWeight: fontWeight(t.font, 800),
     left: p[1] === 'l' ? cs(L.mL) : p[1] === 'm' ? '50%' : '', right: p[1] === 'r' ? cs(L.mR) : '', top: p[0] === 'o' ? cs(L.mT) : '', bottom: p[0] === 'u' ? cs(L.mB) : '',
@@ -2028,16 +2045,16 @@ function placeTextline(W, H){
   if (el.classList.contains('hidden')) el.classList.remove('hidden');
 }
 // Für den Export: Mittelpunkt wie bei jedem Titel, dazu Ecke und Randabstand (anchor, mx, my) für Ausgaben, die an der Ecke ausrichten können
-function tlineCue(W, H){
-  if (!tlineOn() || !(total > 0)) return null;
-  const L = tlineLayout(W, H), {t, p, px, tw, padX, padY} = L, th = px * 1.12;
+function tlineCue(W, H){ return tlineOn() && total > 0 ? lineCue(tlineLayout(W, H), W, H, 0, total) : null; }
+function lineCue(L, W, H, s, e){
+  const {t, p, px, tw, padX, padY} = L, th = px * 1.12;
   const cx = p[1] === 'l' ? L.mL + padX + tw / 2 : p[1] === 'r' ? W - L.mR - padX - tw / 2 : W / 2, cy = p[0] === 'o' ? L.mT + padY + th / 2 : H - L.mB - padY - th / 2;
-  return {start: 0, end: r3(total), text: L.text, x: +(cx / W).toFixed(4), y: +(cy / H).toFixed(4), size: +(t.size * L.fit).toFixed(4), color: t.color || '#FFFFFF', outline: !t.bg && t.outline !== false, bg: !!t.bg,
+  return {start: r3(s), end: r3(e), text: L.text, x: +(cx / W).toFixed(4), y: +(cy / H).toFixed(4), size: +(t.size * L.fit).toFixed(4), color: t.color || '#FFFFFF', outline: !t.bg && t.outline !== false, bg: !!t.bg,
     title: true, line: true, font: t.font || '', anchor: p, mx: +((p[1] === 'r' ? L.mR : L.mL) / W).toFixed(4), my: +((p[0] === 'o' ? L.mT : L.mB) / H).toFixed(4)};
 }
 function openTextline(){
   if (!P) return;
-  const body = $('#sheetBody'), POS = [['ol','↖'],['om','↑'],['or','↗'],['ul','↙'],['um','↓'],['ur','↘']], before = snapshot(), had = tlineOn();
+  const body = $('#sheetBody'), POS = [['ol','↖'],['om','↑'],['or','↗'],['ul','↙'],['um','↓'],['ur','↘']], had = tlineOn(); let before = null;
   body.innerHTML = `<h3>Textzeile</h3>
     <input type="text" id="tlText" maxlength="80" dir="auto" placeholder="z. B. @deinkanal · V. i. S. d. P.: Vorname Nachname" style="width:100%;font-size:16px">
     <div class="grid2" style="margin-top:10px">
@@ -2057,7 +2074,7 @@ function openTextline(){
   // Alles, was in diesem Blatt geändert wird, ist zusammen ein Rückgängig-Schritt. Der Stand davor wird schon bei der ersten
   // Änderung zurückgelegt: Das Blatt bleibt offen, während man im Projekt weiterarbeitet, und wird womöglich nie eigens geschlossen.
   let dirty = false;
-  const set = patch => { if (!dirty){ dirty = true; undo.push(before); if (undo.length > 200) undo.shift(); redo = []; }
+  const set = patch => { if (!dirty){ dirty = true; before = snapshot(); undo.push(before); if (undo.length > 200) undo.shift(); redo = []; }
     P.textline = {...cur(), ...patch}; paint(); view(); changedLive(); };
   fillFontSelects();
   const paint = () => { const x = cur(); if ($('#tlText').value !== (x.text || '')) $('#tlText').value = x.text || '';
@@ -2135,7 +2152,7 @@ function safeClamp(x, y, w, h){
 const inSafe = (x, y, w, h) => { const [nx, ny] = safeClamp(x, y, w, h); return Math.abs(nx - x) < 0.004 && Math.abs(ny - y) < 0.004; };
 function setSafe(v){
   if (!P) return; P.settings.safe = v || ''; if (v) try { localStorage.setItem('hc-safe', v); } catch(_){}
-  changed(false); syncSafe(); placeSafe(); placeOverlay(); updateTitles(outPos); viewTextline();
+  changed(false); syncSafe(); placeSafe(); placeOverlay(); updateTitles(outPos); viewTextline(); viewSrcLine(); viewLower();
   toast(!v ? 'Schutzzonen aus' : !safeFits() ? 'Schutzzonen gibt es nur im Hochformat (9:16) – dieses Projekt ist breiter. Ein Clip daraus übernimmt die Einstellung.' : `Schutzzonen: ${safeLabel()} – Untertitel und Titel rasten beim Ziehen in der freien Fläche ein`);
 }
 function syncSafe(){ const v = (P && P.settings.safe) || ''; for (const sel of $$('select.safe-sel')) sel.value = v; }
@@ -2201,7 +2218,7 @@ function updateOverlay(o){
     syncMedia(el, it.in + (o - a.at));
     if (playing && el.paused) el.play().catch(() => {}); if (!playing && !el.paused) el.pause();
   });
-  updateAudio(o); placeWatermark(W, H); placeTextline(W, H);
+  updateAudio(o); placeWatermark(W, H); placeTextline(W, H); placeSrcLine(W, H, o); placeLower(W, H, o);
   // Griffe: am ausgewählten Element, sonst am obersten
   const sel = selOvlId(), mainSel = typeof TL !== 'undefined' && TL.sel && TL.sel.kind === 'main', tgt = act.find(a => a.x.id === sel) || (mainSel ? null : act[act.length - 1]) || null;   // Hauptclip ausgewählt: Rahmen am Hauptbild
   curPip = tgt ? tgt.x : null; pipTarget = tgt;
@@ -2451,7 +2468,7 @@ $('#pipBox').addEventListener('wheel', e => {
 const titleEls = new Map();
 function updateTitles(o){
   const box = $('#titleOv'); if (!box) return;
-  const act = P.items.filter(x => x.type === 'title').map(x => ({x, a: srcToOut(snapSrc(x.at))})).filter(t => o >= t.a && o < t.a + t.x.dur);
+  const act = P.items.filter(x => x.type === 'title' && !x.lt).map(x => ({x, a: srcToOut(snapSrc(x.at))})).filter(t => o >= t.a && o < t.a + t.x.dur);
   for (const [id, el] of titleEls) if (!act.some(t => t.x.id === id)){ el.remove(); titleEls.delete(id); }
   const st = $('#stage'), W = st.clientWidth, H = st.clientHeight, zone = !playing && act.length ? safeZone() : null;
   for (const {x} of act){
@@ -2524,8 +2541,8 @@ function applyMainTransform(){
 // Scrubben
 (() => { const sc = $('#scrub');
   const at = e => { const b = sc.getBoundingClientRect(); return clamp((e.clientX - b.left) / b.width, 0, 1) * total; };
-  sc.addEventListener('pointerdown', e => { sc.setPointerCapture(e.pointerId); const was = playing; if (was) pausePlay(); seekOut(at(e), false); if (window.syncScroll) syncScroll(outPos, true);
-    sc.onpointermove = ev => { seekOut(at(ev), false); if (window.syncScroll) syncScroll(outPos, true); }; sc.onpointerup = () => { sc.onpointermove = null; if (was) startPlay(); }; });
+  sc.addEventListener('pointerdown', e => { sc.setPointerCapture(e.pointerId); const was = playing; if (was) pausePlay(); seekOut(at(e), false); tlReveal();
+    sc.onpointermove = ev => { seekOut(at(ev), false); tlReveal(); }; sc.onpointerup = () => { sc.onpointermove = null; if (was) startPlay(); }; });
 })();
 V.addEventListener('error', () => { if (!P || vSi < 0) return; V.dataset.err = '1'; $('#proxyBar').classList.remove('hidden');
   const s = P.sources[vSi];
@@ -2676,6 +2693,11 @@ function renderTranscript(){
   if (order.length !== tokens.length) computeOrder();
   let para = -1, pEl = null, src = -1, prev = -2, lastSpk = ''; const frag = document.createDocumentFragment(), fset = fillerSet();
   const markAt = new Map(); for (const m of P.marks || []){ const k = tokAtSrc(m.at); if (k < 0) continue; if (!markAt.has(k)) markAt.set(k, []); markAt.get(k).push(m); }
+  // Stellen mit Quelle (rf), offenem Beleg (need) oder Prüfvermerk (okd): unterstrichen, mit einem Zettel vor dem ersten Wort
+  const refCls = new Map(), refPin = new Map();
+  for (const r of refsAll()){ const ids = refToks(r).filter(i => isTextTok(i)); if (!ids.length) continue; const cls = refOpen(r) ? 'need' : refHas(r) ? '' : 'okd';
+    for (const i of ids) if (refCls.get(i) !== 'need') refCls.set(i, cls);
+    if (!refPin.has(ids[0])) refPin.set(ids[0], []); refPin.get(ids[0]).push(r); }
   for (const i of order){
     const t = tokens[i], mk = markAt.get(i), chap = mk && mk.find(m => m.k === 'chap');
     if (t.src !== src && P.sources.length > 1){ src = t.src; const h = document.createElement('div'); h.className = 'src-head'; h.textContent = `🎞 ${src + 1} · ${P.sources[src].name}`; frag.append(h); pEl = null; }
@@ -2693,11 +2715,14 @@ function renderTranscript(){
     else sp.className = 'tk pause';
     if (t.type === 'word' && !pEl._dir){ pEl._dir = 1; if (RTL_CH.test(tokText(t))) pEl.dir = 'rtl'; }
     if (mk) for (const m of mk) if (m.k === 'note'){ const pin = document.createElement('span'); pin.className = 'note-pin' + (m.done ? ' done' : ''); pin.dataset.mk = m.id; pin.title = 'Notiz: ' + m.text; pin.innerHTML = icon('📝'); pEl.append(pin, ' '); }
+    const rp = refPin.get(i); if (rp) for (const r of rp){ const pin = document.createElement('span'), open = refOpen(r), has = refHas(r); pin.className = 'ref-pin' + (open ? ' need' : has ? '' : ' okd'); pin.dataset.rf = r.id;
+      pin.title = open ? 'Beleg nötig – anklicken und die Quelle eintragen' : has ? 'Quelle: ' + refLine(r) : 'Geprüft, ohne Quelle'; pin.innerHTML = icon(open ? '❓' : has ? '❝' : '✓'); pEl.append(pin, ' '); }
+    if (refCls.has(i)){ sp.classList.add('rf'); if (refCls.get(i)) sp.classList.add(refCls.get(i)); }
     spans[t.i] = sp; pEl.append(sp, ' ');
     prev = i;
   }
   root.append(frag); tokens.forEach(t => paint(t.i));
-  paintFillerCount(fset); paintMarkTimes(); paintMarksBtn();
+  paintFillerCount(fset); paintMarkTimes(); paintMarksBtn(); paintRefsBtn();
   const todo = P.sources.filter(s => !s.tr).length;
   $('#textTodo').classList.toggle('hidden', !todo); $('#textTodo b').textContent = todo === 1 ? '1 Video ist' : `${todo} Videos sind`;
   if ($('#findIn').value) runFind();
@@ -2728,7 +2753,7 @@ $('#transcript').addEventListener('click', e => {
   else if (selA === selB && i === selA){ clearSel(); return; }
   else selB = i;
   showSel();
-  if (!playing){ const t = tokens[i]; seekOut(srcToOut(snapSrc(t.ws ?? t.s)), false); if (window.syncScroll) syncScroll(outPos, true); }
+  if (!playing){ const t = tokens[i]; seekOut(srcToOut(snapSrc(t.ws ?? t.s)), false); tlReveal(); }
 });
 const TDrag = { on:false, anchor:null, moved:false, timer:0, x:0, y:0, scroller:null, auto:0, lastX:0, lastY:0 };
 function tokAt(x, y){
@@ -2877,7 +2902,7 @@ function growSel(){
   const g = growStep(); if (!g) return toast('Der ganze Absatz ist schon markiert');
   selA = order[g.r[0]]; selB = order[g.r[1]]; showSel();
   if (spans[selA]) spans[selA].scrollIntoView({block: 'nearest', behavior: 'smooth'});
-  if (!playing){ const t = tokens[selA]; seekOut(srcToOut(snapSrc(t.ws ?? t.s)), false); if (window.syncScroll) syncScroll(outPos, true); }
+  if (!playing){ const t = tokens[selA]; seekOut(srcToOut(snapSrc(t.ws ?? t.s)), false); tlReveal(); }
 }
 $('#selSent').onclick = growSel;
 function keepOnlySel(){
@@ -2888,7 +2913,7 @@ function keepOnlySel(){
   const nw = rest.filter(i => tokens[i].type === 'word').length, first = tokens[selIds()[0]];
   commit(() => { rest.forEach(i => deleted.add(i)); for (const k of bare) addDel(P.sources[k].off, srcEnd(k)); }, false);
   tokens.forEach(t => paint(t.i)); showSel(); paintFillerCount();
-  if (playing) pausePlay(); seekOut(srcToOut(snapSrc(first.ws ?? first.s)), false); if (window.syncScroll) syncScroll(outPos, true);
+  if (playing) pausePlay(); seekOut(srcToOut(snapSrc(first.ws ?? first.s)), false); tlReveal();
   lastCut = outPos;
   toast(`Nur die Markierung bleibt (${fmtT(total)}) – ${nw} ${nw === 1 ? 'Wort' : 'Wörter'} gelöscht, Strg+Z macht es rückgängig`);
 }
@@ -2921,7 +2946,7 @@ function askName(title, val){
     inp.onkeydown = e => { if (e.key === 'Enter') done(inp.value.trim() || null); if (e.key === 'Escape') done(null); };
   });
 }
-async function newSpeaker(){ const name = await askName('Neue Person', `Person ${P.speakers.length + 1}`); if (!name) return null; const sp = {id:newId(), name, st:{}}; P.speakers.push(sp); return sp; }
+async function newSpeaker(){ const v = await askPerson('Neue Person', {name: `Person ${P.speakers.length + 1}`}); if (!v) return null; const sp = {id:newId(), name: v.name, st:{}}; if (v.role) sp.role = v.role; if (v.lt) sp.lt = true; P.speakers.push(sp); return sp; }
 function assignSpeaker(ids, sp){
   commit(() => { for (const i of ids){ const t = tokens[i]; if (t.type === 'pause') continue; if (sp) t.spk = sp.id; else delete t.spk; } splitCuesBySpeaker(); }, false);
   renderTranscript(); clearSel(); if (tab === 'subs') renderSubs();
@@ -2945,6 +2970,10 @@ function renderSpeakers(){
     sp.st ||= {}; const st = sp.st, n = tokens.filter(t => t.spk === sp.id && t.type === 'word').length;
     const row = document.createElement('div'); row.className = 'spk-row';
     row.innerHTML = `<div class="spk-head"><b class="dot" style="background:${spkCol(sp)}"></b><input type="text" class="spk-name"><span class="muted small">${n} Wörter</span><button class="mini spk-del" title="Person entfernen">✕</button></div>
+      <div class="grid2 spk-lt">
+        <label>Funktion <input type="text" class="sp-role" maxlength="80" dir="auto" placeholder="z. B. Sprecherin, Bündnis XY"></label>
+        <label class="row" title="Name und Funktion erscheinen als Einblendung, sobald die Person im geschnittenen Video zum ersten Mal spricht"><input type="checkbox" class="sp-lt"> Bauchbinde beim ersten Auftritt</label>
+      </div>
       <div class="grid2">
         <label>Farbe <span class="row"><select class="sp-colmode"><option value="">wie alle</option><option value="own">eigene</option></select><input type="color" class="sp-color"></span></label>
         <label>Schrift <select class="sp-font">${fontOpts()}</select></label>
@@ -2956,7 +2985,10 @@ function renderSpeakers(){
     q('.spk-name').value = sp.name; q('.sp-colmode').value = st.color ? 'own' : ''; q('.sp-color').value = (st.color || S().color || '#FFFFFF').toLowerCase(); q('.sp-color').disabled = !st.color;
     q('.sp-font').value = st.font != null ? st.font : '__'; q('.sp-size').value = st.size || ''; q('.sp-outline').value = st.outline == null ? '' : st.outline ? '1' : '0';
     q('.sp-pos').value = st.y == null ? '' : (Object.keys(POS_Y).find(k => POS_Y[k] === st.y) || 'frei');
-    const upd = fn => { commit(fn, false); styleOverlay(); renderSpeakers(); if (tab === 'text') renderTranscript(); };
+    q('.sp-role').value = sp.role || ''; q('.sp-lt').checked = !!sp.lt;
+    const upd = fn => { commit(fn, false); styleOverlay(); renderSpeakers(); if (tab === 'text') renderTranscript(); lowerChanged(); };
+    q('.sp-role').onchange = e => upd(() => { const v = e.target.value.replace(/\s+/g, ' ').trim(); if (v){ sp.role = v; if (sp.lt == null) sp.lt = true; } else delete sp.role; });
+    q('.sp-lt').onchange = e => upd(() => { sp.lt = e.target.checked; });
     q('.spk-name').onchange = e => upd(() => sp.name = e.target.value.trim() || sp.name);
     q('.sp-colmode').onchange = e => upd(() => { if (e.target.value) st.color = (q('.sp-color').value || '#ffffff').toUpperCase(); else delete st.color; });
     q('.sp-color').onchange = e => upd(() => st.color = e.target.value.toUpperCase());
@@ -3276,7 +3308,7 @@ async function editMark(id){
 // Nach einer Änderung an den Marken: Text, Abspielbalken, Zeitskala, Liste und Export-Reiter nachziehen
 function marksChanged(){
   if (tokens.length && spans.length){ renderTranscript(); showSel(); }
-  drawScrub(); if (studioOn() && window.renderTimeline) renderTimeline();
+  drawScrub(); if (tlOn() && window.renderTimeline) renderTimeline();
   paintMarksBtn(); if (marksSheetOpen()) renderMarksSheet(); if (tab === 'export') renderExport();
 }
 function paintMarksBtn(){ const n = marksOf('chap').length + marksOf('note').filter(m => !m.done).length; $('#marksBtn').textContent = 'Marken' + (n ? ` (${n})` : ''); }
@@ -3292,7 +3324,7 @@ $('#selNote').onclick = () => addMark('note');
 const marksSheetOpen = () => !$('#sheet').classList.contains('hidden') && !!$('#mkSheet');
 function jumpToMark(m){
   const o = markOut(m); if (playing) pausePlay();
-  seekOut(Math.min(o, Math.max(0, total - 0.01)), false); if (window.syncScroll) syncScroll(outPos, true);
+  seekOut(Math.min(o, Math.max(0, total - 0.01)), false); tlReveal();
   if (tab === 'text'){ const k = tokAtSrc(m.at); if (k >= 0 && spans[k]) spans[k].scrollIntoView({block: 'center', behavior: 'smooth'}); }
 }
 function openMarks(){
@@ -3356,6 +3388,539 @@ function renderChapters(){
 }
 $('#chapCopy').onclick = copyChapters;
 $('#chapOpen').onclick = openMarks; $('#exNotesBtn').onclick = openMarks;
+
+// ───────── Quellen und Belege (B1, B2) ─────────
+// P.refs = [{id, at, end, medium, title, date, url, text, show, done}] – at/end in Quellzeit: vom Anfang des ersten bis zum Ende des
+// letzten Worts der Stelle. Mit Angaben (Medium, Titel oder Link) ist der Eintrag eine Quelle. Ohne Angaben heißt er „Beleg nötig“
+// und bleibt offen, bis eine Quelle eingetragen oder er als geprüft abgehakt ist. Der Export weist auf offene Einträge hin.
+const refsAll = () => (P && P.refs) || [];
+const refStr = (r, k) => String(r[k] || '').replace(/\s+/g, ' ').trim();
+const refHas = r => !!(refStr(r, 'medium') || refStr(r, 'title') || refStr(r, 'url'));
+const refOpen = r => !refHas(r) && !r.done;
+const refOut = r => srcToOut(snapSrc(r.at));
+function refToks(r){ const out = []; for (let i = Math.max(0, tokAtSrc(r.at + 0.002)); i < tokens.length && tokens[i].s < r.end - 0.002; i++) out.push(i); return out; }
+const refKept = r => refToks(r).filter(i => isTextTok(i) && tokText(tokens[i]) && !isCut(i));   // Wörter der Stelle, die im Video bleiben
+const refGone = r => !refKept(r).length;
+const refsOpen = () => refsAll().filter(r => refOpen(r) && !refGone(r));   // offen und noch im Video
+function refQuote(r, n = 10){ const w = refToks(r).filter(i => isTextTok(i) && tokText(tokens[i])).map(i => tokText(tokens[i])); return w.length > n ? w.slice(0, n).join(' ') + ' …' : w.join(' '); }
+const refHost = u => { try { return u ? new URL(/^[a-z][a-z0-9+.-]*:/i.test(u) ? u : 'https://' + u).hostname.replace(/^www\./, '') : ''; } catch(_){ return ''; } };
+// Text der Zeile im Bild: eigener Text, sonst Medium (ersatzweise Titel oder die Adresse der Seite) mit Datum
+function refLabel(r){
+  const own = refStr(r, 'text'); if (own) return own;
+  const main = refStr(r, 'medium') || refStr(r, 'title') || refHost(refStr(r, 'url')), d = refStr(r, 'date');
+  return main ? main + (d ? ', ' + d : '') : '';
+}
+// Eintrag der Quellenliste: „Medium: Titel (Datum) – Link“
+function refLine(r){
+  const m = refStr(r, 'medium'), t = refStr(r, 'title'), d = refStr(r, 'date'), u = refStr(r, 'url');
+  let s = m && t ? `${m}: ${t}` : m || t; if (d) s += s ? ` (${d})` : d; if (u) s += s ? ` – ${u}` : u; return s;
+}
+// Quellen in der Reihenfolge, in der sie im geschnittenen Video vorkommen. Gleiche Angaben stehen einmal in der Liste und teilen sich die Nummer.
+function refList(){
+  const rows = [], byKey = new Map(), byId = new Map();
+  for (const r of refsAll().filter(r => refHas(r) && !refGone(r)).sort((a, b) => refOut(a) - refOut(b) || a.at - b.at)){
+    const line = refLine(r), key = line.toLowerCase(); if (!byKey.has(key)){ rows.push(line); byKey.set(key, rows.length); } byId.set(r.id, byKey.get(key)); }
+  return {rows, byId};
+}
+const refListText = () => { const {rows} = refList(); return rows.length ? 'Quellen:\n' + rows.map((l, k) => `[${k + 1}] ${l}`).join('\n') : ''; };
+// Zeit im geschnittenen Video, in der die Quelle im Bild steht: der Satz (oder die Sätze) um die Stelle, mindestens REF_MIN Sekunden
+const REF_MIN = 2.5;
+function refSpan(r){
+  const ks = refKept(r).map(i => pos[i]).filter(k => k != null); if (!ks.length) return null;
+  const [a, b] = sentBounds(Math.min(...ks), Math.max(...ks)); let s = Infinity, e = -Infinity;
+  for (let k = a; k <= b; k++){ const i = order[k]; if (!isTextTok(i) || isCut(i)) continue; const t = tokens[i]; s = Math.min(s, srcToOut(wS(t))); e = Math.max(e, srcToOut(wE(t))); }
+  if (!(e > s)) return null;
+  e = Math.min(total, Math.max(e, s + REF_MIN)); return e - s > 0.2 ? [s, e] : null;
+}
+// Stil der Zeile im Bild (P.srcStyle): Lage o/u + l/m/r, Größe und Randabstand als Anteil der kürzeren Bildseite, pre = vorangestelltes Wort
+const SRC_DEF = {pos: 'ol', size: 0.024, margin: 0.035, color: '#FFFFFF', outline: true, bg: false, font: '', safe: true, on: true, pre: 'Quelle:'};
+const srcStyle = () => ({...SRC_DEF, ...((P && P.srcStyle) || {})});
+// Zeilen im Bild: je Quelle die Dauer ihres Satzes. Was sich zeitlich überschneidet, steht gemeinsam in einer Zeile.
+let refMemo = null;
+function refCues(){
+  if (refMemo) return refMemo;
+  const st = srcStyle(), out = []; if (st.on === false || !refsAll().length || !tokens.length) return refMemo = out;
+  if (order.length !== tokens.length) computeOrder();
+  const list = refsAll().filter(r => refHas(r) && r.show !== false).map(r => ({sp: refSpan(r), lbl: refLabel(r)})).filter(x => x.sp && x.lbl).sort((a, b) => a.sp[0] - b.sp[0]);
+  for (const x of list){ const last = out[out.length - 1];
+    if (last && x.sp[0] < last.e - 0.05){ last.e = Math.max(last.e, x.sp[1]); if (!last.lbls.includes(x.lbl)) last.lbls.push(x.lbl); }
+    else out.push({s: x.sp[0], e: x.sp[1], lbls: [x.lbl]}); }
+  const pre = String(st.pre ?? '').trim();
+  for (const g of out) g.text = (pre ? (pre === 'Quelle:' && g.lbls.length > 1 ? 'Quellen:' : pre) + ' ' : '') + g.lbls.join(' · ');
+  return refMemo = out;
+}
+// Steht die dauerhafte Textzeile in derselben Ecke, rückt die Quellenzeile daneben: oben unter sie, unten über sie
+function srcMinV(W, H){
+  const p = srcStyle().pos; if (!tlineOn() || ({...TLINE_DEF, ...P.textline}).pos !== p) return 0;
+  const L = tlineLayout(W, H); return (p[0] === 'o' ? L.mT : L.mB) + L.px * 1.12 + 2 * L.padY + L.px * 0.3;
+}
+const srcLayout = (text, W, H) => lineLayout(srcStyle(), text, W, H, srcMinV(W, H));
+function placeSrcLine(W, H, o){
+  const el = $('#srcLine'), cur = P && refsAll().length ? refCues().find(c => o >= c.s - 1e-3 && o < c.e) : null;
+  if (!cur){ if (!el.classList.contains('hidden')) el.classList.add('hidden'); return; }
+  const key = [W, H, cur.text, JSON.stringify(P.srcStyle || 0), tlineOn() ? JSON.stringify(P.textline) : '', P.settings.safe || '', document.fonts ? document.fonts.status : ''].join('|');
+  if (el.dataset.k === key && !el.classList.contains('hidden')) return; el.dataset.k = key;
+  paintLine(el, srcLayout(cur.text, W, H));
+}
+const viewSrcLine = () => { const st = $('#stage'); placeSrcLine(st.clientWidth, st.clientHeight, outPos); };
+// Mehrere schnelle Änderungen (Regler, Tippen) sind zusammen ein Rückgängig-Schritt. Der Stand davor wird zu Beginn der Folge zurückgelegt;
+// kam inzwischen ein anderer Schritt dazu oder liegt die letzte Änderung länger zurück, beginnt eine neue Folge.
+let burstKey = '', burstLen = -1, burstT = 0;
+function commitBurst(key, fn){
+  const now = Date.now();
+  if (burstKey !== key || undo.length !== burstLen || now - burstT > 4000){ undo.push(snapshot()); if (undo.length > 200) undo.shift(); redo = []; burstKey = key; burstLen = undo.length; }
+  burstT = now; fn(); changedLive();
+}
+function refDialog(r, fresh){   // → null (abgebrochen), {del: true} oder die Angaben
+  return new Promise(res => {
+    const gone = refGone(r), sp = gone ? null : refSpan(r), F = ['medium', 'title', 'date', 'url', 'text'];
+    const box = hcModal(`<h3>Quelle</h3>
+      <p class="ref-q" dir="auto"></p>
+      <div class="grid2">
+        <label>Medium oder Herausgeber:in <input type="text" id="rfMedium" maxlength="120" dir="auto" placeholder="z. B. Statistisches Bundesamt"></label>
+        <label>Datum <input type="text" id="rfDate" maxlength="40" placeholder="z. B. 12.03.2025"></label>
+      </div>
+      <label class="col">Titel <input type="text" id="rfTitle" maxlength="240" dir="auto" placeholder="Titel des Artikels, der Studie oder der Sendung"></label>
+      <label class="col">Link <input type="text" id="rfUrl" maxlength="600" inputmode="url" autocapitalize="off" spellcheck="false" placeholder="https://…"></label>
+      <label class="row"><input type="checkbox" id="rfShow"> Als Zeile im Bild zeigen, solange der Satz läuft</label>
+      <label class="col" id="rfTextRow">Text im Bild <input type="text" id="rfText" maxlength="90" dir="auto"></label>
+      <label class="row" id="rfDoneRow"><input type="checkbox" id="rfDone"> Geprüft, die Stelle braucht keine Quelle</label>
+      <p class="muted small" id="rfAt"></p>
+      <div class="row wrap" style="margin-top:12px">${fresh ? '' : '<button class="btn danger" id="rfDel">Entfernen</button>'}<button class="btn" id="rfNo" style="margin-left:auto">Abbrechen</button><button class="btn primary" id="rfOk">OK</button></div>`);
+    const q = id => box.querySelector('#' + id), inp = {medium: q('rfMedium'), title: q('rfTitle'), date: q('rfDate'), url: q('rfUrl'), text: q('rfText')};
+    box.querySelector('.ref-q').textContent = '„' + refQuote(r, 26) + '“';
+    for (const k of F) inp[k].value = r[k] || '';
+    q('rfShow').checked = r.show !== false; q('rfDone').checked = !!r.done;
+    const read = () => { const v = {}; for (const k of F) v[k] = inp[k].value.replace(/\s+/g, ' ').trim(); v.show = q('rfShow').checked; v.done = q('rfDone').checked; return v; };
+    const where = gone ? 'Die Stelle ist weggeschnitten; sie fehlt im Bild und in der Quellenliste.' : `Die Stelle beginnt bei ${fmtT(refOut(r))} im geschnittenen Video.`;
+    const paint = () => { const v = read(), has = refHas(v);
+      q('rfTextRow').classList.toggle('hidden', !v.show || !has); inp.text.placeholder = refLabel({...v, text: ''}) || 'Medium, Datum';
+      q('rfDoneRow').classList.toggle('hidden', has); q('rfOk').textContent = has || v.done ? 'Speichern' : 'Als „Beleg nötig“ markieren';
+      q('rfAt').textContent = where + (has ? (v.show && sp ? ` Die Zeile steht ${(sp[1] - sp[0]).toFixed(1).replace('.', ',')} s im Bild.` : '') : v.done ? '' : ' Ohne Angaben bleibt sie als „Beleg nötig“ offen, und der Export weist darauf hin.'); };
+    const done = v => { closeHcModal(); res(v); };
+    q('rfNo').onclick = () => done(null); q('rfOk').onclick = () => done(read()); if (q('rfDel')) q('rfDel').onclick = () => done({del: true});
+    box.addEventListener('input', paint); box.addEventListener('change', paint);
+    box.addEventListener('keydown', e => { e.stopPropagation(); if (e.key === 'Escape') done(null); else if (e.key === 'Enter' && e.target.tagName === 'INPUT' && e.target.type !== 'checkbox'){ e.preventDefault(); q('rfOk').click(); } });
+    paint(); setTimeout(() => { if (inp.medium.isConnected) inp.medium.focus(); }, 30);
+  });
+}
+// Stelle für einen neuen Eintrag: die Markierung im Text, sonst der Satz an der Abspiellinie
+function refRange(){
+  if (!tokens.length) return null; if (order.length !== tokens.length) computeOrder();
+  let ids;
+  if (tab === 'text' && selA != null) ids = selIds();
+  else { const k = tokAtOut(outPos); if (k == null || pos[k] == null) return null; const [a, b] = sentBounds(pos[k], pos[k]); ids = order.slice(a, b + 1); }
+  ids = ids.filter(i => isTextTok(i) && tokText(tokens[i])); if (!ids.length) return null;
+  return {at: r3(Math.min(...ids.map(i => wS(tokens[i])))), end: r3(Math.max(...ids.map(i => wE(tokens[i]))))};
+}
+function refApply(r, v){
+  for (const k of ['medium', 'title', 'date', 'url', 'text']){ if (v[k]) r[k] = v[k]; else delete r[k]; }
+  if (v.show === false) r.show = false; else delete r.show; if (v.done && !refHas(r)) r.done = true; else delete r.done;
+}
+async function addRef(quick){   // quick: ohne Dialog als „Beleg nötig“ markieren
+  if (!P || !timeline.length || $('#hcModal')) return;
+  const rg = refRange(); if (!rg) return toast('Erst im Text die Stelle markieren, zu der die Quelle gehört');
+  const same = refsAll().find(r => Math.abs(r.at - rg.at) < 0.05 && Math.abs(r.end - rg.end) < 0.05);   // die Stelle hat schon einen Eintrag
+  if (same) return quick ? toast(refOpen(same) ? 'Die Stelle ist schon als „Beleg nötig“ markiert' : 'Die Stelle hat schon einen Eintrag') : editRef(same.id);
+  const r = {id: newId(), ...rg}, P0 = P;
+  if (!quick){ const v = await refDialog(r, true); if (!v || P !== P0) return; refApply(r, v); }
+  commit(() => { P.refs ||= []; P.refs.push(r); }, false);
+  refsChanged(); toast(refHas(r) ? 'Quelle hinterlegt' : r.done ? 'Als geprüft vermerkt' : 'Als „Beleg nötig“ markiert');
+}
+async function editRef(id){
+  const r = refsAll().find(x => x.id === id), P0 = P; if (!r || $('#hcModal')) return;
+  const v = await refDialog(r, false); if (!v || P !== P0 || !refsAll().includes(r)) return;
+  if (v.del) commit(() => { P.refs = P.refs.filter(x => x !== r); }, false);
+  else { const nx = {...r}; refApply(nx, v); if (JSON.stringify(nx) === JSON.stringify(r)) return; commit(() => refApply(r, v), false); }
+  refsChanged();
+}
+// Nach einer Änderung an den Quellen: Text, Bild, Liste und Export-Reiter nachziehen
+function refsChanged(){
+  if (tokens.length && spans.length){ renderTranscript(); showSel(); }
+  viewSrcLine(); paintRefsBtn(); if (refsSheetOpen()) renderRefsSheet(); if (tab === 'export') renderExport();
+}
+function paintRefsBtn(){ const b = $('#refsBtn'), n = refsOpen().length, all = refsAll().length; b.textContent = 'Quellen' + (n ? ` (${n} offen)` : all ? ` (${all})` : ''); b.classList.toggle('warn', n > 0); }
+$('#transcript').addEventListener('click', e => { const el = e.target.closest('[data-rf]'); if (el && P) editRef(el.dataset.rf); });
+$('#selRef').onclick = () => addRef(false);
+// Sätze, die nach einem Beleg verlangen: Zahlen und Mengen, Studien, Umfragen, Zitate. Namen lassen sich so nicht erkennen.
+const REF_WORDS = /^(prozent|percent|million|milliard|billion|tausend|drittel|viertel|hälfte|studie|study|umfrage|survey|statisti|zufolge|zitat)|^(laut|according)$/;
+const refHint = w => /\d|[„“”"«»]/.test(w) || REF_WORDS.test(w.toLowerCase().replace(/^[^\p{L}\d]+|[^\p{L}\d]+$/gu, ''));
+function refSuggest(){
+  if (!tokens.length) return toast('Noch kein Text vorhanden'); if (order.length !== tokens.length) computeOrder();
+  const word = i => isTextTok(i) && !!tokText(tokens[i]), taken = i => refsAll().some(r => wS(tokens[i]) < r.end - 0.002 && wE(tokens[i]) > r.at + 0.002), add = [];
+  for (let k = 0; k < order.length; k++){
+    if (!word(order[k])) continue;
+    const [a, b] = sentBounds(k, k), ids = order.slice(a, b + 1).filter(i => word(i) && !isCut(i)); k = Math.max(k, b);
+    if (ids.length < 3 || ids.some(taken) || !ids.some(i => refHint(tokText(tokens[i])))) continue;
+    add.push({id: newId(), at: r3(Math.min(...ids.map(i => wS(tokens[i])))), end: r3(Math.max(...ids.map(i => wE(tokens[i]))))});
+  }
+  if (!add.length) return toast('Keine weiteren Sätze mit Zahlen, Studien oder Zitaten gefunden');
+  commit(() => { P.refs ||= []; P.refs.push(...add); }, false); refsChanged();
+  toast(`${add.length === 1 ? '1 Satz' : add.length + ' Sätze'} als „Beleg nötig“ markiert – Strg+Z macht es rückgängig`);
+}
+async function copyRefs(){
+  const txt = refListText(); if (!txt) return toast('Noch keine Quellen hinterlegt');
+  const ok = await copyText(txt); toast(ok ? 'Quellenliste in der Zwischenablage' : 'Kopieren hat nicht geklappt');
+  const m = $('#refMsg'); if (m) m.textContent = ok ? 'In der Zwischenablage – in die Beschreibung des Videos einfügen.' : 'Kopieren hat nicht geklappt. Der Text oben lässt sich markieren.';
+}
+// ── Liste der Quellen und Belege: bleibt offen, während man zu den Stellen springt ──
+const refsSheetOpen = () => !$('#sheet').classList.contains('hidden') && !!$('#rfSheet');
+let rfStyleOpen = false;
+function jumpToRef(r){
+  const o = refOut(r); if (playing) pausePlay();
+  seekOut(Math.min(o, Math.max(0, total - 0.01)), false); tlReveal();
+  if (tab === 'text'){ const k = refToks(r)[0]; if (k != null && spans[k]) spans[k].scrollIntoView({block: 'center', behavior: 'smooth'}); }
+}
+function openRefs(){
+  if (!P) return; sheetItem = null;
+  const body = $('#sheetBody'); body.innerHTML = '<div id="rfSheet"></div>'; body.onclick = null;
+  const box = $('#rfSheet'), setStyle = patch => { commitBurst('src', () => { P.srcStyle = {...srcStyle(), ...patch}; }); viewSrcLine(); paintSrcStyle(); };
+  box.addEventListener('click', e => {
+    const rowEl = e.target.closest('.mk-row'), a = e.target.closest('[data-a]'), act = a ? a.dataset.a : '', r = rowEl && refsAll().find(x => x.id === rowEl.dataset.id);
+    if (r && e.target.matches('input[type=checkbox]')){ const on = e.target.checked; commit(() => { if (on) r.done = true; else delete r.done; }, false); return refsChanged(); }
+    if (r && act === 'edit') return editRef(r.id);
+    if (r && e.target.closest('.mk-go')) return jumpToRef(r);
+    if (act === 'add') return addRef(false);
+    if (act === 'find') return refSuggest();
+    if (act === 'copy') return copyRefs();
+    if (act === 'ok') return closeSheet();
+    const p = e.target.closest('#rsPos [data-p]'); if (p) setStyle({pos: p.dataset.p});
+  });
+  const onStyle = e => { const id = e.target.id;
+    if (id === 'rsOn') setStyle({on: e.target.checked}); else if (id === 'rsBg') setStyle({bg: e.target.checked}); else if (id === 'rsColor') setStyle({color: e.target.value.toUpperCase()});
+    else if (id === 'rsPre') setStyle({pre: e.target.value.trim()}); else if (id === 'rsSize') setStyle({size: +e.target.value}); };
+  box.addEventListener('input', onStyle); box.addEventListener('change', onStyle);
+  box.addEventListener('toggle', e => { if (e.target.id === 'rfStyle') rfStyleOpen = e.target.open; }, true);
+  box.addEventListener('keydown', e => { if (e.target.id === 'rsPre') e.stopPropagation(); });
+  const POS = [['ol','↖'],['om','↑'],['or','↗'],['ul','↙'],['um','↓'],['ur','↘']];
+  box.innerHTML = `<h3>Quellen und Belege</h3><div id="rfRows"></div>
+    <details class="tr-style" id="rfStyle"${rfStyleOpen ? ' open' : ''}><summary>Zeile im Bild</summary>
+      <label class="row"><input type="checkbox" id="rsOn"> Quellen als Zeile im Bild zeigen</label>
+      <div class="grid2">
+        <div class="field"><span>Lage</span><div class="wm-pos" id="rsPos">${POS.map(([k, a]) => `<button type="button" data-p="${k}">${a}</button>`).join('')}</div></div>
+        <label>Davor steht <input type="text" id="rsPre" maxlength="20" placeholder="nichts"></label>
+        <label>Farbe <input type="color" id="rsColor"></label>
+        <label class="row"><input type="checkbox" id="rsBg"> dunkler Kasten</label>
+      </div>
+      <div class="field"><span>Größe <b id="rsSizeV"></b></span><input type="range" id="rsSize" min="0.016" max="0.05" step="0.002"></div>
+      <p class="muted small">Die Zeile steht im Bild, solange der Satz mit der Aussage läuft, mindestens ${String(REF_MIN).replace('.', ',')} Sekunden. In CapCut und Concat liegt sie auf einer eigenen Textspur.</p>
+    </details>
+    <div class="row" style="margin-top:12px"><button class="btn primary" data-a="ok" style="margin-left:auto">Fertig</button></div>`;
+  renderRefsSheet(); openSheet(true);
+}
+function paintSrcStyle(){
+  const st = srcStyle(), on = $('#rsOn'); if (!on) return;
+  on.checked = st.on !== false; $('#rsBg').checked = !!st.bg; $('#rsColor').value = (st.color || '#FFFFFF').toLowerCase(); if (document.activeElement !== $('#rsPre')) $('#rsPre').value = st.pre ?? '';
+  $('#rsSize').value = st.size; $('#rsSizeV').textContent = (st.size * 100).toFixed(1).replace('.', ',') + ' %';
+  $('#rsPos').querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.p === st.pos));
+}
+function renderRefsSheet(){
+  const box = $('#rfRows'); if (!box) return;
+  const all = refsAll().map(r => ({r, o: refOut(r), gone: refGone(r)})).sort((a, b) => a.o - b.o || a.r.at - b.r.at), {byId} = refList();
+  const open = all.filter(x => refOpen(x.r)), src = all.filter(x => refHas(x.r)), okd = all.filter(x => !refHas(x.r) && x.r.done), nOpen = open.filter(x => !x.gone).length;
+  const row = x => { const r = x.r, has = refHas(r), n = byId.get(r.id);
+    return `<div class="mk-row rf-row${x.gone ? ' cut' : ''}${!has && r.done ? ' done' : ''}" data-id="${r.id}">${has ? '' : `<input type="checkbox"${r.done ? ' checked' : ''} title="Geprüft, die Stelle braucht keine Quelle">`}<button type="button" class="mk-go" title="Zur Stelle springen"><span class="mono">${x.gone ? '–' : fmtT(x.o)}</span><span class="mk-t" dir="auto">${has ? `<b>${n ? `[${n}] ` : ''}${esc(refLabel(r) || refLine(r))}</b>` : ''}<i>${esc(refQuote(r))}</i></span></button><button type="button" class="mini" data-a="edit" title="Bearbeiten">✎</button></div>`; };
+  box.innerHTML = `<h4>Beleg nötig${open.length ? ` · ${nOpen} offen` : ''}</h4>${open.length ? open.map(row).join('') : '<p class="muted small">Keine offenen Stellen. Was noch einen Beleg braucht, im Text markieren und „Quelle“ wählen – ohne Angaben bleibt die Stelle offen.</p>'}
+    <div class="row wrap"><button class="btn small" data-a="find" title="Markiert Sätze mit Zahlen und Mengen, Studien, Umfragen und Zitaten">🔍 Stellen vorschlagen</button></div>
+    <h4>Quellen${src.length ? ` · ${src.length}` : ''}</h4>${src.length ? src.map(row).join('') : '<p class="muted small">Noch keine Quellen. Im Text die Aussage markieren und „Quelle“ wählen (Taste R).</p>'}
+    <div class="row wrap"><button class="btn small" data-a="add" title="Zur Markierung im Text, sonst zum Satz an der Abspiellinie">＋ Quelle …</button>${src.length ? '<button class="btn small" data-a="copy">📋 Quellenliste kopieren</button>' : ''}</div>
+    ${okd.length ? `<h4>Geprüft, ohne Quelle</h4>${okd.map(row).join('')}` : ''}`;
+  paintSrcStyle();
+}
+// Zähler und Liste folgen dem Schnitt (eine weggeschnittene Stelle zählt nicht mehr): kurz nach jeder Änderung auffrischen
+let refsLateT = 0;
+function refsLater(){ clearTimeout(refsLateT); refsLateT = setTimeout(() => { if (!P) return; paintRefsBtn(); if (refsSheetOpen()) renderRefsSheet(); if (lowerSheetOpen()) paintLowerSheet(); }, 250); }
+$('#refsBtn').onclick = openRefs;
+// Export-Reiter: Quellenliste für die Beschreibung und der Hinweis auf offene Belege
+function renderRefsCard(){
+  const txt = refListText(), open = refsOpen().length, gone = refsAll().filter(r => refHas(r) && refGone(r)).length;
+  $('#refText').classList.toggle('hidden', !txt); $('#refText').textContent = txt; $('#refCopy').classList.toggle('hidden', !txt);
+  $('#refWarn').classList.toggle('hidden', !gone); $('#refWarn').textContent = gone ? `${gone === 1 ? 'Eine Quelle gehört' : gone + ' Quellen gehören'} zu einer weggeschnittenen Stelle und ${gone === 1 ? 'fehlt' : 'fehlen'} in der Liste.` : '';
+  $('#exRefs').classList.toggle('hidden', !open); $('#exRefs span').textContent = open === 1 ? 'Noch 1 Beleg offen: Eine Stelle ist als „Beleg nötig“ markiert.' : `Noch ${open} Belege offen: So viele Stellen sind als „Beleg nötig“ markiert.`;
+}
+$('#refCopy').onclick = copyRefs;
+$('#refOpen').onclick = openRefs; $('#exRefsBtn').onclick = () => { setTab('text'); openRefs(); };
+// Vor dem Export: Sind noch Belege offen, nachfragen. → true: exportieren, false: erst ansehen
+function askOpenRefs(){
+  const n = refsOpen().length; if (!n) return Promise.resolve(true);
+  return new Promise(res => {
+    const box = hcModal(`<h3>${n === 1 ? 'Ein Beleg ist' : n + ' Belege sind'} noch offen</h3>
+      <p>${n === 1 ? 'Eine Stelle ist' : n + ' Stellen sind'} als „Beleg nötig“ markiert und hat noch keine Quelle.</p>
+      <div class="row wrap" style="margin-top:12px"><button class="btn" id="xrSee">Belege ansehen</button><button class="btn primary" id="xrGo" style="margin-left:auto">Trotzdem exportieren</button></div>`);
+    const done = v => { closeHcModal(); res(v); };
+    box.querySelector('#xrSee').onclick = () => done(false); box.querySelector('#xrGo').onclick = () => done(true);
+    box.addEventListener('keydown', e => { if (e.key === 'Escape') done(false); });
+  });
+}
+
+// ───────── Barrierefreiheit (B10) ─────────
+// Geprüft wird, was sich an den Einstellungen ablesen lässt: Untertitel vorhanden, groß genug, mit genug Kontrast zwischen Schrift und
+// Umrandung bzw. Kasten, im Lesetempo. Kontrast nach WCAG 2: Verhältnis der relativen Leuchtdichten, von 1 : 1 (gleiche Farbe) bis
+// 21 : 1 (Schwarz auf Weiß); für Text gelten 4,5 : 1 als Mindestwert.
+const hexRgb = h => { const m = /^#?([0-9a-f]{6})$/i.exec(String(h || '').trim()); return m ? [0, 2, 4].map(k => parseInt(m[1].slice(k, k + 2), 16)) : [255, 255, 255]; };
+const relLum = h => { const [r, g, b] = hexRgb(h).map(v => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
+const contrast = (a, b) => { const x = relLum(a), y = relLum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
+// size: Schrifthöhe als Anteil der kürzeren Bildseite; box: der dunkle Kasten vor hellem Bild (der ungünstigste Fall)
+const A11Y = {contrast: 4.5, size: 0.055, box: '#666666'};
+const fmtRatio = c => (Math.floor(c * 10) / 10).toFixed(1).replace('.', ',') + ' : 1';
+const bestOutline = col => contrast(col, '#000000') >= contrast(col, '#FFFFFF') ? '#000000' : '#FFFFFF';
+// Hinweise: [{k, text, fix (Beschriftung), run}]. styleOnly: nur, was am Stil der Untertitel liegt (für den Untertitel-Reiter).
+function a11yIssues(styleOnly){
+  const out = [], st = S(), [W, H] = outSize(), tall = H > W, on = st.enabled !== false && P.cues.length > 0;
+  const apply = fn => () => { commit(fn, false); syncStyleInputs(); if (tab === 'subs') renderSpeakers(); };
+  if (!on){
+    if (!styleOnly && exFmt !== 'audio' && tokens.some(t => t.type === 'word')) out.push({k: 'nosubs', text: (st.enabled === false ? 'Die Untertitel sind ausgeschaltet.' : 'Das Video hat noch keine Untertitel.') + ' Wer ohne Ton schaut oder schlecht hört, bekommt den Inhalt dann nicht mit.', fix: 'Zu den Untertiteln', run: () => setTab('subs')});
+    return out;
+  }
+  if (!styleOnly && exFmt === 'audio') return out;
+  const used = new Set(); for (const t of tokens) if (t.spk && t.type === 'word') used.add(t.spk);
+  const styles = [{sp: null, x: st}].concat(P.speakers.filter(sp => used.has(sp.id) && sp.st && Object.keys(sp.st).length).map(sp => ({sp, x: {...st, ...sp.st}})));
+  for (const {sp, x} of styles){
+    const who = sp ? ` von ${sp.name}` : '', own = k => !sp || sp.st[k] != null;
+    if ((SIZE_F[x.size] || 0.058) * (tall ? 1.25 : 1) < A11Y.size && own('size')) out.push({k: 'size', text: `Die Untertitel${who} sind klein. Im ${tall ? 'Hochformat' : W === H ? 'quadratischen Format' : 'Querformat'} sind sie auf dem Handy schwer zu lesen.`,
+      fix: sp ? 'Größe wie alle' : 'Auf „mittel“ stellen', run: apply(() => { if (sp) delete sp.st.size; else st.size = 'mittel'; })});
+    const col = x.color || '#FFFFFF';
+    if (x.bg){ const c = contrast(col, A11Y.box);
+      if (c < A11Y.contrast && own('color')) out.push({k: 'contrast', text: `Die Schrift${who} hebt sich vor hellem Bild kaum vom Kasten ab (Kontrast ${fmtRatio(c)}, empfohlen sind mindestens 4,5 : 1).`,
+        fix: sp ? 'Farbe wie alle' : 'Schrift weiß', run: apply(() => { if (sp) delete sp.st.color; else st.color = '#FFFFFF'; })}); }
+    else if (x.outline !== false){ const oc = x.outlineColor || '#000000', c = contrast(col, oc);
+      if (c < A11Y.contrast && (own('color') || own('outline'))) out.push({k: 'contrast', text: `Schrift und Umrandung${who} heben sich kaum voneinander ab (Kontrast ${fmtRatio(c)}, empfohlen sind mindestens 4,5 : 1).`,
+        fix: sp ? 'Farbe wie alle' : `Umrandung ${bestOutline(col) === '#000000' ? 'schwarz' : 'weiß'}`, run: apply(() => { if (sp) delete sp.st.color; else st.outlineColor = bestOutline(col); })}); }
+    else if (own('outline')) out.push({k: 'bare', text: `Die Untertitel${who} haben weder Umrandung noch Kasten. Vor hellem oder unruhigem Bild sind sie kaum zu lesen.`,
+      fix: sp ? 'Umrandung wie alle' : 'Umrandung an', run: apply(() => { if (sp) delete sp.st.outline; else { st.outline = true; if (contrast(col, st.outlineColor || '#000000') < A11Y.contrast) st.outlineColor = bestOutline(col); } })});
+  }
+  if (trHas() && P.trans.mode !== 'off' && st.mode !== 'word'){ const ts = trStyle(), c = ts.outline !== false && !st.bg ? contrast(ts.color || '#FFFFFF', ts.outlineColor || '#000000') : 99;
+    if (c < A11Y.contrast) out.push({k: 'contrast', text: `Übersetzung und Umrandung heben sich kaum voneinander ab (Kontrast ${fmtRatio(c)}, empfohlen sind mindestens 4,5 : 1).`}); }
+  if (styleOnly) return out;
+  const hard = new Set(); readIssues(computedCues()).forEach((q, k, a) => { if (q && (q.fast || q.short)) hard.add(k); });
+  if (hard.size) out.push({k: 'read', text: `${hard.size === 1 ? 'Ein Untertitel steht' : hard.size + ' Untertitel stehen'} zu kurz im Bild, um mitzulesen.`, fix: 'Neu umbrechen', run: () => { readFix(); renderA11y(); }});
+  if (exFmt === 'video' && P.settings.burn === false) out.push({k: 'burn', text: 'Die Untertitel werden nicht ins Video eingebrannt. Lade die SRT-Datei auf der Plattform mit hoch, damit sie dort zuschaltbar sind.'});
+  return out;
+}
+let a11yRun = [];
+function renderA11y(){
+  if (!P) return;
+  const paint = (box, list, okText) => { if (!box) return;
+    box.innerHTML = list.length ? list.map((x, k) => `<div class="a11y-row"><span>${esc(x.text)}</span>${x.fix ? `<button type="button" class="btn small" data-k="${a11yRun.push(x.run) - 1}">${esc(x.fix)}</button>` : ''}</div>`).join('') : okText ? `<p class="a11y-ok small">${icon('✓')}<span>${okText}</span></p>` : '';
+    box.classList.toggle('hidden', !list.length && !okText); };
+  a11yRun = [];
+  if (tab === 'export'){ const all = a11yIssues(false), warn = all.filter(x => x.k !== 'burn').length;
+    paint($('#a11yList'), all, exFmt === 'audio' ? '' : 'Untertitel sind an, groß genug und heben sich gut ab.');
+    $('#exA11y').classList.toggle('hidden', !warn); $('#exA11y span').textContent = warn === 1 ? 'Barrierefreiheit: 1 Hinweis zu den Untertiteln.' : `Barrierefreiheit: ${warn} Hinweise zu den Untertiteln.`; }
+  else if (tab === 'subs') paint($('#a11ySub'), a11yIssues(true), '');
+}
+for (const id of ['a11yList', 'a11ySub']) $('#' + id).addEventListener('click', e => { const b = e.target.closest('[data-k]'), f = b && a11yRun[+b.dataset.k]; if (f){ f(); renderA11y(); } });
+let a11yT = 0;
+const a11yLater = () => { clearTimeout(a11yT); a11yT = setTimeout(() => { if (P && tab === 'subs') renderA11y(); }, 150); };
+$('#exA11yBtn').onclick = () => $('#a11yCard').scrollIntoView({block: 'center', behavior: 'smooth'});
+// ── Textfassung: der gesprochene Text mit Kapiteln, Sprecher:innen und Quellen, für alle, die das Video nicht hören oder nicht sehen ──
+function textVersion(){
+  if (order.length !== tokens.length) computeOrder();
+  const {rows, byId} = refList(), foot = new Map(), chapAt = new Map(), out = [];
+  for (const r of refsAll()){ const n = byId.get(r.id), ids = n ? refKept(r) : []; if (!ids.length) continue;   // Fußnote hinter dem letzten Wort der Stelle
+    const last = ids.reduce((a, b) => pos[b] > pos[a] ? b : a); if (!foot.has(last)) foot.set(last, []); if (!foot.get(last).includes(n)) foot.get(last).push(n); }
+  for (const m of marksOf('chap')){ const k = tokAtSrc(m.at); if (k >= 0 && !markGone(markOut(m))) chapAt.set(k, (m.text || 'Kapitel').trim()); }
+  let cur = null, para = -1, src = -1, lastSpk = null, chap = null; const named = new Set();
+  for (const i of order){
+    const t = tokens[i]; if (chapAt.has(i)) chap = chapAt.get(i);   // die Überschrift steht vor dem nächsten Wort, das im Video bleibt
+    if (!isTextTok(i) || isCut(i)) continue; const w = String(tokText(t) || '').trim(); if (!w) continue;
+    const spk = t.spk || '', newSrc = t.src !== src && P.sources.length > 1;
+    if (chap != null){ out.push({head: chap}); chap = null; cur = null; }
+    if (!cur || t.p !== para || newSrc || spk !== lastSpk){
+      const sp = spkOf(spk); let who = sp ? sp.name : '';
+      if (sp && !named.has(sp.id)){ named.add(sp.id); const role = String(sp.role || '').trim(); if (role) who += ` (${role})`; }
+      cur = {who, words: []}; out.push(cur); para = t.p; src = t.src; lastSpk = spk;
+    }
+    cur.words.push(w + (foot.has(i) ? ' ' + foot.get(i).sort((a, b) => a - b).map(n => `[${n}]`).join('') : ''));
+  }
+  const body = out.map(p => p.head != null ? `## ${p.head}` : (p.who ? p.who + ': ' : '') + p.words.join(' ').replace(/\s+([,.;:!?…»“)])/g, '$1').replace(/([„«(])\s+/g, '$1')).join('\n\n');
+  if (!body) return '';
+  return `${P.name || 'Video'}\nTextfassung des Videos · ${fmtT(total)}\n\n${body}` + (rows.length ? '\n\nQuellen\n' + rows.map((l, k) => `[${k + 1}] ${l}`).join('\n') : '') + '\n';
+}
+const textVersionName = () => (($('#exName').value || P.name || 'Video').replace(/[\\/:*?"<>|]/g, '_').slice(0, 80)) + ' – Textfassung.txt';
+const textvOn = () => { if (P && P.settings.textv != null) return !!P.settings.textv; try { return localStorage.getItem('hc-textv') === '1'; } catch(_){ return false; } };
+$('#exTextv').onchange = e => { P.settings.textv = e.target.checked; try { localStorage.setItem('hc-textv', e.target.checked ? '1' : '0'); } catch(_){} changed(false); };
+$('#tvSave').onclick = async () => {
+  const txt = textVersion(); if (!txt){ $('#tvMsg').textContent = 'Noch kein Text vorhanden.'; return; }
+  try { const m = await saveBlob(textVersionName(), new Blob([txt], {type: 'text/plain'})); if (m){ $('#tvMsg').textContent = m; toast(m.split(':')[0]); } } catch(e){ $('#tvMsg').textContent = 'Fehler: ' + e.message; }
+};
+$('#tvCopy').onclick = async () => {
+  const txt = textVersion(); if (!txt){ $('#tvMsg').textContent = 'Noch kein Text vorhanden.'; return; }
+  const ok = await copyText(txt); $('#tvMsg').textContent = ok ? 'Textfassung in der Zwischenablage.' : 'Kopieren hat nicht geklappt – bitte als Datei speichern.'; toast(ok ? 'Textfassung kopiert' : 'Kopieren fehlgeschlagen');
+};
+
+// ───────── Bauchbinden (B3) ─────────
+// Name und Funktion einer Person als Einblendung im Design der Folien (Designprofil: Farben, Schriften, Akzentbalken).
+// Automatisch: Jede Person, bei der die Bauchbinde eingeschaltet ist (lt), bekommt sie bei ihrem ersten Wort im geschnittenen Video;
+// sie folgt dem Schnitt. Von Hand: ein Titel-Element mit lt (name, role) an beliebiger Stelle.
+// P.lower = {pos: a/u/o (über den Untertiteln / unterer / oberer Rand) + l/m/r, size, dur} gilt für alle.
+// Gezeichnet wird auf einer Leinwand in Ausgabegröße. Dasselbe Bild steht in der Vorschau und geht als Bild-Einblendung in jeden Export.
+const LOWER_DEF = {pos: 'al', size: 1, dur: 4};
+const lowerStyle = () => ({...LOWER_DEF, ...((P && P.lower) || {})});
+let lowerMemo = null; const lowerRects = new Map();
+function lowerList(){   // [{id, spk | item, name, role, a, e}] in Ausgabezeit, ohne Überschneidungen
+  if (lowerMemo) return lowerMemo;
+  const out = [], st = lowerStyle(); if (!P || !(total > 0)) return lowerMemo = out;
+  const need = new Map(); for (const sp of P.speakers || []) if (sp.lt && String(sp.name || '').trim()) need.set(sp.id, sp);
+  if (need.size && tokens.length){ if (order.length !== tokens.length) computeOrder();
+    for (const i of order){ const t = tokens[i], sp = t.spk && need.get(t.spk); if (!sp || t.type !== 'word' || isCut(i)) continue;
+      need.delete(t.spk); out.push({id: 'spk-' + sp.id, spk: sp.id, name: sp.name.trim(), role: String(sp.role || '').trim(), a: srcToOut(wS(t)), d: +st.dur || 4}); if (!need.size) break; } }
+  for (const it of P.items) if (it.type === 'title' && it.lt && String(it.name || '').trim()) out.push({id: it.id, item: it, name: it.name.trim(), role: String(it.role || '').trim(), a: srcToOut(snapSrc(it.at)), d: it.dur});
+  out.sort((x, y) => x.a - y.a);
+  out.forEach((x, k) => { const nx = out[k + 1]; x.e = Math.min(total, x.a + Math.max(0.3, x.d), nx ? nx.a : Infinity); });   // die nächste löst die laufende ab
+  return lowerMemo = out.filter(x => x.e - x.a > 0.1);
+}
+const lowerImgs = new Map(), lowerFontsOk = new Set();
+const lowerFontKey = () => JSON.stringify(slProfile().fonts || {});
+function lowerFonts(){   // Schriften des Designprofils laden; sind sie da, wird neu gezeichnet
+  const k = lowerFontKey(); if (lowerFontsOk.has(k)) return Promise.resolve();
+  return slFonts(slProfile()).then(() => { lowerFontsOk.add(k); lowerImgs.clear(); if (P) viewLower(); }).catch(() => {});
+}
+const lowerReady = () => P && lowerList().length ? lowerFonts() : Promise.resolve();
+function lowerImage(name, role, W, H){
+  const pr = slProfile(), C = slColors(pr, pr.theme !== 'hell'), size = +lowerStyle().size || 1;
+  const key = JSON.stringify([name, role, W, H, size, C.bg, C.fg, C.mute, C.acc, pr.fonts, pr.bar !== false, lowerFontsOk.has(lowerFontKey())]);
+  let im = lowerImgs.get(key); if (im) return im;
+  if (lowerImgs.size > 60) lowerImgs.clear();
+  const u = Math.min(W, H) * (H > W ? 1.25 : 1) * size, nameF = slFontFn(pr.fonts.head, 800), roleF = slFontFn(pr.fonts.body, 500);
+  const cv = document.createElement('canvas'), ctx = cv.getContext('2d');
+  let ns = u * 0.042, rs = u * 0.027;
+  const width = () => { ctx.font = nameF(ns); const a = ctx.measureText(name).width; ctx.font = roleF(rs); return Math.max(a, role ? ctx.measureText(role).width : 0); };
+  const bar = pr.bar !== false ? Math.round(ns * 0.2) : 0;
+  let tw = width(), padX = ns * 0.6; const fit = (W * 0.84 - bar - 2 * padX) / tw;
+  if (fit < 1){ const g = Math.max(0.45, fit); ns *= g; rs *= g; padX = ns * 0.6; tw = width(); }   // lange Namen: Schrift verkleinern, bis die Bauchbinde ins Bild passt
+  const padY = ns * 0.42, gap = role ? ns * 0.16 : 0, w = Math.ceil(bar + 2 * padX + tw), h = Math.ceil(2 * padY + ns * 1.08 + (role ? gap + rs * 1.15 : 0));
+  cv.width = w; cv.height = h;
+  ctx.fillStyle = C.bg; ctx.fillRect(0, 0, w, h); if (bar){ ctx.fillStyle = C.acc; ctx.fillRect(0, 0, bar, h); }
+  ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
+  ctx.fillStyle = C.fg; ctx.font = nameF(ns); ctx.fillText(name, bar + padX, padY + ns * 0.56);
+  if (role){ ctx.fillStyle = C.mute; ctx.font = roleF(rs); ctx.fillText(role, bar + padX, padY + ns * 1.08 + gap + rs * 0.58); }
+  im = {key, cv, url: cv.toDataURL('image/png'), w, h}; lowerImgs.set(key, im); return im;
+}
+// Streifen, in dem die Untertitel stehen (Grundeinstellung): [oben, unten] in Pixeln, null ohne Untertitel
+function subBand(W, H){
+  const st = S(); if (!P.cues.length || st.enabled === false) return null;
+  const rows = (st.mode === 'word' ? 1 : Math.max(1, +st.lines || 2)) * (trHas() && P.trans.mode === 'both' && st.mode !== 'word' ? 2 : 1);
+  const px = subPx(W, H, st), bh = px * 1.15 * rows + (st.bg ? px * 0.2 : 0), cy = (st.y ?? 0.88) * H;
+  return [cy - bh / 2, cy + bh / 2];
+}
+// So weit reichen Textzeile und Quellenzeile vom oberen bzw. unteren Rand ins Bild (0: dort steht keine)
+function linesReach(W, H, side){
+  let v = 0;
+  if (tlineOn() && (({...TLINE_DEF, ...P.textline}).pos || 'ul')[0] === side){ const L = tlineLayout(W, H); v = (side === 'o' ? L.mT : L.mB) + L.px * 1.12 + 2 * L.padY; }
+  if (srcStyle().pos[0] === side && refCues().length){ const L = srcLayout('Quelle', W, H); v = Math.max(v, (side === 'o' ? L.mT : L.mB) + L.px * 1.12 + 2 * L.padY); }
+  return v;
+}
+// Linke obere Ecke der Bauchbinde in Ausgabe-Pixeln: am Rand der freien Fläche, neben Textzeile und Quellenzeile, auf Wunsch über den Untertiteln
+function lowerRect(im, W, H){
+  const rk = im.key + '|' + W + '|' + H; if (lowerRects.has(rk)) return lowerRects.get(rk);
+  const p = lowerStyle().pos || 'al', z = safeZone(), mn = Math.min(W, H), m = 0.04 * mn, gap = 0.014 * mn, top = p[0] === 'o';
+  const mL = Math.max(m, z ? z.l * W : 0), mR = Math.max(m, z ? (top ? z.r : Math.max(z.r, z.cw)) * W : 0);
+  const rT = linesReach(W, H, 'o'), rB = linesReach(W, H, 'u'), mT = Math.max(m, z ? z.t * H : 0, rT ? rT + gap : 0), mB = Math.max(m, z ? z.b * H : 0, rB ? rB + gap : 0);
+  const x = p[1] === 'l' ? mL : p[1] === 'r' ? W - mR - im.w : (W - im.w) / 2;
+  let y = top ? mT : H - mB - im.h;
+  if (p[0] === 'a'){ const b = subBand(W, H); if (b && b[0] < y + im.h + gap && b[1] > y - gap){ const up = b[0] - gap - im.h; if (up >= mT) y = up; } }
+  const r = {x, y}; lowerRects.set(rk, r); return r;
+}
+function placeLower(W, H, o){
+  const box = $('#lowerOv'), x = P ? lowerList().find(q => o >= q.a - 1e-3 && o < q.e) : null;
+  if (!x){ if (box.firstChild) box.textContent = ''; return; }
+  if (!lowerFontsOk.has(lowerFontKey())) lowerFonts();
+  const [OW, OH] = outSize(), k = W / OW, im = lowerImage(x.name, x.role, OW, OH), r = lowerRect(im, OW, OH);
+  let el = box.firstChild; if (!el){ el = document.createElement('img'); el.alt = ''; box.append(el); }
+  const key = [im.key, W, r.x.toFixed(1), r.y.toFixed(1)].join('|'); if (el.dataset.k === key) return; el.dataset.k = key;
+  if (el.dataset.src !== im.key){ el.src = im.url; el.dataset.src = im.key; }
+  Object.assign(el.style, {left: (r.x * k).toFixed(1) + 'px', top: (r.y * k).toFixed(1) + 'px', width: (im.w * k).toFixed(1) + 'px', height: (im.h * k).toFixed(1) + 'px'});
+}
+const viewLower = () => { const st = $('#stage'); placeLower(st.clientWidth, st.clientHeight, outPos); };
+// Für den Export: jede Bauchbinde als Bild-Einblendung über allen Clips (Spur 98, unter dem Wasserzeichen)
+function lowerPlan(W, H){
+  const out = []; if (!TS.saveImage) return out;
+  for (const x of lowerList()){
+    const im = lowerImage(x.name, x.role, W, H), m = J(TS.saveImage(`bauchbinde-${hashStr(im.key)}.png`, im.url, im.w, im.h, P.id)); if (!m || !m.uri) continue;
+    const r = lowerRect(im, W, H);
+    out.push({mode: 'pip', image: true, uri: m.uri, in: 0, out: r3(x.e - x.a), at: r3(x.a), x: +((r.x + im.w / 2) / W).toFixed(4), y: +((r.y + im.h / 2) / H).toFixed(4), w: +(im.w / W).toFixed(4), aspect: +(im.w / im.h).toFixed(5),
+      track: 98, vol: 0, hasAudio: false, width: im.w, height: im.h, rotation: 0, lower: true});
+  }
+  return out;
+}
+// Neue Person oder Bauchbinde von Hand: Name, Funktion und ob die Bauchbinde beim ersten Auftritt erscheint
+function askPerson(title, v0 = {}, opt = {}){   // → null, {del: true} oder {name, role, lt, dur}
+  return new Promise(res => {
+    const m = hcModal(`<h3>${esc(title)}</h3>
+      <label class="col">Name <input type="text" id="apName" maxlength="60" dir="auto" style="font-size:16px"${opt.names ? ' list="apNames"' : ''}></label>${opt.names ? `<datalist id="apNames">${opt.names.map(n => `<option value="${esc(n)}">`).join('')}</datalist>` : ''}
+      <label class="col">Funktion <input type="text" id="apRole" maxlength="80" dir="auto" placeholder="z. B. Sprecherin, Bündnis XY"></label>
+      ${opt.dur ? '<label class="row">Dauer (s) <input type="number" id="apDur" min="0.5" max="60" step="0.5" style="width:90px"></label>' : '<label class="row"><input type="checkbox" id="apLt"> Bauchbinde beim ersten Auftritt zeigen</label>'}
+      <p class="muted small">${opt.dur ? 'Die Bauchbinde erscheint an der Abspiellinie. Sie lässt sich in der Zeitleiste verschieben und kürzen.' : 'Die Funktion steht in der Bauchbinde unter dem Namen und in der Textfassung.'}</p>
+      <div class="row" style="margin-top:12px">${opt.del ? '<button class="btn danger" id="apDel">Entfernen</button>' : ''}<button class="btn" id="apNo" style="margin-left:auto">Abbrechen</button><button class="btn primary" id="apOk">OK</button></div>`);
+    const q = id => m.querySelector('#' + id); let touched = false;
+    q('apName').value = v0.name || ''; q('apRole').value = v0.role || ''; if (q('apLt')) q('apLt').checked = !!v0.lt; if (q('apDur')) q('apDur').value = v0.dur || LOWER_DEF.dur;
+    if (q('apLt')){ q('apLt').onchange = () => touched = true; q('apRole').oninput = () => { if (!touched) q('apLt').checked = !!q('apRole').value.trim(); }; }
+    if (opt.roles) q('apName').addEventListener('input', () => { const r = opt.roles[q('apName').value.trim()]; if (r != null && !q('apRole').value.trim()) q('apRole').value = r; });   // bekannte Person gewählt: Funktion übernehmen
+    const done = v => { closeHcModal(); res(v); };
+    const ok = () => { const name = q('apName').value.replace(/\s+/g, ' ').trim(); if (!name){ q('apName').focus(); return; }
+      done({name, role: q('apRole').value.replace(/\s+/g, ' ').trim(), lt: q('apLt') ? q('apLt').checked : true, dur: q('apDur') ? clamp(+q('apDur').value || LOWER_DEF.dur, 0.5, 60) : 0}); };
+    q('apNo').onclick = () => done(null); q('apOk').onclick = ok; if (q('apDel')) q('apDel').onclick = () => done({del: true});
+    m.addEventListener('keydown', e => { e.stopPropagation(); if (e.key === 'Enter' && e.target.tagName === 'INPUT' && e.target.type !== 'checkbox'){ e.preventDefault(); ok(); } else if (e.key === 'Escape') done(null); });
+    setTimeout(() => { if (q('apName').isConnected){ q('apName').focus(); q('apName').select(); } }, 30);
+  });
+}
+const lowerText = (name, role) => name + (role ? ' · ' + role : '');
+function lowerChanged(){ viewLower(); if (tlOn() && window.renderTimeline) renderTimeline(); if (lowerSheetOpen()) paintLowerSheet(); if (tab === 'export') renderExport(); }
+async function addLower(){
+  if (!P || !timeline.length || $('#hcModal')) return;
+  const P0 = P, at = r3(outToSrcT(outPos)), roles = Object.fromEntries((P.speakers || []).map(sp => [sp.name, sp.role || '']));
+  const v = await askPerson('Bauchbinde', {dur: lowerStyle().dur}, {dur: true, names: Object.keys(roles), roles}); if (!v || P !== P0) return;
+  let it; commit(() => { it = {id: newId(), type: 'title', lt: true, at, dur: v.dur, name: v.name, role: v.role, text: lowerText(v.name, v.role), x: 0.5, y: 0.8, size: 'mittel', scale: 1, color: '#FFFFFF', outline: true, bg: true}; P.items.push(it); }, tlOn());
+  lowerChanged(); toast(`Bauchbinde „${v.name}“ bei ${fmtT(srcToOut(snapSrc(at)))}`);
+}
+async function editLower(id){
+  const it = P.items.find(x => x.id === id), P0 = P; if (!it || !it.lt || $('#hcModal')) return;
+  const v = await askPerson('Bauchbinde', {name: it.name, role: it.role, dur: it.dur}, {dur: true, del: true}); if (!v || P !== P0 || !P.items.includes(it)) return;
+  if (v.del) commit(() => { P.items = P.items.filter(x => x !== it); }, tlOn());
+  else if (v.name !== it.name || v.role !== (it.role || '') || v.dur !== it.dur) commit(() => { it.name = v.name; it.role = v.role; it.dur = v.dur; it.text = lowerText(v.name, v.role); }, tlOn());
+  else return;
+  lowerChanged();
+}
+// ── Blatt „Bauchbinden“: Übersicht, neue Bauchbinde, Lage und Größe für alle ──
+const lowerSheetOpen = () => !$('#sheet').classList.contains('hidden') && !!$('#lwSheet');
+function openLower(){
+  if (!P) return; sheetItem = null;
+  const body = $('#sheetBody'); body.innerHTML = '<div id="lwSheet"></div>'; body.onclick = null;
+  const box = $('#lwSheet'), set = patch => { commitBurst('lower', () => { P.lower = {...lowerStyle(), ...patch}; }); lowerChanged(); };
+  box.addEventListener('click', e => {
+    const rowEl = e.target.closest('.mk-row'), a = e.target.closest('[data-a]'), act = a ? a.dataset.a : '', x = rowEl && lowerList().find(q => q.id === rowEl.dataset.id);
+    if (x && act === 'edit') return x.item ? editLower(x.item.id) : (closeSheet(), setTab('subs'), setTimeout(() => $('#spkCard').scrollIntoView({block: 'center', behavior: 'smooth'}), 80));
+    if (x && e.target.closest('.mk-go')){ if (playing) pausePlay(); seekOut(Math.min(x.a + 0.02, Math.max(0, total - 0.01)), false); tlReveal(); return; }
+    if (act === 'add') return addLower();
+    if (act === 'ok') return closeSheet();
+  });
+  const onIn = e => { const id = e.target.id;
+    if (id === 'lwV' || id === 'lwH') set({pos: $('#lwV').value + $('#lwH').value}); else if (id === 'lwSize') set({size: +e.target.value}); else if (id === 'lwDur' && e.type === 'change') set({dur: clamp(+e.target.value || LOWER_DEF.dur, 1, 30)}); };
+  box.addEventListener('input', onIn); box.addEventListener('change', onIn);
+  box.addEventListener('keydown', e => { if (e.target.tagName === 'INPUT') e.stopPropagation(); });
+  box.innerHTML = `<h3>Bauchbinden</h3><div id="lwRows"></div>
+    <div class="row wrap"><button class="btn small" data-a="add">＋ Bauchbinde an der Abspiellinie</button></div>
+    <div class="grid2" style="margin-top:10px">
+      <label>Höhe <select id="lwV"><option value="a">über den Untertiteln</option><option value="u">unterer Rand</option><option value="o">oberer Rand</option></select></label>
+      <label>Seite <select id="lwH"><option value="l">links</option><option value="m">Mitte</option><option value="r">rechts</option></select></label>
+      <label>Dauer beim ersten Auftritt (s) <input type="number" id="lwDur" min="1" max="30" step="0.5"></label>
+    </div>
+    <div class="field"><span>Größe <b id="lwSizeV"></b></span><input type="range" id="lwSize" min="0.7" max="1.6" step="0.05"></div>
+    <p class="muted small">Farben, Schriften und der Balken kommen aus dem Designprofil deiner Folien. Schutzzonen, Textzeile und Quellenzeile bleiben frei. Im Export liegt jede Bauchbinde als Bild über allen Clips.</p>
+    <div class="row" style="margin-top:12px"><button class="btn primary" data-a="ok" style="margin-left:auto">Fertig</button></div>`;
+  paintLowerSheet(); openSheet(true);
+}
+function paintLowerSheet(){
+  const rows = $('#lwRows'); if (!rows) return; const st = lowerStyle(), list = lowerList();
+  const off = (P.speakers || []).filter(sp => sp.lt && !list.some(x => x.spk === sp.id)).map(sp => sp.name);
+  rows.innerHTML = (list.length ? list.map(x => `<div class="mk-row rf-row" data-id="${x.id}"><button type="button" class="mk-go" title="Zur Stelle springen"><span class="mono">${fmtT(x.a)}</span><span class="mk-t" dir="auto"><b>${esc(x.name)}</b><i>${esc(x.role || (x.spk ? 'erster Auftritt' : ''))}${x.spk && x.role ? ' · erster Auftritt' : ''}</i></span></button><button type="button" class="mini" data-a="edit" title="${x.spk ? 'Bei den Sprecher:innen einstellen' : 'Bearbeiten'}">✎</button></div>`).join('')
+      : '<p class="muted small">Noch keine Bauchbinden. Bei den Sprecher:innen (Reiter „Untertitel“) eine Funktion eintragen: Dann erscheint die Bauchbinde von selbst beim ersten Auftritt der Person.</p>')
+    + (off.length ? `<p class="muted small">${esc(off.join(', '))}: noch ohne Auftritt im geschnittenen Video.</p>` : '');
+  if (document.activeElement !== $('#lwV')) $('#lwV').value = (st.pos || 'al')[0]; if (document.activeElement !== $('#lwH')) $('#lwH').value = (st.pos || 'al')[1];
+  if (document.activeElement !== $('#lwDur')) $('#lwDur').value = st.dur; $('#lwSize').value = st.size; $('#lwSizeV').textContent = Math.round(st.size * 100) + ' %';
+}
+$('#lowerBtn').onclick = openLower;
 
 // ───────── Suche im Text ─────────
 let finds = [], findPos = -1;
@@ -4271,10 +4836,11 @@ function coverDraw(cv, o){
     const ent = [...layers].find(x => x[1] === el), kl = ent ? keyLayers.get(ent[0]) : null, m = /inset\(([\d.]+)% ([\d.]+)% ([\d.]+)% ([\d.]+)%/.exec(el.style.clipPath || '');
     draw(kl && el.style.opacity === '0' ? kl.canvas : el, box(el), el.classList.contains('free') ? 'fill' : 'cover', m ? {t: +m[1] / 100, r: +m[2] / 100, b: +m[3] / 100, l: +m[4] / 100} : null);
   }
+  const lw = $('#lowerOv img'); if (lw && lw.complete && lw.naturalWidth) draw(lw, box(lw), 'fill');
   const wm = $('#wm'); if (shown(wm)){ ctx.globalAlpha = clamp(+wm.style.opacity || 1, 0, 1); draw(wm, box(wm), 'fill'); ctx.globalAlpha = 1; }
   // Schrift aus dem Video: Titel, Textzeile, Untertitel – dieselben Angaben wie im Export
   if (o.titles || o.subs){
-    const plan = buildPlan(), sub = plan.subs, sty = (sub && sub.style) || {};
+    const plan = buildPlan(true), sub = plan.subs, sty = (sub && sub.style) || {};
     for (const c of (sub && sub.cues) || []){
       if (!(outPos >= c.start - 1e-3 && outPos < c.end) || !(c.title ? o.titles : o.subs)) continue;
       coverCue(ctx, c.title ? c : {...c, size: c.size || SIZE_F[sty.size] || 0.058, color: c.color || sty.color, outline: c.outline != null ? c.outline : sty.outline !== false, font: c.font != null ? c.font : sty.font, outlineColor: c.outlineColor || sty.outlineColor, bg: c.bg || !!sty.bg}, W, H);
@@ -4490,7 +5056,7 @@ function renderExportForm(){
 function paintExportForm(){
   $$('#exFmt button').forEach(b => b.classList.toggle('on', b.dataset.v === exFmt));
   $$('#paneExport [data-fmt]').forEach(el => el.classList.toggle('hidden', !el.dataset.fmt.split(' ').includes(exFmt)));
-  $('#exSubs').checked = P ? P.settings.burn !== false : true;
+  $('#exSubs').checked = P ? P.settings.burn !== false : true; $('#exTextv').checked = textvOn();
   if (CAP.audioFormats){ $$('#exAudioFmt option').forEach(op => op.hidden = op.disabled = !CAP.audioFormats.includes(op.value)); if (!CAP.audioFormats.includes($('#exAudioFmt').value)) $('#exAudioFmt').value = CAP.audioFormats[0]; }
   if (CAP.platform === 'android') $('#exNote').textContent = exFmt === 'audio' ? 'Die Tonspur (M4A) landet im Ordner „Musik/HoneyCut“. Bitte die App während des Exports geöffnet lassen.'
     : 'Das Video landet direkt in deiner Galerie (Ordner „HoneyCut“). Bitte die App während des Exports geöffnet lassen.';
@@ -4517,7 +5083,7 @@ function wrapTitle(text, size, font, W, H){
 }
 // Freistellen im Plan: Farben als #rrggbb, Toleranz/weicher Rand wie ffmpeg „chromakey“ (similarity/blend), Hauptbild mit Hintergrundfarbe
 function planKey(k, main){ const n = ChromaGL.norm(k); const o = {colors: n.colors.map(c => c.toLowerCase()), tol: +n.tol.toFixed(3), soft: +n.soft.toFixed(3), spill: !!n.spill}; if (main) o.bg = (k.bg || '#000000').toLowerCase(); return o; }
-function buildPlan(){
+function buildPlan(dry){   // dry: nur nachsehen (z. B. für das Titelbild) – es werden keine Bilder abgelegt
   const [W, H] = outSize();
   const segs = timeline.map(g => {
     if (g.kind === 'insert') return {kind:'insert', uri:g.uri, in:r3(g.in), out:r3(g.out), image: isImg(g.item.clip), hasAudio: g.item.clip.hasAudio !== false && !isImg(g.item.clip), hasVideo:true, vol:+(g.item.vol ?? 1)};
@@ -4538,7 +5104,7 @@ function buildPlan(){
     ...(keyOn(o.x.key) ? {key: planKey(o.x.key, false)} : {}),
     aspect:+elAspect(o.x).toFixed(5), track: elTrack(o.x), vol:+(o.x.vol || 0), hasAudio: o.x.clip.hasAudio !== false && !isImg(o.x.clip),
     width:o.x.clip.width, height:o.x.clip.height, rotation:o.x.clip.rotation || 0}))
-    .concat(wmPlan(W, H))
+    .concat(dry ? [] : lowerPlan(W, H)).concat(wmPlan(W, H))
     .concat(audios.map(a => ({mode:'audio', image:false, uri:a.x.clip.uri, in:r3(a.x.in), out:r3(a.x.in + (a.end - a.at)), at:r3(a.at), track:a.x.track || 1, vol:+(a.x.vol ?? 1), hasAudio:true})));
   const cl = S().enabled !== false && P.cues.length ? computedCues() : [], ctr = trTexts(cl);
   const cues = cl.length ? cl.map((x, k) => { const [cx, cy0] = cueXY(x.c), sy = x.c.x == null && window.subSlideY ? subSlideY(x.s, x.e) : null, cy = sy ?? cy0, o = {start:r3(x.s), end:r3(x.e), text:wrapText(x.text), x:cx, y:cy};
@@ -4547,9 +5113,10 @@ function buildPlan(){
     if (st){ if (st.color) o.color = st.color; if (st.size) o.size = SIZE_F[st.size] || 0.058; if (st.font != null) o.font = st.font; if (st.outline != null) o.outline = !!st.outline; if (sp.name) o.speaker = sp.name; }
     if (ctr[k] != null) return trCues(o, ctr[k], W, H, cueStyle(x.c));
     return [o]; }).flat() : [];
-  for (const t of P.items.filter(x => x.type === 'title' && (x.text || '').trim())){ const a = srcToOut(snapSrc(t.at)); if (a >= total) continue;
+  for (const t of P.items.filter(x => x.type === 'title' && !x.lt && (x.text || '').trim())){ const a = srcToOut(snapSrc(t.at)); if (a >= total) continue;
     cues.push({start:r3(a), end:r3(Math.min(total, a + t.dur)), text:wrapTitle(t.text.trim(), (SIZE_F[t.size] || 0.058) * (t.scale || 1), t.font, W, H), x:t.x, y:t.y, size:+((SIZE_F[t.size] || 0.058) * (t.scale || 1)).toFixed(4), color:t.color || '#FFFFFF', outline:t.outline !== false, bg:!!t.bg, title:true, font:t.font || ''}); }
   const tl = tlineCue(W, H); if (tl) cues.push(tl);
+  for (const c of refCues()) cues.push({...lineCue(srcLayout(c.text, W, H), W, H, c.s, c.e), src: true});
   const subs = cues.length ? {cues, style:S(), fonts: planFonts([S().font, ...cues.map(c => c.font)])} : null;
   const media = P.sources.map(s => ({uri:s.uri, name:s.name, duration:s.duration, width:dispSize(s)[0], height:dispSize(s)[1], fps:s.fps, hasAudio:s.hasAudio !== false, hasVideo:hasVid(s), kind:s.kind || 'video'}));
   return {format:exFmt, name: ($('#exName').value || P.name).replace(/[\\/:*?"<>|]/g, '_'), width:W, height:H, fps:primary().fps || 30, total:r3(total),
@@ -4645,10 +5212,11 @@ $('#txDocx').onclick = async () => {
 $('#txChip').onclick = () => { setTab('export'); setTimeout(() => $('#txCard').scrollIntoView({block: 'center', behavior: 'smooth'}), 60); };
 function renderExport(){
   const [W, H] = outSize(), n = P.items.reduce((m, x) => (m[x.type] = (m[x.type] || 0) + 1, m), {});
+  const nLower = exFmt === 'audio' ? 0 : lowerList().length, nTitle = P.items.filter(x => x.type === 'title' && !x.lt).length, nSrc = exFmt === 'audio' ? 0 : refCues().length;
   $('#exSummary').textContent = `${fmtT(total)}${exFmt === 'audio' ? '' : ` · ${W}×${H}`} · ${timeline.filter(g => g.kind === 'main').length} Abschnitte` + (P.sources.length > 1 ? ` aus ${P.sources.length} Videos` : '') +
-    (n.insert ? ` · ${n.insert} Einschub` : '') + (n.broll ? ` · ${n.broll} B-Roll` : '') + (n.pip ? ` · ${n.pip} Einblendung${n.pip > 1 ? 'en' : ''}` : '') + (n.zoom ? ` · ${n.zoom} Zoom` : '') + (n.fx ? ` · ${n.fx} Anpassungen` : '') + (n.title ? ` · ${n.title} Titel` : '') + (tlineOn() ? ' · Textzeile' : '') +
+    (n.insert ? ` · ${n.insert} Einschub` : '') + (n.broll ? ` · ${n.broll} B-Roll` : '') + (n.pip ? ` · ${n.pip} Einblendung${n.pip > 1 ? 'en' : ''}` : '') + (n.zoom ? ` · ${n.zoom} Zoom` : '') + (n.fx ? ` · ${n.fx} Anpassungen` : '') + (nTitle ? ` · ${nTitle} Titel` : '') + (nLower ? ` · ${nLower} Bauchbinde${nLower > 1 ? 'n' : ''}` : '') + (tlineOn() ? ' · Textzeile' : '') + (nSrc ? ` · ${nSrc} Quellenzeile${nSrc > 1 ? 'n' : ''}` : '') +
     (S().enabled !== false && P.cues.length ? ` · ${computedCues().length} Untertitel` : '');
-  renderLenLights(); renderChapters();
+  renderLenLights(); renderChapters(); renderRefsCard(); renderA11y();
 }
 $('#exRes').onchange = renderExport;
 let exJob = null, exResult = null;
@@ -4683,8 +5251,14 @@ async function levelPlan(plan){
 }
 $('#exLevel').onchange = () => { if (P){ P.settings.level = $('#exLevel').checked; changed(false); } };
 $('#exBtn').onclick = async () => {
-  if (!timeline.length) return; saveNow(); pausePlay();
-  const plan = buildPlan(); exResult = null; $('#exDone').classList.add('hidden'); $('#exFiles').textContent = '';
+  if (!timeline.length || $('#exBtn').disabled) return; saveNow(); pausePlay();
+  const P0 = P; if (!(await askOpenRefs())){ if (P === P0){ setTab('text'); openRefs(); } return; }
+  if (P !== P0) return;
+  await lowerReady();
+  const plan = buildPlan(); exResult = null;
+  // Textfassung: Unter Windows legt das Backend sie neben das Video, sonst speichert die App sie nach dem Export
+  const tv = (exFmt === 'video' || exFmt === 'audio') && textvOn() ? textVersion() : '', tvName = textVersionName();
+  if (tv && CAP.platform === 'desktop') plan.textfile = {name: tvName, text: tv}; $('#exDone').classList.add('hidden'); $('#exFiles').textContent = ''; $('#exWarn').classList.add('hidden');
   if ($('#exLevel').checked && exFmt !== 'concat'){
     $('#exBtn').disabled = true; $('#exMsg').textContent = 'Lautstärke wird gemessen …';
     try { await levelPlan(plan); } catch(e){ console.warn(e); }
@@ -4697,7 +5271,10 @@ $('#exBtn').onclick = async () => {
     j => { end(); exResult = j.result || {}; $('#exDone').classList.remove('hidden');
       if (CAP.platform === 'android'){ $('#exMsg').textContent = 'Fertig – das Video ist in deiner Galerie (Ordner „HoneyCut“).'; }
       else { $('#exMsg').textContent = exResult.note || 'Fertig.'; $('#exFiles').textContent = (exResult.files || []).join('\n'); }
-      $('#exOpen').classList.toggle('hidden', CAP.platform !== 'android' && !exResult.playable); },
+      // Hinweis des Exports, z. B. wenn eine gewählte Schrift nicht geladen werden konnte und die Standardschrift im Video steht
+      if (exResult.warn){ $('#exWarn span').textContent = exResult.warn; $('#exWarn').classList.remove('hidden'); toast(exResult.warn); }
+      $('#exOpen').classList.toggle('hidden', CAP.platform !== 'android' && !exResult.playable);
+      if (tv && CAP.platform !== 'desktop') saveBlob(tvName, new Blob([tv], {type: 'text/plain'})).then(m => { $('#exMsg').textContent += ' Textfassung: ' + (m || 'gespeichert') + '.'; }).catch(e => { $('#exMsg').textContent += ' Die Textfassung ließ sich nicht speichern: ' + e.message; }); },
     j => { end(); $('#exMsg').textContent = j.status === 'cancelled' ? 'Abgebrochen.' : ('Fehler: ' + (j.error || 'unbekannt')); });
 };
 $('#exCancel').onclick = () => exJob && TS.cancel(exJob);
@@ -4712,12 +5289,13 @@ function setTab(t){
   $('#proj').dataset.tab = t;
   $('#paneTrans').classList.toggle('hidden', t !== 'trans');
   $('#paneText').classList.toggle('hidden', t !== 'text'); $('#paneSubs').classList.toggle('hidden', t !== 'subs');
-  $('#paneStudio').classList.toggle('hidden', t !== 'studio' && t !== 'clip'); $('#paneExport').classList.toggle('hidden', t !== 'export');
+  $('#paneStudio').classList.toggle('hidden', t !== 'studio' && t !== 'clip' && t !== 'text'); $('#paneExport').classList.toggle('hidden', t !== 'export');
+  if (window.applyTlFold) applyTlFold();   // Zeitleiste im Text- und im Clip-Reiter: je eigener Stand (ein- oder ausgeklappt)
   $('#paneClip').classList.toggle('hidden', t !== 'clip'); if (t === 'clip' && window.renderClip) renderClip();
   $('#paneSlides').classList.toggle('hidden', t !== 'slides'); if (t === 'slides' && window.renderSlides) renderSlides();
   $$('#tabs button[data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === t || (t === 'trans' && b.dataset.tab === 'text')));
   if (t === 'trans') renderSources();
-  if (t === 'subs') renderSubs(); if (studioOn() && window.renderStudio) renderStudio(); if (t === 'export') renderExport();
+  if (t === 'subs'){ renderSubs(); renderA11y(); } if (tlOn() && window.renderStudio) renderStudio(); if (t === 'export') renderExport();
   setTimeout(fitStage, 0);
 }
 const TAB_LBL = {text:'Text', trans:'Text', subs:'Untertitel', studio:'Studio', export:'Export', clip:'Clip', slides:'Folien'};
