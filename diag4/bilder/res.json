@@ -1,0 +1,506 @@
+{
+ "cfg": [
+  {
+   "name": "standard",
+   "shots": [
+    {
+     "text": "Gewerkschaft Zahlen versagt das",
+     "stage": [
+      688,
+      387
+     ],
+     "fam": "Inter, system-ui, -apple-system, \"Segoe UI\", Roboto, sans-serif",
+     "px": 22.4
+    },
+    {
+     "text": "Seit mehr anderes das warum\nseit dieser warum warum.",
+     "stage": [
+      688,
+      387
+     ],
+     "fam": "Inter, system-ui, -apple-system, \"Segoe UI\", Roboto, sans-serif",
+     "px": 22.4
+    }
+   ],
+   "warn": null,
+   "files": [
+    "wys_standard.mp4",
+    "Untertitel – wys_standard.srt"
+   ],
+   "size": [
+    640,
+    360
+   ],
+   "times": [
+    5.56,
+    2.33
+   ]
+  },
+  {
+   "name": "poppins",
+   "shots": [
+    {
+     "text": "Gewerkschaft Zahlen versagt das",
+     "stage": [
+      688,
+      387
+     ],
+     "fam": "TSF-poppins, Inter, system-ui, -apple-system, \"Segoe UI\", Roboto, sans-serif",
+     "px": 22.4
+    },
+    {
+     "text": "Seit mehr anderes das warum\nseit dieser warum warum.",
+     "stage": [
+      688,
+      387
+     ],
+     "fam": "TSF-poppins, Inter, system-ui, -apple-system, \"Segoe UI\", Roboto, sans-serif",
+     "px": 22.4
+    }
+   ],
+   "warn": null,
+   "files": [
+    "wys_poppins.mp4",
+    "Untertitel – wys_poppins.srt"
+   ],
+   "size": [
+    640,
+    360
+   ],
+   "times": [
+    5.56,
+    2.33
+   ]
+  },
+  {
+   "name": "anton",
+   "shots": [
+    {
+     "text": "Gewerkschaft Zahlen versagt das",
+     "stage": [
+      688,
+      387
+     ],
+     "fam": "TSF-anton, Inter, system-ui, -apple-system, \"Segoe UI\", Roboto, sans-serif",
+     "px": 22.4
+    },
+    {
+     "text": "Seit mehr anderes das warum\nseit dieser warum warum.",
+     "stage": [
+      688,
+      387
+     ],
+     "fam": "TSF-anton, Inter, system-ui, -apple-system, \"Segoe UI\", Roboto, sans-serif",
+     "px": 22.4
+    }
+   ],
+   "warn": null,
+   "files": [
+    "wys_anton.mp4",
+    "Untertitel – wys_anton.srt"
+   ],
+   "size": [
+    640,
+    360
+   ],
+   "times": [
+    5.56,
+    2.33
+   ]
+  },
+  {
+   "name": "playfair",
+   "shots": [
+    {
+     "text": "Gewerkschaft Zahlen versagt das",
+     "stage": [
+      688,
+      387
+     ],
+     "fam": "TSF-playfair, Inter, system-ui, -apple-system, \"Segoe UI\", Roboto, sans-serif",
+     "px": 22.4
+    },
+    {
+     "text": "Seit mehr anderes das warum\nseit dieser warum warum.",
+     "stage": [
+      688,
+      387
+     ],
+     "fam": "TSF-playfair, Inter, system-ui, -apple-system, \"Segoe UI\", Roboto, sans-serif",
+     "px": 22.4
+    }
+   ],
+   "warn": null,
+   "files": [
+    "wys_playfair.mp4",
+    "Untertitel – wys_playfair.srt"
+   ],
+   "size": [
+    640,
+    360
+   ],
+   "times": [
+    5.56,
+    2.33
+   ]
+  },
+  {
+   "name": "inter",
+   "shots": [
+    {
+     "text": "Gewerkschaft Zahlen versagt das",
+     "stage": [
+      688,
+      387
+     ],
+     "fam": "TSF-inter, Inter, system-ui, -apple-system, \"Segoe UI\", Roboto, sans-serif",
+     "px": 22.4
+    },
+    {
+     "text": "Seit mehr anderes das warum\nseit dieser warum warum.",
+     "stage": [
+      688,
+      387
+     ],
+     "fam": "TSF-inter, Inter, system-ui, -apple-system, \"Segoe UI\", Roboto, sans-serif",
+     "px": 22.4
+    }
+   ],
+   "warn": null,
+   "files": [
+    "wys_inter.mp4",
+    "Untertitel – wys_inter.srt"
+   ],
+   "size": [
+    640,
+    360
+   ],
+   "times": [
+    5.56,
+    2.33
+   ]
+  },
+  {
+   "name": "robotocondensed",
+   "shots": [
+    {
+     "text": "Gewerkschaft Zahlen versagt das",
+     "stage": [
+      688,
+      387
+     ],
+     "fam": "TSF-robotocondensed, Inter, system-ui, -apple-system, \"Segoe UI\", Roboto, sans-serif",
+     "px": 22.4
+    },
+    {
+     "text": "Seit mehr anderes das warum\nseit dieser warum warum.",
+     "stage": [
+      688,
+      387
+     ],
+     "fam": "TSF-robotocondensed, Inter, system-ui, -apple-system, \"Segoe UI\", Roboto, sans-serif",
+     "px": 22.4
+    }
+   ],
+   "warn": null,
+   "files": [
+    "wys_robotocondensed.mp4",
+    "Untertitel – wys_robotocondensed.srt"
+   ],
+   "size": [
+    640,
+    360
+   ],
+   "times": [
+    5.56,
+    2.33
+   ]
+  },
+  {
+   "name": "archivo",
+   "shots": [
+    {
+     "text": "Gewerkschaft Zahlen versagt das",
+     "stage": [
+      688,
+      387
+     ],
+     "fam": "TSF-archivo, Inter, system-ui, -apple-system, \"Segoe UI\", Roboto, sans-serif",
+     "px": 22.4
+    },
+    {
+     "text": "Seit mehr anderes das warum\nseit dieser warum warum.",
+     "stage": [
+      688,
+      387
+     ],
+     "fam": "TSF-archivo, Inter, system-ui, -apple-system, \"Segoe UI\", Roboto, sans-serif",
+     "px": 22.4
+    }
+   ],
+   "warn": null,
+   "files": [
+    "wys_archivo.mp4",
+    "Untertitel – wys_archivo.srt"
+   ],
+   "size": [
+    640,
+    360
+   ],
+   "times": [
+    5.56,
+    2.33
+   ]
+  },
+  {
+   "name": "bebas",
+   "shots": [
+    {
+     "text": "Gewerkschaft Zahlen versagt das",
+     "stage": [
+      688,
+      387
+     ],
+     "fam": "TSF-bebas, Inter, system-ui, -apple-system, \"Segoe UI\", Roboto, sans-serif",
+     "px": 22.4
+    },
+    {
+     "text": "Seit mehr anderes das warum\nseit dieser warum warum.",
+     "stage": [
+      688,
+      387
+     ],
+     "fam": "TSF-bebas, Inter, system-ui, -apple-system, \"Segoe UI\", Roboto, sans-serif",
+     "px": 22.4
+    }
+   ],
+   "warn": null,
+   "files": [
+    "wys_bebas.mp4",
+    "Untertitel – wys_bebas.srt"
+   ],
+   "size": [
+    640,
+    360
+   ],
+   "times": [
+    5.56,
+    2.33
+   ]
+  },
+  {
+   "name": "kasten",
+   "shots": [
+    {
+     "text": "Gewerkschaft Zahlen versagt das",
+     "stage": [
+      688,
+      387
+     ],
+     "fam": "TSF-poppins, Inter, system-ui, -apple-system, \"Segoe UI\", Roboto, sans-serif",
+     "px": 22.4
+    },
+    {
+     "text": "Seit mehr anderes das warum\nseit dieser warum warum.",
+     "stage": [
+      688,
+      387
+     ],
+     "fam": "TSF-poppins, Inter, system-ui, -apple-system, \"Segoe UI\", Roboto, sans-serif",
+     "px": 22.4
+    }
+   ],
+   "warn": null,
+   "files": [
+    "wys_kasten.mp4",
+    "Untertitel – wys_kasten.srt"
+   ],
+   "size": [
+    640,
+    360
+   ],
+   "times": [
+    5.56,
+    2.33
+   ]
+  },
+  {
+   "name": "standard_kasten",
+   "shots": [
+    {
+     "text": "Gewerkschaft Zahlen versagt das",
+     "stage": [
+      688,
+      387
+     ],
+     "fam": "Inter, system-ui, -apple-system, \"Segoe UI\", Roboto, sans-serif",
+     "px": 22.4
+    },
+    {
+     "text": "Seit mehr anderes das warum\nseit dieser warum warum.",
+     "stage": [
+      688,
+      387
+     ],
+     "fam": "Inter, system-ui, -apple-system, \"Segoe UI\", Roboto, sans-serif",
+     "px": 22.4
+    }
+   ],
+   "warn": null,
+   "files": [
+    "wys_standard_kasten.mp4",
+    "Untertitel – wys_standard_kasten.srt"
+   ],
+   "size": [
+    640,
+    360
+   ],
+   "times": [
+    5.56,
+    2.33
+   ]
+  },
+  {
+   "name": "titel",
+   "shots": [
+    {
+     "text": "Seit mehr anderes das warum\nseit dieser warum warum.",
+     "stage": [
+      688,
+      387
+     ],
+     "fam": "TSF-montserrat, Inter, system-ui, -apple-system, \"Segoe UI\", Roboto, sans-serif",
+     "px": 22.4
+    }
+   ],
+   "warn": null,
+   "files": [
+    "wys_titel.mp4",
+    "Untertitel – wys_titel.srt"
+   ],
+   "size": [
+    640,
+    360
+   ],
+   "times": [
+    3
+   ]
+  },
+  {
+   "name": "hoch_standard",
+   "shots": [
+    {
+     "text": "Gewerkschaft Zahlen versagt das",
+     "stage": [
+      469,
+      834
+     ],
+     "fam": "Inter, system-ui, -apple-system, \"Segoe UI\", Roboto, sans-serif",
+     "px": 34
+    },
+    {
+     "text": "Seit mehr anderes das warum\nseit dieser warum warum.",
+     "stage": [
+      469,
+      834
+     ],
+     "fam": "Inter, system-ui, -apple-system, \"Segoe UI\", Roboto, sans-serif",
+     "px": 34
+    }
+   ],
+   "warn": null,
+   "files": [
+    "wys_hoch_standard.mp4",
+    "Untertitel – wys_hoch_standard.srt"
+   ],
+   "size": [
+    360,
+    640
+   ],
+   "times": [
+    5.56,
+    2.33
+   ]
+  },
+  {
+   "name": "hoch_poppins",
+   "shots": [
+    {
+     "text": "Gewerkschaft Zahlen versagt das",
+     "stage": [
+      469,
+      834
+     ],
+     "fam": "TSF-poppins, Inter, system-ui, -apple-system, \"Segoe UI\", Roboto, sans-serif",
+     "px": 34
+    },
+    {
+     "text": "Seit mehr anderes das warum\nseit dieser warum warum.",
+     "stage": [
+      469,
+      834
+     ],
+     "fam": "TSF-poppins, Inter, system-ui, -apple-system, \"Segoe UI\", Roboto, sans-serif",
+     "px": 34
+    }
+   ],
+   "warn": null,
+   "files": [
+    "wys_hoch_poppins.mp4",
+    "Untertitel – wys_hoch_poppins.srt"
+   ],
+   "size": [
+    360,
+    640
+   ],
+   "times": [
+    5.56,
+    2.33
+   ]
+  },
+  {
+   "name": "hoch_kasten",
+   "shots": [
+    {
+     "text": "Gewerkschaft Zahlen versagt das",
+     "stage": [
+      469,
+      834
+     ],
+     "fam": "TSF-anton, Inter, system-ui, -apple-system, \"Segoe UI\", Roboto, sans-serif",
+     "px": 44
+    },
+    {
+     "text": "Seit mehr anderes das warum\nseit dieser warum warum.",
+     "stage": [
+      469,
+      834
+     ],
+     "fam": "TSF-anton, Inter, system-ui, -apple-system, \"Segoe UI\", Roboto, sans-serif",
+     "px": 44
+    }
+   ],
+   "warn": null,
+   "files": [
+    "wys_hoch_kasten.mp4",
+    "Untertitel – wys_hoch_kasten.srt"
+   ],
+   "size": [
+    360,
+    640
+   ],
+   "times": [
+    5.56,
+    2.33
+   ]
+  }
+ ],
+ "logs": [],
+ "browser": "msedge",
+ "browserVersion": "156.0.4314.58",
+ "app": {
+  "platform": "desktop",
+  "version": "2.27.0"
+ },
+ "ok": true
+}

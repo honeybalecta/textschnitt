@@ -1,0 +1,43 @@
+{
+ "version": "2.27.0",
+ "frozen": true,
+ "ffmpeg": "D:\\a\\textschnitt\\textschnitt\\dist\\HoneyCut\\_internal\\ffmpeg\\ffmpeg.exe",
+ "probe": {
+  "ok": true,
+  "schriften": {
+   "standard": {
+    "breite": 213,
+    "soll": 215.3,
+    "hinweis": null,
+    "anders_als_standard": null,
+    "ok": true
+   },
+   "poppins": {
+    "breite": 228,
+    "soll": 229.8,
+    "hinweis": null,
+    "anders_als_standard": 0.0315,
+    "ok": true
+   },
+   "anton": {
+    "breite": 177,
+    "soll": 178.2,
+    "hinweis": null,
+    "anders_als_standard": 0.0387,
+    "ok": true
+   }
+  }
+ },
+ "standard": {
+  "family": "Arial",
+  "ps": "Arial-BoldMT",
+  "cell": [
+   0.9052734375,
+   0.2119140625
+  ],
+  "css": [
+   0.9052734375,
+   0.2119140625
+  ]
+ }
+}

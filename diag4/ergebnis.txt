@@ -1,0 +1,67 @@
+== Umgebung ==
+System: Windows-2025Server-10.0.26100-SP0 · Python des Prüfskripts: 3.12.10
+App: D:\a\textschnitt\textschnitt\dist\HoneyCut\HoneyCut.exe vorhanden: True
+== Schriftprobe des Selbsttests in der gebauten App ==
+  Version 2.27.0 · gebaut: True · Standardschrift: {'family': 'Arial', 'ps': 'Arial-BoldMT', 'cell': [0.9052734375, 0.2119140625], 'css': [0.9052734375, 0.2119140625]}
+  Ergebnis: {"ok": true, "schriften": {"standard": {"breite": 213, "soll": 215.3, "hinweis": null, "anders_als_standard": null, "ok": true}, "poppins": {"breite": 228, "soll": 229.8, "hinweis": null, "anders_als_standard": 0.0315, "ok": true}, "anton": {"breite": 177, "soll": 178.2, "hinweis": null, "anders_als_standard": 0.0387, "ok": true}}}
+
+== Vorbereitung ==
+  Testvideo: kurz.mp4 rc 0 
+  App gestartet: Prozess 9716 läuft: True · Port: 8765 · Zugang gefunden: True
+
+== Vorschau ↔ Export (helle Schrift im Bild, Anteile von Breite und Höhe) ==
+  Bedienung beendet: rc 0 
+  Browser: msedge 156.0.4314.58 · App: {'platform': 'desktop', 'version': '2.27.0'} · ok: True 
+  standard           0: Breite Export/Vorschau 0.993 · Höhe 0.948 · Mitte dx +0.0000 dy -0.0008 · passt · Vorschau Inter, system-ui, -apple-sys 22.4px · [640, 360] · Hinweis: None · 'Gewerkschaft Zahlen versagt das'
+  standard           1: Breite Export/Vorschau 1.000 · Höhe 0.991 · Mitte dx -0.0002 dy -0.0002 · passt · Vorschau Inter, system-ui, -apple-sys 22.4px · [640, 360] · Hinweis: None · 'Seit mehr anderes das warum\nseit d'
+  poppins            0: Breite Export/Vorschau 1.008 · Höhe 0.988 · Mitte dx +0.0006 dy +0.0016 · passt · Vorschau TSF-poppins, Inter, system-u 22.4px · [640, 360] · Hinweis: None · 'Gewerkschaft Zahlen versagt das'
+  poppins            1: Breite Export/Vorschau 1.011 · Höhe 1.017 · Mitte dx +0.0006 dy +0.0025 · passt · Vorschau TSF-poppins, Inter, system-u 22.4px · [640, 360] · Hinweis: None · 'Seit mehr anderes das warum\nseit d'
+  anton              0: Breite Export/Vorschau 1.008 · Höhe 0.998 · Mitte dx +0.0000 dy +0.0019 · passt · Vorschau TSF-anton, Inter, system-ui, 22.4px · [640, 360] · Hinweis: None · 'Gewerkschaft Zahlen versagt das'
+  anton              1: Breite Export/Vorschau 1.007 · Höhe 0.993 · Mitte dx +0.0006 dy +0.0005 · passt · Vorschau TSF-anton, Inter, system-ui, 22.4px · [640, 360] · Hinweis: None · 'Seit mehr anderes das warum\nseit d'
+  playfair           0: Breite Export/Vorschau 1.018 · Höhe 0.948 · Mitte dx +0.0008 dy +0.0040 · passt · Vorschau TSF-playfair, Inter, system- 22.4px · [640, 360] · Hinweis: None · 'Gewerkschaft Zahlen versagt das'
+  playfair           1: Breite Export/Vorschau 1.012 · Höhe 0.973 · Mitte dx -0.0008 dy +0.0036 · passt · Vorschau TSF-playfair, Inter, system- 22.4px · [640, 360] · Hinweis: None · 'Seit mehr anderes das warum\nseit d'
+  inter              0: Breite Export/Vorschau 1.004 · Höhe 0.998 · Mitte dx +0.0000 dy +0.0005 · passt · Vorschau TSF-inter, Inter, system-ui, 22.4px · [640, 360] · Hinweis: None · 'Gewerkschaft Zahlen versagt das'
+  inter              1: Breite Export/Vorschau 0.999 · Höhe 0.991 · Mitte dx -0.0002 dy -0.0002 · passt · Vorschau TSF-inter, Inter, system-ui, 22.4px · [640, 360] · Hinweis: None · 'Seit mehr anderes das warum\nseit d'
+  robotocondensed    0: Breite Export/Vorschau 1.012 · Höhe 0.948 · Mitte dx +0.0000 dy +0.0012 · passt · Vorschau TSF-robotocondensed, Inter,  22.4px · [640, 360] · Hinweis: None · 'Gewerkschaft Zahlen versagt das'
+  robotocondensed    1: Breite Export/Vorschau 1.007 · Höhe 1.010 · Mitte dx +0.0006 dy +0.0029 · passt · Vorschau TSF-robotocondensed, Inter,  22.4px · [640, 360] · Hinweis: None · 'Seit mehr anderes das warum\nseit d'
+  archivo            0: Breite Export/Vorschau 1.006 · Höhe 1.024 · Mitte dx +0.0000 dy +0.0012 · passt · Vorschau TSF-archivo, Inter, system-u 22.4px · [640, 360] · Hinweis: None · 'Gewerkschaft Zahlen versagt das'
+  archivo            1: Breite Export/Vorschau 1.004 · Höhe 1.004 · Mitte dx +0.0000 dy +0.0032 · passt · Vorschau TSF-archivo, Inter, system-u 22.4px · [640, 360] · Hinweis: None · 'Seit mehr anderes das warum\nseit d'
+  bebas              0: Breite Export/Vorschau 1.008 · Höhe 0.943 · Mitte dx +0.0000 dy +0.0015 · passt · Vorschau TSF-bebas, Inter, system-ui, 22.4px · [640, 360] · Hinweis: None · 'Gewerkschaft Zahlen versagt das'
+  bebas              1: Breite Export/Vorschau 1.009 · Höhe 1.004 · Mitte dx +0.0006 dy +0.0025 · passt · Vorschau TSF-bebas, Inter, system-ui, 22.4px · [640, 360] · Hinweis: None · 'Seit mehr anderes das warum\nseit d'
+  kasten             0: Breite Export/Vorschau 1.008 · Höhe 0.988 · Mitte dx +0.0006 dy +0.0016 · passt · Vorschau TSF-poppins, Inter, system-u 22.4px · [640, 360] · Hinweis: None · 'Gewerkschaft Zahlen versagt das'
+  kasten             1: Breite Export/Vorschau 1.011 · Höhe 1.017 · Mitte dx +0.0006 dy +0.0025 · passt · Vorschau TSF-poppins, Inter, system-u 22.4px · [640, 360] · Hinweis: None · 'Seit mehr anderes das warum\nseit d'
+  standard_kasten    0: Breite Export/Vorschau 0.993 · Höhe 0.948 · Mitte dx +0.0000 dy -0.0008 · passt · Vorschau Inter, system-ui, -apple-sys 22.4px · [640, 360] · Hinweis: None · 'Gewerkschaft Zahlen versagt das'
+  standard_kasten    1: Breite Export/Vorschau 1.000 · Höhe 1.010 · Mitte dx -0.0002 dy +0.0008 · passt · Vorschau Inter, system-ui, -apple-sys 22.4px · [640, 360] · Hinweis: None · 'Seit mehr anderes das warum\nseit d'
+  titel              0: Breite Export/Vorschau 0.996 · Höhe 1.001 · Mitte dx -0.0004 dy +0.0014 · passt · Vorschau TSF-montserrat, Inter, syste 22.4px · [640, 360] · Hinweis: None · 'Seit mehr anderes das warum\nseit d'
+  hoch_standard      0: Breite Export/Vorschau 1.012 · Höhe 0.982 · Mitte dx -0.0014 dy +0.0006 · passt · Vorschau Inter, system-ui, -apple-sys 34.0px · [360, 640] · Hinweis: None · 'Gewerkschaft Zahlen versagt das'
+  hoch_standard      1: Breite Export/Vorschau 1.025 · Höhe 0.988 · Mitte dx -0.0014 dy +0.0002 · passt · Vorschau Inter, system-ui, -apple-sys 34.0px · [360, 640] · Hinweis: None · 'Seit mehr anderes das warum\nseit d'
+  hoch_poppins       0: Breite Export/Vorschau 1.007 · Höhe 0.981 · Mitte dx -0.0005 dy +0.0009 · passt · Vorschau TSF-poppins, Inter, system-u 34.0px · [360, 640] · Hinweis: None · 'Gewerkschaft Zahlen versagt das'
+  hoch_poppins       1: Breite Export/Vorschau 1.006 · Höhe 1.000 · Mitte dx +0.0000 dy +0.0008 · passt · Vorschau TSF-poppins, Inter, system-u 34.0px · [360, 640] · Hinweis: None · 'Seit mehr anderes das warum\nseit d'
+  hoch_kasten        0: Breite Export/Vorschau 1.001 · Höhe 0.975 · Mitte dx -0.0009 dy +0.0012 · passt · Vorschau TSF-anton, Inter, system-ui, 44.0px · [360, 640] · Hinweis: None · 'Gewerkschaft Zahlen versagt das'
+  hoch_kasten        1: Breite Export/Vorschau 1.004 · Höhe 0.994 · Mitte dx +0.0000 dy +0.0014 · passt · Vorschau TSF-anton, Inter, system-ui, 44.0px · [360, 640] · Hinweis: None · 'Seit mehr anderes das warum\nseit d'
+  Abweichungen: 0
+
+== Protokoll der App (Schriften) ==
+  | 2026-11-15 18:35:49  libass: Using font provider directwrite (with GDI)
+  | 2026-11-15 18:35:49  libass: fontselect: (Arial, 700, 0) -> Arial-BoldMT, 0, Arial-BoldMT
+  | 2026-11-15 18:35:49  Schrift „poppins“ (poppins): Poppins-Bold.ttf, 152 kB, Familie „TS Poppins“, PostScript-Name „TSPoppins-Regular“, Zelle 1.762 Geviert
+  | 2026-11-15 18:35:50  libass: fontselect: (TS Poppins, 400, 0) -> TSPoppins-Regular, 0, TSPoppins-Regular
+  | 2026-11-15 18:35:50  Schrift „anton“ (anton): Anton-Regular.ttf, 166 kB, Familie „TS Anton“, PostScript-Name „TSAnton-Regular“, Zelle 1.733 Geviert
+  | 2026-11-15 18:35:50  libass: fontselect: (TS Anton, 400, 0) -> TSAnton-Regular, 0, TSAnton-Regular
+  | 2026-11-15 18:35:59  Desktop-App gestartet auf Port 8765 – Python 3.12.10
+  | 2026-11-15 18:36:34  Schrift „Poppins“ (poppins): Poppins-Bold.ttf, 152 kB, Familie „TS Poppins“, PostScript-Name „TSPoppins-Regular“, Zelle 1.762 Geviert
+  | 2026-11-15 18:36:42  Schrift „Anton“ (anton): Anton-Regular.ttf, 166 kB, Familie „TS Anton“, PostScript-Name „TSAnton-Regular“, Zelle 1.733 Geviert
+  | 2026-11-15 18:36:51  Schrift „Playfair“ (playfair): PlayfairDisplay-ExtraBold.ttf, 190 kB, Familie „TS Playfair“, PostScript-Name „TSPlayfair-Regular“, Zelle 1.410 Geviert
+  | 2026-11-15 18:36:52  libass: fontselect: (TS Playfair, 400, 0) -> TSPlayfair-Regular, 0, TSPlayfair-Regular
+  | 2026-11-15 18:36:59  Schrift „Inter“ (inter): Inter-Bold.ttf, 334 kB, Familie „TS Inter“, PostScript-Name „TSInter-Regular“, Zelle 1.430 Geviert
+  | 2026-11-15 18:37:00  libass: fontselect: (TS Inter, 400, 0) -> TSInter-Regular, 0, TSInter-Regular
+  | 2026-11-15 18:37:07  Schrift „Roboto Condensed“ (robotocondensed): RobotoCondensed-Bold.ttf, 141 kB, Familie „TS Roboto Condensed“, PostScript-Name „TSRobotoCondensed-Regular“, Zelle 1.200 Geviert
+  | 2026-11-15 18:37:08  libass: fontselect: (TS Roboto Condensed, 400, 0) -> TSRobotoCondensed-Regular, 0, TSRobotoCondensed-Regular
+  | 2026-11-15 18:37:15  Schrift „Archivo Black“ (archivo): ArchivoBlack-Regular.ttf, 88 kB, Familie „TS Archivo Black“, PostScript-Name „TSArchivoBlack-Regular“, Zelle 1.347 Geviert
+  | 2026-11-15 18:37:16  libass: fontselect: (TS Archivo Black, 400, 0) -> TSArchivoBlack-Regular, 0, TSArchivoBlack-Regular
+  | 2026-11-15 18:37:23  Schrift „Bebas Neue“ (bebas): BebasNeue-Regular.ttf, 59 kB, Familie „TS Bebas Neue“, PostScript-Name „TSBebasNeue-Regular“, Zelle 1.300 Geviert
+  | 2026-11-15 18:37:25  libass: fontselect: (TS Bebas Neue, 400, 0) -> TSBebasNeue-Regular, 0, TSBebasNeue-Regular
+  | 2026-11-15 18:37:48  Schrift „Montserrat“ (montserrat): Montserrat-ExtraBold.ttf, 365 kB, Familie „TS Montserrat“, PostScript-Name „TSMontserrat-Regular“, Zelle 1.562 Geviert
+  | 2026-11-15 18:37:49  libass: fontselect: (TS Montserrat, 400, 0) -> TSMontserrat-Regular, 0, TSMontserrat-Regular
+
+fertig
