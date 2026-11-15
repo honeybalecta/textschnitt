@@ -14,14 +14,15 @@ const THUMB = (uri, t, h) => TS.thumbUrl ? TS.thumbUrl(uri, +t.toFixed(1), h) : 
 
 const fmtT = t => { t = Math.max(0, t || 0); const h = Math.floor(t / 3600), m = Math.floor(t % 3600 / 60), s = Math.floor(t % 60);
   return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(s).padStart(2, '0'); };
-const fmtS = t => { t = Math.max(0, t || 0); const m = Math.floor(t / 60), s = t - m * 60; return m + ':' + s.toFixed(1).padStart(4, '0').replace('.', ','); };
+const fmtS = t => { t = Math.round(Math.max(0, t || 0) * 10) / 10; const m = Math.floor(t / 60), s = t - m * 60; return m + ':' + s.toFixed(1).padStart(4, '0').replace('.', ','); };
 const norm = w => w.toLowerCase().replace(/[.,!?;:…"„“”‚‘’'()\-–—]/g, '');
 const FILLER = /^(ä+h*m*|ä+m+|ö+h*m*|ö+m+|e+h+m*|e+m+|h+m+|mh+m+|m+h*m+|u+h+m*|uu+m+|erm|a+h+m+)$/i;
 const WD = {t: 0, v: -1, n: 0};   // Abspiel-Wächter (siehe playWatch)
 const newId = () => Math.random().toString(36).slice(2, 10);
 const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
 const r3 = x => +(+x).toFixed(3);
-const sentEnd = w => /[.?!…]$/.test(w || '') && !/^\d+\.$/.test(w || '');   // „am 31.“ ist kein Satzende
+const SENT_END = /[.?!…؟۔]$/;   // „؟“ und „۔“: Fragezeichen und Punkt in arabischer Schrift
+const sentEnd = w => SENT_END.test(w || '') && !/^\d+\.$/.test(w || '');   // „am 31.“ ist kein Satzende
 const tokText = t => (P && P.edits && P.edits[t.i] != null) ? P.edits[t.i] : t.text;
 const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;'}[c]));
 function toast(msg){ const t = $('#toast'); t.textContent = msg; t.classList.add('on'); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('on'), 2600); }
@@ -363,31 +364,85 @@ const range = (a, b) => { const r = []; for (let k = a; k <= b; k++) r.push(k); 
 function envDb(si, t){ const s = P.sources[si], a = envArr(s); if (!a) return 0; const i = Math.round((t - s.off) * 100); return i < 0 || i >= a.length ? -90 : a[i] / 2.8 - 90; }
 
 // ───────── Projektliste ─────────
+// Suche, Reihenfolge, Vorschaubild und „Duplizieren“ (A9). Das Vorschaubild ist das zuletzt gesehene Bild des Projekts, klein im Gerät
+// abgelegt (localStorage); wo das Backend Bilder aus dem Video liefert (Windows), springt es für noch nie geöffnete Projekte ein.
+let homeList = [];
+const THUMB_KEY = id => 'hc-thumb-' + id;
+const HOME_SORT = {new: (a, b) => b.updated - a.updated, old: (a, b) => a.updated - b.updated, len: (a, b) => b.duration - a.duration || b.updated - a.updated,
+  name: (a, b) => String(a.name).localeCompare(String(b.name), 'de', {numeric: true, sensitivity: 'base'}) || b.updated - a.updated};
+try { const v = localStorage.getItem('hc-home-sort'); if (HOME_SORT[v]) $('#projSort').value = v; } catch(_){}
+function projThumb(p){ try { const d = localStorage.getItem(THUMB_KEY(p.id)); if (d) return d; } catch(_){} return p.thumb ? THUMB(p.thumb, Math.min(1, (p.duration || 2) / 2), 96) : ''; }
+// Bild an der Abspiellinie als kleines Vorschaubild merken (beim Schließen und beim Verlassen der Seite)
+function saveThumb(){
+  if (!P || !timeline.length) return;
+  try {
+    const g = timeline[curSeg], el = g && g.kind === 'insert' ? (isImg(g.item.clip) ? II : IV) : V, w = el.videoWidth || el.naturalWidth, h = el.videoHeight || el.naturalHeight;
+    if (!w || !h || (el.readyState != null && el.readyState < 2)) return;
+    const H = 120, W = Math.max(40, Math.round(H * w / h)), c = document.createElement('canvas'); c.width = W; c.height = H;
+    c.getContext('2d').drawImage(el, 0, 0, W, H);
+    const d = c.toDataURL('image/jpeg', 0.7); if (d.length > 400 && d.length < 80000) localStorage.setItem(THUMB_KEY(P.id), d);
+  } catch(_){}
+}
+function duplicateProject(id){
+  let p = null; try { p = J(TS.loadProject(id)); } catch(_){}
+  if (!p || typeof p !== 'object') return toast('Projekt konnte nicht geladen werden');
+  const names = new Set(homeList.map(x => x.name)), base = String(p.name || 'Projekt').replace(/ \(Kopie(?: \d+)?\)$/, ''); let name = base + ' (Kopie)', k = 2;
+  while (names.has(name)) name = `${base} (Kopie ${k++})`;
+  p.id = newId(); p.name = name; p.created = p.updated = Date.now();
+  try { TS.saveProject(p.id, JSON.stringify(p)); } catch(e){ return toast('Duplizieren fehlgeschlagen: ' + ((e && e.message) || e)); }
+  try { const d = localStorage.getItem(THUMB_KEY(id)); if (d) localStorage.setItem(THUMB_KEY(p.id), d); } catch(_){}
+  showHome(); toast(`„${name}“ angelegt – als Ausgangspunkt für eine Variante`);
+}
 function showHome(){
   $('#home').classList.remove('hidden'); $('#proj').classList.add('hidden');
-  const list = J(TS.listProjects()) || [];
-  const box = $('#projList'); box.innerHTML = '';
-  $('#homeEmpty').classList.toggle('hidden', list.length > 0);
-  list.sort((a, b) => b.updated - a.updated).forEach(p => {
-    const el = document.createElement('div'); el.className = 'proj-item';
-    el.innerHTML = `<div class="meta"><b></b><span class="muted small"></span></div><button class="del ren" title="Umbenennen">✎</button>${TS.versions ? '<button class="del ver" title="Frühere Fassungen dieses Projekts">🕘</button>' : ''}${TS.exportPackage ? '<button class="del share" title="Projekt weitergeben (.honeycut) – auf einem anderen Gerät oder von einer anderen Person weiterbearbeiten">⤴</button>' : ''}<button class="del" title="Löschen">🗑</button>`;
-    el.querySelector('b').textContent = p.name;
-    el.querySelector('span').textContent = `${fmtT(p.duration)}${p.sources > 1 ? ` · ${p.sources} Videos` : ''} · ${p.transcribed ? 'transkribiert' : 'noch nicht transkribiert'} · ${new Date(p.updated).toLocaleDateString('de-DE')}`;
-    el.onclick = e => { if (e.target.closest('.del,.name-edit')) return; openProject(p.id); };
-    const sh = el.querySelector('.share'); if (sh) sh.onclick = () => packageDialog(p.id);
-    el.querySelector('.ren').onclick = () => { const b = el.querySelector('b'); if (b) editNameInline(b, p.name, v => { if (renameProject(p.id, v)){ p.name = v; b.textContent = v; toast('Umbenannt'); } }); };
-    const ve = el.querySelector('.ver'); if (ve) ve.onclick = () => openVersions(p);
-    el.querySelector('.del:not(.share):not(.ren):not(.ver)').onclick = () => { if (confirm(`„${p.name}“ löschen? Deine Videos bleiben erhalten.` + (TS.trash ? '\n\nDas Projekt liegt danach noch 30 Tage im Papierkorb.' : ''))) { TS.deleteProject(p.id); showHome(); } };
-    box.append(el);
-  });
+  homeList = J(TS.listProjects()) || [];
+  // Vorschaubilder aufräumen: gelöschte Projekte, und bei sehr vielen Projekten bleiben nur die der 120 zuletzt bearbeiteten im Gerät
+  // (der Platz dort ist begrenzt und wird auch für Looks, Füllwörter und Designprofile gebraucht)
+  try { const ids = new Set([...homeList].sort(HOME_SORT.new).slice(0, 120).map(p => p.id)); for (let k = localStorage.length - 1; k >= 0; k--){ const key = localStorage.key(k); if (key && key.startsWith('hc-thumb-') && !ids.has(key.slice(9))) localStorage.removeItem(key); } } catch(_){}
+  renderHome();
   renderUpdateBanner();
-  // Papierkorb (Desktop): gelöschte Projekte lassen sich 30 Tage lang zurückholen
-  const nTrash = TS.trashCount ? TS.trashCount() : 0;
-  if (nTrash){ const t = document.createElement('button'); t.className = 'btn small trash-link'; t.textContent = `🗑 Papierkorb (${nTrash})`; t.onclick = openTrash; box.append(t); }
   $('#homeHint').textContent = CAP.platform === 'web' ? 'Wähle ein oder mehrere Videos von deinem Gerät. Sie werden nicht hochgeladen: Transkription, Schnitt und Export laufen komplett in deinem Browser.'
     : CAP.platform === 'desktop' ? 'Wähle ein oder mehrere Videos (Strg/Umschalt für mehrere). Sie werden hintereinandergehängt und gemeinsam transkribiert.'
     : 'Wähle ein oder mehrere Videos aus deiner Galerie. Sie werden hintereinandergehängt und auf dem Gerät transkribiert – du schneidest dann über den Text.';
 }
+function renderHome(){
+  const box = $('#projList'); box.innerHTML = '';
+  const words = $('#projFind').value.toLowerCase().split(/\s+/).filter(Boolean), all = homeList;
+  $('#homeEmpty').classList.toggle('hidden', all.length > 0);
+  $('#homeFind').classList.toggle('hidden', all.length < 5 && !words.length);
+  const list = all.filter(p => { const n = String(p.name || '').toLowerCase(); return words.every(w => n.includes(w)); }).sort(HOME_SORT[$('#projSort').value] || HOME_SORT.new);
+  if (!list.length && all.length){ const e = document.createElement('p'); e.className = 'muted home-none'; e.textContent = `Kein Projekt passt zu „${$('#projFind').value.trim()}“.`; box.append(e); }
+  for (const p of list){
+    const el = document.createElement('div'); el.className = 'proj-item'; el.dataset.id = p.id;
+    el.innerHTML = `<span class="pthumb"></span><div class="meta"><b></b><span class="muted small"></span></div><div class="pacts"><button class="del ren" title="Umbenennen">✎</button><button class="del dup" title="Duplizieren – als Ausgangspunkt für eine Variante">⧉</button>${TS.versions ? '<button class="del ver" title="Frühere Fassungen dieses Projekts">🕘</button>' : ''}${TS.exportPackage ? '<button class="del share" title="Projekt weitergeben (.honeycut) – auf einem anderen Gerät oder von einer anderen Person weiterbearbeiten">⤴</button>' : ''}<button class="del kill" title="Löschen">🗑</button></div><button class="del more" title="Umbenennen, Duplizieren, Weitergeben, Löschen">⋯</button>`;
+    el.querySelector('b').textContent = p.name;
+    el.querySelector('.meta span').textContent = `${fmtT(p.duration)}${p.sources > 1 ? ` · ${p.sources} Videos` : ''} · ${p.transcribed ? 'transkribiert' : 'noch nicht transkribiert'} · ${new Date(p.updated).toLocaleDateString('de-DE')}`;
+    const src = projThumb(p), th = el.querySelector('.pthumb');
+    if (src){ const im = document.createElement('img'); im.alt = ''; im.loading = 'lazy'; im.onerror = () => { im.remove(); th.innerHTML = icon('🎞'); }; im.src = src; th.append(im); } else th.innerHTML = icon('🎞');
+    const acts = {
+      ren: () => { const b = el.querySelector('b'); if (b) editNameInline(b, p.name, v => { if (renameProject(p.id, v)){ p.name = v; b.textContent = v; toast('Umbenannt'); } }); },
+      dup: () => duplicateProject(p.id),
+      ver: () => openVersions(p),
+      share: () => packageDialog(p.id),
+      kill: () => { if (confirm(`„${p.name}“ löschen? Deine Videos bleiben erhalten.` + (TS.trash ? '\n\nDas Projekt liegt danach noch 30 Tage im Papierkorb.' : ''))) { TS.deleteProject(p.id); showHome(); } },
+    };
+    el.onclick = e => {
+      if (e.target.closest('.name-edit')) return;
+      const b = e.target.closest('.del'); if (!b) return openProject(p.id);
+      if (b.classList.contains('more')){ const r = b.getBoundingClientRect();   // schmale Bildschirme: alle Handgriffe in einem Menü
+        return showMenu(Math.min(r.left, innerWidth - 240), r.bottom + 4, [{icon: icon('✎'), label: 'Umbenennen', fn: acts.ren}, {icon: icon('⧉'), label: 'Duplizieren', fn: acts.dup},
+          ...(TS.versions ? [{icon: icon('🕘'), label: 'Frühere Fassungen', fn: acts.ver}] : []), ...(TS.exportPackage ? [{icon: icon('⤴'), label: 'Weitergeben', fn: acts.share}] : []), {icon: icon('🗑'), label: 'Löschen', fn: acts.kill, cls: 'danger'}]); }
+      for (const k in acts) if (b.classList.contains(k)) return acts[k]();
+    };
+    box.append(el);
+  }
+  // Papierkorb (Desktop): gelöschte Projekte lassen sich 30 Tage lang zurückholen
+  const nTrash = TS.trashCount ? TS.trashCount() : 0;
+  if (nTrash){ const t = document.createElement('button'); t.className = 'btn small trash-link'; t.textContent = `🗑 Papierkorb (${nTrash})`; t.onclick = openTrash; box.append(t); }
+}
+$('#projFind').addEventListener('input', renderHome);
+$('#projFind').addEventListener('keydown', e => { if (e.key === 'Escape' && $('#projFind').value){ $('#projFind').value = ''; renderHome(); } });
+$('#projSort').addEventListener('change', () => { try { localStorage.setItem('hc-home-sort', $('#projSort').value); } catch(_){} renderHome(); });
 if (CAP.version && CAP.platform !== 'web'){ const v = document.createElement('p'); v.className = 'muted small'; v.style.cssText = 'text-align:center;margin:24px 0 90px'; v.textContent = 'HoneyCut ' + CAP.version; $('#home .home-body').append(v); }
 $('#newProj').onclick = async () => { const list = asList(await pickMedia('videos')); if (list.length) createProject(list); };
 function createProject(list){
@@ -419,7 +474,7 @@ function openProjectNow(id, keep){
   if (!np || typeof np !== 'object') return toast('Projekt konnte nicht geladen werden');   // das offene Projekt bleibt dabei unberührt
   P = np; clearTimeout(saveRetryT); saveFails = 0; $('#saved').classList.remove('err'); $('#saved').textContent = '';
   if (!P.sources){ P.sources = [P.main]; P.sources[0].tr = !!(P.tokens || []).length; delete P.main; }   // altes Format (ein Video)
-  P.adj ||= {}; P.speakers ||= []; P.slides ||= []; P.items ||= []; P.dels ||= []; P.splits ||= []; P.edits ||= {}; P.moves ||= []; P.trims ||= {}; P.settings ||= {pad:0.06}; P.cues ||= [];
+  P.adj ||= {}; P.speakers ||= []; P.slides ||= []; P.items ||= []; P.marks ||= []; P.dels ||= []; P.splits ||= []; P.edits ||= {}; P.moves ||= []; P.trims ||= {}; P.settings ||= {pad:0.06}; P.cues ||= [];
   if (P.settings.burn == null) P.settings.burn = true;
   P.sub_style = {...DEF_STYLE, ...(P.sub_style || {})}; if (P.sub_style.y == null) P.sub_style.y = POS_Y[P.sub_style.pos] ?? 0.88;
   tokens = P.tokens || []; tokens.forEach(t => { if (t.src == null) t.src = 0; });
@@ -429,7 +484,7 @@ function openProjectNow(id, keep){
   projNameEl.textContent = P.name; $('#exName').value = P.name + '_geschnitten';
   const [ow, oh] = baseDims(); $('#exRes').options[0].textContent = `Original (${ow}×${oh})`;
   fitStage(); setTimeout(fitStage, 60);
-  fillModels(); syncStyleInputs(); renderExportForm();
+  fillModels(); syncLang(); syncSafe(); syncStyleInputs(); renderExportForm();
   if (tokens.length){ renderTranscript(); if (!P.cues.length) genCues(); }
   recompute();
   $('.clip-tab').classList.toggle('hidden', !P.clipOf && !P.format);
@@ -464,7 +519,7 @@ $('#proj').addEventListener('pointerdown', () => { if ($('#proj').classList.cont
 // Offenes Projekt merken: Lädt die Oberfläche neu (Android: auf-/zuklappen, Speicher knapp), geht es dort weiter
 const OPEN_KEY = 'hc-open';
 addEventListener('pagehide', () => rememberOpen()); document.addEventListener('visibilitychange', () => { if (document.hidden) rememberOpen(); });
-function rememberOpen(){ if (!P || document.body.classList.contains('solo')) return; try { localStorage.setItem(OPEN_KEY, JSON.stringify({id: P.id, tab, pos: outPos, at: Date.now()})); } catch(_){} }
+function rememberOpen(){ if (!P || document.body.classList.contains('solo')) return; if (document.hidden) saveThumb(); try { localStorage.setItem(OPEN_KEY, JSON.stringify({id: P.id, tab, pos: outPos, at: Date.now()})); } catch(_){} }
 // ───────── Verwaltung (Desktop): frühere Fassungen und Papierkorb ─────────
 const fmtWhen = ms => new Date(ms).toLocaleString('de-DE', {weekday:'short', day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'});
 const fmtBytes = b => b >= 1e9 ? (b / 1e9).toFixed(1).replace('.', ',') + ' GB' : b >= 1e6 ? Math.round(b / 1e6) + ' MB' : b >= 1e3 ? Math.round(b / 1e3) + ' KB' : (b || 0) + ' B';
@@ -642,14 +697,18 @@ function openUpdate(u){
 setTimeout(() => { if (!$('#home').classList.contains('hidden')) renderUpdateBanner(); }, 50000);   // die Prüfung läuft eine halbe Minute nach dem Start
 
 // ── Alle Projekte sichern, Sicherung einspielen (Desktop) ──
-// Gesichert werden die Projekte samt Folienbildern und Schriften, dazu die eigenen Designprofile und Farbfavoriten – ohne die Videos.
-const PREF_KEYS = ['hc-slide-profiles', 'hc-colfav'];
+// Gesichert werden die Projekte samt Folienbildern und Schriften, dazu die eigenen Designprofile, Farbfavoriten, Füllwörter und
+// Untertitel-Looks – ohne die Videos.
+const PREF_KEYS = ['hc-slide-profiles', 'hc-colfav', 'hc-fillers', 'hc-sub-looks'];
 function uiPrefs(){ const o = {}; for (const k of PREF_KEYS){ try { const v = JSON.parse(localStorage.getItem(k)); if (Array.isArray(v) && v.length) o[k] = v; } catch(_){} } return o; }
 function mergePrefs(pr){
   let n = 0; if (!pr || typeof pr !== 'object') return 0;
   try { if (window.slUserProfiles){ const have = slUserProfiles(), add = (pr['hc-slide-profiles'] || []).filter(p => p && p.id && p.colors && !have.some(h => h.id === p.id)); if (add.length){ slSaveUserProfiles(have.concat(add)); n += add.length; } } } catch(_){}
   try { const add = (pr['hc-colfav'] || []).filter(c => typeof c === 'string' && /^#[0-9a-f]{6}$/i.test(c)).map(c => c.toUpperCase()).filter(c => !favCols.includes(c));
     if (add.length){ favCols = favCols.concat(add).slice(0, 16); saveFavs(); n += add.length; } } catch(_){}
+  try { const add = (pr['hc-fillers'] || []).filter(x => typeof x === 'string' && fillKey(x) && !ownFill.some(y => fillKey(y) === fillKey(x)));
+    if (add.length){ ownFill = ownFill.concat(add).slice(0, 200); saveOwnFill(); n += add.length; } } catch(_){}
+  try { n += mergeLooks(pr['hc-sub-looks']); } catch(_){}
   return n;
 }
 const plural = (k, one, many) => `${k} ${k === 1 ? one : many}`;
@@ -685,7 +744,7 @@ async function backupRestore(){
       if (len('kept')) parts.push(`${plural(len('kept'), 'Projekt ist', 'Projekte sind')} hier neuer und ${len('kept') === 1 ? 'bleibt' : 'bleiben'} so`);
       if (res.same) parts.push(`${plural(res.same, 'Projekt war', 'Projekte waren')} schon auf diesem Stand`);
       if (len('failed')) parts.push(`${plural(len('failed'), 'Projekt ließ', 'Projekte ließen')} sich nicht lesen`);
-      const extra = [res.fonts ? plural(res.fonts, 'Schrift', 'Schriften') : '', res.slides ? plural(res.slides, 'Bild', 'Bilder') : '', nPref ? plural(nPref, 'Designprofil oder Farbfavorit', 'Designprofile und Farbfavoriten') : ''].filter(Boolean);
+      const extra = [res.fonts ? plural(res.fonts, 'Schrift', 'Schriften') : '', res.slides ? plural(res.slides, 'Bild', 'Bilder') : '', nPref ? plural(nPref, 'eigene Einstellung', 'eigene Einstellungen') + ' (Designprofile, Farbfavoriten, Füllwörter, Looks)' : ''].filter(Boolean);
       m.querySelector('#pkgMsg').textContent = (res.created ? `Sicherung vom ${new Date(res.created).toLocaleDateString('de-DE')}: ` : '') + (parts.length ? parts.join(', ') + '.' : 'Die Sicherung enthält keine Projekte.')
         + (extra.length ? ` Dazu ${extra.join(', ')}.` : '') + (len('updated') || len('kept') ? ' Der jeweils andere Stand liegt bei den früheren Fassungen des Projekts.' : '');
       m.querySelector('#pkgCancel').textContent = 'Schließen';
@@ -738,7 +797,7 @@ const projNameEl = $('#projName');   // fest gemerkt: Während des Umbenennens s
 projNameEl.title = 'Anklicken zum Umbenennen';
 projNameEl.onclick = () => { if (P) editNameInline(projNameEl, P.name, v => { if (renameProject(P.id, v)) toast('Umbenannt'); }); };
 function closeProject(){
-  pausePlay();
+  pausePlay(); saveThumb();
   if (!saveNow() && !confirm('Der letzte Stand ließ sich nicht speichern (' + ($('#saved').title || 'Grund unbekannt') + ').\n\nOK: trotzdem schließen – die letzten Änderungen gehen verloren.\nAbbrechen: im Projekt bleiben.')) return;
   clearTimeout(saveRetryT); saveFails = 0; busBye();
   try { localStorage.removeItem(OPEN_KEY); } catch(_){} setFull(false); allLayers(releaseMedia); for (const el of audLayers.values()) releaseMedia(el); audLayers.clear(); busPid = null; P = null; V.removeAttribute('src'); V.load(); vSi = -1; hideOverlay(); showHome(); }
@@ -755,7 +814,7 @@ function fitStage(){
     let W = availW, H = W * h / w; if (H > boxH){ H = boxH; W = H * w / h; }
     st.style.width = Math.floor(W) + 'px'; st.style.height = Math.floor(H) + 'px';
     for (const el of [$('#sideL'), $('#sideR')]) el.classList.add('hidden');
-    styleOverlay(); refreshStageOverlays(); return; }
+    styleOverlay(); refreshStageOverlays(); placeSafe(); return; }
   if (fill){ wrap.style.height = ''; boxH = wrap.clientHeight || innerHeight * 0.6; }
   else { boxH = Math.round(h > w ? Math.max(150, innerHeight * 0.38) : Math.min(availW * 9 / 16, Math.max(150, innerHeight * 0.36))); wrap.style.height = boxH + 'px'; }   // Hochformat: mehr Höhe, die Seiten nutzen die Steuerung
   const boxW = fill ? availW : Math.min(availW, boxH * 16 / 9);
@@ -764,7 +823,7 @@ function fitStage(){
   st.style.width = Math.floor(W) + 'px'; st.style.height = Math.floor(H) + 'px';
   const side = Math.floor((availW - W) / 2), show = side >= 64;
   for (const el of [$('#sideL'), $('#sideR')]){ el.classList.toggle('hidden', !show); el.style.width = show ? Math.min(side, 170) + 'px' : ''; el.style.height = Math.floor(fill ? H : boxH) + 'px'; }
-  styleOverlay(); refreshStageOverlays();
+  styleOverlay(); refreshStageOverlays(); placeSafe();
 }
 // Einblendungen und Titel nach einer Größenänderung der Bühne neu setzen
 function refreshStageOverlays(){ if (!P || typeof outPos === 'undefined') return; try { updateOverlay(outPos); updateTitles(outPos); } catch(_){} }
@@ -806,7 +865,7 @@ function closeHcModal(){ const m = $('#hcModal'); if (m) m.remove(); }
 // Projekt, wie er ist. Früher wurde er wie eine Datei behandelt – unter Windows brach das Weitergeben daran ab
 // („stat: path too long for Windows“).
 const inlineUri = u => /^(data:|blob:|https?:)/i.test(u) || u.length > 2000;
-function packageSpec(proj, withMedia){
+function packageSpec(proj, withMedia, withLooks){
   const p = JSON.parse(JSON.stringify(proj)), files = [], hfiles = [], byUri = new Map();
   const fileFor = (m, kind) => {
     if (byUri.has(m.uri)) return byUri.get(m.uri);
@@ -827,7 +886,10 @@ function packageSpec(proj, withMedia){
   if (p.sub_style && p.sub_style.font) p.sub_style.font = fontKey(p.sub_style.font);
   for (const it of p.items || []) if (it.font) it.font = fontKey(it.font);
   for (const sp of p.speakers || []) if (sp.st && sp.st.font) sp.st.font = fontKey(sp.st.font);
-  const header = {format: 'honeycut-projekt', v: 1, app: CAP.version || '', platform: CAP.platform || '', created: Date.now(), name: p.name, project: p, files: hfiles};
+  if (p.textline && p.textline.font) p.textline.font = fontKey(p.textline.font);
+  // eigene Untertitel-Looks mitgeben (samt ihrer Schriften), damit das andere Gerät sie übernehmen kann
+  const looks = withLooks ? subLooks.map(l => { const st = {...l.st}; if (st.font) st.font = fontKey(st.font); return {id: l.id, name: l.name, st}; }) : [];
+  const header = {format: 'honeycut-projekt', v: 1, app: CAP.version || '', platform: CAP.platform || '', created: Date.now(), name: p.name, project: p, files: hfiles, ...(looks.length ? {looks} : {})};
   return {name: p.name || 'Projekt', header, files};
 }
 function packageDialog(pid){
@@ -838,12 +900,13 @@ function packageDialog(pid){
     <p class="muted small">„${esc(proj.name || 'Projekt')}“ wird als eine Datei (.honeycut) gespeichert. Die Datei z. B. über eine Cloud, per USB oder AirDrop/Quick Share aufs andere Gerät bringen und dort mit „Projekt importieren“ öffnen.</p>
     <label class="row"><input type="checkbox" id="pkgMedia" checked> Videos, Bilder und Schriften mitschicken</label>
     <p class="muted small" id="pkgHint">Ohne: nur der Schnitt (kleine Datei). Das andere Gerät nimmt dann die Videos aus einer früher empfangenen Fassung dieses Projekts oder fragt nach ihnen.</p>
+    ${subLooks.length ? `<label class="row"><input type="checkbox" id="pkgLooks" checked> Meine Untertitel-Looks mitgeben (${subLooks.length})</label>` : ''}
     <div class="progress hidden" id="pkgProg"><i></i></div><div class="small muted" id="pkgMsg"></div>
     <div class="row" style="margin-top:12px"><button class="btn" id="pkgCancel">Abbrechen</button><button class="btn primary" id="pkgGo" style="margin-left:auto">Exportieren</button></div>`);
   let job = null;
   m.querySelector('#pkgCancel').onclick = () => { if (job) TS.cancel(job); closeHcModal(); };
   m.querySelector('#pkgGo').onclick = async () => {
-    const spec = packageSpec(proj, m.querySelector('#pkgMedia').checked);
+    const spec = packageSpec(proj, m.querySelector('#pkgMedia').checked, !!(m.querySelector('#pkgLooks') && m.querySelector('#pkgLooks').checked));
     m.querySelector('#pkgGo').disabled = true;
     const r = await platformCall(id => TS.exportPackage(id, JSON.stringify(spec)));
     if (!r || !r.job){ m.querySelector('#pkgGo').disabled = false; return; }
@@ -890,6 +953,8 @@ async function finishImport(res){
   if (proj.sub_style && proj.sub_style.font) proj.sub_style.font = fk(proj.sub_style.font);
   for (const it of proj.items || []) if (it.font) it.font = fk(it.font);
   for (const sp of proj.speakers || []) if (sp.st && sp.st.font) sp.st.font = fk(sp.st.font);
+  if (proj.textline && proj.textline.font) proj.textline.font = fk(proj.textline.font);
+  let nLooks = 0; try { nLooks = mergeLooks((header.looks || []).map(l => ({...l, st: {...(l && l.st), font: fk(l && l.st && l.st.font)}}))); } catch(_){}
   // fehlende Dateien: auf diesem Gerät auswählen lassen
   if (missing.length) await relinkDialog(proj, missing.map(n => ({n, ...info(n)})));
   if (old){
@@ -899,7 +964,7 @@ async function finishImport(res){
   if (P && P.id === proj.id) closeProject();
   TS.saveProject(proj.id, JSON.stringify(proj));
   closeHcModal(); showHome(); openProject(proj.id);
-  toast(`„${proj.name}“ importiert` + (hf.some(f => f.included) ? '' : ' – ohne mitgeschickte Dateien'));
+  toast(`„${proj.name}“ importiert` + (hf.some(f => f.included) ? '' : ' – ohne mitgeschickte Dateien') + (nLooks ? ` · ${nLooks} ${nLooks === 1 ? 'Untertitel-Look' : 'Untertitel-Looks'} übernommen` : ''));
 }
 // Dateien, die nicht im Paket waren und hier nicht gefunden wurden, selbst auswählen
 function relinkDialog(proj, list){
@@ -1017,16 +1082,20 @@ function tokMarks(){ const o = {}; for (const t of tokens) if (t.spk || t.ks) o[
 // Zum Stand gehören auch Format, Bildausschnitt und die Lautstärke der Hauptvideos (fm, fr, sv). Sie fehlten: „Rückgängig“
 // nach einem Formatwechsel, nach dem Verschieben des Ausschnitts oder nach „Alle angleichen“ tat nichts bzw. nur die Hälfte.
 function snapshot(){ return JSON.stringify({d:[...deleted], t:P.trims, c:P.cues, i:P.items, a:P.adj, x:P.dels, y:P.splits, s:P.sub_style, e:P.edits, m:P.moves, k:P.speakers, w:tokMarks(), f:P.slides, wm:P.watermark || null, tr:P.trans || null,
-  fm:P.format || null, fr:P.frame || null, sv:P.sources.map(x => x.vol == null ? null : x.vol)}); }
+  fm:P.format || null, fr:P.frame || null, sv:P.sources.map(x => x.vol == null ? null : x.vol), mk:P.marks || [], tl:P.textline || null}); }
 function restore(s){ const o = JSON.parse(s); deleted = new Set(o.d); P.trims = o.t; P.cues = o.c; P.items = o.i; P.adj = o.a; P.dels = o.x || []; P.splits = o.y || [];
   if (o.s) P.sub_style = o.s; P.edits = o.e || {}; P.moves = o.m || [];
   const fmCh = 'fm' in o && (P.format || null) !== (o.fm || null), frCh = 'fr' in o && JSON.stringify(P.frame || null) !== JSON.stringify(o.fr || null);
   if ('fm' in o) P.format = o.fm || null; if ('fr' in o) P.frame = o.fr || null;
   if (o.sv) o.sv.forEach((v, k) => { const x = P.sources[k]; if (!x) return; if (v == null) delete x.vol; else x.vol = v; });
+  const mkCh = 'mk' in o && JSON.stringify(P.marks || []) !== JSON.stringify(o.mk || []);
+  if ('mk' in o) P.marks = o.mk || [];
+  if ('tl' in o){ if (o.tl) P.textline = o.tl; else delete P.textline; viewTextline(); }
   if (o.f) P.slides = o.f; if (o.k) P.speakers = o.k;
   if ('wm' in o){ if (o.wm) P.watermark = o.wm; else delete P.watermark; } if ('tr' in o){ if (o.tr) P.trans = o.tr; else delete P.trans; trMemo.list = null; } if (o.w){ for (const t of tokens){ const m = o.w[t.i]; if (m){ if (m[0]) t.spk = m[0]; else delete t.spk; if (m[1]) t.ks = true; else delete t.ks; } else { delete t.spk; delete t.ks; } } }
   const reorder = JSON.stringify(P.moves) !== lastOrderKey; syncStyleInputs(); changed(true);
-  if (reorder && tokens.length) renderTranscript(); else tokens.forEach(t => paint(t.i));
+  if ((reorder || mkCh) && tokens.length) renderTranscript(); else tokens.forEach(t => paint(t.i));
+  if (mkCh){ paintMarksBtn(); if (marksSheetOpen()) renderMarksSheet(); }
   if (fmCh || frCh) frameRestored(fmCh); }
 // Format oder Bildausschnitt kamen mit einem früheren Stand zurück: Bühne, Export-Angaben, Clip-Reiter und Folien nachziehen
 function frameRestored(fmCh){
@@ -1097,7 +1166,8 @@ function changed(rerender = true){
   if (rerender){ if (tab === 'subs') renderSubs(); if (studioOn() && window.renderStudio) renderStudio(); }
   else if (tab === 'subs') updateSubsList();
   cueCache.at = -1; if (!playing) updateSubs(outPos);
-  if (tab === 'export') renderExport();
+  if (tab === 'export') renderExport(); else if (tab === 'clip') renderLenLights();
+  textLater();
   clearTimeout(saveT); $('#saved').textContent = '…'; saveT = setTimeout(saveNow, 700);
   if (!applyingRemote && busOn()){ clearTimeout(busT); busT = setTimeout(() => { if (busOn()) busSend({t:'state', snap: snapshot()}); }, 120); }
 }
@@ -1140,7 +1210,7 @@ function buildTokens(words, duration, bursts){
     let newPara = false;
     if (out.length){
       const last = [...out].reverse().find(t => t.type !== 'pause');
-      const ends = last && /[.?!…]$/.test(last.text);
+      const ends = last && SENT_END.test(last.text);
       if (gap >= PARA_GAP || (paraWords >= PARA_MAX && ends)) newPara = true;
     }
     let regionStart;
@@ -1454,6 +1524,7 @@ function drawScrub(){
   for (const g of timeline){ const d = document.createElement('div'); d.className = 's ' + g.kind + (g.kind === 'main' && g.si % 2 ? ' alt' : ''); d.style.left = pct(g.o); d.style.width = `calc(${pct(segDur(g))} - 1px)`; box.append(d); }
   for (const o of overlays){ const d = document.createElement('div'); d.className = 'ovl'; d.style.left = pct(o.at); d.style.width = pct(o.end - o.at); box.append(d); }
   for (const z of P.items.filter(x => x.type === 'zoom')){ const a = srcToOut(snapSrc(z.at)), b = srcToOut(snapSrc(z.at + z.dur)); const d = document.createElement('div'); d.className = 'zm'; d.style.left = pct(a); d.style.width = pct(Math.max(0.2, b - a)); box.append(d); }
+  for (const m of P.marks || []){ if (m.k === 'note' && m.done) continue; const o = markOut(m); if (markGone(o)) continue; const d = document.createElement('div'); d.className = 'mk ' + m.k; d.style.left = pct(o); box.append(d); }
 }
 
 // ───────── Wiedergabe ─────────
@@ -1921,6 +1992,179 @@ function wmPlan(W, H){
   return [{mode: 'pip', image: true, uri: w.clip.uri, in: 0, out: r3(total), at: 0, x: r3(r.cx / W), y: r3(r.cy / H), w: +(r.w / W).toFixed(4), aspect: +clipAspect(w.clip).toFixed(5),
     track: 99, vol: 0, hasAudio: false, width: w.clip.width, height: w.clip.height, rotation: 0, opacity: +(+(w.op ?? WM_DEF.op)).toFixed(3), watermark: true}];
 }
+// ── Dauerhafte Textzeile (B9): eine kleine Zeile über die ganze Länge – Kanalname, Kennzeichnung, „V. i. S. d. P.“ ──
+// P.textline = {text, pos: o/u + l/m/r, size und margin als Anteil der kürzeren Bildseite, color, outline, bg, font, on, safe}.
+// safe (Vorgabe: an): Sind Schutzzonen eingeschaltet, rückt die Zeile in die freie Fläche; am Bildrand läge sie unter den Bedienelementen der Apps.
+// Im Export ist sie ein Titel von 0 bis zum Ende (mit „line“ gekennzeichnet), damit alle Plattformen sie ohne Sonderweg zeichnen.
+const TLINE_DEF = {text: '', pos: 'ul', size: 0.028, margin: 0.035, color: '#FFFFFF', outline: true, bg: false, font: '', on: true, safe: true};
+const tlineOn = () => !!(P && P.textline && P.textline.on !== false && String(P.textline.text || '').trim());
+const tlineText = () => String(P.textline.text || '').replace(/\s+/g, ' ').trim();
+const tlinePx = (t, W, H) => t.size * Math.min(W, H) * (H > W ? 1.25 : 1);
+// Maße im Bild W × H: Randabstände je Seite (mit Schutzzonen mindestens bis zur freien Fläche), Schriftgröße (so weit verkleinert,
+// dass die Zeile zwischen die Ränder passt) und Textbreite. Vorschau und Export rechnen damit gleich.
+function tlineLayout(W, H){
+  const t = {...TLINE_DEF, ...P.textline}, text = tlineText(), m = t.margin * Math.min(W, H), p = t.pos || 'ul', z = t.safe !== false ? safeZone() : null;
+  const mT = Math.max(m, z ? z.t * H : 0), mB = Math.max(m, z ? z.b * H : 0), mL = Math.max(m, z ? z.l * W : 0);
+  const mR = Math.max(m, z ? (p[0] === 'u' ? Math.max(z.r, z.cw) : z.r) * W : 0);   // unten reicht die Knopfspalte bis an die freie Fläche heran
+  wrapCtx ||= document.createElement('canvas').getContext('2d');
+  const fam = fontCss(t.font).replace('var(--ui)', getComputedStyle(document.body).fontFamily || 'sans-serif'), wt = fontWeight(t.font, 800);
+  const measure = s => { wrapCtx.font = `${wt} ${s.toFixed(2)}px ${fam}`; return wrapCtx.measureText(text).width; };
+  let px = tlinePx(t, W, H), tw = measure(px);
+  // höchstens 86 % der Breite: Die Android-Ausgabe bricht Text bei 88 % um, die Zeile soll überall einzeilig bleiben
+  const avail = Math.max(10, Math.min(W * 0.86, p[1] === 'm' ? W - 2 * Math.max(mL, mR) : W - mL - mR) - (t.bg ? px * 0.6 : 0)), fit = tw > avail ? Math.max(0.2, avail / tw) : 1;
+  if (fit < 1){ px *= fit; tw = measure(px); }
+  return {t, text, p, px, tw, fit, mT, mB, mL, mR, padX: t.bg ? px * 0.3 : 0, padY: t.bg ? px * 0.1 : 0};
+}
+const viewTextline = () => { const st = $('#stage'); placeTextline(st.clientWidth, st.clientHeight); };   // Textzeile auf der Bühne nachziehen
+function placeTextline(W, H){
+  const el = $('#tline'); if (!tlineOn()){ if (!el.classList.contains('hidden')) el.classList.add('hidden'); return; }
+  const key = W + '×' + H + JSON.stringify(P.textline) + (P.settings.safe || '') + (document.fonts ? document.fonts.status : ''); if (el.dataset.k === key && !el.classList.contains('hidden')) return; el.dataset.k = key;   // beim Abspielen: nur bei Änderungen neu setzen
+  const L = tlineLayout(W, H), {t, p, px} = L, ol = Math.max(1, px / 14), cs = v => v.toFixed(1) + 'px';
+  setText(el, L.text); el.classList.toggle('bg', !!t.bg);
+  Object.assign(el.style, {fontSize: px.toFixed(2) + 'px', color: t.color || '#FFFFFF', fontFamily: fontCss(t.font), fontWeight: fontWeight(t.font, 800),
+    left: p[1] === 'l' ? cs(L.mL) : p[1] === 'm' ? '50%' : '', right: p[1] === 'r' ? cs(L.mR) : '', top: p[0] === 'o' ? cs(L.mT) : '', bottom: p[0] === 'u' ? cs(L.mB) : '',
+    transform: p[1] === 'm' ? 'translateX(-50%)' : '',
+    textShadow: t.bg || t.outline === false ? 'none' : [[-1,-1],[1,-1],[-1,1],[1,1],[0,-1.4],[0,1.4],[-1.4,0],[1.4,0]].map(([a, b]) => `${(a*ol).toFixed(1)}px ${(b*ol).toFixed(1)}px 0 #000`).join(',')});
+  if (el.classList.contains('hidden')) el.classList.remove('hidden');
+}
+// Für den Export: Mittelpunkt wie bei jedem Titel, dazu Ecke und Randabstand (anchor, mx, my) für Ausgaben, die an der Ecke ausrichten können
+function tlineCue(W, H){
+  if (!tlineOn() || !(total > 0)) return null;
+  const L = tlineLayout(W, H), {t, p, px, tw, padX, padY} = L, th = px * 1.12;
+  const cx = p[1] === 'l' ? L.mL + padX + tw / 2 : p[1] === 'r' ? W - L.mR - padX - tw / 2 : W / 2, cy = p[0] === 'o' ? L.mT + padY + th / 2 : H - L.mB - padY - th / 2;
+  return {start: 0, end: r3(total), text: L.text, x: +(cx / W).toFixed(4), y: +(cy / H).toFixed(4), size: +(t.size * L.fit).toFixed(4), color: t.color || '#FFFFFF', outline: !t.bg && t.outline !== false, bg: !!t.bg,
+    title: true, line: true, font: t.font || '', anchor: p, mx: +((p[1] === 'r' ? L.mR : L.mL) / W).toFixed(4), my: +((p[0] === 'o' ? L.mT : L.mB) / H).toFixed(4)};
+}
+function openTextline(){
+  if (!P) return;
+  const body = $('#sheetBody'), POS = [['ol','↖'],['om','↑'],['or','↗'],['ul','↙'],['um','↓'],['ur','↘']], before = snapshot(), had = tlineOn();
+  body.innerHTML = `<h3>Textzeile</h3>
+    <input type="text" id="tlText" maxlength="80" dir="auto" placeholder="z. B. @deinkanal · V. i. S. d. P.: Vorname Nachname" style="width:100%;font-size:16px">
+    <div class="grid2" style="margin-top:10px">
+      <div class="field"><span>Lage</span><div class="wm-pos" id="tlPos">${POS.map(([k, a]) => `<button type="button" data-p="${k}">${a}</button>`).join('')}</div></div>
+      <label>Schrift <select id="tlFont" class="font-sel"></select></label>
+      <label>Farbe <input type="color" id="tlColor"></label>
+      <label class="row"><input type="checkbox" id="tlOn"> Anzeigen</label>
+      <label class="row"><input type="checkbox" id="tlOutline"> Umrandung</label>
+      <label class="row"><input type="checkbox" id="tlBg"> dunkler Kasten</label>
+    </div>
+    <label class="row" id="tlSafeRow"><input type="checkbox" id="tlSafe"> In der freien Fläche der Schutzzonen halten</label>
+    <div class="field"><span>Größe <b id="tlSizeV"></b></span><input type="range" id="tlSize" min="0.016" max="0.06" step="0.002"></div>
+    <div class="field"><span>Abstand zum Rand <b id="tlMarV"></b></span><input type="range" id="tlMar" min="0" max="0.15" step="0.005"></div>
+    <p class="muted small">Steht über die ganze Länge im Bild: über allen Clips, in jedem Export und in den Clips aus diesem Projekt. In CapCut und Concat liegt sie auf einer eigenen Textspur.</p>
+    <div class="row" style="margin-top:12px"><button class="btn danger" id="tlDel">Entfernen</button><button class="btn primary" id="tlOk" style="margin-left:auto">Fertig</button></div>`;
+  const cur = () => ({...TLINE_DEF, ...(P.textline || {})}), view = viewTextline;
+  // Alles, was in diesem Blatt geändert wird, ist zusammen ein Rückgängig-Schritt. Der Stand davor wird schon bei der ersten
+  // Änderung zurückgelegt: Das Blatt bleibt offen, während man im Projekt weiterarbeitet, und wird womöglich nie eigens geschlossen.
+  let dirty = false;
+  const set = patch => { if (!dirty){ dirty = true; undo.push(before); if (undo.length > 200) undo.shift(); redo = []; }
+    P.textline = {...cur(), ...patch}; paint(); view(); changedLive(); };
+  fillFontSelects();
+  const paint = () => { const x = cur(); if ($('#tlText').value !== (x.text || '')) $('#tlText').value = x.text || '';
+    $('#tlOn').checked = x.on !== false; $('#tlOutline').checked = x.outline !== false; $('#tlOutline').disabled = !!x.bg; $('#tlBg').checked = !!x.bg;
+    $('#tlColor').value = (x.color || '#FFFFFF').toLowerCase(); $('#tlFont').value = x.font && fontOf(x.font).key ? x.font : '';
+    $('#tlSafe').checked = x.safe !== false; $('#tlSafeRow').classList.toggle('hidden', !safeZone());
+    $('#tlPos').querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.p === x.pos));
+    $('#tlSize').value = x.size; $('#tlSizeV').textContent = (x.size * 100).toFixed(1).replace('.', ',') + ' %'; $('#tlMar').value = x.margin; $('#tlMarV').textContent = (x.margin * 100).toFixed(1).replace('.', ',') + ' %'; };
+  const upd = () => set({text: $('#tlText').value, on: $('#tlOn').checked, outline: $('#tlOutline').checked, bg: $('#tlBg').checked, safe: $('#tlSafe').checked, color: $('#tlColor').value.toUpperCase(),
+    ...($('#tlFont').value !== '__import' ? {font: $('#tlFont').value} : {}), size: +$('#tlSize').value, margin: +$('#tlMar').value});
+  for (const id of ['tlText', 'tlOn', 'tlOutline', 'tlBg', 'tlSafe', 'tlColor', 'tlFont', 'tlSize', 'tlMar']){ $('#' + id).addEventListener('input', upd); $('#' + id).addEventListener('change', upd); }
+  $('#tlText').addEventListener('keydown', e => { e.stopPropagation(); if (e.key === 'Enter') $('#tlOk').click(); });
+  $('#tlFont').addEventListener('change', async () => { if ($('#tlFont').value !== '__import') return; const f = await importFont(); fillFontSelects(); if (f) set({font: f.key}); else paint(); });
+  $('#tlPos').onclick = e => { const b = e.target.closest('button'); if (b) set({pos: b.dataset.p}); };
+  // Beim Schließen: Text glätten; eine Zeile ohne Text gibt es nicht. Hat sich unterm Strich nichts geändert, entfällt der Rückgängig-Schritt.
+  let closed = false;
+  const finish = del => { if (closed) return; closed = true;
+    if (P.textline){ if (del || !String(P.textline.text || '').trim()) delete P.textline; else P.textline.text = tlineText(); }
+    if (dirty && undo[undo.length - 1] === before && snapshot() === before) undo.pop();
+    changed(false); view(); if (del && had) toast('Textzeile entfernt'); };
+  sheetOnClose = () => finish(false);
+  $('#tlDel').onclick = () => { if (P.textline) set({}); finish(true); closeSheet(); };
+  $('#tlOk').onclick = closeSheet;
+  body.onclick = null; sheetItem = null; paint(); view(); openSheet(true);
+  if (!had) setTimeout(() => { const el = $('#tlText'); if (el) el.focus(); }, 30);
+}
+
+// ───────── Schutzzonen der Plattformen (B7) ─────────
+// Wo TikTok, Instagram und YouTube ihre Bedienelemente über ein Hochformat-Video legen. Anteile an Höhe bzw. Breite, bezogen auf
+// 1080 × 1920: t/b/l/r = Rand oben/unten/links/rechts, cw/cy = Knopfspalte rechts (Breite, ab welcher Höhe).
+// „ad“ sind die Vorgaben, die die Plattformen selbst für Anzeigen veröffentlichen (TikTok: In-Feed-Vorlage, Meta: 14 % / 35 % / 6 %,
+// Google: 288 / 672 / 48 / 192 px). Für normale Beiträge nennen sie keine Zahlen; „post“ sind gemessene Richtwerte – was die App
+// tatsächlich verdeckt, hängt vom Gerät und von der Länge der Beschreibung ab.
+const SAFE = {
+  post: {tiktok: {t: 0.08, b: 0.21, l: 0.06, r: 0.06, cw: 0.16, cy: 0.41}, reels: {t: 0.115, b: 0.2, l: 0.06, r: 0.06, cw: 0.11, cy: 0.55}, shorts: {t: 0.095, b: 0.21, l: 0.045, r: 0.045, cw: 0.12, cy: 0.4}},
+  ad:   {tiktok: {t: 0.125, b: 0.344, l: 0.111, r: 0.111, cw: 0.278, cy: 0.4375}, reels: {t: 0.14, b: 0.35, l: 0.06, r: 0.06, cw: 0.21, cy: 0.6}, shorts: {t: 0.15, b: 0.35, l: 0.044, r: 0.178, cw: 0, cy: 1}},
+};
+const SAFE_NAME = {tiktok: 'TikTok', reels: 'Instagram Reels', shorts: 'YouTube Shorts', all: 'alle drei'};
+const safeFits = () => { const [W, H] = baseDims(); return H / W >= 1.5; };   // Hochformat ab etwa 2:3 – darunter liegen die Bedienelemente neben dem Bild
+function safeZone(){   // die gewählte Zone (bei „alle drei“ die jeweils größte), sonst null
+  const v = P && P.settings.safe; if (!v || !safeFits()) return null;
+  const [key, kind] = String(v).split(':'), set = SAFE[kind === 'ad' ? 'ad' : 'post'], list = key === 'all' ? Object.values(set) : set[key] ? [set[key]] : [];
+  if (!list.length) return null;
+  const z = {t: 0, b: 0, l: 0, r: 0, cw: 0, cy: 1};
+  for (const x of list){ z.t = Math.max(z.t, x.t); z.b = Math.max(z.b, x.b); z.l = Math.max(z.l, x.l); z.r = Math.max(z.r, x.r); if (x.cw){ z.cw = Math.max(z.cw, x.cw); z.cy = Math.min(z.cy, x.cy); } }
+  return z;
+}
+const safeLabel = () => { const [key, kind] = String((P && P.settings.safe) || '').split(':'); return key ? `${SAFE_NAME[key] || key}${kind === 'ad' ? ' · Anzeige' : ''}` : ''; };
+function placeSafe(){
+  const ov = $('#safeOv'), z = P && !CanvasEdit ? safeZone() : null;
+  ov.classList.toggle('hidden', !z); $('#sideSafe').classList.toggle('on', !!(P && P.settings.safe));
+  if (!z) return;
+  const pc = v => (v * 100).toFixed(2) + '%', key = JSON.stringify(z) + safeLabel(); if (ov.dataset.k === key) return; ov.dataset.k = key;
+  ov.innerHTML = `<i style="left:0;right:0;top:0;height:${pc(z.t)}"></i><i style="left:0;right:0;bottom:0;height:${pc(z.b)}"></i>
+    <i style="left:0;width:${pc(z.l)};top:${pc(z.t)};bottom:${pc(z.b)}"></i><i style="right:0;width:${pc(z.r)};top:${pc(z.t)};bottom:${pc(z.b)}"></i>
+    ${z.cw > z.r ? `<i style="right:${pc(z.r)};width:${pc(z.cw - z.r)};top:${pc(Math.max(z.t, z.cy))};bottom:${pc(z.b)}"></i>` : ''}<b style="bottom:${pc(1 - z.t)};left:${pc(z.l)}"></b>`;
+  ov.querySelector('b').textContent = 'Bedienelemente · ' + safeLabel();   // steht im oberen Streifen, damit es nichts in der freien Fläche verdeckt
+}
+// Kasten (Mittelpunkt x/y, Breite w, Höhe h, alles als Anteil des Bildes) in die freie Fläche schieben
+function safeClamp(x, y, w, h){
+  const z = safeZone(); if (!z) return [x, y];
+  const L = z.l, R = 1 - z.r, T = z.t, B = 1 - z.b;
+  x = w >= R - L ? (L + R) / 2 : clamp(x, L + w / 2, R - w / 2);
+  y = h >= B - T ? (T + B) / 2 : clamp(y, T + h / 2, B - h / 2);
+  // Knopfspalte rechts: Ein Kasten, der daneben Platz hat, weicht ihr aus – nach links oder nach oben, je nachdem, was näher liegt.
+  // Breite Kästen (zweizeilige Untertitel über fast die ganze Breite) passen ohnehin nicht daneben und bleiben, wo sie sind;
+  // sonst würden sie bis über die Spalte hinaus nach oben springen.
+  const cx0 = 1 - z.cw, cy0 = Math.max(T, z.cy);
+  if (z.cw > z.r && w <= cx0 - L + 1e-6 && x + w / 2 > cx0 + 1e-6 && y + h / 2 > cy0 + 1e-6){
+    const up = cy0 - h / 2, left = cx0 - w / 2;
+    if (up - h / 2 >= T - 1e-6 && y - up <= x - left) y = up; else x = left;
+  }
+  return [x, y];
+}
+const inSafe = (x, y, w, h) => { const [nx, ny] = safeClamp(x, y, w, h); return Math.abs(nx - x) < 0.004 && Math.abs(ny - y) < 0.004; };
+function setSafe(v){
+  if (!P) return; P.settings.safe = v || ''; if (v) try { localStorage.setItem('hc-safe', v); } catch(_){}
+  changed(false); syncSafe(); placeSafe(); placeOverlay(); updateTitles(outPos); viewTextline();
+  toast(!v ? 'Schutzzonen aus' : !safeFits() ? 'Schutzzonen gibt es nur im Hochformat (9:16) – dieses Projekt ist breiter. Ein Clip daraus übernimmt die Einstellung.' : `Schutzzonen: ${safeLabel()} – Untertitel und Titel rasten beim Ziehen in der freien Fläche ein`);
+}
+function syncSafe(){ const v = (P && P.settings.safe) || ''; for (const sel of $$('select.safe-sel')) sel.value = v; }
+(() => { const keys = ['tiktok', 'reels', 'shorts', 'all'], opt = (k, ad) => `<option value="${k}${ad ? ':ad' : ''}">${SAFE_NAME[k]}</option>`;
+  for (const sel of $$('select.safe-sel')){ sel.innerHTML = `<option value="">aus</option><optgroup label="Beiträge (Richtwerte)">${keys.map(k => opt(k)).join('')}</optgroup><optgroup label="Anzeigen (Vorgaben der Plattformen)">${keys.map(k => opt(k, true)).join('')}</optgroup>`;
+    sel.addEventListener('change', () => setSafe(sel.value)); } })();
+$('#sideSafe').onclick = e => { e.stopPropagation(); if (!P) return; let last = 'all'; try { last = localStorage.getItem('hc-safe') || 'all'; } catch(_){} setSafe(P.settings.safe ? '' : last); };
+
+// ───────── Längen-Ampel (F6): passt der Clip in die Grenzen der Plattformen? ─────────
+// hard = längstens möglich, soft = Grenze, ab der es Einschränkungen gibt. Stand November 2026: YouTube Shorts bis 3:00;
+// Instagram Reels bis 20:00, über 3:00 ohne Empfehlung an neue Zuschauer:innen; TikTok bis 10:00 in der App aufgenommen, bis 60:00 als hochgeladene Datei.
+const LEN_LIMITS = [
+  {k: 'shorts', name: 'YouTube Shorts', hard: 180, over: 'ab 3:00 wird daraus ein normales YouTube-Video'},
+  {k: 'reels', name: 'Instagram Reels', soft: 180, hard: 1200, softNote: 'so lange Reels empfiehlt Instagram neuen Zuschauer:innen nicht mehr', over: 'mehr als 20:00 nimmt Instagram als Reel nicht an'},
+  {k: 'tiktok', name: 'TikTok', soft: 600, hard: 3600, softNote: 'so lange Videos nimmt TikTok nur als hochgeladene Datei', over: 'mehr als 60:00 nimmt TikTok nicht an'},
+];
+const lenRelevant = () => { const [W, H] = baseDims(); return !!(P && total > 0 && (H > W || P.format || P.clipOf || total <= 180)); };
+function lenLights(){
+  return LEN_LIMITS.map(L => { const lim = L.soft || L.hard, st = total > L.hard + 0.05 ? 'over' : total > lim + 0.05 ? 'warn' : 'ok';
+    const txt = st === 'over' ? `${fmtT(Math.ceil(total - L.hard))} zu lang – ${L.over}`
+      : st === 'warn' ? `${fmtT(Math.ceil(total - lim))} über ${fmtT(lim)} – ${L.softNote}`
+      : `passt, noch ${fmtT(Math.floor(lim - total))} Platz bis ${fmtT(lim)}`;
+    return {...L, st, txt}; });
+}
+function renderLenLights(){
+  const on = lenRelevant(), html = on ? lenLights().map(L => `<span class="len-chip ${L.st}" data-k="${L.k}" title="${esc(L.name)}: ${esc(L.txt)}"><i></i><b>${esc(L.name)}</b> ${esc(L.txt)}</span>`).join('') : '';
+  for (const id of ['#exLen', '#clipLen']){ const el = $(id); el.classList.toggle('hidden', !on); if (el.dataset.h !== html){ el.dataset.h = html; el.innerHTML = html; } }
+}
+
 // Einblendung/Ton an die Zeitleiste angleichen. Beim Abspielen wird nur selten gesprungen (höchstens alle 1,5 s und nie,
 // solange der letzte Sprung noch läuft); kleine Abweichungen holt die Abspielgeschwindigkeit sanft auf. Früher wurde bei
 // jeder Abweichung über 0,3 s sofort neu gesprungen – lag ein Clip etwas zurück, sprang er Bild für Bild neu, kam nie
@@ -1957,7 +2201,7 @@ function updateOverlay(o){
     syncMedia(el, it.in + (o - a.at));
     if (playing && el.paused) el.play().catch(() => {}); if (!playing && !el.paused) el.pause();
   });
-  updateAudio(o); placeWatermark(W, H);
+  updateAudio(o); placeWatermark(W, H); placeTextline(W, H);
   // Griffe: am ausgewählten Element, sonst am obersten
   const sel = selOvlId(), mainSel = typeof TL !== 'undefined' && TL.sel && TL.sel.kind === 'main', tgt = act.find(a => a.x.id === sel) || (mainSel ? null : act[act.length - 1]) || null;   // Hauptclip ausgewählt: Rahmen am Hauptbild
   curPip = tgt ? tgt.x : null; pipTarget = tgt;
@@ -2209,15 +2453,16 @@ function updateTitles(o){
   const box = $('#titleOv'); if (!box) return;
   const act = P.items.filter(x => x.type === 'title').map(x => ({x, a: srcToOut(snapSrc(x.at))})).filter(t => o >= t.a && o < t.a + t.x.dur);
   for (const [id, el] of titleEls) if (!act.some(t => t.x.id === id)){ el.remove(); titleEls.delete(id); }
-  const st = $('#stage'), W = st.clientWidth, H = st.clientHeight;
+  const st = $('#stage'), W = st.clientWidth, H = st.clientHeight, zone = !playing && act.length ? safeZone() : null;
   for (const {x} of act){
     let el = titleEls.get(x.id);
-    if (!el){ el = document.createElement('div'); el.className = 'titlebox'; el.dataset.id = x.id; box.append(el); titleEls.set(x.id, el); }
+    if (!el){ el = document.createElement('div'); el.className = 'titlebox'; el.dir = 'auto'; el.dataset.id = x.id; box.append(el); titleEls.set(x.id, el); }
     if (!(TitleDrag.on && TitleDrag.id === x.id)){ setText(el, x.text || 'Titel'); el.style.left = (x.x * W) + 'px'; el.style.top = (x.y * H) + 'px'; }
     const px = (SIZE_F[x.size] || 0.058) * Math.min(W, H) * (H > W ? 1.25 : 1) * (x.scale || 1), ol = Math.max(1, px / 14);
     el.style.fontSize = px.toFixed(1) + 'px'; el.style.color = x.color || '#FFFFFF'; el.style.fontFamily = fontCss(x.font); el.style.fontWeight = fontWeight(x.font, 800);
     el.style.textShadow = x.outline !== false ? [[-1,-1],[1,-1],[-1,1],[1,1],[0,-1.4],[0,1.4],[-1.4,0],[1.4,0]].map(([a, b]) => `${(a*ol).toFixed(1)}px ${(b*ol).toFixed(1)}px 0 #000`).join(',') : 'none';
     el.style.background = x.bg ? 'rgba(0,0,0,.55)' : ''; el.classList.toggle('sel', !!(typeof TL !== 'undefined' && TL.sel && TL.sel.id === x.id));
+    if (!playing) el.classList.toggle('unsafe', !!zone && !(TitleDrag.on && TitleDrag.id === x.id) && !inSafe(x.x, x.y, el.offsetWidth / W, el.offsetHeight / H));
   }
 }
 const TitleDrag = {on:false};
@@ -2229,7 +2474,8 @@ $('#titleOv').addEventListener('pointerdown', e => {
 });
 $('#titleOv').addEventListener('pointermove', e => {
   if (!TitleDrag.on) return; const st = $('#stage').getBoundingClientRect();
-  const x = clamp(TitleDrag.sx + (e.clientX - TitleDrag.x0) / st.width, 0.02, 0.98), y = clamp(TitleDrag.sy + (e.clientY - TitleDrag.y0) / st.height, 0.02, 0.98);
+  let x = clamp(TitleDrag.sx + (e.clientX - TitleDrag.x0) / st.width, 0.02, 0.98), y = clamp(TitleDrag.sy + (e.clientY - TitleDrag.y0) / st.height, 0.02, 0.98);
+  if (safeZone()) [x, y] = safeClamp(x, y, TitleDrag.el.offsetWidth / st.width, TitleDrag.el.offsetHeight / st.height);
   if (Math.abs(e.clientX - TitleDrag.x0) + Math.abs(e.clientY - TitleDrag.y0) > 3) TitleDrag.moved = true;
   TitleDrag.el.style.left = (x * st.width) + 'px'; TitleDrag.el.style.top = (y * st.height) + 'px'; TitleDrag.nx = x; TitleDrag.ny = y;
 });
@@ -2293,6 +2539,20 @@ $('#proxyBtn').onclick = () => {
 };
 
 // ───────── Quellen & Transkription ─────────
+// Sprachen der Transkription (C8). Whisper kennt rund hundert Sprachen; angeboten werden die, die Wörter mit Leerzeichen trennen –
+// der Schnitt über den Text arbeitet Wort für Wort. Deutsch, Englisch und „automatisch“ stehen fest in index.html.
+const LANGS_TOP = [['tr', 'Türkisch'], ['ar', 'Arabisch'], ['ru', 'Russisch'], ['pl', 'Polnisch'], ['uk', 'Ukrainisch']];
+const LANGS_MORE = [['sq', 'Albanisch'], ['hy', 'Armenisch'], ['az', 'Aserbaidschanisch'], ['bs', 'Bosnisch'], ['bg', 'Bulgarisch'], ['da', 'Dänisch'], ['et', 'Estnisch'], ['fi', 'Finnisch'],
+  ['fr', 'Französisch'], ['ka', 'Georgisch'], ['el', 'Griechisch'], ['he', 'Hebräisch'], ['hi', 'Hindi'], ['id', 'Indonesisch'], ['it', 'Italienisch'], ['ca', 'Katalanisch'], ['hr', 'Kroatisch'],
+  ['lv', 'Lettisch'], ['lt', 'Litauisch'], ['mk', 'Mazedonisch'], ['nl', 'Niederländisch'], ['no', 'Norwegisch'], ['ps', 'Paschtu'], ['fa', 'Persisch'], ['pt', 'Portugiesisch'], ['ro', 'Rumänisch'],
+  ['sv', 'Schwedisch'], ['sr', 'Serbisch'], ['sk', 'Slowakisch'], ['sl', 'Slowenisch'], ['es', 'Spanisch'], ['sw', 'Suaheli'], ['cs', 'Tschechisch'], ['hu', 'Ungarisch'], ['ur', 'Urdu'], ['vi', 'Vietnamesisch']];
+(() => { const sel = $('#lang');
+  for (const [label, list] of [['Häufig gebraucht', LANGS_TOP], ['Weitere Sprachen', LANGS_MORE]]){ const g = document.createElement('optgroup'); g.label = label;
+    for (const [v, n] of list){ const o = document.createElement('option'); o.value = v; o.textContent = n; g.append(o); } sel.append(g); } })();
+// Die Sprache gehört zum Projekt: Wer ein weiteres Video anhängt, bekommt die Sprache des Projekts vorgeschlagen; ein neues Projekt beginnt mit Deutsch
+function syncLang(){ const sel = $('#lang'), v = (P && P.language) || 'de'; sel.value = [...sel.options].some(o => o.value === v) ? v : 'de'; }
+// Schrift von rechts nach links (Arabisch, Hebräisch, Persisch, Urdu …): Absätze im Text richten sich nach ihrem ersten Wort
+const RTL_CH = /[\u0590-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]/;
 function fillModels(){
   const ms = J(TS.models()) || [];
   const sel = $('#model'), keep = sel.value; sel.innerHTML = '';
@@ -2414,25 +2674,30 @@ let selA = null, selB = null;
 function renderTranscript(){
   const root = $('#transcript'); root.innerHTML = ''; spans = new Array(tokens.length);
   if (order.length !== tokens.length) computeOrder();
-  let para = -1, pEl = null, fillers = 0, src = -1, prev = -2, lastSpk = ''; const frag = document.createDocumentFragment();
+  let para = -1, pEl = null, src = -1, prev = -2, lastSpk = ''; const frag = document.createDocumentFragment(), fset = fillerSet();
+  const markAt = new Map(); for (const m of P.marks || []){ const k = tokAtSrc(m.at); if (k < 0) continue; if (!markAt.has(k)) markAt.set(k, []); markAt.get(k).push(m); }
   for (const i of order){
-    const t = tokens[i];
+    const t = tokens[i], mk = markAt.get(i), chap = mk && mk.find(m => m.k === 'chap');
     if (t.src !== src && P.sources.length > 1){ src = t.src; const h = document.createElement('div'); h.className = 'src-head'; h.textContent = `🎞 ${src + 1} · ${P.sources[src].name}`; frag.append(h); pEl = null; }
     const jump = prev >= 0 && i !== prev + 1;
-    if (t.p !== para || !pEl || jump){ pEl = document.createElement('p'); para = t.p;
+    if (chap){ const h = document.createElement('div'); h.className = 'chap-head'; h.dataset.mk = chap.id; h.title = 'Kapitel – anklicken zum Umbenennen oder Entfernen';
+      h.innerHTML = `${icon('🚩')}<b dir="auto"></b><span class="t"></span>`; h.querySelector('b').textContent = chap.text || 'Kapitel'; frag.append(h); }
+    if (t.p !== para || !pEl || jump || chap){ pEl = document.createElement('p'); para = t.p;
       if (jump) pEl.classList.add('moved');
       const ts = document.createElement('span'); ts.className = 'ts'; ts.textContent = (jump ? '↕ ' : '') + fmtT(t.ws ?? t.s); pEl.append(ts); frag.append(pEl); }
     if (t.type !== 'pause' && (t.spk || '') !== lastSpk){ lastSpk = t.spk || '';
       const who = spkOf(lastSpk); if (who || P.speakers.length){ const l = document.createElement('span'); l.className = 'spk-lbl' + (who ? '' : ' none'); l.textContent = who ? who.name : 'ohne Person'; if (who) l.style.setProperty('--sc', spkCol(who)); pEl.append(l, ' '); } }
     const sp = document.createElement('span'); sp.dataset.i = t.i;
-    if (t.type === 'word'){ sp.className = 'tk word' + (t.pr < 0.5 ? ' low' : '') + (t.ug ? ' rep' : ''); if (t.ug) sp.title = 'Nachgehört: Whisper hatte diese Stelle zunächst ausgelassen – meist ein Anlauf'; if (FILLER.test(norm(tokText(t)))){ sp.classList.add('filler'); fillers++; } }
+    if (t.type === 'word'){ sp.className = 'tk word' + (t.pr < 0.5 ? ' low' : '') + (t.ug ? ' rep' : ''); if (t.ug) sp.title = 'Nachgehört: Whisper hatte diese Stelle zunächst ausgelassen – meist ein Anlauf'; if (fset.has(t.i)) sp.classList.add('filler'); }
     else if (t.type === 'unk'){ sp.className = 'tk unk'; sp.title = 'Hier wurde gesprochen, aber Whisper hat kein Wort erkannt – meist ein ausgelassener Anlauf. „Wiederholungen weg“ löscht solche Stellen; antippen spielt sie ab.'; if (t.att) sp.classList.add('att'); }
     else sp.className = 'tk pause';
+    if (t.type === 'word' && !pEl._dir){ pEl._dir = 1; if (RTL_CH.test(tokText(t))) pEl.dir = 'rtl'; }
+    if (mk) for (const m of mk) if (m.k === 'note'){ const pin = document.createElement('span'); pin.className = 'note-pin' + (m.done ? ' done' : ''); pin.dataset.mk = m.id; pin.title = 'Notiz: ' + m.text; pin.innerHTML = icon('📝'); pEl.append(pin, ' '); }
     spans[t.i] = sp; pEl.append(sp, ' ');
     prev = i;
   }
   root.append(frag); tokens.forEach(t => paint(t.i));
-  $('#fillerBtn').textContent = `Füllwörter weg (${fillers})`;
+  paintFillerCount(fset); paintMarkTimes(); paintMarksBtn();
   const todo = P.sources.filter(s => !s.tr).length;
   $('#textTodo').classList.toggle('hidden', !todo); $('#textTodo b').textContent = todo === 1 ? '1 Video ist' : `${todo} Videos sind`;
   if ($('#findIn').value) runFind();
@@ -2564,9 +2829,70 @@ function showSel(){
     $('#selDel span').textContent = allDel ? 'Zurück' : 'Löschen'; $('#selDel').title = allDel ? 'Gelöschte Wörter wiederherstellen (Entf)' : 'Markierte Wörter löschen (Entf)'; $('#selDel').classList.toggle('restore', allDel);
     const n = ids.filter(i => tokens[i].type === 'word').length;
     $('#selCount').textContent = ids.length === 1 ? '1 Wort' : `${n} Wörter`;
-    $('#selInfo').textContent = ids.length === 1 ? (FINE ? 'Zweites Wort anklicken oder ziehen' : 'Zweites Wort antippen') : (FINE ? 'Markierung ziehen = verschieben' : 'Halten + ziehen = verschieben'); }
+    $('#selInfo').textContent = ids.length === 1 ? (FINE ? 'Zweites Wort anklicken oder ziehen' : 'Zweites Wort antippen') : (FINE ? 'Markierung ziehen = verschieben' : 'Halten + ziehen = verschieben');
+    const g = spans.length ? growStep() : null; $('#selSent span').textContent = !g || g.what === 'para' ? 'Absatz' : 'Satz'; $('#selSent').disabled = !g; }
 }
 function clearSel(){ selA = selB = null; showSel(); }
+// Anzeigen im Text-Reiter, die dem Schnitt folgen (Zähler der Füllwörter, Zeiten an den Kapiteln): kurz nach einer Änderung auffrischen
+let textLateT = 0;
+function textLater(){ if (tab !== 'text' || !tokens.length) return; clearTimeout(textLateT); textLateT = setTimeout(() => { if (P && tab === 'text' && spans.length){ paintFillerCount(); paintMarkTimes(); } }, 250); }
+// ── Satz und Absatz auswählen, „Nur das behalten“ (C4) ──
+// Gerechnet wird in der Reihenfolge, in der der Text dasteht (order/pos). Ein Satz reicht vom Wort nach dem vorigen Satzende bis zum
+// nächsten Wort mit Satzende; Pausen und nicht erkannte Stellen dazwischen gehören dazu, ein Wechsel des Videos beendet ihn.
+function sentBounds(ka, kb){
+  const tk = k => tokens[order[k]], isW = k => tk(k).type === 'word' && !!tokText(tk(k)), ends = k => sentEnd(tokText(tk(k)));
+  let a = ka, b = kb, last = null;
+  for (let k = ka - 1; k >= 0 && tk(k).src === tk(ka).src; k--){ if (!isW(k)) continue; if (ends(k)) break; a = k; }
+  for (let k = kb; k >= ka; k--) if (isW(k)){ last = k; break; }
+  if (last != null && ends(last)) b = last;
+  else for (let k = kb + 1; k < order.length && tk(k).src === tk(kb).src; k++){ if (!isW(k)) continue; b = k; if (ends(k)) break; }
+  while (a < b && !isW(a)) a++;
+  while (b > a && !isW(b)) b--;
+  return [a, b];
+}
+function paraBounds(ka, kb){
+  const par = k => spans[order[k]] && spans[order[k]].parentElement; let a = ka, b = kb;
+  while (a > 0 && par(a - 1) === par(ka)) a--;
+  while (b < order.length - 1 && par(b + 1) === par(kb)) b++;
+  return [a, b];
+}
+// Wort an der Abspiellinie (für A, C und B ohne Markierung)
+function tokAtOut(o){
+  const g = timeline[segAtOut(o)]; if (!g || g.kind !== 'main' || !tokens.length) return null;
+  const t = outToSrcT(o); let lo = 0, hi = tokens.length - 1, k = -1;
+  while (lo <= hi){ const m = (lo + hi) >> 1; if (tokens[m].s <= t + 1e-3){ k = m; lo = m + 1; } else hi = m - 1; }
+  return k < 0 ? null : k;
+}
+// Welche Stufe „Satz“ als Nächstes auswählt: 'sent', 'para' oder null (mehr geht nicht)
+function growStep(){
+  if (selA == null || pos[selA] == null) return null;
+  const ka = Math.min(pos[selA], pos[selB]), kb = Math.max(pos[selA], pos[selB]);
+  const grow = r => r[0] < ka || r[1] > kb ? [Math.min(r[0], ka), Math.max(r[1], kb)] : null;   // nur, was die Markierung größer macht
+  let r = grow(sentBounds(ka, kb)); if (r) return {what: 'sent', r};
+  r = grow(paraBounds(ka, kb)); return r ? {what: 'para', r} : null;
+}
+function growSel(){
+  if (!P || !tokens.length || !spans.length) return;
+  if (selA == null){ const k = tokAtOut(outPos); if (k == null) return toast('Erst ein Wort markieren'); selA = selB = k; }
+  const g = growStep(); if (!g) return toast('Der ganze Absatz ist schon markiert');
+  selA = order[g.r[0]]; selB = order[g.r[1]]; showSel();
+  if (spans[selA]) spans[selA].scrollIntoView({block: 'nearest', behavior: 'smooth'});
+  if (!playing){ const t = tokens[selA]; seekOut(srcToOut(snapSrc(t.ws ?? t.s)), false); if (window.syncScroll) syncScroll(outPos, true); }
+}
+$('#selSent').onclick = growSel;
+function keepOnlySel(){
+  const ids = new Set(selIds()); if (!ids.size) return;
+  const rest = tokens.filter(t => !ids.has(t.i) && !deleted.has(t.i)).map(t => t.i);
+  const bare = P.sources.map((x, k) => k).filter(k => !tokens.some(t => t.src === k) && !P.dels.some(d => d[0] <= P.sources[k].off + 0.01 && d[1] >= srcEnd(k) - 0.01));   // Videos ohne Transkript
+  if (!rest.length && !bare.length) return toast('Außer der Markierung ist nichts mehr übrig');
+  const nw = rest.filter(i => tokens[i].type === 'word').length, first = tokens[selIds()[0]];
+  commit(() => { rest.forEach(i => deleted.add(i)); for (const k of bare) addDel(P.sources[k].off, srcEnd(k)); }, false);
+  tokens.forEach(t => paint(t.i)); showSel(); paintFillerCount();
+  if (playing) pausePlay(); seekOut(srcToOut(snapSrc(first.ws ?? first.s)), false); if (window.syncScroll) syncScroll(outPos, true);
+  lastCut = outPos;
+  toast(`Nur die Markierung bleibt (${fmtT(total)}) – ${nw} ${nw === 1 ? 'Wort' : 'Wörter'} gelöscht, Strg+Z macht es rückgängig`);
+}
+$('#selOnly').onclick = keepOnlySel;
 // ── Untertitel weggeschnittener Wörter behalten: der Schnitt bleibt, nur der Text erscheint kurz am Schnitt ──
 function keepSubs(ids, on){
   ids = ids.filter(i => isTextTok(i)); if (!ids.length) return;
@@ -2678,7 +3004,7 @@ function applyRangeText(ids, text){
 function openRangeEdit(ids){
   ids = ids.filter(i => !deleted.has(i)); if (!ids.length) return toast('Nur gelöschte Wörter markiert');
   const body = $('#sheetBody'), cur = rangeText(ids);
-  body.innerHTML = `<h3>Text korrigieren</h3><textarea id="rangeEdit" rows="3" style="width:100%;font:18px/1.4 var(--read)"></textarea>
+  body.innerHTML = `<h3>Text korrigieren</h3><textarea id="rangeEdit" rows="3" dir="auto" style="width:100%;font:18px/1.4 var(--read)"></textarea>
     <p class="muted small">Am Schnitt ändert sich nichts. Gleiche Wortzahl: Wort für Wort ersetzt. Sonst wird der Text auf die Zeit der markierten Stellen verteilt –
     so lassen sich Wörter zusammenschreiben oder fehlende Wörter ergänzen (am besten die 🗣-Stelle mit markieren). Erscheint so auch in den Untertiteln.</p>
     <div class="row"><button class="btn" id="rangeReset">↺ Original</button><button class="btn primary" id="rangeOk" style="margin-left:auto">Fertig</button></div>`;
@@ -2739,12 +3065,68 @@ function tidyPauses(ids){
 let lastCut = null;
 $('#selPlay').onclick = () => { const ids = selIds(); if (!ids.length) return; const t = tokens[ids[0]]; const a = srcToOut(snapSrc(t.ws ?? t.s)); seekOut(Math.max(0, a - 0.5), false); startPlay(); };
 $('#cutPlayBtn').onclick = () => { if (lastCut == null) return toast('Noch kein Schnitt'); seekOut(Math.max(0, lastCut - 2), false); startPlay(); stopAt = lastCut + 2; };
-const fillerIds = (minTok = 0) => tokens.filter(t => t.i >= minTok && t.type === 'word' && !deleted.has(t.i) && FILLER.test(norm(tokText(t)))).map(t => t.i);
+// ── Füllwörter: Verzögerungslaute (äh, ähm …) und die eigene Liste (C3) ──
+// Die eigene Liste gilt auf diesem Gerät für alle Projekte und lässt sich je Projekt abschalten (P.settings.ownFillers === false).
+// Einträge können aus mehreren Wörtern bestehen („ich sag mal“); sie gelten über aufeinanderfolgende Wörter, Pausen dazwischen zählen nicht.
+const OWN_FILL_KEY = 'hc-fillers';
+const FILL_SUGGEST = ['halt', 'sozusagen', 'genau', 'quasi', 'irgendwie', 'eigentlich', 'gewissermaßen', 'ich sag mal', 'im Endeffekt', 'oder so'];
+let ownFill = (() => { try { const v = JSON.parse(localStorage.getItem(OWN_FILL_KEY)); return Array.isArray(v) ? v.filter(x => typeof x === 'string' && x.trim()) : []; } catch(_){ return []; } })();
+const fillKey = f => String(f).trim().split(/\s+/).map(norm).filter(Boolean).join(' ');
+const ownFillOn = () => !!(P && P.settings.ownFillers !== false && ownFill.length);
+function saveOwnFill(){ try { localStorage.setItem(OWN_FILL_KEY, JSON.stringify(ownFill)); } catch(_){} }
+function fillerSet(){   // Nummern aller Wörter, die als Füllwort gelten
+  const out = new Set(), ws = tokens.filter(t => t.type === 'word'), nw = ws.map(t => norm(tokText(t)));
+  ws.forEach((t, k) => { if (FILLER.test(nw[k])) out.add(t.i); });
+  if (!ownFillOn()) return out;
+  const one = new Set(), many = [];
+  for (const f of ownFill){ const key = fillKey(f), parts = key.split(' '); if (!key) continue; one.add(key); if (parts.length > 1) many.push(parts); }
+  ws.forEach((t, k) => { if (nw[k] && one.has(nw[k])) out.add(t.i); });
+  for (const parts of many) for (let k = 0; k + parts.length <= ws.length; k++){
+    if (nw[k] !== parts[0]) continue; let ok = true;
+    for (let j = 1; j < parts.length; j++) if (nw[k + j] !== parts[j] || ws[k + j].src !== ws[k].src){ ok = false; break; }
+    if (ok) for (let j = 0; j < parts.length; j++) out.add(ws[k + j].i);
+  }
+  return out;
+}
+const fillerIds = (minTok = 0) => { const fs = fillerSet(); return tokens.filter(t => t.i >= minTok && t.type === 'word' && !deleted.has(t.i) && fs.has(t.i)).map(t => t.i); };
+// Zähler am Knopf: Füllwörter, die noch im Schnitt stehen
+function paintFillerCount(fs){ fs ||= fillerSet(); let n = 0; for (const i of fs) if (!deleted.has(i)) n++; $('#fillerBtn').textContent = `Füllwörter weg (${n})`; return n; }
+// Markierung im Text nach einer Änderung der Liste
+function paintFillers(){ const fs = fillerSet(); for (const t of tokens){ const sp = t.type === 'word' && spans[t.i]; if (sp) sp.classList.toggle('filler', fs.has(t.i)); } return paintFillerCount(fs); }
+function openFillers(){
+  const body = $('#sheetBody');
+  body.innerHTML = `<h3>Eigene Füllwörter</h3>
+    <p class="muted small">„Füllwörter weg“ entfernt immer Verzögerungslaute wie „äh“ und „ähm“. Hier ergänzt du Wörter und Wendungen, die zusätzlich verschwinden sollen. Die Liste gilt auf diesem Gerät für alle Projekte.</p>
+    <div class="fw-list" id="fwList"></div>
+    <div class="row"><input type="text" id="fwIn" maxlength="60" placeholder="Wort oder Wendung, z. B. sozusagen" autocomplete="off" style="flex:1;min-width:0"><button class="btn" id="fwAdd">Hinzufügen</button></div>
+    <div class="fw-sugg" id="fwSugg"></div>
+    <label class="row"><input type="checkbox" id="fwOn"> In diesem Projekt anwenden</label>
+    <p class="muted small" id="fwInfo"></p>
+    <div class="row" style="margin-top:12px"><button class="btn primary" id="fwOk" style="margin-left:auto">Fertig</button></div>`;
+  const paintList = () => {
+    $('#fwList').innerHTML = ownFill.length ? ownFill.map((f, k) => `<span class="fw-chip">${esc(f)}<button type="button" data-del="${k}" title="Entfernen">×</button></span>`).join('') : '<span class="muted small">Noch keine eigenen Füllwörter.</span>';
+    const have = new Set(ownFill.map(fillKey)), sug = FILL_SUGGEST.filter(x => !have.has(fillKey(x)));
+    $('#fwSugg').innerHTML = sug.length ? '<span class="muted small">Vorschläge</span>' + sug.map(x => `<button type="button" class="chip" data-add="${esc(x)}">＋ ${esc(x)}</button>`).join('') : '';
+    $('#fwOn').checked = P.settings.ownFillers !== false; $('#fwOn').disabled = !ownFill.length;
+    const n = spans.length ? paintFillers() : paintFillerCount();
+    $('#fwInfo').textContent = !tokens.length ? '' : n ? `Im Text ${n === 1 ? 'steht noch 1 Füllwort' : `stehen noch ${n} Füllwörter`} – „Füllwörter weg“ entfernt ${n === 1 ? 'es' : 'sie'}.` : 'Im Text steht gerade kein Füllwort mehr.';
+  };
+  const add = v => { const key = fillKey(v); if (!key) return; if (ownFill.some(x => fillKey(x) === key)) return toast('Steht schon in der Liste'); if (FILLER.test(key)) return toast('Das wird ohnehin entfernt');
+    ownFill.push(String(v).trim().replace(/\s+/g, ' ').slice(0, 60)); saveOwnFill(); paintList(); };
+  $('#fwAdd').onclick = () => { add($('#fwIn').value); $('#fwIn').value = ''; $('#fwIn').focus(); };
+  $('#fwIn').onkeydown = e => { e.stopPropagation(); if (e.key === 'Enter'){ e.preventDefault(); $('#fwAdd').click(); } };
+  $('#fwOn').onchange = e => { P.settings.ownFillers = e.target.checked; changed(false); paintList(); };
+  $('#fwOk').onclick = closeSheet;
+  body.onclick = e => { const d = e.target.closest('[data-del]'), a = e.target.closest('[data-add]');
+    if (d){ ownFill.splice(+d.dataset.del, 1); saveOwnFill(); paintList(); } else if (a) add(a.dataset.add); };
+  sheetItem = null; paintList(); openSheet(false);
+}
+$('#fillerCfg').onclick = () => { if (P) openFillers(); };
 function bulkDelete(ids){ ids.forEach(i => deleted.add(i)); tidyPauses(ids).forEach(i => deleted.add(i)); }
 $('#fillerBtn').onclick = () => {
   const ids = fillerIds(0);
   if (!ids.length) return toast('Keine Füllwörter übrig');
-  commit(() => bulkDelete(ids), false); tokens.forEach(t => paint(t.i)); toast(`${ids.length} Füllwörter entfernt`);
+  commit(() => bulkDelete(ids), false); tokens.forEach(t => paint(t.i)); paintFillerCount(); toast(`${ids.length} Füllwörter entfernt`);
 };
 // Pausen kürzen (0 = ganz löschen)
 function trimPauses(len, minTok = 0){
@@ -2832,6 +3214,149 @@ function highlightNow(){
     if (b.top < pb.top + 20 || b.bottom > pb.bottom - 120) spans[k].scrollIntoView({block:'center', behavior:'smooth'}); }
 }
 
+// ───────── Marken: Kapitel (A7) und Notizen (A8) ─────────
+// Eine Marke hängt an einer Stelle der Quelle (at, wie alle Elemente) und wandert mit dem Schnitt. Kapitel ergeben die Zeitstempel für
+// die YouTube-Beschreibung, Notizen die Aufgabenliste des Projekts. P.marks = [{id, k: 'chap' | 'note', at, text, done}]
+const marksOf = k => ((P && P.marks) || []).filter(m => m.k === k);
+const markOut = m => srcToOut(snapSrc(m.at));
+const markGone = o => o >= total - 0.05;   // die Stelle liegt hinter dem Ende des geschnittenen Videos
+const marksSorted = k => marksOf(k).map(m => ({m, o: markOut(m)})).sort((a, b) => a.o - b.o || a.m.at - b.m.at);
+function tokAtSrc(t){ let lo = 0, hi = tokens.length - 1, k = -1; while (lo <= hi){ const m = (lo + hi) >> 1; if (tokens[m].s <= t + 1e-3){ k = m; lo = m + 1; } else hi = m - 1; } return k; }
+// Stelle für eine neue Marke: das erste markierte Wort, sonst die Abspiellinie (im Text-Reiter der Anfang des Wortes dort)
+function markAnchor(){
+  if (tab === 'text' && selA != null){ const ids = selIds(), i = ids.find(i => tokens[i].type !== 'pause') ?? ids[0]; return r3(wS(tokens[i])); }
+  const t = outToSrcT(outPos), k = tab === 'text' ? tokAtSrc(t) : -1;
+  return r3(k >= 0 && tokens[k].type === 'word' ? wS(tokens[k]) : t);
+}
+// Vorschlag für den Titel eines Kapitels: die ersten Wörter ab der Stelle
+function chapSuggest(at){
+  const out = [];
+  for (let i = Math.max(0, tokAtSrc(at)); i < tokens.length && out.length < 6; i++){ const t = tokens[i]; if (t.type !== 'word' || deleted.has(i) || !tokText(t)) continue; out.push(tokText(t)); if (sentEnd(tokText(t))) break; }
+  return out.join(' ').replace(/[.,;:!?…]+$/, '');
+}
+function markDialog(m, fresh){   // → null (abgebrochen), {del: true} oder {text, done}
+  return new Promise(res => {
+    const chap = m.k === 'chap', o = markOut(m);
+    const box = hcModal(`<h3>${chap ? 'Kapitel' : 'Notiz'}</h3>
+      ${chap ? '<input type="text" id="mkIn" maxlength="100" dir="auto" placeholder="Titel des Kapitels" style="width:100%;font-size:16px">'
+             : '<textarea id="mkIn" rows="3" maxlength="500" dir="auto" placeholder="z. B. Quelle fehlt · B-Roll einsetzen" style="width:100%;font-size:16px"></textarea>'}
+      <p class="muted small" id="mkAt"></p>
+      ${chap || fresh ? '' : '<label class="row"><input type="checkbox" id="mkDone"> Erledigt</label>'}
+      <div class="row" style="margin-top:12px">${fresh ? '' : '<button class="btn danger" id="mkDel">Entfernen</button>'}<button class="btn" id="mkNo" style="margin-left:auto">Abbrechen</button><button class="btn primary" id="mkOk">OK</button></div>`);
+    const inp = box.querySelector('#mkIn'), dn = box.querySelector('#mkDone'), del = box.querySelector('#mkDel');
+    inp.value = m.text || ''; if (dn) dn.checked = !!m.done; setTimeout(() => { inp.focus(); inp.select(); }, 30);
+    box.querySelector('#mkAt').textContent = markGone(o) ? 'Die Stelle ist weggeschnitten.' : `${chap ? 'Beginnt' : 'Steht'} bei ${fmtT(o)} im geschnittenen Video.`;
+    const done = v => { closeHcModal(); res(v); };
+    box.querySelector('#mkNo').onclick = () => done(null);
+    box.querySelector('#mkOk').onclick = () => done({text: inp.value.trim(), done: dn ? dn.checked : !!m.done});
+    if (del) del.onclick = () => done({del: true});
+    inp.onkeydown = e => { e.stopPropagation(); if (e.key === 'Escape') done(null); else if (e.key === 'Enter' && (chap || e.ctrlKey || e.metaKey)){ e.preventDefault(); box.querySelector('#mkOk').click(); } };
+  });
+}
+async function addMark(k, at){
+  if (!P || !timeline.length || $('#hcModal')) return;
+  if (at == null) at = markAnchor();
+  const near = (P.marks || []).find(m => m.k === k && Math.abs(m.at - at) < 0.05);   // hier gibt es schon eine: bearbeiten
+  if (near) return editMark(near.id);
+  const m = {id: newId(), k, at, text: k === 'chap' ? chapSuggest(at) : ''}, P0 = P;
+  const r = await markDialog(m, true); if (!r || P !== P0) return;
+  if (k === 'note' && !r.text) return toast('Ohne Text wird keine Notiz angeheftet');
+  m.text = r.text || 'Kapitel';
+  commit(() => { P.marks ||= []; P.marks.push(m); }, false);
+  marksChanged(); toast(k === 'chap' ? `Kapitel „${m.text}“ beginnt bei ${fmtT(markOut(m))}` : 'Notiz angeheftet');
+}
+async function editMark(id){
+  const m = (P.marks || []).find(x => x.id === id), P0 = P; if (!m || $('#hcModal')) return;
+  const r = await markDialog(m, false); if (!r || P !== P0 || !(P.marks || []).includes(m)) return;
+  if (r.del) commit(() => { P.marks = P.marks.filter(x => x !== m); }, false);
+  else if (r.text !== (m.text || '') || !!r.done !== !!m.done) commit(() => { if (r.text || m.k === 'chap') m.text = r.text || 'Kapitel'; if (r.done) m.done = true; else delete m.done; }, false);
+  else return;
+  marksChanged();
+}
+// Nach einer Änderung an den Marken: Text, Abspielbalken, Zeitskala, Liste und Export-Reiter nachziehen
+function marksChanged(){
+  if (tokens.length && spans.length){ renderTranscript(); showSel(); }
+  drawScrub(); if (studioOn() && window.renderTimeline) renderTimeline();
+  paintMarksBtn(); if (marksSheetOpen()) renderMarksSheet(); if (tab === 'export') renderExport();
+}
+function paintMarksBtn(){ const n = marksOf('chap').length + marksOf('note').filter(m => !m.done).length; $('#marksBtn').textContent = 'Marken' + (n ? ` (${n})` : ''); }
+// Zeiten an den Kapitel-Überschriften im Text: Sie folgen dem Schnitt
+function paintMarkTimes(){
+  for (const h of $$('#transcript .chap-head')){ const m = (P.marks || []).find(x => x.id === h.dataset.mk); if (!m) continue;
+    const o = markOut(m); setText(h.querySelector('.t'), markGone(o) ? 'weggeschnitten' : fmtT(o)); h.classList.toggle('cut', markGone(o)); }
+}
+$('#transcript').addEventListener('click', e => { const el = e.target.closest('[data-mk]'); if (el && P) editMark(el.dataset.mk); });
+$('#selChap').onclick = () => addMark('chap');
+$('#selNote').onclick = () => addMark('note');
+// ── Liste der Kapitel und Notizen: bleibt offen, während man zu den Stellen springt ──
+const marksSheetOpen = () => !$('#sheet').classList.contains('hidden') && !!$('#mkSheet');
+function jumpToMark(m){
+  const o = markOut(m); if (playing) pausePlay();
+  seekOut(Math.min(o, Math.max(0, total - 0.01)), false); if (window.syncScroll) syncScroll(outPos, true);
+  if (tab === 'text'){ const k = tokAtSrc(m.at); if (k >= 0 && spans[k]) spans[k].scrollIntoView({block: 'center', behavior: 'smooth'}); }
+}
+function openMarks(){
+  if (!P) return; sheetItem = null;
+  const body = $('#sheetBody'); body.innerHTML = '<div id="mkSheet"></div>';
+  body.onclick = e => {
+    const rowEl = e.target.closest('.mk-row'), a = e.target.closest('[data-a]'), act = a ? a.dataset.a : '', m = rowEl && (P.marks || []).find(x => x.id === rowEl.dataset.id);
+    if (m && e.target.matches('input[type=checkbox]')){ const on = e.target.checked; commit(() => { if (on) m.done = true; else delete m.done; }, false); return marksChanged(); }
+    if (m && act === 'edit') return editMark(m.id);
+    if (m && e.target.closest('.mk-go')) return jumpToMark(m);
+    if (act === 'chap' || act === 'note') return addMark(act, r3(outToSrcT(outPos)));
+    if (act === 'copy') return copyChapters();
+    if (act === 'clear'){ commit(() => { P.marks = P.marks.filter(x => !(x.k === 'note' && x.done)); }, false); return marksChanged(); }
+    if (act === 'ok') closeSheet();
+  };
+  renderMarksSheet(); openSheet(true);
+}
+function renderMarksSheet(){
+  const box = $('#mkSheet'); if (!box) return;
+  const ch = marksSorted('chap'), no = marksSorted('note'), open = no.filter(x => !x.m.done).length;
+  const row = x => `<div class="mk-row${x.m.done ? ' done' : ''}${markGone(x.o) ? ' cut' : ''}" data-id="${x.m.id}">${x.m.k === 'note' ? `<input type="checkbox"${x.m.done ? ' checked' : ''} title="Erledigt">` : ''}<button type="button" class="mk-go" title="Zur Stelle springen"><span class="mono">${markGone(x.o) ? '–' : fmtT(x.o)}</span><span class="mk-t" dir="auto">${esc(x.m.text || 'Kapitel')}</span></button><button type="button" class="mini" data-a="edit" title="Bearbeiten">✎</button></div>`;
+  box.innerHTML = `<h3>Kapitel und Notizen</h3>
+    <h4>Kapitel</h4>${ch.length ? ch.map(row).join('') : '<p class="muted small">Noch keine Kapitel. Im Text ein Wort markieren und „Kapitel“ wählen, oder die Abspiellinie an die Stelle setzen.</p>'}
+    <div class="row wrap"><button class="btn small" data-a="chap">＋ Kapitel an der Abspiellinie</button>${ch.length ? '<button class="btn small" data-a="copy">📋 Zeitstempel kopieren</button>' : ''}</div>
+    <h4>Notizen${no.length ? ` · ${open} offen` : ''}</h4>${no.length ? no.map(row).join('') : '<p class="muted small">Noch keine Notizen. Sie halten fest, was an einer Stelle noch zu tun ist.</p>'}
+    <div class="row wrap"><button class="btn small" data-a="note">＋ Notiz an der Abspiellinie</button>${no.some(x => x.m.done) ? '<button class="btn small ghost" data-a="clear">Erledigte entfernen</button>' : ''}</div>
+    <div class="row" style="margin-top:12px"><button class="btn primary" data-a="ok" style="margin-left:auto">Fertig</button></div>`;
+}
+$('#marksBtn').onclick = openMarks;
+// ── Zeitstempel für die YouTube-Beschreibung ──
+// YouTube zeigt Kapitel nur, wenn der erste Zeitstempel 0:00 ist, mindestens drei aufsteigend dastehen und jedes Kapitel mindestens
+// zehn Sekunden dauert. Beginnt das erste Kapitel später, steht deshalb „0:00 Einstieg“ davor.
+function chapterRows(){
+  const list = marksSorted('chap').filter(x => !markGone(x.o)); if (!list.length) return [];
+  const rows = list.map(x => [x.o, (x.m.text || 'Kapitel').trim()]);
+  if (rows[0][0] > 0.5) rows.unshift([0, 'Einstieg']); else rows[0][0] = 0;
+  return rows;
+}
+const chapterText = () => chapterRows().map(([o, t]) => `${fmtT(o)} ${t}`).join('\n');
+function chapterIssues(){
+  const rows = chapterRows(), out = []; if (!rows.length) return out;
+  const shown = marksSorted('chap').filter(x => !markGone(x.o)), gone = marksOf('chap').length - shown.length;
+  if (shown[0].o > 0.5) out.push('Die Liste beginnt mit „0:00 Einstieg“, weil YouTube Kapitel nur anzeigt, wenn das erste bei 0:00 beginnt.');
+  if (rows.length < 3) out.push(`YouTube zeigt Kapitel erst ab drei Einträgen, bisher ${rows.length === 1 ? 'ist es einer' : 'sind es zwei'}.`);
+  const short = rows.filter((r, k) => (k + 1 < rows.length ? rows[k + 1][0] : total) - r[0] < 10).map(r => `„${r[1]}“`);
+  if (short.length) out.push(`${short.length === 1 ? 'Das Kapitel' : 'Die Kapitel'} ${short.join(', ')} ${short.length === 1 ? 'ist' : 'sind'} kürzer als zehn Sekunden; YouTube verlangt mindestens zehn.`);
+  if (gone) out.push(`${gone === 1 ? 'Ein Kapitel liegt' : gone + ' Kapitel liegen'} an einer weggeschnittenen Stelle am Ende und ${gone === 1 ? 'fehlt' : 'fehlen'} in der Liste.`);
+  return out;
+}
+async function copyChapters(){
+  const txt = chapterText(); if (!txt) return toast('Noch keine Kapitel');
+  const ok = await copyText(txt); toast(ok ? 'Zeitstempel in der Zwischenablage' : 'Kopieren hat nicht geklappt');
+  const m = $('#chapMsg'); if (m) m.textContent = ok ? 'In der Zwischenablage – in die Beschreibung des Videos einfügen.' : 'Kopieren hat nicht geklappt. Der Text oben lässt sich markieren.';
+}
+function renderChapters(){
+  const txt = chapterText(), iss = chapterIssues(), open = marksOf('note').filter(m => !m.done).length;
+  $('#chapText').classList.toggle('hidden', !txt); $('#chapText').textContent = txt;
+  $('#chapWarn').classList.toggle('hidden', !iss.length); $('#chapWarn').textContent = iss.join(' ');
+  $('#chapCopy').classList.toggle('hidden', !txt);
+  $('#exNotes').classList.toggle('hidden', !open); $('#exNotes span').textContent = open === 1 ? 'Noch 1 offene Notiz in diesem Projekt.' : `Noch ${open} offene Notizen in diesem Projekt.`;
+}
+$('#chapCopy').onclick = copyChapters;
+$('#chapOpen').onclick = openMarks; $('#exNotesBtn').onclick = openMarks;
+
 // ───────── Suche im Text ─────────
 let finds = [], findPos = -1;
 function runFind(){
@@ -2908,7 +3433,7 @@ $('#transcript').addEventListener('dblclick', e => {
   const any = e.target.closest('.tk'); if (any && !any.classList.contains('word')){ const i = +any.dataset.i; selA = selB = i; showSel(); openRangeEdit([i]); return; }
   const sp = e.target.closest('.tk.word'); if (!sp) return; const i = +sp.dataset.i;
   const body = $('#sheetBody');
-  body.innerHTML = `<h3>Wort korrigieren</h3><input type="text" id="wordEdit" style="width:100%;font:18px var(--read)"><p class="muted small">Die Zeit im Video bleibt gleich – nur der Text (auch in den Untertiteln) ändert sich. Leer lassen löscht das Wort.</p>
+  body.innerHTML = `<h3>Wort korrigieren</h3><input type="text" id="wordEdit" dir="auto" style="width:100%;font:18px var(--read)"><p class="muted small">Die Zeit im Video bleibt gleich – nur der Text (auch in den Untertiteln) ändert sich. Leer lassen löscht das Wort.</p>
     <div class="row"><button class="btn" id="wordReset">↺ Original: </button><button class="btn primary" id="wordOk" style="margin-left:auto">Fertig</button></div>`;
   $('#wordEdit').value = tokText(tokens[i]); $('#wordReset').textContent += tokens[i].text;
   openSheet(false); setTimeout(() => { $('#wordEdit').focus(); $('#wordEdit').select(); }, 30);
@@ -3077,7 +3602,7 @@ function genCues(startTok = 0){
     for (const w of ws){
       if (cur){
         const prev = tokens[cur.b], nl = len + 1 + tokText(w).length;
-        const endS = /[.?!…]$/.test(tokText(prev)) && len > maxChars * 0.35, comma = /[,;:]$/.test(tokText(prev)) && len > maxChars * 0.7;
+        const endS = SENT_END.test(tokText(prev)) && len > maxChars * 0.35, comma = /[,;:،؛]$/.test(tokText(prev)) && len > maxChars * 0.7;
         if (nl > maxChars || w.we - cur.t0 > maxDur || endS || comma || w.ws - lastEnd > 0.8 || w.src !== prev.src || (w.spk || '') !== (prev.spk || '')){ out.push(cur); cur = null; }
       }
       if (!cur){ cur = {id:newId(), a: out.length ? out[out.length-1].b + 1 : startTok, b:w.i, text:null, ds:0, de:0, off:false, t0:w.ws}; len = tokText(w).length; }
@@ -3088,7 +3613,7 @@ function genCues(startTok = 0){
     const lenOf = ids => ids.reduce((n, i) => n + tokText(tokens[i]).length + 1, 0);
     for (let k = 1; k < out.length; k++){
       const prev = out[k-1], c = out[k]; const pw = cueWords(prev), cw = cueWords(c);
-      if (/[.?!…]$/.test(tokens[prev.b] ? tokText(tokens[prev.b]) : '') || lenOf(cw) > maxChars * 0.3) continue;
+      if (SENT_END.test(tokens[prev.b] ? tokText(tokens[prev.b]) : '') || lenOf(cw) > maxChars * 0.3) continue;
       while (pw.length > 2 && lenOf(cw) + tokText(tokens[pw[pw.length-1]]).length < lenOf(pw) - tokText(tokens[pw[pw.length-1]]).length){
         const w = pw.pop(); cw.unshift(w); prev.b = pw[pw.length-1]; c.a = prev.b + 1; }
     }
@@ -3404,6 +3929,7 @@ function placeOverlay(){
   const cx = clamp(x * W, bw / 2 + m * W, W - bw / 2 - m * W), cy = clamp(y * H, bh / 2 + m * H, H - bh / 2 - m * H);
   ov.style.left = (bw > W * (1 - 2 * m) ? W / 2 : cx) + 'px'; ov.style.top = cy + 'px';
   ov.classList.toggle('grab', !!ov.textContent);
+  ov.classList.toggle('unsafe', !!ov.textContent && !!safeZone() && !inSafe(cx / W, cy / H, bw / W, bh / H));
 }
 // Ziehen im Bild verschiebt die Untertitel – alle, oder den im Studio ausgewählten
 const SubDrag = {on:false};
@@ -3421,6 +3947,7 @@ $('#subOv').addEventListener('pointermove', e => {
   if (Math.abs(e.clientX - SubDrag.x0) + Math.abs(e.clientY - SubDrag.y0) > 3) SubDrag.moved = true;
   if (Math.abs(x - 0.5) < 0.025) x = 0.5;                                          // mittig einrasten
   for (const v of Object.values(POS_Y)) if (Math.abs(y - v) < 0.015) y = v;
+  if (safeZone()){ const ov = $('#subOv'); [x, y] = safeClamp(x, y, ov.offsetWidth / st.width, ov.offsetHeight / st.height); }   // Schutzzonen an: außerhalb einrasten
   SubDrag.x = clamp(x, 0, 1); SubDrag.y = clamp(y, 0, 1);
   $('#stage').classList.toggle('snap-x', SubDrag.x === 0.5); placeOverlay();
 });
@@ -3443,7 +3970,7 @@ function syncStyleInputs(){
   $('#sideSubs').classList.toggle('on', st.enabled !== false); fillFontSelects();
   $('#subsMaster').checked = st.enabled !== false; $('#subsMasterLbl').textContent = st.enabled !== false ? 'Untertitel an' : 'Untertitel aus';
   $('#paneSubs').classList.toggle('subs-off', st.enabled === false); $('#paneSubs').classList.toggle('word-mode', st.mode === 'word');
-  styleOverlay();
+  styleOverlay(); renderLooks();
 }
 [['#stChars','chars',Number],['#stLines','lines',Number],['#stDur','dur',Number],['#stSize','size',String],['#stColor','color',v => v.toUpperCase()]]
   .forEach(([sel, key, conv]) => $(sel).addEventListener('change', e => { S()[key] = conv(e.target.value); styleOverlay(); changed(false); }));
@@ -3495,12 +4022,12 @@ function renderSubs(){
   const frag = document.createDocumentFragment();
   P.cues.forEach((c, idx) => {
     const el = document.createElement('div'); el.className = 'cue'; el.dataset.id = c.id;
-    el.innerHTML = `<div class="tm"><span class="t"></span><span class="w"></span></div><textarea rows="2"></textarea>
+    el.innerHTML = `<div class="tm"><span class="t"></span><span class="w"></span></div><textarea rows="2" dir="auto"></textarea>
       <div class="acts"><button data-a="split">✂ teilen</button><button data-a="merge">⤓ zusammen</button><button data-a="off"></button>
       <button data-a="keep" class="hidden"></button><select class="cue-spk hidden" title="Person dieses Untertitels"></select>
       <button data-a="auto" class="hidden">↺ auto</button><button data-a="pos" class="hidden">↺ Position</button><button data-a="time" class="hidden">↺ Zeit</button><button data-a="s-">Start −</button><button data-a="s+">Start +</button><button data-a="e-">Ende −</button><button data-a="e+">Ende +</button></div>`;
     if (idx === P.cues.length - 1) el.querySelector('[data-a=merge]').disabled = true;
-    if (trHas() && P.trans.mode !== 'off' && S().mode !== 'word'){ el.querySelector('textarea').insertAdjacentHTML('afterend', `<textarea rows="1" class="cue-tr" placeholder="${(P.trans.lang || 'en').toUpperCase()} – Übersetzung"></textarea>`);
+    if (trHas() && P.trans.mode !== 'off' && S().mode !== 'word'){ el.querySelector('textarea').insertAdjacentHTML('afterend', `<textarea rows="1" class="cue-tr" dir="auto" placeholder="${(P.trans.lang || 'en').toUpperCase()} – Übersetzung"></textarea>`);
       const tt = el.querySelector('.cue-tr'), cl = computedCues(), k0 = cl.findIndex(x => x.c === c); tt.value = k0 >= 0 ? trTexts(cl)[k0] || '' : '';
       tt.addEventListener('focus', () => tt._b = snapshot());
       tt.addEventListener('input', () => { P.trans.map ||= {}; const k = trKey(cueText(c)); if (tt.value.trim()) P.trans.map[k] = tt.value.trim(); else delete P.trans.map[k]; cueCache.at = -1; trMemo.list = null; clearTimeout(saveT); saveT = setTimeout(saveNow, 800); });
@@ -3509,7 +4036,7 @@ function renderSubs(){
     ta.addEventListener('focus', () => ta._b = snapshot());
     ta.addEventListener('input', () => { const k0 = trKey(cueText(c)); c.text = c.own ? ta.value : ta.value.trim() === autoText(c) ? null : ta.value;
       if (P.trans && P.trans.map && P.trans.map[k0] != null){ trMemo.list = null; const k1 = trKey(cueText(c)); if (k1 !== k0){ P.trans.map[k1] = P.trans.map[k0]; delete P.trans.map[k0]; } }
-      paintCue(c, true); cueCache.at = -1; clearTimeout(saveT); saveT = setTimeout(saveNow, 800); });
+      paintCue(c, true); cueCache.at = -1; clearTimeout(saveT); saveT = setTimeout(saveNow, 800); paintReadLater(); });
     ta.addEventListener('blur', () => { if (ta._b && ta._b !== snapshot()){ undo.push(ta._b); redo = []; } ta._b = null; });
     frag.append(el); cueEls.set(c.id, el);
   });
@@ -3536,7 +4063,7 @@ function paintCue(c, keepText){
     ss.value = c.spk || ''; const sp = cueSpk(c); el.style.setProperty('--sc', sp ? spkCol(sp) : 'transparent'); }
 }
 function updateSubs2(){ P.cues.forEach(c => paintCue(c)); updateCount(); }
-function updateCount(){ $('#subCount').textContent = computedCues().length + ' Untertitel'; }
+function updateCount(){ paintRead(); }
 function updateSubsList(){ if (tab === 'subs') updateSubs2(); }
 $('#cueList').addEventListener('change', e => {
   const ss = e.target.closest('.cue-spk'); if (!ss) return; const c = P.cues.find(x => x.id === ss.closest('.cue').dataset.id); if (!c) return;
@@ -3575,6 +4102,278 @@ $('#cueList').addEventListener('click', e => {
     commit(() => { if (a[0] === 's') setCueFree(c, t.s + d, t.e); else setCueFree(c, t.s, t.e + d); if (c.lk) refreshLo(c); }, false); cueCache.at = -1; updateSubs2(); }
   cueCache.at = -1;
 });
+
+// ───────── Eigene Looks (D5): ein fertiger Untertitel-Stil unter einem Namen ─────────
+// Gilt auf diesem Gerät für alle Projekte (localStorage), reist mit der Sicherung und – auf Wunsch – im Projektpaket mit.
+const LOOK_KEY = 'hc-sub-looks';
+const LOOK_FIELDS = ['mode', 'chars', 'lines', 'dur', 'size', 'pos', 'x', 'y', 'color', 'outline', 'outlineColor', 'font', 'bg'];
+const LOOK_SPLIT = ['mode', 'chars', 'lines', 'dur'];   // diese Angaben bestimmen die Aufteilung: Ändern sie sich, werden die Untertitel neu aufgeteilt
+let subLooks = (() => { try { const v = JSON.parse(localStorage.getItem(LOOK_KEY)); return Array.isArray(v) ? v.filter(l => l && l.id && l.name && l.st) : []; } catch(_){ return []; } })();
+const lookOf = st => { const o = {}; for (const k of LOOK_FIELDS) if (st[k] != null && st[k] !== '' && st[k] !== false) o[k] = st[k]; if (st.outline === false) o.outline = false; return o; };
+const lookSame = (a, b) => JSON.stringify(lookOf(a)) === JSON.stringify(lookOf(b));
+const lookActive = l => !!P && S().look === 'own:' + l.id && lookSame(S(), l.st);
+function saveLooks(){ try { localStorage.setItem(LOOK_KEY, JSON.stringify(subLooks)); } catch(_){} renderLooks(); }
+function renderLooks(){
+  const box = $('#lookList'); if (!box) return;
+  box.innerHTML = subLooks.length ? subLooks.map(l => `<span class="look-chip${lookActive(l) ? ' on' : ''}" data-look="${esc(l.id)}" title="Look „${esc(l.name)}“ übernehmen"><b>${esc(l.name)}</b><button type="button" data-del="${esc(l.id)}" title="Look löschen">×</button></span>`).join('') : '<span class="muted small">noch keine eigenen</span>';
+  // Clip-Studio: eigene Looks hinter den vier mitgelieferten
+  const cl = $('#clipLooks'); if (cl){ cl.querySelectorAll('[data-own]').forEach(b => b.remove());
+    for (const l of subLooks){ const b = document.createElement('button'); b.dataset.own = l.id; b.innerHTML = '<b></b><span>eigener Look</span>'; b.querySelector('b').textContent = l.name; b.classList.toggle('on', lookActive(l)); cl.append(b); } }
+}
+function applyLook(l){
+  if (!P) return; const st = S(), regen = LOOK_SPLIT.some(k => l.st[k] != null && l.st[k] !== st[k]) && tokens.length > 0, n = regen ? manualCount() : 0;
+  if (n && !confirm(`${n} Untertitel wurden von Hand bearbeitet. Dieser Look teilt die Untertitel neu auf; dabei gehen diese Änderungen verloren. Fortfahren?`)) return;
+  commit(() => { for (const k of LOOK_FIELDS){ if (l.st[k] != null) st[k] = l.st[k]; else if (k in DEF_STYLE) st[k] = DEF_STYLE[k]; else delete st[k]; } st.look = 'own:' + l.id; if (regen) genCues(); }, true);
+  syncStyleInputs(); styleOverlay(); renderLooks(); if (tab === 'clip' && window.renderClip) renderClip(); cueCache.at = -1; updateSubs(outPos);
+  toast(`Look „${l.name}“ übernommen` + (regen ? ` – ${P.cues.length} Untertitel neu aufgeteilt` : ''));
+}
+async function saveLook(){
+  if (!P) return; const cur = subLooks.find(l => S().look === 'own:' + l.id);
+  const name = await askName('Look speichern', cur ? cur.name : ''); if (!name || !P) return;
+  const ex = subLooks.find(l => l.name.toLowerCase() === name.toLowerCase());
+  if (ex && !lookSame(ex.st, S()) && !confirm(`Den Look „${ex.name}“ mit dem jetzigen Stil überschreiben?`)) return;
+  const l = ex || {id: newId(), name: name.slice(0, 40)}; l.st = lookOf(S()); if (!ex) subLooks.push(l);
+  S().look = 'own:' + l.id; saveLooks(); changed(false);
+  toast(`Look „${l.name}“ gespeichert – er steht jetzt in jedem Projekt bereit`);
+}
+$('#lookSave').onclick = saveLook;
+$('#lookList').onclick = e => {
+  const d = e.target.closest('[data-del]'), c = e.target.closest('[data-look]');
+  if (d){ const l = subLooks.find(x => x.id === d.dataset.del); if (l && confirm(`Look „${l.name}“ löschen? Projekte, die ihn verwenden, behalten ihren Stil.`)){ subLooks = subLooks.filter(x => x !== l); saveLooks(); } return; }
+  if (c){ const l = subLooks.find(x => x.id === c.dataset.look); if (l) applyLook(l); }
+};
+$('#clipLooks').addEventListener('click', e => { const b = e.target.closest('[data-own]'); if (!b) return; e.stopPropagation(); const l = subLooks.find(x => x.id === b.dataset.own); if (l) applyLook(l); });
+// Looks aus einer Sicherung oder einem Projektpaket dazunehmen (vorhandene bleiben); Rückgabe: wie viele neu sind
+function mergeLooks(list){
+  let n = 0;
+  for (const l of Array.isArray(list) ? list : []){
+    if (!l || typeof l.name !== 'string' || !l.name.trim() || !l.st || typeof l.st !== 'object') continue;
+    if (subLooks.some(x => x.id === l.id || (x.name.toLowerCase() === l.name.trim().toLowerCase() && lookSame(x.st, l.st)))) continue;
+    subLooks.push({id: l.id && !subLooks.some(x => x.id === l.id) ? String(l.id) : newId(), name: l.name.trim().slice(0, 40), st: lookOf(l.st)}); n++;
+  }
+  if (n) saveLooks(); return n;
+}
+
+// ───────── Lesbarkeit der Untertitel (D7) ─────────
+// Geprüft wird, was gleich im Bild steht: zu viele Zeichen je Sekunde, zu lange Zeilen, zu kurze Standzeit. „Neu umbrechen“ teilt
+// zu lange Untertitel am Wort in der Mitte, lässt zu schnelle oder zu kurze länger stehen, soweit bis zum nächsten Platz ist,
+// und legt zu kurze sonst mit dem Nachbarn zusammen.
+const READ = {cps: 20, minDur: 0.7};
+const cueChars = x => x.text.replace(/\s+/g, ' ').trim().length;
+function readIssues(list){   // je Eintrag der berechneten Liste: null oder {long, fast, short, why: […]}
+  const st = S(); if (st.mode === 'word') return list.map(() => null);
+  const maxC = +st.chars || 32, maxL = +st.lines || 2;
+  return list.map(x => {
+    const n = cueChars(x), d = x.e - x.s, rows = wrapText(x.text).split('\n'), longest = Math.max(...rows.map(r => r.length)), o = {why: []};
+    if (rows.length > maxL){ o.long = true; o.why.push(`${rows.length} Zeilen`); }
+    else if (longest > maxC * 1.15 + 1){ o.long = true; o.why.push(`${longest} Zeichen in einer Zeile`); }
+    const cps = Math.round(n / Math.max(0.05, d)), d1 = Math.round(d * 10) / 10;   // gerundet wie angezeigt, damit Grenze und Meldung zusammenpassen
+    if (n > 8 && cps > READ.cps){ o.fast = true; o.why.push(`${cps} Zeichen je Sekunde`); }
+    else if (d1 < READ.minDur && !x.kept){ o.short = true; o.why.push(`steht nur ${d1.toFixed(1).replace('.', ',')} s`); }
+    return o.why.length ? o : null;
+  });
+}
+// Untertitel am Wort teilen, das der Mitte (nach Zeichen) am nächsten liegt
+function splitCueMid(c){
+  const idx = P.cues.indexOf(c); if (idx < 0) return false;
+  const words = cueText(c).trim().split(/\s+/).filter(Boolean); if (words.length < 2) return false;
+  const tot = words.join(' ').length; let k = 1, best = Infinity, acc = 0;
+  for (let j = 0; j < words.length - 1; j++){ acc += words[j].length + (j ? 1 : 0); const d = Math.abs(acc - tot / 2) - (/[,;:.!?…]$/.test(words[j]) ? 3 : 0); if (d < best){ best = d; k = j + 1; } }
+  const left = words.slice(0, k).join(' '), right = words.slice(k).join(' ');
+  if (c.own){ const c2 = splitOwnCue(c, left, right); if (!c2) return false; P.cues.splice(idx + 1, 0, c2); return true; }
+  const ids = cueWords(c); if (ids.length < 2) return false;
+  const manual = c.text != null, kt = clamp(manual ? Math.round(ids.length * left.length / Math.max(1, tot)) : k, 1, ids.length - 1);   // eigener Text: die Wörter darunter im selben Verhältnis teilen
+  const c2 = {id: newId(), a: ids[kt - 1] + 1, b: c.b, text: manual ? right : null, ds: 0, de: isFree(c) ? 0 : c.de || 0, off: c.off, ...(c.x != null ? {x: c.x, y: c.y} : {}), ...(c.spk ? {spk: c.spk} : {})};
+  c.b = ids[kt - 1]; c.text = manual ? left : null; c.de = 0; delete c.fa; delete c.fd; P.cues.splice(idx + 1, 0, c2); return true;
+}
+function readFix(){
+  if (!P) return; let split = 0, longer = 0, merged = 0;
+  commit(() => {
+    // 1) zu schnell oder zu kurz: in die Lücke bis zum nächsten Untertitel hinein länger stehen lassen
+    const list = computedCues(), iss = readIssues(list);
+    list.forEach((x, k) => { const q = iss[k]; if (!q || !(q.fast || q.short) || list.filter(y => y.c === x.c).length > 1) return;
+      const n = list[k + 1], room = (n ? n.s - 0.04 : total) - x.e, add = Math.min(room, Math.max(READ.minDur, cueChars(x) / READ.cps) - (x.e - x.s)); if (add < 0.05) return;
+      setCueFree(x.c, x.s, x.e + add); if (x.c.lk) refreshLo(x.c); longer++; });   // wie „Ende +“: Der Untertitel bekommt eine feste Zeit
+    cueCache.at = -1;
+    // 2) immer noch zu kurz, weil gleich der nächste folgt: mit dem Nachbarn zusammenlegen, wenn beide zusammen in einen Untertitel passen.
+    //    Nur Untertitel mit automatischem Text und ohne eigene Zeit oder Lage; endet der kurze einen Satz, kommt er zum vorigen.
+    const maxAll = (+S().chars || 32) * (+S().lines || 2);
+    const plain = c => !c.own && c.text == null && !isFree(c) && !c.ds && !c.de && c.x == null && !c.lk && !c.off;
+    for (let round = 0; round < 3 && !P.moves.length; round++){
+      const l = computedCues(), q = readIssues(l), used = new Set(); let n = 0;
+      l.forEach((x, k) => {
+        if (!q[k] || !q[k].short || used.has(x.c) || !plain(x.c)) return;
+        const src = c => { const ids = cueWords(c); return ids.length ? tokens[ids[0]].src : -1; };
+        const fits = y => !!y && !used.has(y.c) && plain(y.c) && src(y.c) === src(x.c) && cueSpk(y.c) === cueSpk(x.c) && cueChars(x) + 1 + cueChars(y) <= maxAll;
+        const prev = l[k - 1], next = l[k + 1];
+        const okNext = fits(next) && next.c.a === x.c.b + 1 && next.s - x.e < 0.8, okPrev = fits(prev) && prev.c.b + 1 === x.c.a && x.s - prev.e < 0.8;
+        if (okPrev && (!okNext || sentEnd(x.text))){ prev.c.b = x.c.b; P.cues.splice(P.cues.indexOf(x.c), 1); used.add(x.c); used.add(prev.c); n++; merged++; }
+        else if (okNext){ x.c.b = next.c.b; P.cues.splice(P.cues.indexOf(next.c), 1); used.add(x.c); used.add(next.c); n++; merged++; }
+      });
+      if (!n) break; cueCache.at = -1;
+    }
+    // 3) zu lange Zeilen: teilen, bei sehr langen Untertiteln bis zu drei Mal
+    for (let round = 0; round < 3; round++){
+      const l2 = computedCues(), i2 = readIssues(l2), seen = new Set(); let n = 0;
+      l2.forEach((x, k) => { if (!i2[k] || !i2[k].long || seen.has(x.c)) return; seen.add(x.c); if (splitCueMid(x.c)){ n++; split++; } });
+      if (!n) break; cueCache.at = -1;
+    }
+  }, true);
+  cueCache.at = -1; if (tab === 'subs') renderSubs(); updateSubs(outPos);
+  const left = paintRead(), did = [split ? `${split} geteilt` : '', longer ? `${longer} länger eingeblendet` : '', merged ? `${merged} zusammengelegt` : ''].filter(Boolean).join(', ');
+  toast(!did ? 'Hier ließ sich nichts verbessern – bis zum nächsten Untertitel ist kein Platz' : did + (left ? ` · ${left} ${left === 1 ? 'bleibt' : 'bleiben'} markiert` : ' · alles gut lesbar'));
+}
+$('#readFix').onclick = readFix;
+// Markierung in der Liste und Zähler; Rückgabe: Anzahl schwer lesbarer Untertitel
+function paintRead(){
+  if (!P) return 0;
+  const list = computedCues(), iss = readIssues(list), by = new Map();
+  iss.forEach((q, k) => { if (!q) return; const id = list[k].c.id; by.set(id, [...new Set((by.get(id) || []).concat(q.why))]); });
+  for (const [id, el] of cueEls){ const w = by.get(id); el.classList.toggle('hard', !!w); let b = el.querySelector('.rd');
+    if (w){ if (!b){ b = document.createElement('div'); b.className = 'rd'; el.querySelector('.tm').after(b); } setText(b, 'Schwer lesbar: ' + w.join(', ')); } else if (b) b.remove(); }
+  const n = by.size;
+  $('#subCount').textContent = `${list.length} Untertitel` + (n ? ` · ${n} schwer lesbar` : ''); $('#subCount').classList.toggle('warn', n > 0);
+  $('#readFix').classList.toggle('hidden', !n); $('#readFix').textContent = `Neu umbrechen (${n})`;
+  $('#readInfo').classList.toggle('hidden', !n);
+  if (n) $('#readInfo').textContent = `Als schwer lesbar gilt: mehr als ${READ.cps} Zeichen je Sekunde, Zeilen über der eingestellten Länge oder weniger als ${String(READ.minDur).replace('.', ',')} s im Bild.`;
+  return n;
+}
+let readLateT = 0;
+const paintReadLater = () => { clearTimeout(readLateT); readLateT = setTimeout(() => { if (P && tab === 'subs') paintRead(); }, 500); };
+$('#subCount').onclick = () => { const el = $('#cueList .cue.hard'); if (el) el.scrollIntoView({block: 'center', behavior: 'smooth'}); };
+
+// ───────── Titelbild (A6): das Bild an der Abspiellinie als PNG oder JPG ─────────
+// Gezeichnet wird, was die Bühne gerade zeigt – Hauptbild samt Lage, Zoom und Farbanpassung, Einblendungen (auch freigestellte und
+// zugeschnittene), Wasserzeichen –, auf Wunsch mit Titeln, Textzeile und Untertiteln, dazu eine Titelzeile im Design der Folien.
+function coverDraw(cv, o){
+  const st = $('#stage'), R = st.getBoundingClientRect(), W = cv.width, H = cv.height, k = W / R.width, ctx = cv.getContext('2d');
+  ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
+  const box = el => { const r = el.getBoundingClientRect(); return {x: (r.left - R.left) * k, y: (r.top - R.top) * k, w: r.width * k, h: r.height * k}; };
+  const shown = el => !el.classList.contains('hidden');
+  // Medium in seinen Kasten zeichnen: eingepasst (contain), füllend (cover) oder gestreckt (fill); clip = Zuschnitt als Anteile des Kastens
+  const draw = (el, b, fit, clip) => {
+    const vw = el.videoWidth || el.naturalWidth || el.width || 0, vh = el.videoHeight || el.naturalHeight || el.height || 0; if (!vw || !vh || b.w <= 0 || b.h <= 0) return;
+    let dw = b.w, dh = b.h; if (fit !== 'fill'){ const f = (fit === 'cover' ? Math.max : Math.min)(b.w / vw, b.h / vh); dw = vw * f; dh = vh * f; }
+    const c = clip || {l: 0, t: 0, r: 0, b: 0};
+    ctx.save(); ctx.beginPath(); ctx.rect(b.x + c.l * b.w, b.y + c.t * b.h, b.w * (1 - c.l - c.r), b.h * (1 - c.t - c.b)); ctx.clip();
+    ctx.drawImage(el, b.x + (b.w - dw) / 2, b.y + (b.h - dh) / 2, dw, dh); ctx.restore();
+  };
+  // Hauptbild: ein laufender Einschub liegt darüber und füllt die Bühne
+  if (shown(II)) draw(II, box(II), 'contain'); else if (shown(IV)) draw(IV, box(IV), 'contain');
+  else if (!st.classList.contains('audio-only')){
+    const g = timeline[curSeg], key = mainKeyOf(g), keyed = !!(vKey && key && V.style.opacity === '0'), b = box(V);
+    if (keyed){ ctx.fillStyle = key.bg || '#000'; ctx.fillRect(0, 0, W, H); }
+    ctx.filter = V.style.filter || 'none'; draw(keyed ? vKey.canvas : V, b, 'contain'); ctx.filter = 'none';
+  }
+  // Einblendungen in der Reihenfolge der Spuren
+  for (const el of st.querySelectorAll('.ovl-layer')){
+    if (el.tagName === 'CANVAS' || !shown(el)) continue;
+    const ent = [...layers].find(x => x[1] === el), kl = ent ? keyLayers.get(ent[0]) : null, m = /inset\(([\d.]+)% ([\d.]+)% ([\d.]+)% ([\d.]+)%/.exec(el.style.clipPath || '');
+    draw(kl && el.style.opacity === '0' ? kl.canvas : el, box(el), el.classList.contains('free') ? 'fill' : 'cover', m ? {t: +m[1] / 100, r: +m[2] / 100, b: +m[3] / 100, l: +m[4] / 100} : null);
+  }
+  const wm = $('#wm'); if (shown(wm)){ ctx.globalAlpha = clamp(+wm.style.opacity || 1, 0, 1); draw(wm, box(wm), 'fill'); ctx.globalAlpha = 1; }
+  // Schrift aus dem Video: Titel, Textzeile, Untertitel – dieselben Angaben wie im Export
+  if (o.titles || o.subs){
+    const plan = buildPlan(), sub = plan.subs, sty = (sub && sub.style) || {};
+    for (const c of (sub && sub.cues) || []){
+      if (!(outPos >= c.start - 1e-3 && outPos < c.end) || !(c.title ? o.titles : o.subs)) continue;
+      coverCue(ctx, c.title ? c : {...c, size: c.size || SIZE_F[sty.size] || 0.058, color: c.color || sty.color, outline: c.outline != null ? c.outline : sty.outline !== false, font: c.font != null ? c.font : sty.font, outlineColor: c.outlineColor || sty.outlineColor, bg: c.bg || !!sty.bg}, W, H);
+    }
+  }
+  if (String(o.text || '').trim()) coverTitle(ctx, o.text.trim(), o.pos, W, H);
+}
+function coverCue(ctx, c, W, H){
+  const size = c.size * Math.min(W, H) * (H > W ? 1.25 : 1);
+  ctx.font = `${fontWeight(c.font, c.title ? 800 : 700)} ${size.toFixed(1)}px ${fontCss(c.font).replace('var(--ui)', getComputedStyle(document.body).fontFamily || 'sans-serif')}`;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  const rows = String(c.text).split('\n'), lh = size * 1.12, bw = Math.max(...rows.map(r => ctx.measureText(r).width)), bh = rows.length * lh, cx = c.x * W, cy = c.y * H;
+  if (c.bg){ const px = size * 0.3, py = size * 0.1; ctx.fillStyle = 'rgba(0,0,0,.55)'; ctx.fillRect(cx - bw / 2 - px, cy - bh / 2 - py, bw + 2 * px, bh + 2 * py); }
+  rows.forEach((row, n) => { const y = cy - bh / 2 + lh * (n + 0.5);
+    if (c.outline && !c.bg){ ctx.lineJoin = 'round'; ctx.miterLimit = 2; ctx.lineWidth = 2 * Math.max(1, size / 14); ctx.strokeStyle = c.outlineColor || '#000'; ctx.strokeText(row, cx, y); }
+    ctx.fillStyle = c.color || '#FFFFFF'; ctx.fillText(row, cx, y); });
+}
+// Titelzeile im Design der Folien: Kasten in der Hintergrundfarbe des Designprofils, Balken in der Akzentfarbe, Überschriften-Schrift.
+// *so* färbt Wörter in der Akzentfarbe (wie in den Folien).
+function coverRich(text){   // Zeilen → Wörter → Läufe [Text, hervorgehoben]
+  let hl = false;
+  return String(text).split('\n').map(line => line.split(/\s+/).filter(Boolean).map(raw => { const runs = []; let w = '';
+    for (const ch of raw){ if (ch === '*'){ if (w){ runs.push([w, hl]); w = ''; } hl = !hl; } else w += ch; }
+    if (w) runs.push([w, hl]); return runs; }).filter(r => r.length)).filter(l => l.length);
+}
+function coverWrap(ctx, lines, maxW){   // → [{runs, w}] je Zeile
+  const sp = ctx.measureText(' ').width, out = [];
+  for (const words of lines){ let cur = {runs: [], w: 0};
+    for (const runs of words){ const ww = runs.reduce((n, r) => n + ctx.measureText(r[0]).width, 0);
+      if (cur.runs.length && cur.w + sp + ww > maxW){ out.push(cur); cur = {runs: [], w: 0}; }
+      if (cur.runs.length){ cur.runs.push([' ', false]); cur.w += sp; }
+      cur.runs.push(...runs); cur.w += ww; }
+    if (cur.runs.length) out.push(cur); }
+  return out;
+}
+function coverTitle(ctx, text, pos, W, H){
+  const pr = window.slProfile ? slProfile() : null, C = pr ? slColors(pr, true) : {bg: '#131312', fg: '#EDE7DA', acc: '#E5402A'};
+  const font = pr && window.slFontFn ? slFontFn(pr.fonts && pr.fonts.head, 800) : (s => `800 ${s.toFixed(1)}px Inter, "Segoe UI", sans-serif`);
+  const port = H > W, u = Math.min(W, H) / 100, padX = 5 * u, bar = pr && pr.bar === false ? 0 : 1.3 * u, inX = 3.4 * u, inY = 2.8 * u, maxW = W - 2 * padX - bar - 2 * inX, lines = coverRich(text);
+  if (!lines.length) return;
+  let size = Math.min(W, H) * (port ? 0.095 : 0.12), rows = [];
+  for (let n = 0; n < 14; n++){ ctx.font = font(size); rows = coverWrap(ctx, lines, maxW); if (rows.length <= (port ? 4 : 3) && rows.every(r => r.w <= maxW + 1)) break; size *= 0.92; }
+  const lh = size * 1.16, bh = rows.length * lh + 2 * inY, bw = Math.max(...rows.map(r => r.w)) + 2 * inX + bar;
+  const y0 = pos === 'oben' ? (port ? 16 : 7) * u : pos === 'mitte' ? (H - bh) / 2 : H - bh - (port ? 24 : 8) * u, x0 = padX;
+  ctx.globalAlpha = 0.92; ctx.fillStyle = C.bg; ctx.fillRect(x0, y0, bw, bh); ctx.globalAlpha = 1;
+  if (bar){ ctx.fillStyle = C.acc; ctx.fillRect(x0, y0, bar, bh); }
+  ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+  rows.forEach((r, i) => { let x = x0 + bar + inX; const y = y0 + inY + size * 0.86 + i * lh;
+    for (const [t, hl] of r.runs){ ctx.fillStyle = hl ? C.acc : C.fg; ctx.fillText(t, x, y); x += ctx.measureText(t).width; } });
+}
+async function coverRender(cv, o){
+  if (window.slFonts) try { await slFonts(slProfile()); } catch(_){}
+  if (V.seeking) await new Promise(res => { const t = setTimeout(res, 1500); V.addEventListener('seeked', () => { clearTimeout(t); res(); }, {once: true}); });
+  drawKeyFrames(); coverDraw(cv, o);
+}
+function openCover(){
+  if (!P || !timeline.length) return; if (playing) pausePlay();
+  const [bw, bh] = baseDims(), W = Math.round(bw / 2) * 2, H = Math.round(bh / 2) * 2, port = H > W, small = Math.min(W, H) > 720 ? 720 / Math.min(W, H) : 0;
+  let pref = {}; try { pref = JSON.parse(localStorage.getItem('hc-cover')) || {}; } catch(_){}
+  const cs = P.settings.cover || {}, body = $('#sheetBody');
+  body.innerHTML = `<h3>Titelbild</h3>
+    <canvas id="cvPrev" class="cover-prev"></canvas>
+    <label class="field"><span>Titelzeile (auf Wunsch) – *so* färbt Wörter in der Akzentfarbe</span><textarea id="cvText" rows="2" dir="auto" maxlength="160" placeholder="z. B. Wer hat das *wirklich* gesagt?"></textarea></label>
+    <div class="grid2">
+      <label>Lage der Titelzeile <select id="cvPos"><option value="oben">oben</option><option value="mitte">Mitte</option><option value="unten">unten</option></select></label>
+      <label>Format <select id="cvFmt"><option value="png">PNG (verlustfrei)</option><option value="jpg">JPG (kleine Datei)</option></select></label>
+      <label>Größe <select id="cvSize"><option value="0">wie das Video (${W} × ${H})</option>${small ? `<option value="${small}">${Math.round(W * small / 2) * 2} × ${Math.round(H * small / 2) * 2}</option>` : ''}</select></label>
+    </div>
+    <label class="row" style="margin-top:10px"><input type="checkbox" id="cvTitles"> Titel und Textzeile aus dem Video zeigen</label>
+    <label class="row"><input type="checkbox" id="cvSubs"> Untertitel zeigen</label>
+    <p class="muted small">Gezeigt wird das Bild an der Abspiellinie samt Einblendungen und Wasserzeichen. Für ein anderes Bild die Abspiellinie verschieben, die Vorschau zieht nach. Die Titelzeile übernimmt Farben und Schrift vom Designprofil der Folien.</p>
+    <div class="row" style="margin-top:12px"><span class="muted small" id="cvMsg" style="flex:1;min-width:0"></span><button class="btn" id="cvNo">Schließen</button><button class="btn primary" id="cvSave">Speichern …</button></div>`;
+  $('#cvText').value = cs.text || ''; $('#cvPos').value = cs.pos || (port ? 'mitte' : 'unten'); $('#cvTitles').checked = cs.titles !== false; $('#cvSubs').checked = !!cs.subs;
+  $('#cvFmt').value = pref.fmt === 'jpg' ? 'jpg' : 'png'; if (pref.small && small) $('#cvSize').value = String(small);
+  const opts = () => ({text: $('#cvText').value, pos: $('#cvPos').value, titles: $('#cvTitles').checked, subs: $('#cvSubs').checked});
+  const prev = $('#cvPrev'); prev.width = Math.round(Math.min(W, 640 * (port ? 0.6 : 1))); prev.height = Math.round(prev.width * H / W);
+  let last = '', busy = false;
+  const paint = async force => { const key = outPos.toFixed(3) + JSON.stringify(opts()) + (V.seeking ? 's' : ''); if (busy || (!force && key === last)) return; busy = true; last = key;
+    try { await coverRender(prev, opts()); } catch(e){ $('#cvMsg').textContent = 'Dieses Bild lässt sich hier nicht zeigen: ' + ((e && e.message) || e); } busy = false; };
+  const tick = setInterval(() => { if (!$('#cvPrev')) return clearInterval(tick); paint(false); }, 350);
+  const keep = () => { P.settings.cover = opts(); try { localStorage.setItem('hc-cover', JSON.stringify({fmt: $('#cvFmt').value, small: +$('#cvSize').value > 0})); } catch(_){} clearTimeout(saveT); saveT = setTimeout(saveNow, 700); };
+  for (const id of ['cvText', 'cvPos', 'cvTitles', 'cvSubs', 'cvFmt', 'cvSize']){ $('#' + id).addEventListener('input', () => { keep(); paint(true); }); $('#' + id).addEventListener('change', () => { keep(); paint(true); }); }
+  $('#cvText').addEventListener('keydown', e => e.stopPropagation());
+  $('#cvNo').onclick = closeSheet;
+  $('#cvSave').onclick = async () => {
+    const f = +$('#cvSize').value || 1, cv = document.createElement('canvas'), jpg = $('#cvFmt').value === 'jpg'; cv.width = Math.round(W * f / 2) * 2; cv.height = Math.round(H * f / 2) * 2;
+    $('#cvSave').disabled = true; $('#cvMsg').textContent = 'Bild wird erzeugt …';
+    try {
+      await coverRender(cv, opts());
+      const blob = await new Promise(res => cv.toBlob(res, jpg ? 'image/jpeg' : 'image/png', 0.92)); if (!blob) throw new Error('kein Bild erzeugt');
+      const msg = await saveBlob((P.name || 'Video').replace(/[\\/:*?"<>|]/g, '_').slice(0, 80) + ' – Titelbild.' + (jpg ? 'jpg' : 'png'), blob);
+      $('#cvMsg').textContent = msg ? `${msg} · ${cv.width} × ${cv.height}, ${fmtBytes(blob.size)}` : 'Nicht gespeichert.';
+    } catch(e){ $('#cvMsg').textContent = 'Das Bild ließ sich nicht speichern: ' + ((e && e.message) || e); hcLog('Titelbild: ' + ((e && e.message) || e)); }
+    $('#cvSave').disabled = false;
+  };
+  sheetOnClose = () => clearInterval(tick);
+  body.onclick = null; sheetItem = null; openSheet(true); paint(true);
+}
+$('#coverBtn').onclick = openCover; $('#clipCover').onclick = openCover;
 
 // ───────── Elemente (Clips, Zoom) ─────────
 const TYPE_LBL = {broll:'B-Roll', insert:'Einschub', pip:'Einblendung', zoom:'Zoom', fx:'Anpassung', title:'Titel', audio:'Ton'};
@@ -3750,6 +4549,7 @@ function buildPlan(){
     return [o]; }).flat() : [];
   for (const t of P.items.filter(x => x.type === 'title' && (x.text || '').trim())){ const a = srcToOut(snapSrc(t.at)); if (a >= total) continue;
     cues.push({start:r3(a), end:r3(Math.min(total, a + t.dur)), text:wrapTitle(t.text.trim(), (SIZE_F[t.size] || 0.058) * (t.scale || 1), t.font, W, H), x:t.x, y:t.y, size:+((SIZE_F[t.size] || 0.058) * (t.scale || 1)).toFixed(4), color:t.color || '#FFFFFF', outline:t.outline !== false, bg:!!t.bg, title:true, font:t.font || ''}); }
+  const tl = tlineCue(W, H); if (tl) cues.push(tl);
   const subs = cues.length ? {cues, style:S(), fonts: planFonts([S().font, ...cues.map(c => c.font)])} : null;
   const media = P.sources.map(s => ({uri:s.uri, name:s.name, duration:s.duration, width:dispSize(s)[0], height:dispSize(s)[1], fps:s.fps, hasAudio:s.hasAudio !== false, hasVideo:hasVid(s), kind:s.kind || 'video'}));
   return {format:exFmt, name: ($('#exName').value || P.name).replace(/[\\/:*?"<>|]/g, '_'), width:W, height:H, fps:primary().fps || 30, total:r3(total),
@@ -3846,8 +4646,9 @@ $('#txChip').onclick = () => { setTab('export'); setTimeout(() => $('#txCard').s
 function renderExport(){
   const [W, H] = outSize(), n = P.items.reduce((m, x) => (m[x.type] = (m[x.type] || 0) + 1, m), {});
   $('#exSummary').textContent = `${fmtT(total)}${exFmt === 'audio' ? '' : ` · ${W}×${H}`} · ${timeline.filter(g => g.kind === 'main').length} Abschnitte` + (P.sources.length > 1 ? ` aus ${P.sources.length} Videos` : '') +
-    (n.insert ? ` · ${n.insert} Einschub` : '') + (n.broll ? ` · ${n.broll} B-Roll` : '') + (n.pip ? ` · ${n.pip} Einblendung${n.pip > 1 ? 'en' : ''}` : '') + (n.zoom ? ` · ${n.zoom} Zoom` : '') + (n.fx ? ` · ${n.fx} Anpassungen` : '') + (n.title ? ` · ${n.title} Titel` : '') +
+    (n.insert ? ` · ${n.insert} Einschub` : '') + (n.broll ? ` · ${n.broll} B-Roll` : '') + (n.pip ? ` · ${n.pip} Einblendung${n.pip > 1 ? 'en' : ''}` : '') + (n.zoom ? ` · ${n.zoom} Zoom` : '') + (n.fx ? ` · ${n.fx} Anpassungen` : '') + (n.title ? ` · ${n.title} Titel` : '') + (tlineOn() ? ' · Textzeile' : '') +
     (S().enabled !== false && P.cues.length ? ` · ${computedCues().length} Untertitel` : '');
+  renderLenLights(); renderChapters();
 }
 $('#exRes').onchange = renderExport;
 let exJob = null, exResult = null;

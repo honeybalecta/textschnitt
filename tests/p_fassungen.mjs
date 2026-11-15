@@ -43,7 +43,7 @@ check('Der Stand vor dem Zurückholen liegt jetzt selbst bei den Fassungen', ite
 await page.click('#mgClose'); await page2.close();
 // 4) Papierkorb
 const n0 = await page.evaluate(() => document.querySelectorAll('.proj-item').length);
-await page.locator('.proj-item', { hasText: /^Rede/ }).filter({ hasNotText: 'Fassung vom' }).locator('.del:not(.share):not(.ren):not(.ver)').click(); await sleep(300);
+await page.locator('.proj-item', { hasText: /^Rede/ }).filter({ hasNotText: 'Fassung vom' }).locator('.del.kill').click(); await sleep(300);
 const link = await page.evaluate(() => { const b = document.querySelector('.trash-link'); return b ? b.textContent : null; });
 check('Nach dem Löschen erscheint der Papierkorb auf der Startseite', /Papierkorb \(1\)/.test(link || '') && await page.evaluate(() => document.querySelectorAll('.proj-item').length) === n0 - 1, link);
 await page.click('.trash-link'); await sleep(300);
@@ -53,7 +53,7 @@ await page.screenshot({ path: OUT + '/papierkorb.png' });
 await page.locator('#mgSheet [data-a=back]').click(); await sleep(400);
 check('Wiederherstellen bringt das Projekt zurück in die Liste', await page.evaluate(() => [...document.querySelectorAll('.proj-item b')].some(b => b.textContent === 'Rede')) && !(await page.evaluate(() => !!document.querySelector('.trash-link'))));
 // endgültig löschen
-await page.locator('.proj-item', { hasText: /^Rede/ }).filter({ hasNotText: 'Fassung vom' }).locator('.del:not(.share):not(.ren):not(.ver)').click(); await sleep(300);
+await page.locator('.proj-item', { hasText: /^Rede/ }).filter({ hasNotText: 'Fassung vom' }).locator('.del.kill').click(); await sleep(300);
 await page.click('.trash-link'); await sleep(300); await page.locator('#mgSheet [data-a=kill]').click(); await sleep(400);
 check('Endgültig löschen leert den Eintrag', !fs.existsSync(`${D}/sicherungen/${pid}`) && !(await page.evaluate(() => !!document.querySelector('.trash-link'))));
 // Kopie aufräumen

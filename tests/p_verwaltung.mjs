@@ -26,7 +26,8 @@ const used = `${DATA}/freigestellt/1111111111111111.mp4`, free = `${DATA}/freige
 const slUsed = `${DATA}/folien/${sid.slice(0, 20)}/folie-t1-2.png`, slOld = `${DATA}/folien/${sid.slice(0, 20)}/folie-t1-1.png`;
 mk(used, 3_000_000); mk(free, 2_000_000); mk(orphan, 1_500_000); mk(slUsed, 40_000); mk(slOld, 30_000); mk(`${DATA}/cache/thumbs/test-vorschaubild.jpg`, 5000);
 await page.evaluate(([u, s]) => { P.media = [{ uri: u, name: 'frei.mp4', kind: 'video', duration: 2 }, { uri: s, name: 'folie.png', kind: 'image', duration: 600 }]; saveNow(); closeProject(); }, [used, slUsed]);
-await page.evaluate(() => { localStorage.setItem('hc-slide-profiles', JSON.stringify([{ id: 'meins', name: 'Mein Profil', colors: { dark: {}, light: {} } }])); favCols = ['#E5402A']; saveFavs(); });
+await page.evaluate(() => { localStorage.setItem('hc-slide-profiles', JSON.stringify([{ id: 'meins', name: 'Mein Profil', colors: { dark: {}, light: {} } }])); favCols = ['#E5402A']; saveFavs();
+  ownFill = ['halt']; saveOwnFill(); subLooks.push({ id: 'sv1', name: 'Gesichert', st: lookOf(DEF_STYLE) }); saveLooks(); });   // dazu ein eigenes Füllwort und ein Untertitel-Look
 await sleep(300);
 
 // ── Einstellungen ──
@@ -77,18 +78,20 @@ const trash0 = await page.evaluate(() => TS.trashCount());
 await page.evaluate(i => TS.deleteProject(i), sid);
 const other = PJ.edit; const before = JSON.parse(await page.evaluate(i => TS.loadProject(i), other));
 await page.evaluate(([i, t]) => { const p = JSON.parse(TS.loadProject(i)); p.updated = t; p.name = p.name + ' (neuer)'; TS.saveProject(i, JSON.stringify(p)); }, [other, Date.now() + 5000]);
-await page.evaluate(() => { localStorage.removeItem('hc-slide-profiles'); favCols = []; saveFavs(); });
+await page.evaluate(() => { localStorage.removeItem('hc-slide-profiles'); favCols = []; saveFavs(); ownFill = []; saveOwnFill(); subLooks.length = 0; saveLooks(); });
 chk('vor dem Einspielen: Projekt fehlt in der Liste', !(await api('projects')).some(p => p.id === sid));
 setPick({ backup: [zip] });
 chk('nach dem Sichern sind die Einstellungen noch offen', await page.evaluate(() => !document.querySelector('#modelSheet').classList.contains('hidden') && !document.querySelector('#sheetBack').classList.contains('hidden')));
 await page.click('#setMore [data-k=restore] button');
 await page.waitForFunction(() => document.querySelector('#hcModal #pkgCancel') && document.querySelector('#hcModal #pkgCancel').textContent === 'Schließen', null, { timeout: 30000 });
 const rmsg = await page.evaluate(() => document.querySelector('#pkgMsg').textContent);
-chk('Meldung: eins dazu, eins hier neuer, der Rest unverändert, Designprofil und Farbfavorit zurück', /1 Projekt ist dazugekommen, 1 Projekt ist hier neuer und bleibt so, \d+ Projekte waren schon auf diesem Stand\. Dazu 2 Designprofile und Farbfavoriten\. Der jeweils andere Stand liegt bei den früheren Fassungen des Projekts\.$/.test(rmsg), rmsg);
+chk('Meldung: eins dazu, eins hier neuer, der Rest unverändert, vier eigene Einstellungen zurück', /1 Projekt ist dazugekommen, 1 Projekt ist hier neuer und bleibt so, \d+ Projekte waren schon auf diesem Stand\. Dazu 4 eigene Einstellungen \(Designprofile, Farbfavoriten, Füllwörter, Looks\)\. Der jeweils andere Stand liegt bei den früheren Fassungen des Projekts\.$/.test(rmsg), rmsg);
 await page.screenshot({ path: OUT + '/einspielen.png' });
 await page.click('#pkgCancel'); await sleep(200);
-const after = await page.evaluate(i => ({ list: [...document.querySelectorAll('#projList .proj-item b')].map(b => b.textContent), prof: JSON.parse(localStorage.getItem('hc-slide-profiles') || '[]').map(p => p.id), fav: favCols, trash: TS.trashCount() }), sid);
+const after = await page.evaluate(i => ({ list: [...document.querySelectorAll('#projList .proj-item b')].map(b => b.textContent), prof: JSON.parse(localStorage.getItem('hc-slide-profiles') || '[]').map(p => p.id), fav: favCols, fill: ownFill, looks: subLooks.map(l => l.name), trash: TS.trashCount() }), sid);
 chk('Projekt steht wieder in der Liste und nicht mehr im Papierkorb, Profile und Favoriten sind zurück', after.list.includes('Test ' + sid) && after.trash === trash0 && after.prof.join() === 'meins' && after.fav.join() === '#E5402A', after);
+chk('eigene Füllwörter und Untertitel-Looks sind zurück', after.fill.join() === 'halt' && after.looks.join() === 'Gesichert', [after.fill, after.looks]);
+await page.evaluate(() => { ownFill = []; saveOwnFill(); subLooks.length = 0; saveLooks(); });
 const vers = await api('project/versions?id=' + other);
 chk('das hier neuere Projekt bleibt; der gesicherte Stand liegt bei seinen früheren Fassungen', JSON.parse(await page.evaluate(i => TS.loadProject(i), other)).name.endsWith('(neuer)') && vers.some(v => v.name === before.name && v.at === before.updated), vers.map(v => v.name));
 await page.evaluate(([i, b]) => TS.saveProject(i, JSON.stringify(b)), [other, before]);   // Ausgangszustand wiederherstellen

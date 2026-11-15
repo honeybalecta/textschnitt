@@ -37,7 +37,7 @@ os.environ.setdefault("HF_HUB_DISABLE_IMPLICIT_TOKEN", "1")
 import warnings  # noqa: E402
 warnings.filterwarnings("ignore", module="huggingface_hub")
 
-VERSION = "2.26.1"
+VERSION = "2.27.0"
 APP_DIR = Path(__file__).resolve().parent
 FROZEN = bool(getattr(sys, "frozen", False))          # als installierte .exe gebaut
 RES_DIR = Path(getattr(sys, "_MEIPASS", APP_DIR))      # mitgelieferte Dateien (Oberfläche, ffmpeg, Modelle)
@@ -946,9 +946,23 @@ def clean_cues(raw) -> list[dict]:
                 o["font"] = str(c["font"])
             if c.get("outlineColor"):
                 o["outlineColor"] = str(c["outlineColor"])
+            # Dauerhafte Textzeile: sitzt an einer Ecke (anchor = o/u + l/m/r) mit Randabstand mx/my als Anteil von Breite/Höhe
+            if c.get("line"):
+                o["line"] = True
+                a = str(c.get("anchor") or "")
+                if len(a) == 2 and a[0] in "ou" and a[1] in "lmr":
+                    try:
+                        o.update(anchor=a, mx=min(0.5, max(0.0, float(c.get("mx") or 0))), my=min(0.5, max(0.0, float(c.get("my") or 0))))
+                    except (TypeError, ValueError):
+                        pass
             cues.append(o)
     cues.sort(key=lambda c: c["start"])
     return cues
+
+
+def spoken_cues(cues: list[dict]) -> list[dict]:
+    """Nur die Untertitel – ohne Titel und Textzeile, die zum Bild gehören."""
+    return [c for c in cues if not c.get("title")]
 
 
 def write_srt(cues: list[dict], out: Path):
@@ -1057,6 +1071,13 @@ def write_ass(cues: list[dict], style: dict, out: Path, w: int, h: int, fonts: d
         cy = min(max(c["y"] * h, bh / 2 + m * h), h - bh / 2 - m * h)
         txt = c["text"].replace("{", "(").replace("}", ")").replace("\n", "\\N")
         ov = f"\\an5\\pos({cx:.0f},{cy:.0f})"
+        if c.get("anchor"):
+            # Textzeile: an der Ecke ausgerichtet – unabhängig davon, wie breit die Schrift im Export tatsächlich läuft.
+            # Mit Kasten rückt sie um dessen Rand nach innen, damit der Kasten am Randabstand endet.
+            a, pad = c["anchor"], (max(2.0, csize / 6) if c.get("bg") else 0.0)
+            ax = c["mx"] * w + pad if a[1] == "l" else w - c["mx"] * w - pad if a[1] == "r" else w / 2
+            ay = c["my"] * h + pad if a[0] == "o" else h - c["my"] * h - pad
+            ov = f"\\an{(7 if a[0] == 'o' else 1) + 'lmr'.index(a[1])}\\pos({ax:.0f},{ay:.0f})"
         if c.get("size"):
             ov += f"\\fs{csize:.0f}"
         if c.get("title"):
@@ -1560,7 +1581,10 @@ def render_plan(job: dict, plan: dict, out: Path, with_video: bool, cues: list[d
     try:
         W, H = int(plan["width"]) // 2 * 2, int(plan["height"]) // 2 * 2
         total = float(plan.get("total") or 1)
-        burn = with_video and cues and plan.get("burn", True)
+        # Titel und Textzeile gehören zum Bild und stehen immer im Video; die Untertitel nur mit „Untertitel einbrennen“.
+        if not plan.get("burn", True):
+            cues = [c for c in cues if c.get("title")]
+        burn = with_video and bool(cues)
         subs = plan.get("subs") or {}
         fonts = collect_fonts(subs.get("fonts") or {}, tmp / "fonts") if burn else {}
         vtail = ["-c:v", "libx264", "-crf", QUALITY_CRF.get(plan.get("quality"), "20"), "-preset", "medium",
@@ -1727,7 +1751,7 @@ def pip_center(o: dict, W: float, H: float) -> tuple[float, float]:
 
 
 def write_concat(plan: dict, name: str, cues: list[dict], style: dict) -> Path:
-    """Concat-Projekt (concat.json): T1 Hauptspur, T2 B-Roll/Bild-im-Bild, T3 Untertitel."""
+    """Concat-Projekt (concat.json): T1 Hauptspur, T2 B-Roll/Bild-im-Bild, T3 Untertitel und Titel, T4 dauerhafte Textzeile."""
     root = concat_root()
     root.mkdir(parents=True, exist_ok=True)
     folder = root / safe_name(name)
@@ -1811,7 +1835,7 @@ def write_concat(plan: dict, name: str, cues: list[dict], style: dict) -> Path:
         d = min(cu["end"], cursor) - cu["start"]
         if d <= 0:
             continue
-        clips.append({**base, "id": f"c{len(clips) + 1}", "trackId": "T3", "kind": "text", "mediaId": "",
+        clips.append({**base, "id": f"c{len(clips) + 1}", "trackId": "T4" if cu.get("line") else "T3", "kind": "text", "mediaId": "",
                       "name": cu["text"].split("\n")[0][:40], "start": round(cu["start"], 6), "duration": round(d, 6),
                       "offsetX": round(cu["x"] - 0.5, 4), "offsetY": round(cu["y"] - 0.5, 4),
                       "text": {"content": cu["text"], "fontSize": round(cu["size"] * 0.78, 4) if cu.get("size") else CONCAT_SIZES.get(style.get("size", "mittel"), 0.045),
@@ -1823,7 +1847,7 @@ def write_concat(plan: dict, name: str, cues: list[dict], style: dict) -> Path:
         if c["kind"] == "text":
             c.pop("sourceStart", None)
             c.pop("preservePitch", None)
-    # Spuren: T1 Hauptspur, Videospuren V1…, T3 Untertitel (Reihenfolge der Liste = Stapel)
+    # Spuren: T1 Hauptspur, Videospuren V1…, T3 Untertitel und Titel, T4 Textzeile (Reihenfolge der Liste = Stapel)
     tracks = [{"id": "T1", "muted": False, "visible": True}] + [{"id": f"V{k}", "muted": False, "visible": True} for k in sorted(ovl_tracks)] + \
              [{"id": f"T{i}", "muted": False, "visible": True} for i in (3, 4)] + [{"id": f"A{k}", "muted": False, "visible": True} for k in sorted(aud_tracks)]
     timeline = {"id": "TL1", "name": "Timeline 1", "tracks": tracks, "clips": clips, "video": video}
@@ -1831,8 +1855,8 @@ def write_concat(plan: dict, name: str, cues: list[dict], style: dict) -> Path:
            "name": folder.name, "timelines": [timeline], "tracks": tracks, "version": 1, "video": video}
     check_concat(doc)
     (folder / "concat.json").write_text(json.dumps(doc, ensure_ascii=False, indent=2), encoding="utf-8")
-    if cues:
-        write_srt(cues, folder / f"{safe_name(name)}.srt")
+    if spoken_cues(cues):
+        write_srt(spoken_cues(cues), folder / f"{safe_name(name)}.srt")
     log(f"Concat-Projekt: {folder} · {len(clips)} Clips")
     return folder
 
@@ -2026,9 +2050,12 @@ def write_capcut(plan: dict, root: Path, name: str, cues: list[dict], style: dic
     for trk in sorted(aud_by):
         tracks.append({"attribute": 0, "flag": 0, "id": uuid.uuid4().hex, "is_default_name": False, "name": f"Ton {trk}",
                        "segments": aud_by[trk], "type": "audio"})
-    if cues:
+    # Textspuren: Untertitel und Titel auf einer, die dauerhafte Textzeile auf einer eigenen (so lässt sie sich in CapCut für sich ausblenden)
+    for tname, tcues in (("Untertitel", [c for c in cues if not c.get("line")]), ("Textzeile", [c for c in cues if c.get("line")])):
+        if not tcues:
+            continue
         tsegs = []
-        for c in cues:
+        for c in tcues:
             d = min(c["end"], cursor) - c["start"]
             if d <= 0:
                 continue
@@ -2044,7 +2071,7 @@ def write_capcut(plan: dict, root: Path, name: str, cues: list[dict], style: dic
                                    "transform": {"x": round((c["x"] - 0.5) * 2, 4), "y": round((0.5 - c["y"]) * 2, 4)}},
                           "uniform_scale": {"on": True, "value": 1.0}, "render_index": 15000})
         tracks.append({"attribute": 0, "flag": 0, "id": uuid.uuid4().hex, "is_default_name": False,
-                       "name": "Untertitel", "segments": tsegs, "type": "text"})
+                       "name": tname, "segments": tsegs, "type": "text"})
     if not any_video:
         W, H = 1920, 1080
     plat = {"app_id": 359289, "app_source": "cc", "app_version": "6.7.0",
@@ -2131,10 +2158,10 @@ def export_job(job: dict, plan: dict):
         result["note"] = f"Fertig – Concat-Projekt in {folder}"
     else:
         raise RuntimeError(f"Unbekanntes Format: {fmt}")
-    if cues and fmt != "concat":
+    if spoken_cues(cues) and fmt != "concat":   # die SRT-Datei enthält die Untertitel; Titel und Textzeile stehen im Bild
         outdir.mkdir(exist_ok=True)
         srt = outdir / f"{stem}.srt"
-        write_srt(cues, srt)
+        write_srt(spoken_cues(cues), srt)
         files.append(srt)
     for f in files + [outdir]:
         CREATED.add(norm_path(str(f)))
@@ -2186,9 +2213,11 @@ def allow_all(obj) -> None:
 
 def project_summary(p: dict) -> dict:
     srcs = p.get("sources") or ([p["main"]] if p.get("main") else [])
+    # Erstes Video des Projekts: daraus holt sich die Projektliste ein Vorschaubild, solange das Projekt noch nie geöffnet war
+    thumb = next((str(s.get("uri") or "") for s in srcs if isinstance(s, dict) and s.get("kind") != "audio" and s.get("hasVideo") is not False and s.get("uri")), "")
     return {"id": p["id"], "name": p.get("name", ""), "updated": p.get("updated", 0),
             "duration": sum(float(s.get("duration") or 0) for s in srcs), "sources": len(srcs),
-            "transcribed": bool(p.get("tokens"))}
+            "transcribed": bool(p.get("tokens")), "thumb": "" if not_a_path(thumb) else thumb}
 
 
 def list_projects() -> list[dict]:
@@ -2203,6 +2232,8 @@ def list_projects() -> list[dict]:
             if not c or c[0] != st.st_mtime_ns or c[1] != st.st_size:
                 c = (st.st_mtime_ns, st.st_size, project_summary(json.loads(f.read_text(encoding="utf-8"))))
                 _list_cache[f.name] = c
+                if c[2].get("thumb"):   # für das Vorschaubild in der Projektliste freigeben (einmal je gelesener Projektdatei)
+                    allow(c[2]["thumb"])
             out.append(dict(c[2]))
         except Exception:
             continue
@@ -3303,6 +3334,8 @@ def backup_restore_job(job: dict, src: str):
             res["prefs"] = json.loads(z.read("einstellungen.json").decode("utf-8")) if "einstellungen.json" in infos else {}
         except ValueError:
             res["prefs"] = {}
+        if keys and isinstance(res["prefs"], dict):   # eigene Looks: Schriften bekommen wie in den Projekten ihre neuen Schlüssel
+            _walk_strings(res["prefs"], lambda v: keys.get(v))
     res["created"] = int(meta.get("created") or 0)
     res["total"] = len(todo)
     log(f"Sicherung eingespielt: {len(res['added'])} neu, {len(res['updated'])} aktualisiert, {len(res['kept'])} hier neuer, "

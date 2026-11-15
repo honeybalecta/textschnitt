@@ -65,6 +65,11 @@
     'cc': '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M10 10.5a2.5 2.5 0 1 0 0 3M17 10.5a2.5 2.5 0 1 0 0 3"/>',
     'step-': '<path d="M19 20 9 12l10-8z"/><path d="M5 19V5"/>', 'step+': '<path d="M5 4l10 8-10 8z"/><path d="M19 5v14"/>',
     'cutprev': '<path d="M11 19 2 12l9-7z"/><path d="M22 19l-9-7 9-7z"/>', 'cutnext': '<path d="M13 19l9-7-9-7z"/><path d="M2 19l9-7-9-7z"/>',
+    '🚩': '<path d="M5 21V4"/><path d="M5 4h12l-2.5 4L17 12H5"/>',
+    '📝': '<path d="M5 3h10l4 4v14H5z"/><path d="M15 3v4h4M9 12h6M9 16h4"/>',
+    '⊡': '<path d="M8 4H4v16h4M16 4h4v16h-4"/><path d="M9 12h6"/>',
+    '⋯': '<circle cx="5" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="19" cy="12" r="1.6" fill="currentColor" stroke="none"/>',
+    'safe': '<rect x="6" y="2.5" width="12" height="19" rx="2"/><path d="M9 6.5h4M9 10h6v5H9zM9 18h6" stroke-dasharray="1.6 1.6"/>',
   };
   const svg = d => `<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
   window.icon = (ch, fallback) => P[ch] ? svg(P[ch]) : (fallback != null ? fallback : ch);

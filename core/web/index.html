@@ -17,6 +17,7 @@
   <div class="home-body">
     <div class="upd hidden" id="updBanner"></div>
     <div class="home-actions"><h2 class="home-h">Projekte</h2><button class="btn small" id="impProj" title="Projekt von einem anderen Gerät oder einer anderen Person öffnen (.honeycut)">⤓ Projekt importieren</button></div>
+    <div class="home-find hidden" id="homeFind"><input type="search" id="projFind" placeholder="Projekte durchsuchen" autocomplete="off" enterkeyhint="search"><select id="projSort" title="Reihenfolge der Liste"><option value="new">Zuletzt bearbeitet</option><option value="old">Älteste zuerst</option><option value="name">Name A–Z</option><option value="len">Längste zuerst</option></select></div>
     <div id="projList"></div>
     <div class="empty-home hidden" id="homeEmpty">
       <h2>Noch keine Projekte</h2>
@@ -57,10 +58,12 @@
       <img id="oi" class="hidden" alt="">
       <img id="ii" class="hidden" alt="">
       <img id="wm" class="wm hidden" alt="">
+      <div id="tline" class="tline hidden" dir="auto"></div>
+      <div id="safeOv" class="safe-ov hidden"></div>
       <div id="canvasBox" class="cv-box hidden"><i class="cv-h tl"></i><i class="cv-h tr"></i><i class="cv-h bl"></i><i class="cv-h br"></i><span class="cv-lbl"></span></div>
       <div class="audio-note">♪</div>
       <div class="snap-guide"></div>
-      <div class="subov" id="subOv" title="Ziehen, um die Untertitel zu verschieben"></div>
+      <div class="subov" id="subOv" dir="auto" title="Ziehen, um die Untertitel zu verschieben"></div>
       <div class="title-ov" id="titleOv"></div>
       <div class="pip-box hidden" id="pipBox" title="Ziehen zum Verschieben, Ecke ziehen (oder Mausrad) für die Größe"><i class="pip-h"></i></div>
       <div class="crop-box hidden" id="cropBox"><div class="crop-win" id="cropWin"><i data-h="nw"></i><i data-h="n"></i><i data-h="ne"></i><i data-h="e"></i><i data-h="se"></i><i data-h="s"></i><i data-h="sw"></i><i data-h="w"></i><b class="crop-grid"></b></div></div>
@@ -75,6 +78,7 @@
       <div class="srow"><button class="sbtn" id="sideSplit" data-tip="Hier teilen (Strg+B)" data-ico="✂"></button><button class="sbtn" id="sideCutPlay" data-tip="Letzten Schnitt anhören" data-ico="▶"></button></div>
       <div class="srow"><button class="sbtn" id="sideFull" data-tip="Vollbild (F)" data-ico="⤢"></button></div>
       <div class="srow"><button class="sbtn" id="sideSubs" data-tip="Untertitel an/aus" data-ico="cc"></button><button class="sbtn" id="sideFont" data-tip="Schrift der Untertitel" data-ico="Aa"></button></div>
+      <div class="srow"><button class="sbtn" id="sideSafe" data-tip="Schutzzonen der Plattformen zeigen" data-ico="safe"></button></div>
     </div>
   </div>
   <div class="transport">
@@ -131,11 +135,12 @@
       <div class="todo hidden" id="textTodo"><span><b></b> noch nicht transkribiert.</span><button class="btn primary" id="textTodoBtn">Jetzt transkribieren</button></div>
       <div class="toolbar" id="textTools">
         <button class="chip ico" id="findBtn" title="Suchen und ersetzen (Strg+F)">🔍</button>
-        <button class="chip" id="fillerBtn">Füllwörter weg</button>
+        <span class="chip combo"><button id="fillerBtn">Füllwörter weg</button><button id="fillerCfg" class="cfg" title="Eigene Füllwörter festlegen">✎</button></span>
         <button class="chip" id="repeatBtn" title="Wiederholte Anläufe finden und löschen – der letzte Versuch bleibt stehen">Wiederholungen weg</button>
         <span class="chip combo"><button id="pauseBtn">Pausen kürzen</button><select id="pauseLen"><option value="0" selected>ganz weg</option><option value="0.1">0,1 s</option><option value="0.2">0,2 s</option><option value="0.3">0,3 s</option><option value="0.5">0,5 s</option></select></span>
         <button class="chip" id="cutPlayBtn" title="2 Sekunden vor bis 2 Sekunden nach dem letzten Schnitt abspielen">▶ Letzten Schnitt</button>
         <label class="chip" title="Gelöschte Wörter ausblenden"><input type="checkbox" id="hideDel"> Gelöschtes aus</label>
+        <button class="chip" id="marksBtn" title="Kapitel und Notizen dieses Projekts">Marken</button>
         <button class="chip ico" id="textMore" title="Weitere Werkzeuge">⋯</button>
       </div>
       <div class="hidden" id="textMoreBtns">
@@ -169,8 +174,11 @@
           <label>Farbe der Umrandung <input type="color" id="stOutlineColor" value="#000000"></label>
         </div>
         <div class="colfav" title="Farbfavoriten: antippen setzt die Farbe im zuletzt gewählten Farbfeld"></div>
+        <div class="row wrap looks" id="lookRow"><span class="muted small">Looks</span><span class="look-list" id="lookList"></span><button class="btn small" id="lookSave" title="Den Stil oben unter einem Namen speichern – für andere Projekte und zum Weitergeben">＋ Als Look speichern</button></div>
+        <label class="row safe-row">Schutzzonen <select class="safe-sel" id="safeSel" title="Zeigt im Bild, wo die Apps ihre Bedienelemente über ein Hochformat-Video legen"></select></label>
         <p class="muted small">Tipp: Untertitel lassen sich direkt im Bild an jede Stelle ziehen. Ein einzelner Untertitel bekommt eine eigene Position, wenn er im Studio ausgewählt ist.</p>
-        <div class="row"><button class="btn" id="fontBtn">Aa Schriften …</button><button class="btn" id="regenBtn">Neu aufteilen</button><span class="muted small" id="subCount"></span></div>
+        <div class="row"><button class="btn" id="fontBtn">Aa Schriften …</button><button class="btn" id="regenBtn">Neu aufteilen</button><button class="btn hidden" id="readFix" title="Schwer lesbare Untertitel teilen, länger einblenden oder mit dem Nachbarn zusammenlegen">Neu umbrechen</button><span class="muted small" id="subCount"></span></div>
+        <p class="muted small hidden" id="readInfo"></p>
       </div>
       <div class="card stack" id="spkCard">
         <h3>Sprecher:innen</h3>
@@ -234,6 +242,7 @@
       <div class="card stack">
         <div class="clip-head"><h3>Clip-Studio</h3><button class="btn small" id="clipParent" title="Zurück zum Projekt, aus dem der Clip stammt">↩ Hauptprojekt</button></div>
         <span class="muted small" id="clipInfo"></span>
+        <div class="len-lights hidden" id="clipLen"></div>
         <span class="muted small">Schnitte, Bilder, Titel und Lautstärke in diesem Clip lassen das Hauptprojekt unverändert.</span>
       </div>
       <div class="card stack">
@@ -256,6 +265,12 @@
         </div>
         <div class="row wrap clip-colors" id="clipColors"><span class="muted small">Farbe</span><button data-c="#FFFFFF" style="--c:#FFFFFF"></button><button data-c="#EDE7DA" style="--c:#EDE7DA"></button><button data-c="#F5D90A" style="--c:#F5D90A"></button><button data-c="#E5402A" style="--c:#E5402A"></button><button data-c="#3E8A55" style="--c:#3E8A55"></button></div>
         <div class="row wrap"><span class="muted small">Höhe</span><button class="btn small" data-y="0.18">oben</button><button class="btn small" data-y="0.5">Mitte</button><button class="btn small" data-y="0.7">unteres Drittel</button><button class="btn small" data-y="0.86">unten</button></div>
+        <label class="row safe-row"><span class="muted small">Schutzzonen</span><select class="safe-sel" id="clipSafe"></select></label>
+      </div>
+      <div class="card stack">
+        <h4>Dauerhaft im Bild</h4>
+        <span class="muted small">Logo oder eine kleine Textzeile über die ganze Länge, zum Beispiel Kanalname oder „V. i. S. d. P.“.</span>
+        <div class="row wrap"><button class="btn small" id="clipWm">Wasserzeichen …</button><button class="btn small" id="clipTline">Textzeile …</button><button class="btn small" id="clipCover">Titelbild …</button></div>
       </div>
       <div class="card stack">
         <h4>Hook – Titel am Anfang</h4>
@@ -288,6 +303,7 @@
           <button class="tb" id="barFx" title="Clip anpassen: Tempo, Lautstärke, Farbe (E)"><i>⚙</i><span>Anpassen</span></button>
           <button class="tb" id="barSlide" title="Nächste Folie ab der Abspiellinie als B-Roll (N) – Umschalt+N beendet die laufende Folie"><i>🖼</i><span>Folie (N)</span></button>
           <button class="tb" id="barVol" title="Lautstärke aller Clips – einzeln einstellen oder mit einem Klick angleichen"><i>🔊</i><span>Lautstärke</span></button>
+          <button class="tb" id="barMarks" title="Kapitel und Notizen dieses Projekts"><i>🚩</i><span>Marken</span></button>
         </div>
         <div class="tl-grp">
           <button class="tb" id="barUndo" title="Rückgängig (Strg+Z)"><i>↶</i></button>
@@ -356,12 +372,27 @@
         </div>
         <label class="row">Name <input type="text" id="exName"></label>
         <div class="summary small muted" id="exSummary"></div>
+        <div class="len-lights hidden" id="exLen"></div>
+        <div class="ex-notes hidden" id="exNotes"><span></span><button class="btn small" id="exNotesBtn">Ansehen</button></div>
         <div class="row"><button class="btn primary" id="exBtn">Exportieren</button><button class="btn hidden" id="exCancel">Abbrechen</button></div>
         <div class="progress hidden" id="exProg"><i></i></div>
         <div class="small muted" id="exMsg"></div>
         <pre class="small files" id="exFiles"></pre>
         <div class="row hidden" id="exDone"><button class="btn" id="exShare">Teilen</button><button class="btn" id="exOpen">Ansehen</button></div>
         <p class="muted small" id="exNote"></p>
+      </div>
+      <div class="card stack" id="chapCard">
+        <h3>Kapitel</h3>
+        <span class="muted small" id="chapHint">Im Text ein Wort markieren und „Kapitel“ wählen (Taste C). Daraus entstehen die Zeitstempel für die YouTube-Beschreibung; sie folgen dem Schnitt.</span>
+        <pre class="small files hidden" id="chapText"></pre>
+        <span class="small hidden" id="chapWarn"></span>
+        <div class="row wrap"><button class="btn" id="chapCopy">📋 Zeitstempel kopieren</button><button class="btn" id="chapOpen">Kapitel und Notizen …</button></div>
+        <span class="muted small" id="chapMsg"></span>
+      </div>
+      <div class="card stack" id="coverCard">
+        <h3>Titelbild</h3>
+        <span class="muted small">Das Bild an der Abspiellinie als PNG oder JPG speichern, auf Wunsch mit einer Titelzeile im Design deiner Folien – für das YouTube-Vorschaubild oder das Cover eines Reels.</span>
+        <div class="row"><button class="btn" id="coverBtn">🖼 Titelbild …</button></div>
       </div>
       <div class="card stack" id="txCard">
         <h3>Transkript</h3>
@@ -384,11 +415,15 @@
     <div class="sel-info"><b id="selCount"></b><span id="selInfo"></span></div>
     <div class="sel-acts">
       <button class="sb" id="selPlay" title="Ab hier abspielen"><i>▶</i><span>Abspielen</span></button>
+      <button class="sb" id="selSent" title="Markierung auf den ganzen Satz ausweiten, nochmal: auf den Absatz (A)"><i>⤢</i><span>Satz</span></button>
       <button class="sb" id="selEdit" title="Text der markierten Wörter korrigieren oder fehlende Wörter ergänzen"><i>✎</i><span>Text</span></button>
       <button class="sb" id="selSpk" title="Markierte Wörter einer Person zuordnen"><i>👤</i><span>Person</span></button>
       <button class="sb" id="selClip" title="Markierten Abschnitt als eigenen Clip (z. B. 9:16) öffnen"><i>📱</i><span>Clip</span></button>
       <button class="sb" id="selSlide" title="Aus den markierten Wörtern eine Folie machen"><i>🖼</i><span>Folie</span></button>
       <button class="sb hidden" id="selKeep" title="Nur den Untertitel der weggeschnittenen Wörter zeigen – der Schnitt bleibt"><i>💬</i><span>Untertitel</span></button>
+      <button class="sb" id="selChap" title="Hier beginnt ein Kapitel (C)"><i>🚩</i><span>Kapitel</span></button>
+      <button class="sb" id="selNote" title="Notiz an diese Stelle heften (B)"><i>📝</i><span>Notiz</span></button>
+      <button class="sb" id="selOnly" title="Nur das Markierte behalten, alles andere löschen (Umschalt+Entf)"><i>⊡</i><span>Nur das</span></button>
     </div>
     <button class="sb danger" id="selDel" title="Markierte Wörter löschen (Entf)"><i>🗑</i><span>Löschen</span></button>
     <button class="sb close" id="selClose" title="Auswahl aufheben (Esc)"><i>✕</i></button>

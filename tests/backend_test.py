@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Prüfungen des Backends ohne Browser: sicheres Speichern, frühere Fassungen, Papierkorb, Speicher verwalten,
-alle Projekte sichern und einspielen, Projekt weitergeben, Hinweis auf neue Versionen, Fehlerbericht.
+alle Projekte sichern und einspielen, Projekt weitergeben, Vorschaubild der Projektliste, Textzeile und Untertitel im Export,
+Hinweis auf neue Versionen, Fehlerbericht.
 Läuft in einem frischen Datenordner; nichts verlässt den Rechner (GitHub ist nachgestellt).
 Aufruf: python3 tests/backend_test.py"""
 import gzip
@@ -208,7 +209,8 @@ def sicherung():
     T.save_project("b2", json.dumps({"id": "b2", "name": "Interview", "updated": 3000, "sources": [{"uri": str(D / "freigestellt" / "9999999999999999.mp4"), "orig": "/videos/interview.mp4"}]}))
     T.save_project("b3", json.dumps({"id": "b3", "name": "Kurzclip", "updated": 4000, "sources": []}))
     mk(T.PROJ_DIR / "kaputt.json", b"{nicht lesbar")
-    r = T.backup_all_job(job(), ZIP, {"hc-colfav": ["#E5402A"], "hc-slide-profiles": [{"id": "mein", "name": "Mein Profil", "colors": {}}]})
+    r = T.backup_all_job(job(), ZIP, {"hc-colfav": ["#E5402A"], "hc-slide-profiles": [{"id": "mein", "name": "Mein Profil", "colors": {}}],
+                                      "hc-fillers": ["halt", "ich sag mal"], "hc-sub-looks": [{"id": "l1", "name": "Kampagne", "st": {"font": key1, "color": "#EDE7DA"}}]})
     with zipfile.ZipFile(ZIP) as z:
         names, meta = sorted(z.namelist()), json.loads(z.read("sicherung.json"))
     chk("Sicherung enthält Projekte, verwendete Bilder, Schriften, Einstellungen – ohne Videos und ohne unbenutzte Bilder",
@@ -233,6 +235,7 @@ def sicherung():
     chk("das gelöschte Projekt ist zurück und aus dem Papierkorb verschwunden", proj("b2")["name"] == "Interview" and T.trash_list() == [])
     chk("gleicher Datenordner: Pfade und Schriftschlüssel bleiben", proj("b1")["items"][0]["clip"]["uri"] == s1 and proj("b1")["sub_style"]["font"] == key1 and r["fonts"] == 0 and r["slides"] == 0)
     chk("Designprofile und Farbfavoriten kommen mit zurück", r["prefs"]["hc-colfav"] == ["#E5402A"] and r["prefs"]["hc-slide-profiles"][0]["id"] == "mein")
+    chk("eigene Füllwörter und Looks kommen mit zurück", r["prefs"]["hc-fillers"] == ["halt", "ich sag mal"] and r["prefs"]["hc-sub-looks"][0]["st"] == {"font": key1, "color": "#EDE7DA"})
     r = T.backup_restore_job(job(), ZIP)
     chk("zweites Einspielen ändert nichts und legt keine doppelten Fassungen an", r["same"] == 2 and r["kept"] == ["Kurzclip"] and not r["added"] and not r["updated"]
         and len(T.project_versions("b3")) == 1 and len(T.project_versions("b1")) == 1)
@@ -335,6 +338,61 @@ def projektpakete():
         pathlib.Path.resolve = real_resolve
 
 
+def kleine_helfer():
+    """2.27: Vorschaubild in der Projektliste; dauerhafte Textzeile im Export (Ecke, eigene Spur); SRT nur mit Untertiteln."""
+    vid = T.norm_path(str(TMP / "videos" / "rede.mp4"))
+    mk(Path(vid), b"x")
+    T.save_project("h1", json.dumps({"id": "h1", "name": "Mit Video", "updated": 1, "sources": [{"uri": str(TMP / "ton.mp3"), "kind": "audio", "duration": 5}, {"uri": vid, "duration": 10}]}))
+    T.save_project("h2", json.dumps({"id": "h2", "name": "Nur Ton", "updated": 2, "sources": [{"uri": str(TMP / "ton.mp3"), "kind": "audio", "duration": 5}]}))
+    T.save_project("h3", json.dumps({"id": "h3", "name": "Eingebettet", "updated": 3, "sources": [{"uri": "data:video/mp4;base64," + "A" * 5000, "duration": 5}]}))
+    T.ALLOWED.discard(vid)
+    T._list_cache.clear()
+    lst = {p["id"]: p for p in T.list_projects()}
+    chk("Projektliste nennt das erste Video als Quelle des Vorschaubilds; Ton und eingebettete Daten liefern keins",
+        lst["h1"]["thumb"] == vid and lst["h2"]["thumb"] == "" and lst["h3"]["thumb"] == "", [lst[k]["thumb"][:40] for k in ("h1", "h2", "h3")])
+    chk("das Video ist für das Vorschaubild freigegeben, ohne dass das Projekt geöffnet wurde", vid in T.ALLOWED)
+    for k in ("h1", "h2", "h3"):
+        T.delete_project(k)
+        T.trash_purge(k)
+    # Textzeile, Titel und Untertitel, wie sie die Oberfläche in den Exportplan schreibt
+    raw = [{"start": 0, "end": 10, "text": "@kanal · V. i. S. d. P.", "x": 0.8, "y": 0.09, "size": 0.028, "title": True, "line": True, "anchor": "or", "mx": 0.06, "my": 0.08, "bg": True, "outline": False, "font": ""},
+           {"start": 1, "end": 3, "text": "Ein Titel", "x": 0.5, "y": 0.3, "size": 0.075, "title": True, "font": ""},
+           {"start": 1.5, "end": 2.5, "text": "gesprochen"},
+           {"start": 0, "end": 10, "text": "unten links", "x": 0.2, "y": 0.9, "size": 0.028, "title": True, "line": True, "anchor": "ul", "mx": 0.035, "my": 0.02, "font": ""},
+           {"start": 0, "end": 10, "text": "unten Mitte", "x": 0.5, "y": 0.9, "size": 0.028, "title": True, "line": True, "anchor": "um", "mx": 0.035, "my": 0.02, "font": ""},
+           {"start": 0, "end": 10, "text": "kaputt", "title": True, "line": True, "anchor": "xy", "mx": "?"}]
+    cues = T.clean_cues(raw)
+    by = {c["text"]: c for c in cues}
+    chk("Textzeile: Ecke und Randabstand kommen im Export an, unbrauchbare Angaben werden verworfen",
+        by["@kanal · V. i. S. d. P."].get("line") is True and by["@kanal · V. i. S. d. P."]["anchor"] == "or" and by["@kanal · V. i. S. d. P."]["mx"] == 0.06 and by["@kanal · V. i. S. d. P."]["my"] == 0.08
+        and by["kaputt"].get("line") is True and "anchor" not in by["kaputt"] and "line" not in by["gesprochen"] and "anchor" not in by["Ein Titel"])
+    chk("als Untertitel gilt nur Gesprochenes – Titel und Textzeile gehören zum Bild", [c["text"] for c in T.spoken_cues(cues)] == ["gesprochen"])
+    srt = TMP / "helfer.srt"
+    T.write_srt(T.spoken_cues(cues), srt)
+    chk("die SRT-Datei enthält nur die Untertitel", srt.read_text(encoding="utf-8").strip().split("\n") == ["1", "00:00:01,500 --> 00:00:02,500", "gesprochen"], srt.read_text(encoding="utf-8")[:80].replace("\n", " | "))
+    ass = TMP / "helfer.ass"
+    T.write_ass(cues, {"size": "mittel"}, ass, 1080, 1920, {})
+    ev = {ln.split("}", 1)[1]: ln for ln in ass.read_text(encoding="utf-8-sig").splitlines() if ln.startswith("Dialogue:")}
+    pad = max(2.0, 0.028 * 1080 * 1.25 / 6)   # Rand des Kastens
+    chk("eingebrannt sitzt die Textzeile an ihrer Ecke: oben rechts mit Kasten um dessen Rand nach innen",
+        f"\\an9\\pos({1080 - 0.06 * 1080 - pad:.0f},{0.08 * 1920 + pad:.0f})" in ev["@kanal · V. i. S. d. P."] and ",Box,," in ev["@kanal · V. i. S. d. P."], ev["@kanal · V. i. S. d. P."][:110])
+    chk("unten links und unten in der Mitte", f"\\an1\\pos({0.035 * 1080:.0f},{1920 - 0.02 * 1920:.0f})" in ev["unten links"] and f"\\an2\\pos(540,{1920 - 0.02 * 1920:.0f})" in ev["unten Mitte"],
+        [ev["unten links"][:90], ev["unten Mitte"][:90]])
+    chk("Titel und Untertitel bleiben über ihren Mittelpunkt gesetzt", "\\an5\\pos(540,576)" in ev["Ein Titel"] and "\\an5\\pos(" in ev["gesprochen"] and "\\an5" in ev["kaputt"])
+    # Concat: die Textzeile bekommt ihre eigene Spur, die SRT-Datei daneben enthält nur die Untertitel
+    probe0, root0 = T.probe, T.concat_root
+    T.probe = lambda p: {"duration": 10.0, "hasVideo": True, "hasAudio": True, "width": 1080, "height": 1920, "fps": 30.0}
+    T.concat_root = lambda: TMP / "Concat"
+    try:
+        folder = T.write_concat({"width": 1080, "height": 1920, "fps": 30, "segments": [{"uri": vid, "in": 0, "out": 10, "kind": "main"}], "overlays": []}, "helfer", cues, {"size": "mittel"})
+    finally:
+        T.probe, T.concat_root = probe0, root0
+    doc = json.loads((folder / "concat.json").read_text(encoding="utf-8"))
+    tracks = {c["text"]["content"]: c["trackId"] for c in doc["clips"] if c["kind"] == "text"}
+    chk("Concat: Textzeilen liegen auf T4, Titel und Untertitel auf T3", tracks == {"@kanal · V. i. S. d. P.": "T4", "unten links": "T4", "unten Mitte": "T4", "kaputt": "T4", "Ein Titel": "T3", "gesprochen": "T3"}, tracks)
+    chk("Concat: die SRT-Datei daneben enthält nur die Untertitel", (folder / "helfer.srt").read_text(encoding="utf-8").count("-->") == 1)
+
+
 def umzug():
     a = json.loads((TMP / "umzug.json").read_text())
     mk(T.FONT_DIR / "Zweite.otf", b"ANDERE-SCHRIFT")      # gleicher Name, anderer Inhalt
@@ -345,6 +403,7 @@ def umzug():
     chk("Bildpfade zeigen in den neuen Datenordner, die Dateien liegen dort", p1["items"][0]["clip"]["uri"] == T.norm_path(str(D / "folien/b1/folie-a1-2.png"))
         and Path(p1["items"][0]["clip"]["uri"]).read_bytes() == b"\x89PNG-1" * 1000 and Path(p1["slides"][0]["img"]).is_file() and Path(p1["items"][1]["clip"]["uri"]).is_file())
     chk("Schriftschlüssel folgen dem neuen Speicherort", p1["sub_style"]["font"] == "u" + T._js_hash(f1n) != a["key1"] and p1["items"][0]["font"] == "u" + T._js_hash(f1n))
+    chk("auch in den gesicherten Looks zeigt die Schrift auf den neuen Speicherort", r["prefs"]["hc-sub-looks"][0]["st"]["font"] == "u" + T._js_hash(f1n) and r["prefs"]["hc-fillers"] == ["halt", "ich sag mal"], r["prefs"].get("hc-sub-looks"))
     chk("Videopfade und Transkript bleiben, wie sie waren", p1["sources"][0]["uri"] == "/videos/rede.mp4" and p1["tokens"][0]["text"] == "u1abc" and proj("b2")["sources"][0]["orig"] == "/videos/interview.mp4")
     chk("vorhandene Schrift gleichen Namens bleibt, die gesicherte liegt daneben", (T.FONT_DIR / "Zweite.otf").read_bytes() == b"ANDERE-SCHRIFT" and (T.FONT_DIR / "Zweite_2.otf").read_bytes() == b"FONT-B" * 50)
 
@@ -436,7 +495,7 @@ def bericht_und_protokoll():
 if MODE == "umzug":
     umzug()
     sys.exit(1 if BAD else 0)
-for part in (speichern_und_fassungen, speicher, sicherung, projektpakete, neue_versionen, bericht_und_protokoll):
+for part in (speichern_und_fassungen, speicher, sicherung, projektpakete, kleine_helfer, neue_versionen, bericht_und_protokoll):
     print(f"── {part.__name__.replace('_', ' ')} ──", flush=True)
     part()
 print(f"ERGEBNIS Backend ohne Browser: {N} geprüft, {BAD} Fehler")

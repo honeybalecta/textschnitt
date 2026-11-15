@@ -262,11 +262,17 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
         val composition = if (seqs.isEmpty()) Composition.Builder(listOf(mainSeq) + audSeqs)
             else Composition.Builder(seqs + mainSeq + audSeqs).setVideoCompositorSettings(OvSettings(w, h, trackSpans))
 
-        // Untertitel
+        // Untertitel, Titel und Textzeile. Ist „Untertitel einbrennen“ aus, bleiben nur Titel und Textzeile im Bild.
         val subs = plan.optJSONObject("subs")
-        if (subs != null && subs.getJSONArray("cues").length() > 0) {
-            val overlay: TextureOverlay = SubtitleOverlay(ctx, w, h, subs.getJSONArray("cues"), subs.getJSONObject("style"), subs.optJSONObject("fonts"))
-            composition.setEffects(Effects(listOf(), listOf(OverlayEffect(listOf(overlay)))))
+        if (subs != null) {
+            val all = subs.getJSONArray("cues")
+            val cues = if (plan.optBoolean("burn", true)) all else JSONArray().also { only ->
+                for (i in 0 until all.length()) { val c = all.getJSONObject(i); if (c.optBoolean("title")) only.put(c) }
+            }
+            if (cues.length() > 0) {
+                val overlay: TextureOverlay = SubtitleOverlay(ctx, w, h, cues, subs.getJSONObject("style"), subs.optJSONObject("fonts"))
+                composition.setEffects(Effects(listOf(), listOf(OverlayEffect(listOf(overlay)))))
+            }
         }
 
         // Handyvideos sind oft HDR (HLG/HDR10). Bild-Overlays (Untertitel, Fotos) gehen in HDR nicht –

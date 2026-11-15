@@ -909,3 +909,105 @@ input[type=color]:disabled{opacity:.35}
 .transcript .tk.del.sel.edited{text-decoration-color:rgba(70,130,220,.6)}
 .transcript .tk.del.rep{text-decoration-color:rgba(207,198,176,.33)}
 .transcript .tk.del.sel.rep{text-decoration-color:rgba(207,198,176,.6)}
+
+/* ───────── 2.27 · Kleine Helfer ───────── */
+/* Projektliste: Suche, Reihenfolge, Vorschaubild, Handgriffe */
+.home-find{display:flex;gap:8px;align-items:center;padding:12px 12px 0}
+.home-find input{flex:1;min-width:0}
+.home-find select{flex:none;max-width:46%}
+.home-none{padding:18px 14px;text-align:center}
+.pthumb{flex:none;width:68px;height:48px;border-radius:8px;overflow:hidden;background:var(--surface-2);display:flex;align-items:center;justify-content:center;color:var(--muted)}
+.pthumb img{width:100%;height:100%;object-fit:cover;display:block}
+.pthumb .ico{width:20px;height:20px}
+.pacts{display:flex;flex:none;align-items:center}
+.proj-item .del .ico{width:18px;height:18px;display:block}
+.proj-item .del:hover{color:var(--creme)}
+.proj-item .del.kill:hover{color:var(--del)}
+.proj-item .del.more{display:none}
+@media (max-width:620px){ .proj-item{gap:10px;padding:10px 4px 10px 10px} .proj-item .pacts{display:none} .proj-item .del.more{display:block;padding:12px 10px} .pthumb{width:60px;height:44px} }
+
+/* Dauerhafte Textzeile und Schutzzonen auf der Bühne */
+.stage .tline{position:absolute;z-index:4;white-space:nowrap;line-height:1.12;pointer-events:none;user-select:none;-webkit-user-select:none}
+.stage .tline.bg{background:rgba(0,0,0,.55);padding:.1em .3em;border-radius:.15em}
+.safe-ov{position:absolute;inset:0;z-index:3;pointer-events:none}
+.safe-ov i{position:absolute;background:repeating-linear-gradient(135deg,rgba(19,19,18,.66) 0 7px,rgba(19,19,18,.46) 7px 14px);box-shadow:inset 0 0 0 1px rgba(237,231,218,.32)}
+.safe-ov b{position:absolute;margin:3px 0;font:600 10.5px/1 var(--ui);color:var(--anthrazit);background:var(--creme);padding:3px 6px;border-radius:4px;white-space:nowrap;opacity:.92}
+#proj.full .safe-ov{display:none}
+#proj:not(.full) .subov.unsafe,#proj:not(.full) .titlebox.unsafe{outline:2px solid var(--rot);outline-offset:3px}
+#proj:not(.full) .subov.unsafe::after,#proj:not(.full) .titlebox.unsafe::after{content:'wird verdeckt';position:absolute;left:-3px;bottom:calc(100% + 5px);font:600 10.5px/1 var(--ui);letter-spacing:0;text-transform:none;text-shadow:none;color:var(--on-accent);background:var(--rot);padding:3px 6px;border-radius:4px;white-space:nowrap}
+.safe-row{gap:8px;font-size:13px}
+.safe-row select{flex:1;min-width:0;max-width:300px}
+
+/* Füllwörter: Knopf mit Stift, Liste der eigenen Wörter */
+.chip.combo .cfg{padding:0 10px 0 8px;border-left:1px solid var(--line);color:var(--muted)}
+.chip.combo .cfg .ico{width:14px;height:14px}
+.chip.combo .cfg:hover{color:var(--creme)}
+.fw-list,.fw-sugg{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:10px 0}
+.fw-chip,.look-chip{display:inline-flex;align-items:center;gap:2px;border:1px solid var(--line);background:var(--surface-2);border-radius:999px;padding:0 3px 0 12px;min-height:var(--ctl-sm);font-size:13px}
+.fw-chip button,.look-chip button{border:0;background:transparent;color:var(--muted);width:26px;height:26px;border-radius:50%;font-size:17px;line-height:1;padding:0;flex:none}
+.fw-chip button:hover,.look-chip button:hover{color:var(--del)}
+
+/* Auswahlleiste: alle Knöpfe fließen gemeinsam um, „Löschen“ und „Schließen“ stehen am Ende der letzten Reihe; Knöpfe, die gerade nichts tun können, sind blass */
+.sel-acts{display:contents}
+#selDel{margin-left:auto}
+.sb:disabled{opacity:.38;cursor:default}
+
+/* Kapitel und Notizen: im Text, im Abspielbalken, auf der Zeitskala, in der Liste */
+.chap-head{display:flex;align-items:center;gap:8px;margin:1.3em 0 .55em;padding:6px 10px;border-left:3px solid var(--rot);background:var(--surface);border-radius:0 8px 8px 0;font:600 14px/1.3 var(--ui);color:var(--creme);cursor:pointer}
+.chap-head:first-child{margin-top:.2em}
+.chap-head:hover{background:var(--surface-2)}
+.chap-head .ico{width:15px;height:15px;color:var(--rot);flex:none}
+.chap-head b{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
+.chap-head .t{font:12px var(--mono);color:var(--muted);flex:none}
+.chap-head.cut b{color:var(--muted);text-decoration:line-through}
+.note-pin{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:6px;background:var(--sand);color:var(--anthrazit);vertical-align:-4px;cursor:pointer}
+.note-pin .ico{width:14px;height:14px}
+.note-pin.done{background:transparent;color:var(--muted);box-shadow:inset 0 0 0 1px var(--line)}
+.segs .mk{position:absolute;pointer-events:none}
+.segs .mk.chap{top:0;bottom:0;width:2px;margin-left:-1px;background:var(--creme)}
+.segs .mk.note{top:50%;width:6px;height:6px;margin:-3px 0 0 -3px;border-radius:50%;background:var(--sand);box-shadow:0 0 0 1px rgba(19,19,18,.7)}
+.rmk{position:absolute;top:0;height:var(--rh);width:14px;margin-left:-7px;z-index:2;cursor:pointer}
+.rmk::before{content:'';position:absolute;left:6px;top:0;bottom:0;width:2px;background:var(--creme)}
+.rmk span{position:absolute;left:8px;top:2px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:600 10px/13px var(--ui);color:var(--anthrazit);background:var(--creme);padding:0 5px;border-radius:0 4px 4px 0}
+.rmk.note::before{background:var(--sand);top:7px}
+.rmk.note::after{content:'';position:absolute;left:2px;top:0;border:5px solid transparent;border-top:8px solid var(--sand);border-bottom:0}
+.rmk.note.done{opacity:.4}
+#mkSheet h4{margin:16px 0 6px}
+#mkSheet .row.wrap{margin:8px 0 2px}
+.mk-row{display:flex;align-items:center;gap:8px;border-top:1px solid var(--line)}
+.mk-row input[type=checkbox]{flex:none;width:18px;height:18px;margin:0 0 0 2px;accent-color:var(--rot)}
+.mk-go{flex:1;min-width:0;display:flex;align-items:baseline;gap:10px;border:0;background:transparent;text-align:left;padding:9px 6px;border-radius:8px;min-height:var(--ctl)}
+.mk-go:hover{background:var(--surface-2)}
+.mk-go .mono{flex:none;min-width:42px;font-size:12px;color:var(--muted)}
+.mk-t{flex:1;min-width:0;white-space:pre-wrap;overflow-wrap:anywhere;font-size:14px;line-height:1.35}
+.mk-row.done .mk-t{text-decoration:line-through;color:var(--muted)}
+.mk-row.cut .mk-t{color:var(--muted)}
+.mk-row .mini{flex:none}
+
+/* Untertitel: eigene Looks und Lesbarkeit */
+.looks{gap:8px}
+.look-list{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.look-chip{cursor:pointer}
+.look-chip:hover{border-color:#4a4843}
+.look-chip b{font-weight:500;max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.look-chip.on{border-color:var(--rot);background:rgba(229,64,42,.16)}
+.cue.hard{border-color:var(--sand)}
+.cue .rd{font-size:12px;color:var(--sand);margin-top:4px}
+#subCount.warn{color:var(--sand);cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px}
+
+/* Längen-Ampel: Grün passt, Sand geht mit Einschränkung, Rot ist zu lang */
+.len-lights{display:flex;flex-direction:column;gap:5px}
+.len-chip{position:relative;padding-left:18px;font-size:12.5px;line-height:1.4;color:var(--muted)}
+.len-chip i{position:absolute;left:0;top:.36em;width:9px;height:9px;border-radius:50%;background:var(--gruen)}
+.len-chip b{color:var(--creme);font-weight:600}
+.len-chip.warn i{background:var(--sand)}
+.len-chip.over i{background:var(--rot)}
+.len-chip.over{color:var(--del)}
+
+/* Export: offene Notizen, Kapitel, Titelbild */
+.ex-notes{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:13px;padding:8px 10px;border:1px solid var(--line);border-left:3px solid var(--sand);border-radius:8px}
+.ex-notes span{flex:1;min-width:0}
+#chapText{font-size:13px;line-height:1.5;color:var(--creme);background:var(--surface-2);border-radius:8px;padding:8px 10px;word-break:normal;overflow-wrap:anywhere;user-select:text;-webkit-user-select:text}
+#chapWarn{color:var(--sand)}
+.cover-prev{display:block;max-width:100%;max-height:36vh;margin:0 auto 10px;border-radius:8px;background:#000}
+@media (max-width:759px){ .cover-prev{max-height:22vh} }
