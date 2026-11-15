@@ -8,3 +8,6 @@ textschnitt.log
 Textschnitt starten.bat
 daten/
 site/
+tests/.work/
+tests/node_modules
+tests/package-lock.json

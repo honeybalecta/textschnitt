@@ -52,7 +52,8 @@ window.TSApp = {
   onPicked(reqId, json){ const cb = pending.get(reqId); pending.delete(reqId); if (cb) cb(json ? J(json) : null); },
   onBack(){ if ($('#proj').classList.contains('full')){ setFull(false); return true; }
             if (!$('#sheet').classList.contains('hidden')) { closeSheet(); return true; }
-            if (!$('#modelSheet').classList.contains('hidden')) { $('#modelSheet').classList.add('hidden'); $('#sheetBack').classList.add('hidden'); return true; }
+            if (!$('#mgSheet').classList.contains('hidden')) { closeMg(); return true; }
+            if (!$('#modelSheet').classList.contains('hidden')) { closeSettings(); return true; }
             if (!$('#proj').classList.contains('hidden')) { closeProject(); return true; } return false; },
   onPause(){ if (P) { pausePlay(); saveNow(); rememberOpen(); } },
   onOpenFiles(json){ const list = J(json); if (list && list.length){ if (P) closeProject(); createProject(list); } },
@@ -369,14 +370,20 @@ function showHome(){
   $('#homeEmpty').classList.toggle('hidden', list.length > 0);
   list.sort((a, b) => b.updated - a.updated).forEach(p => {
     const el = document.createElement('div'); el.className = 'proj-item';
-    el.innerHTML = `<div class="meta"><b></b><span class="muted small"></span></div>${TS.exportPackage ? '<button class="del share" title="Projekt weitergeben (.honeycut) – auf einem anderen Gerät oder von einer anderen Person weiterbearbeiten">⤴</button>' : ''}<button class="del" title="Löschen">🗑</button>`;
+    el.innerHTML = `<div class="meta"><b></b><span class="muted small"></span></div><button class="del ren" title="Umbenennen">✎</button>${TS.versions ? '<button class="del ver" title="Frühere Fassungen dieses Projekts">🕘</button>' : ''}${TS.exportPackage ? '<button class="del share" title="Projekt weitergeben (.honeycut) – auf einem anderen Gerät oder von einer anderen Person weiterbearbeiten">⤴</button>' : ''}<button class="del" title="Löschen">🗑</button>`;
     el.querySelector('b').textContent = p.name;
     el.querySelector('span').textContent = `${fmtT(p.duration)}${p.sources > 1 ? ` · ${p.sources} Videos` : ''} · ${p.transcribed ? 'transkribiert' : 'noch nicht transkribiert'} · ${new Date(p.updated).toLocaleDateString('de-DE')}`;
-    el.onclick = e => { if (e.target.closest('.del')) return; openProject(p.id); };
+    el.onclick = e => { if (e.target.closest('.del,.name-edit')) return; openProject(p.id); };
     const sh = el.querySelector('.share'); if (sh) sh.onclick = () => packageDialog(p.id);
-    el.querySelector('.del:not(.share)').onclick = () => { if (confirm(`„${p.name}“ löschen? Deine Videos bleiben erhalten.`)) { TS.deleteProject(p.id); showHome(); } };
+    el.querySelector('.ren').onclick = () => { const b = el.querySelector('b'); if (b) editNameInline(b, p.name, v => { if (renameProject(p.id, v)){ p.name = v; b.textContent = v; toast('Umbenannt'); } }); };
+    const ve = el.querySelector('.ver'); if (ve) ve.onclick = () => openVersions(p);
+    el.querySelector('.del:not(.share):not(.ren):not(.ver)').onclick = () => { if (confirm(`„${p.name}“ löschen? Deine Videos bleiben erhalten.` + (TS.trash ? '\n\nDas Projekt liegt danach noch 30 Tage im Papierkorb.' : ''))) { TS.deleteProject(p.id); showHome(); } };
     box.append(el);
   });
+  renderUpdateBanner();
+  // Papierkorb (Desktop): gelöschte Projekte lassen sich 30 Tage lang zurückholen
+  const nTrash = TS.trashCount ? TS.trashCount() : 0;
+  if (nTrash){ const t = document.createElement('button'); t.className = 'btn small trash-link'; t.textContent = `🗑 Papierkorb (${nTrash})`; t.onclick = openTrash; box.append(t); }
   $('#homeHint').textContent = CAP.platform === 'web' ? 'Wähle ein oder mehrere Videos von deinem Gerät. Sie werden nicht hochgeladen: Transkription, Schnitt und Export laufen komplett in deinem Browser.'
     : CAP.platform === 'desktop' ? 'Wähle ein oder mehrere Videos (Strg/Umschalt für mehrere). Sie werden hintereinandergehängt und gemeinsam transkribiert.'
     : 'Wähle ein oder mehrere Videos aus deiner Galerie. Sie werden hintereinandergehängt und auf dem Gerät transkribiert – du schneidest dann über den Text.';
@@ -419,7 +426,7 @@ function openProjectNow(id, keep){
   deleted = new Set(P.deleted || []); undo = []; redo = [];
   layoutSources(); vSi = -1; vPending = null; cueCache.at = -1; subShown = null;
   $('#home').classList.add('hidden'); $('#proj').classList.remove('hidden');
-  $('#projName').textContent = P.name; $('#exName').value = P.name + '_geschnitten';
+  projNameEl.textContent = P.name; $('#exName').value = P.name + '_geschnitten';
   const [ow, oh] = baseDims(); $('#exRes').options[0].textContent = `Original (${ow}×${oh})`;
   fitStage(); setTimeout(fitStage, 60);
   fillModels(); syncStyleInputs(); renderExportForm();
@@ -458,6 +465,278 @@ $('#proj').addEventListener('pointerdown', () => { if ($('#proj').classList.cont
 const OPEN_KEY = 'hc-open';
 addEventListener('pagehide', () => rememberOpen()); document.addEventListener('visibilitychange', () => { if (document.hidden) rememberOpen(); });
 function rememberOpen(){ if (!P || document.body.classList.contains('solo')) return; try { localStorage.setItem(OPEN_KEY, JSON.stringify({id: P.id, tab, pos: outPos, at: Date.now()})); } catch(_){} }
+// ───────── Verwaltung (Desktop): frühere Fassungen und Papierkorb ─────────
+const fmtWhen = ms => new Date(ms).toLocaleString('de-DE', {weekday:'short', day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'});
+const fmtBytes = b => b >= 1e9 ? (b / 1e9).toFixed(1).replace('.', ',') + ' GB' : b >= 1e6 ? Math.round(b / 1e6) + ' MB' : b >= 1e3 ? Math.round(b / 1e3) + ' KB' : (b || 0) + ' B';
+function openMg(html){ const b = $('#mgBody'); b.innerHTML = html; $('#modelSheet').classList.add('hidden'); $('#mgSheet').classList.remove('hidden'); $('#sheetBack').classList.remove('hidden');
+  const c = b.querySelector('#mgClose'); if (c) c.onclick = closeMg; return b; }
+function closeMg(){ $('#mgSheet').classList.add('hidden'); if ($('#sheet').classList.contains('hidden') && $('#modelSheet').classList.contains('hidden')) $('#sheetBack').classList.add('hidden'); }
+function closeSettings(){ $('#modelSheet').classList.add('hidden'); if ($('#sheet').classList.contains('hidden') && $('#mgSheet').classList.contains('hidden')) $('#sheetBack').classList.add('hidden'); }
+$('#sheetBack').addEventListener('click', () => { closeMg(); closeSettings(); });
+const verLine = v => [fmtT(v.duration), `${v.cut} Stellen gelöscht`, v.items ? `${v.items} Elemente` : '', v.cues ? `${v.cues} Untertitel` : ''].filter(Boolean).join(' · ');
+// Anderen Fenstern, die dieses Projekt offen haben, etwas mitteilen (auch wenn es hier gerade nicht offen ist)
+function busNotify(pid, msg){
+  if (!CAP.bus) return;
+  if (TS.busPost) return TS.busPost(pid, WIN, JSON.stringify(msg));
+  fetch('api/bus?p=' + encodeURIComponent(pid) + '&from=' + WIN + '&k=' + msg.t, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(msg)}).catch(() => {});
+}
+function openVersions(p){
+  let list; try { list = J(TS.versions(p.id)) || []; } catch(e){ return toast('Die Fassungen ließen sich nicht lesen'); }
+  const body = openMg(`<h3>Frühere Fassungen</h3><p class="muted small"></p><div class="mg-list"></div><div class="row"><button class="btn" id="mgClose">Schließen</button></div>`);
+  body.querySelector('p').textContent = list.length
+    ? `„${p.name}“: Beim Arbeiten legt HoneyCut höchstens alle 15 Minuten den vorigen Stand zurück und behält die letzten sechs.`
+    : `Für „${p.name}“ gibt es noch keine früheren Fassungen. Beim Arbeiten legt HoneyCut höchstens alle 15 Minuten den vorigen Stand zurück.`;
+  const box = body.querySelector('.mg-list');
+  for (const v of list){
+    const el = document.createElement('div'); el.className = 'mg-item';
+    el.innerHTML = `<div class="meta"><b></b><span class="muted small"></span></div><button class="btn small" data-a="copy">Als Kopie öffnen</button><button class="btn small" data-a="back">Zurückholen</button>`;
+    el.querySelector('b').textContent = fmtWhen(v.at) + (v.deleted ? ' · vor dem Löschen' : '');
+    el.querySelector('span').textContent = (v.name && v.name !== p.name ? `„${v.name}“ · ` : '') + verLine(v);
+    el.querySelector('[data-a=copy]').onclick = () => {
+      try { const r = J(TS.restoreVersion(p.id, v.file, true)); closeMg(); toast('Fassung als eigenes Projekt geöffnet'); openProject(r.id); }
+      catch(e){ toast('Das ging nicht: ' + ((e && e.message) || e)); } };
+    el.querySelector('[data-a=back]').onclick = () => {
+      if (!confirm(`Den Stand von ${fmtWhen(v.at)} zurückholen?\n\nDer jetzige Stand von „${p.name}“ wird dabei selbst als Fassung zurückgelegt.`)) return;
+      try { TS.restoreVersion(p.id, v.file, false); } catch(e){ return toast('Das ging nicht: ' + ((e && e.message) || e)); }
+      busNotify(p.id, {t:'reload'}); closeMg(); toast('Fassung zurückgeholt');
+      if (P && P.id === p.id) openProject(p.id, true); else showHome(); };
+    box.append(el);
+  }
+}
+function openTrash(){
+  let list; try { list = J(TS.trash()) || []; } catch(e){ return toast('Der Papierkorb ließ sich nicht lesen'); }
+  if (!list.length){ closeMg(); showHome(); return toast('Der Papierkorb ist leer'); }
+  const body = openMg(`<h3>Papierkorb</h3><p class="muted small">Gelöschte Projekte bleiben 30 Tage hier. Deine Videos sind davon nicht betroffen.</p><div class="mg-list"></div>
+    <div class="row"><button class="btn danger" id="mgEmpty">Papierkorb leeren</button><button class="btn" id="mgClose" style="margin-left:auto">Schließen</button></div>`);
+  const box = body.querySelector('.mg-list');
+  for (const t of list){
+    const el = document.createElement('div'); el.className = 'mg-item';
+    el.innerHTML = `<div class="meta"><b></b><span class="muted small"></span></div><button class="btn small" data-a="back">Wiederherstellen</button><button class="btn small danger" data-a="kill">Endgültig löschen</button>`;
+    el.querySelector('b').textContent = t.name || 'Projekt';
+    el.querySelector('span').textContent = `gelöscht am ${new Date(t.gone).toLocaleDateString('de-DE')} · noch ${t.left} ${t.left === 1 ? 'Tag' : 'Tage'} · ${verLine(t)}`;
+    el.querySelector('[data-a=back]').onclick = () => {
+      try { TS.trashRestore(t.id); } catch(e){ return toast('Das ging nicht: ' + ((e && e.message) || e)); }
+      toast(`„${t.name}“ ist wieder da`); showHome(); openTrash(); };
+    el.querySelector('[data-a=kill]').onclick = () => {
+      if (!confirm(`„${t.name}“ endgültig löschen? Das lässt sich nicht rückgängig machen.`)) return;
+      try { TS.trashPurge(t.id); } catch(e){ return toast('Das ging nicht: ' + ((e && e.message) || e)); }
+      showHome(); openTrash(); };
+    box.append(el);
+  }
+  body.querySelector('#mgEmpty').onclick = () => {
+    if (!confirm(`Alle ${list.length} Projekte im Papierkorb endgültig löschen? Das lässt sich nicht rückgängig machen.`)) return;
+    try { TS.trashPurge(''); } catch(e){ return toast('Das ging nicht: ' + ((e && e.message) || e)); }
+    closeMg(); showHome(); toast('Papierkorb geleert'); };
+}
+// ── Speicher verwalten (Desktop): was belegt wie viel, und was lässt sich gefahrlos freigeben ──
+// Als „verwendet“ zählt alles, was in einem Projekt, einer früheren Fassung oder im Papierkorb steht – das rechnet das Backend
+// bei jedem Löschen neu. Exportierte CapCut- und Concat-Projekte kennt HoneyCut nicht; deshalb die Rückfrage.
+const ST_WARN = 'Kein Projekt verwendet sie mehr. Ein früher exportiertes CapCut- oder Concat-Projekt kann aber noch darauf zugreifen; dort würde die Datei dann fehlen.';
+function openStorage(){
+  const body = openMg(`<h3>Speicher</h3><p class="muted small" id="stSum">Wird zusammengezählt …</p><div class="mg-list" id="stList"></div>
+    <div class="row"><button class="btn" id="stFolder">Datenordner öffnen</button><button class="btn" id="mgClose" style="margin-left:auto">Schließen</button></div>`);
+  body.querySelector('#stFolder').onclick = () => { try { TS.storageOpen(); } catch(e){ toast('Der Ordner ließ sich nicht öffnen'); } };
+  const load = () => TS.storage().then(info => { if (body.querySelector('#stList')) renderStorage(body, info, load); })
+    .catch(e => { const el = body.querySelector('#stSum'); if (el) el.textContent = 'Die Übersicht ließ sich nicht erstellen: ' + ((e && e.message) || e); });
+  load();
+}
+function renderStorage(body, info, reload){
+  body.querySelector('#stSum').textContent = `HoneyCut belegt ${fmtBytes(info.total)} für Projekte, Vorschau, Sicherungen und Modelle; auf dem Laufwerk sind noch ${fmtBytes(info.free)} frei. Deine Videos und Exporte zählen hier nicht mit.` + (info.problem ? ' ' + info.problem : '');
+  const box = body.querySelector('#stList'); box.innerHTML = '';
+  const clear = (what, name, ask) => {
+    if (ask && !confirm(ask)) return; let r;
+    try { r = J(TS.storageClear(what, name)); } catch(e){ return toast('Das ging nicht: ' + ((e && e.message) || e)); }
+    toast(r.count ? `${fmtBytes(r.freed)} freigegeben` : 'Hier gab es nichts zu löschen'); if (what === 'model') fillModels(); reload(); };
+  const btn = (el, label, fn, danger) => { const b = document.createElement('button'); b.className = 'btn small' + (danger ? ' danger' : ''); b.textContent = label; b.onclick = fn; el.append(b); return b; };
+  const sub = (el, title, note, label, fn) => { let s = el.querySelector('.st-sub'); if (!s){ s = document.createElement('div'); s.className = 'st-sub'; el.append(s); }
+    const r = document.createElement('div'); r.className = 'st-row'; r.innerHTML = '<div class="meta"><span></span><span class="muted small"></span></div>';
+    r.querySelector('span').textContent = title; r.querySelector('.muted').textContent = note; if (fn) btn(r, label, fn, true); s.append(r); };
+  const n = (k, one, many) => `${k} ${k === 1 ? one : many}`;
+  for (const g of info.groups){
+    const el = document.createElement('div'); el.className = 'mg-item st'; el.dataset.key = g.key;
+    el.innerHTML = '<div class="meta"><b></b><span class="muted small"></span></div>';
+    el.querySelector('b').textContent = `${g.label} · ${g.bytes ? fmtBytes(g.bytes) : 'leer'}`;
+    let hint = g.hint || '';
+    if (g.key === 'thumbs'){ if (g.bytes) btn(el, 'Leeren', () => clear('thumbs', '')); }
+    else if (g.key === 'proxies'){
+      if (g.nfree) btn(el, `Unbenutzte löschen · ${fmtBytes(g.freeable)}`, () => clear('proxies', ''));
+      else if (g.count) hint += ' Alle werden von Projekten verwendet.'; }
+    else if (g.key === 'matte'){
+      if (g.nfree) btn(el, `Unbenutzte löschen · ${fmtBytes(g.freeable)}`, () => clear('matte', '', `${n(g.nfree, 'freigestellte Kopie', 'freigestellte Kopien')} löschen (${fmtBytes(g.freeable)})?\n\n${ST_WARN}`));
+      for (const i of g.items || []){ const free = !i.used.length, unknown = i.used[0] === '?';
+        sub(el, `Kopie vom ${new Date(i.at).toLocaleDateString('de-DE')} · ${fmtBytes(i.bytes)}`,
+          unknown ? 'Verwendung unklar' : free ? 'von keinem Projekt verwendet' : 'verwendet von ' + i.used.join(', '),
+          'Löschen', free ? () => clear('matte', i.name, `Diese freigestellte Kopie löschen (${fmtBytes(i.bytes)})?\n\n${ST_WARN}`) : null); } }
+    else if (g.key === 'slides'){
+      if (g.nfree) btn(el, `Frühere Bilder löschen · ${fmtBytes(g.freeable)}`, () => clear('slides', '', `${n(g.nfree, 'früheres Folienbild', 'frühere Folienbilder')} löschen (${fmtBytes(g.freeable)})?\n\n${ST_WARN}`));
+      else if (g.count) hint += ' Alle vorhandenen Bilder werden von Projekten verwendet.'; }
+    else if (g.key === 'models'){
+      for (const m of g.items || []) sub(el, m.label, fmtBytes(m.bytes), 'Löschen', () => clear('model', m.name, `Das Modell „${m.label}“ löschen (${fmtBytes(m.bytes)})?\n\nDu kannst es in den Einstellungen jederzeit wieder laden.`));
+      if (!g.count) hint = 'Keine nachgeladen. Eingebaute Modelle gehören zum Programm.'; }
+    else if (g.key === 'backups'){ if (g.trash) btn(el, `Papierkorb (${g.trash})`, openTrash); }
+    el.querySelector('.muted').textContent = hint;
+    box.append(el);
+  }
+}
+
+// ── Einstellungen (Desktop): Verwaltung unter den Whisper-Modellen ──
+function renderSettingsMore(){
+  const box = $('#setMore'); if (!box) return; box.innerHTML = '';
+  const sec = title => { const h = document.createElement('h4'); h.textContent = title; const l = document.createElement('div'); l.className = 'mg-list'; box.append(h, l); return l; };
+  const row = (list, title, note, label, fn) => { const el = document.createElement('div'); el.className = 'mg-item';
+    el.innerHTML = '<div class="meta"><b></b><span class="muted small"></span></div>'; el.querySelector('b').textContent = title; el.querySelector('span').textContent = note;
+    if (label){ const b = document.createElement('button'); b.className = 'btn small'; b.textContent = label; b.onclick = fn; el.append(b); } list.append(el); return el; };
+  if (TS.storage || TS.trash || TS.backupAll){
+    const l = sec('Projekte und Speicher');
+    if (TS.storage) row(l, 'Speicher', 'Was HoneyCut auf der Festplatte belegt und was sich freigeben lässt.', 'Öffnen', openStorage).dataset.k = 'storage';
+    if (TS.trash) row(l, 'Papierkorb', 'Gelöschte Projekte bleiben 30 Tage erhalten.', 'Öffnen', openTrash).dataset.k = 'trash';
+    if (TS.backupAll) row(l, 'Alle Projekte sichern', 'Eine Datei mit allen Projekten, ihren Folienbildern und Schriften, ohne die Videos. Für die externe Festplatte oder die Cloud.', 'Sichern …', backupAll).dataset.k = 'backup';
+    if (TS.backupRestore) row(l, 'Sicherung einspielen', 'Projekte aus einer solchen Datei zurückholen. Was hier schon liegt, bleibt erhalten.', 'Einspielen …', backupRestore).dataset.k = 'restore';
+  }
+  let u = null; try { u = TS.updateInfo ? J(TS.updateInfo()) : null; } catch(_){}
+  if (TS.saveReport || (u && u.supported)){
+    const l = sec('Hilfe');
+    if (TS.saveReport) row(l, 'Fehlerbericht', 'Protokoll und Systemangaben als eine Datei, zum Beispiel für die Fehlersuche mit Claude. Enthält Datei- und Projektnamen, aber keine Videos oder Texte.', 'Speichern …', saveReport).dataset.k = 'report';
+    if (u && u.supported){
+      const el = row(l, 'Neue Versionen', '', 'Jetzt prüfen', async e => {
+        const b = e.currentTarget; b.disabled = true; b.textContent = 'Prüfe …';
+        try { const r = await TS.updateCheck(); renderSettingsMore(); renderUpdateBanner(); if (r.latest) openUpdate(r); else toast('HoneyCut ist aktuell'); }
+        catch(err){ b.disabled = false; b.textContent = 'Jetzt prüfen'; toast('GitHub war nicht erreichbar'); } });
+      el.dataset.k = 'update';
+      const lab = document.createElement('label'); lab.className = 'row small'; lab.innerHTML = '<input type="checkbox" id="updOn"> Einmal am Tag bei GitHub nachsehen';
+      lab.querySelector('input').checked = u.enabled; lab.querySelector('input').onchange = e => { try { TS.updateSet({enabled: e.target.checked}); } catch(_){} };
+      el.querySelector('.meta').append(lab);
+      el.querySelector('span').textContent = (u.latest ? `HoneyCut ${u.latest.version} steht bereit.` : u.checked ? `Zuletzt geprüft: ${fmtWhen(u.checked)}. HoneyCut ${u.current} ist aktuell.` : 'Noch nicht geprüft.')
+        + ' Abgerufen wird nur die Liste der Veröffentlichungen; von dir wird nichts gesendet.';
+      if (u.latest){ const b = document.createElement('button'); b.className = 'btn small primary'; b.textContent = 'Ansehen'; b.onclick = () => openUpdate(u); el.append(b); }
+    }
+  }
+}
+// ── Hinweis auf eine neue Version (Windows-App) ──
+function renderUpdateBanner(){
+  const el = $('#updBanner'); if (!el) return;
+  let u = null; try { u = TS.updateInfo ? J(TS.updateInfo()) : null; } catch(_){}
+  const L = u && u.supported && u.enabled && u.latest;
+  if (!L || u.skip === L.version){ el.classList.add('hidden'); return; }
+  el.classList.remove('hidden');
+  el.innerHTML = '<div class="meta"><b></b><span class="muted small"></span></div><button class="btn small primary" data-a="show">Was ist neu?</button><button class="btn small ghost" data-a="skip" title="Diese Version hier nicht mehr melden">Überspringen</button>';
+  el.querySelector('b').textContent = `HoneyCut ${L.version} ist da`;
+  el.querySelector('span').textContent = `Du verwendest ${u.current}.`;
+  el.querySelector('[data-a=show]').onclick = () => openUpdate(u);
+  el.querySelector('[data-a=skip]').onclick = () => { try { TS.updateSet({skip: L.version}); } catch(_){} el.classList.add('hidden'); toast(`${L.version} wird hier nicht mehr gemeldet. In den Einstellungen bleibt sie zu finden.`); };
+}
+function openUpdate(u){
+  const L = u.latest; if (!L) return;
+  const body = openMg(`<h3></h3><p class="muted small"></p><div id="updNotes"></div>
+    <div class="row wrap"><button class="btn primary" id="updGet">Installer herunterladen</button><button class="btn" id="updPage">Bei GitHub ansehen</button><button class="btn" id="mgClose" style="margin-left:auto">Schließen</button></div>`);
+  body.querySelector('h3').textContent = `HoneyCut ${L.version}`;
+  body.querySelector('p').textContent = `Du verwendest ${u.current}. Der Installer${L.size ? ` (${fmtBytes(L.size)})` : ''} wird über deinen Browser heruntergeladen. Zum Installieren HoneyCut schließen und die Datei starten; deine Projekte bleiben erhalten.`;
+  const box = body.querySelector('#updNotes');
+  for (const n of L.notes || []){
+    const h = document.createElement('h4'); h.textContent = n.version + (n.title ? ' · ' + n.title : ''); const ul = document.createElement('ul'); ul.className = 'upd-notes';
+    for (const p of n.points || []){ const li = document.createElement('li'); li.textContent = p; ul.append(li); } box.append(h, ul); }
+  if (!(L.notes || []).length){ const p = document.createElement('p'); p.className = 'small'; p.textContent = 'Die Änderungen stehen auf der Seite bei GitHub.'; box.append(p); }
+  const open = what => { try { TS.updateOpen(what); toast(what === 'installer' ? 'Der Download startet in deinem Browser' : 'Die Seite öffnet sich in deinem Browser'); } catch(e){ toast('Das ging nicht: ' + ((e && e.message) || e)); } };
+  body.querySelector('#updGet').onclick = () => open('installer'); body.querySelector('#updPage').onclick = () => open('page');
+}
+setTimeout(() => { if (!$('#home').classList.contains('hidden')) renderUpdateBanner(); }, 50000);   // die Prüfung läuft eine halbe Minute nach dem Start
+
+// ── Alle Projekte sichern, Sicherung einspielen (Desktop) ──
+// Gesichert werden die Projekte samt Folienbildern und Schriften, dazu die eigenen Designprofile und Farbfavoriten – ohne die Videos.
+const PREF_KEYS = ['hc-slide-profiles', 'hc-colfav'];
+function uiPrefs(){ const o = {}; for (const k of PREF_KEYS){ try { const v = JSON.parse(localStorage.getItem(k)); if (Array.isArray(v) && v.length) o[k] = v; } catch(_){} } return o; }
+function mergePrefs(pr){
+  let n = 0; if (!pr || typeof pr !== 'object') return 0;
+  try { if (window.slUserProfiles){ const have = slUserProfiles(), add = (pr['hc-slide-profiles'] || []).filter(p => p && p.id && p.colors && !have.some(h => h.id === p.id)); if (add.length){ slSaveUserProfiles(have.concat(add)); n += add.length; } } } catch(_){}
+  try { const add = (pr['hc-colfav'] || []).filter(c => typeof c === 'string' && /^#[0-9a-f]{6}$/i.test(c)).map(c => c.toUpperCase()).filter(c => !favCols.includes(c));
+    if (add.length){ favCols = favCols.concat(add).slice(0, 16); saveFavs(); n += add.length; } } catch(_){}
+  return n;
+}
+const plural = (k, one, many) => `${k} ${k === 1 ? one : many}`;
+function jobModal(title, first){
+  const m = hcModal(`<h3></h3><div class="progress" id="pkgProg"><i></i></div><div class="small muted" id="pkgMsg"></div><div class="row" style="margin-top:12px"><button class="btn" id="pkgCancel" style="margin-left:auto">Abbrechen</button></div>`);
+  m.querySelector('h3').textContent = title; m.querySelector('#pkgMsg').textContent = first; return m;
+}
+async function backupAll(){
+  if (P) saveNow();
+  const r = await platformCall(id => TS.backupAll(id, uiPrefs())); if (!r) return;
+  if (!r.job) return toast(r.error ? 'Das ging nicht: ' + r.error : 'Die Sicherung ließ sich nicht starten');
+  const m = jobModal('Alle Projekte sichern', 'Projekte werden gepackt …'); let job = r.job;
+  m.querySelector('#pkgCancel').onclick = () => { if (job) TS.cancel(job); closeHcModal(); };
+  watchJob(job, j => { m.querySelector('#pkgProg i').style.width = (j.progress * 100).toFixed(1) + '%'; if (j.message) m.querySelector('#pkgMsg').textContent = j.message; },
+    j => { const res = j.result || {}; job = null; m.querySelector('#pkgProg i').style.width = '100%';
+      m.querySelector('#pkgMsg').textContent = `${plural(res.projects || 0, 'Projekt', 'Projekte')} gesichert (${fmtBytes(res.bytes || 0)}): ${res.path || ''}`
+        + ((res.skipped || []).length ? ` · ${plural(res.skipped.length, 'Projekt ließ', 'Projekte ließen')} sich nicht lesen und ${res.skipped.length === 1 ? 'fehlt' : 'fehlen'} in der Sicherung.` : '') + ' Die Videos sind nicht enthalten.';
+      m.querySelector('#pkgCancel').textContent = 'Schließen';
+      if (res.path){ const b = document.createElement('button'); b.className = 'btn'; b.textContent = 'Im Ordner zeigen'; b.onclick = () => TS.share(res.path); m.querySelector('.row').prepend(b); } },
+    j => { job = null; m.querySelector('#pkgMsg').textContent = j.status === 'cancelled' ? 'Abgebrochen' : 'Fehler: ' + (j.error || ''); m.querySelector('#pkgCancel').textContent = 'Schließen'; });
+}
+async function backupRestore(){
+  if (P) saveNow();
+  const r = await platformCall(id => TS.backupRestore(id)); if (!r) return;
+  if (!r.job) return toast(r.error ? 'Das ging nicht: ' + r.error : 'Die Sicherung ließ sich nicht öffnen');
+  const m = jobModal('Sicherung einspielen', 'Sicherung wird gelesen …'); let job = r.job;
+  m.querySelector('#pkgCancel').onclick = () => { if (job) TS.cancel(job); closeHcModal(); };
+  watchJob(job, j => { m.querySelector('#pkgProg i').style.width = (j.progress * 100).toFixed(1) + '%'; if (j.message) m.querySelector('#pkgMsg').textContent = j.message; },
+    j => { const res = j.result || {}; job = null; m.querySelector('#pkgProg i').style.width = '100%';
+      const nPref = mergePrefs(res.prefs), parts = [], len = k => (res[k] || []).length;
+      if (len('added')) parts.push(`${plural(len('added'), 'Projekt ist', 'Projekte sind')} dazugekommen`);
+      if (len('updated')) parts.push(`${plural(len('updated'), 'Projekt hat', 'Projekte haben')} den gesicherten, neueren Stand bekommen`);
+      if (len('kept')) parts.push(`${plural(len('kept'), 'Projekt ist', 'Projekte sind')} hier neuer und ${len('kept') === 1 ? 'bleibt' : 'bleiben'} so`);
+      if (res.same) parts.push(`${plural(res.same, 'Projekt war', 'Projekte waren')} schon auf diesem Stand`);
+      if (len('failed')) parts.push(`${plural(len('failed'), 'Projekt ließ', 'Projekte ließen')} sich nicht lesen`);
+      const extra = [res.fonts ? plural(res.fonts, 'Schrift', 'Schriften') : '', res.slides ? plural(res.slides, 'Bild', 'Bilder') : '', nPref ? plural(nPref, 'Designprofil oder Farbfavorit', 'Designprofile und Farbfavoriten') : ''].filter(Boolean);
+      m.querySelector('#pkgMsg').textContent = (res.created ? `Sicherung vom ${new Date(res.created).toLocaleDateString('de-DE')}: ` : '') + (parts.length ? parts.join(', ') + '.' : 'Die Sicherung enthält keine Projekte.')
+        + (extra.length ? ` Dazu ${extra.join(', ')}.` : '') + (len('updated') || len('kept') ? ' Der jeweils andere Stand liegt bei den früheren Fassungen des Projekts.' : '');
+      m.querySelector('#pkgCancel').textContent = 'Schließen';
+      for (const id of res.updatedIds || []) busNotify(id, {t:'reload'});
+      loadUserFonts().catch(() => {});
+      if (P && (res.updatedIds || []).includes(P.id)) openProject(P.id, true); else if (!P) showHome(); },
+    j => { job = null; m.querySelector('#pkgMsg').textContent = j.status === 'cancelled' ? 'Abgebrochen' : 'Fehler: ' + (j.error || ''); m.querySelector('#pkgCancel').textContent = 'Schließen'; });
+}
+// ── Fehlerbericht ──
+async function saveReport(){
+  const ui = {'Fenster': `${innerWidth}×${innerHeight}, Bildpunkte je Punkt ${devicePixelRatio}`, 'Bildschirm': `${screen.width}×${screen.height}`, 'Browser-Kennung': navigator.userAgent,
+    'Sprache': navigator.language, 'Offenes Projekt': P ? `${P.sources.length} Videos, ${tokens.length} Wörter, ${(P.items || []).length} Elemente, Reiter ${tab}` : 'keines'};
+  const r = await platformCall(id => TS.saveReport(id, ui)); if (!r) return toast('Der Bericht ließ sich nicht speichern');
+  if (r.error) return toast('Das ging nicht: ' + r.error);
+  if (r.ok) toast('Fehlerbericht gespeichert: ' + r.path);
+}
+
+// ───────── Projekt umbenennen ─────────
+// In der Projektliste (Stift) und im offenen Projekt (Name in der Kopfzeile anklicken). Der Name steht nur im Projekt selbst;
+// Videos, Exporte und Sicherungen bleiben, wie sie sind.
+const cleanName = s => String(s || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+function renameProject(id, name){
+  name = cleanName(name); if (!name) return false;
+  if (P && P.id === id){
+    const old = P.name; if (name === old) return true;
+    P.name = name; projNameEl.textContent = name;
+    if ($('#exName').value === old + '_geschnitten') $('#exName').value = name + '_geschnitten';   // nur der unveränderte Vorschlag
+    if (!saveNow()){ return false; }
+    busSend({t:'name', name}); rememberOpen(); return true;
+  }
+  let p = null; try { p = J(TS.loadProject(id)); } catch(_){}
+  if (!p || typeof p !== 'object'){ toast('Projekt konnte nicht geladen werden'); return false; }
+  if (p.name === name) return true;
+  p.name = name;
+  try { TS.saveProject(id, JSON.stringify(p)); } catch(e){ toast('Umbenennen fehlgeschlagen: ' + ((e && e.message) || e)); return false; }
+  return true;
+}
+// Namen an Ort und Stelle bearbeiten: Eingabetaste oder Verlassen des Felds übernimmt, Esc bricht ab
+function editNameInline(el, current, onDone){
+  const inp = document.createElement('input'); inp.type = 'text'; inp.className = 'name-edit'; inp.value = current || ''; inp.maxLength = 120;
+  inp.setAttribute('aria-label', 'Projektname'); inp.enterKeyHint = 'done';
+  let done = false;
+  const finish = ok => { if (done) return; done = true; const v = cleanName(inp.value); inp.replaceWith(el); if (ok && v && v !== current) onDone(v); };
+  inp.onkeydown = e => { e.stopPropagation(); if (e.key === 'Enter'){ e.preventDefault(); finish(true); } else if (e.key === 'Escape'){ e.preventDefault(); finish(false); } };
+  inp.onkeyup = inp.onkeypress = e => e.stopPropagation();
+  inp.onblur = () => finish(true); inp.onclick = inp.onpointerdown = e => e.stopPropagation();
+  el.replaceWith(inp); inp.focus(); inp.select();
+}
+const projNameEl = $('#projName');   // fest gemerkt: Während des Umbenennens steht an seiner Stelle kurz das Eingabefeld
+projNameEl.title = 'Anklicken zum Umbenennen';
+projNameEl.onclick = () => { if (P) editNameInline(projNameEl, P.name, v => { if (renameProject(P.id, v)) toast('Umbenannt'); }); };
 function closeProject(){
   pausePlay();
   if (!saveNow() && !confirm('Der letzte Stand ließ sich nicht speichern (' + ($('#saved').title || 'Grund unbekannt') + ').\n\nOK: trotzdem schließen – die letzten Änderungen gehen verloren.\nAbbrechen: im Projekt bleiben.')) return;
@@ -716,6 +995,7 @@ function busApply(m){
   if (!m || !P) return;
   if (m.t === 'state'){ applyingRemote = true; try { restore(m.snap); } finally { applyingRemote = false; } }
   else if (m.t === 'reload'){ openProject(P.id, true); }
+  else if (m.t === 'name' && m.name){ const old = P.name; P.name = m.name; projNameEl.textContent = m.name; if ($('#exName').value === old + '_geschnitten') $('#exName').value = m.name + '_geschnitten'; }
   else if (m.t === 'pos'){
     if (m.playing && playing) pausePlay();
     if (!playing && Math.abs(m.o - outPos) > 0.03){ posSent = {o: m.o, at: performance.now()}; seekOut(m.o, false); if (studioOn() && window.syncScroll) syncScroll(m.o, true); }
@@ -3651,8 +3931,8 @@ $('#tabs').addEventListener('click', e => { const b = e.target.closest('button')
 matchMedia('(min-width: 760px) and (min-height: 600px)').addEventListener('change', () => { fitStage(); });
 
 // ───────── Modelle ─────────
-$('#modelsBtn').onclick = () => { renderModels(); $('#modelSheet').classList.remove('hidden'); $('#sheetBack').classList.remove('hidden'); };
-$('#modelClose').onclick = () => { $('#modelSheet').classList.add('hidden'); $('#sheetBack').classList.add('hidden'); };
+$('#modelsBtn').onclick = () => { renderModels(); renderSettingsMore(); $('#mgSheet').classList.add('hidden'); $('#modelSheet').classList.remove('hidden'); $('#sheetBack').classList.remove('hidden'); };
+$('#modelClose').onclick = closeSettings;
 function renderModels(){
   const box = $('#modelList'); box.innerHTML = '';
   for (const m of J(TS.models()) || []){

@@ -37,7 +37,7 @@ os.environ.setdefault("HF_HUB_DISABLE_IMPLICIT_TOKEN", "1")
 import warnings  # noqa: E402
 warnings.filterwarnings("ignore", module="huggingface_hub")
 
-VERSION = "2.25.0"
+VERSION = "2.26.0"
 APP_DIR = Path(__file__).resolve().parent
 FROZEN = bool(getattr(sys, "frozen", False))          # als installierte .exe gebaut
 RES_DIR = Path(getattr(sys, "_MEIPASS", APP_DIR))      # mitgelieferte Dateien (Oberfläche, ffmpeg, Modelle)
@@ -614,8 +614,6 @@ def bus_get(pid: str, since: int, sender: str) -> dict:
             b["joins"] += 1
         b["seen"][sender] = now
         peers = _bus_peers(b, sender, now)
-        if not peers:
-            b["msgs"].clear()
         # „joins“ zählt, wie oft ein Fenster dazugekommen ist: Steigt die Zahl, schicken die übrigen Fenster dem neuen ihren
         # Stand (es selbst erkennt sich an „new“ und schickt nichts – sein Stand ist der ältere).
         msgs = [] if since < 0 else [m[2] for m in b["msgs"] if m[0] > since and m[1] != sender]
@@ -2187,6 +2185,7 @@ def backup_dir(f: Path) -> Path:
 
 
 _last_backup: dict[str, float] = {}     # Dateiname → Zeitpunkt der letzten Sicherung in dieser Sitzung
+_last_stamp: dict[str, str] = {}        # Dateiname → Zeitstempel im Namen der zuletzt angelegten Fassung
 
 
 def backup_project(f: Path, force: bool = False, tag: str = "") -> None:
@@ -2209,7 +2208,23 @@ def backup_project(f: Path, force: bool = False, tag: str = "") -> None:
                 return
         _last_backup[f.name] = now
         data = f.read_bytes()
-        dst = d / (time.strftime("%Y%m%d-%H%M%S") + tag + ".json.gz")
+        # Name = Zeitpunkt, und immer später als jede vorhandene Fassung: Die Namen bestimmen die Reihenfolge, und beim
+        # Ausdünnen fallen die kleinsten weg. Mehrere Sicherungen in derselben Sekunde rücken deshalb sekundenweise weiter.
+        fmt = "%Y%m%d-%H%M%S"
+        newest = max((x.name[:15] for x in d.glob("*.json.gz")), default="") if d.is_dir() else ""
+        newest = max(newest, _last_stamp.get(f.name, ""))   # auch eine Fassung, die gerade noch im Hintergrund geschrieben wird
+        t = now
+        if newest and time.strftime(fmt, time.localtime(t)) <= newest:
+            try:
+                t = time.mktime(time.strptime(newest, fmt)) + 1
+            except (ValueError, OverflowError):
+                t = now
+            for _ in range(7300):   # Zeitumstellung: notfalls bis zu zwei Stunden weiterrücken
+                if time.strftime(fmt, time.localtime(t)) > newest:
+                    break
+                t += 1
+        _last_stamp[f.name] = time.strftime(fmt, time.localtime(t))
+        dst = d / (_last_stamp[f.name] + tag + ".json.gz")
 
         def work():
             try:
@@ -2334,6 +2349,131 @@ def delete_project(pid: str) -> None:
         _list_cache.pop(f.name, None)
 
 
+# ───────────────────────────── Frühere Fassungen und Papierkorb ─────────────────────────────
+# Beides liest die Sicherungen, die save_project und delete_project ablegen (sicherungen/<Projekt>/JJJJMMTT-HHMMSS.json.gz).
+
+_VERSION_RE = re.compile(r"^\d{8}-\d{6}(-geloescht)?\.json\.gz$")
+TRASH_DAYS = 30
+
+
+def _read_backup(x: Path):
+    """(Text, Objekt) einer gesicherten Fassung oder None."""
+    import gzip
+    try:
+        txt = gzip.open(x, "rb").read().decode("utf-8")
+        obj = json.loads(txt)
+        return (txt, obj) if isinstance(obj, dict) else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _version_info(x: Path) -> dict | None:
+    r = _read_backup(x)
+    if not r:
+        return None
+    obj = r[1]
+    srcs = obj.get("sources") or ([obj["main"]] if obj.get("main") else [])
+    st = x.stat()
+    return {"file": x.name, "at": int(obj.get("updated") or st.st_mtime * 1000), "saved": int(st.st_mtime * 1000), "bytes": st.st_size,
+            "name": obj.get("name", ""), "duration": sum(float(q.get("duration") or 0) for q in srcs), "sources": len(srcs),
+            "words": sum(1 for t in obj.get("tokens") or [] if t.get("type") == "word"), "cut": len(obj.get("deleted") or []),
+            "items": len(obj.get("items") or []), "cues": len(obj.get("cues") or []), "deleted": "-geloescht" in x.name}
+
+
+def project_versions(pid: str) -> list[dict]:
+    """Gesicherte Stände eines Projekts, jüngster zuerst."""
+    d = backup_dir(proj_path(pid))
+    out = [_version_info(x) for x in sorted(d.glob("*.json.gz"), reverse=True)] if d.is_dir() else []
+    return [v for v in out if v]
+
+
+def new_project_id() -> str:
+    abc = "abcdefghijklmnopqrstuvwxyz0123456789"
+    while True:
+        pid = "".join(secrets.choice(abc) for _ in range(8))
+        if not proj_path(pid).exists() and not backup_dir(proj_path(pid)).exists():
+            return pid
+
+
+def restore_version(pid: str, file: str, copy: bool) -> dict:
+    """Einen gesicherten Stand zurückholen – als neues Projekt (copy) oder an die Stelle des jetzigen. Der jetzige Stand
+    wird dabei selbst als Fassung zurückgelegt, das Zurückholen lässt sich also wieder umkehren."""
+    f = proj_path(pid)
+    if not _VERSION_RE.match(file or ""):
+        raise ValueError("Unbekannte Fassung.")
+    r = _read_backup(backup_dir(f) / file)
+    if not r:
+        raise ValueError("Diese Fassung lässt sich nicht lesen.")
+    obj = r[1]
+    when = time.strftime("%d.%m. %H:%M", time.localtime((obj.get("updated") or 0) / 1000 or (backup_dir(f) / file).stat().st_mtime))
+    if copy:
+        nid = new_project_id()
+        obj["id"] = nid
+        obj["name"] = f"{obj.get('name') or 'Projekt'} (Fassung vom {when})"[:120]
+        obj["updated"] = int(time.time() * 1000)
+        save_project(nid, json.dumps(obj, ensure_ascii=False), obj, backup=False)
+        log(f"Fassung {file} von {f.name} als neues Projekt {nid} geöffnet")
+        return {"id": nid, "name": obj["name"]}
+    if not f.exists():
+        raise ValueError("Das Projekt gibt es nicht mehr – im Papierkorb lässt es sich wiederherstellen.")
+    obj["id"] = json.loads(f.read_text(encoding="utf-8")).get("id") or obj.get("id") or pid
+    obj["updated"] = int(time.time() * 1000)
+    with _proj_lock:
+        backup_project(f, force=True)
+    save_project(pid, json.dumps(obj, ensure_ascii=False), obj, backup=False)
+    log(f"Projekt {f.name}: Fassung {file} zurückgeholt")
+    return {"id": pid, "name": obj.get("name", "")}
+
+
+def trash_list() -> list[dict]:
+    """Gelöschte Projekte, deren letzte Fassung noch bei den Sicherungen liegt (30 Tage)."""
+    out, now = [], time.time()
+    for d in (BACKUP_DIR.iterdir() if BACKUP_DIR.is_dir() else []):
+        if not d.is_dir() or (PROJ_DIR / (d.name + ".json")).exists():
+            continue
+        files = sorted(d.glob("*.json.gz"), reverse=True)
+        v = next((i for i in (_version_info(x) for x in files) if i), None)
+        if not v:
+            continue
+        gone = max(x.stat().st_mtime for x in files)
+        out.append({**v, "id": d.name, "gone": int(gone * 1000), "left": max(0, TRASH_DAYS - int((now - gone) / 86400)),
+                    "bytes": sum(x.stat().st_size for x in files)})
+    return sorted(out, key=lambda t: -t["gone"])
+
+
+def trash_count() -> int:
+    """Anzahl der Projekte im Papierkorb – ohne die Sicherungen zu lesen (für die Startseite)."""
+    return sum(1 for d in (BACKUP_DIR.iterdir() if BACKUP_DIR.is_dir() else [])
+               if d.is_dir() and not (PROJ_DIR / (d.name + ".json")).exists() and any(d.glob("*.json.gz")))
+
+
+def trash_restore(pid: str) -> dict:
+    f = proj_path(pid)
+    d = backup_dir(f)
+    if f.exists():
+        raise ValueError("Dieses Projekt gibt es schon wieder.")
+    for x in (sorted(d.glob("*.json.gz"), reverse=True) if d.is_dir() else []):
+        r = _read_backup(x)
+        if r:
+            obj = r[1]
+            obj["id"] = obj.get("id") or pid
+            obj["updated"] = int(time.time() * 1000)
+            save_project(pid, json.dumps(obj, ensure_ascii=False), obj, backup=False)
+            log(f"Projekt {f.name} aus dem Papierkorb wiederhergestellt ({x.name})")
+            return {"id": pid, "name": obj.get("name", "")}
+    raise ValueError("Im Papierkorb liegt keine lesbare Fassung dieses Projekts.")
+
+
+def trash_purge(pid: str | None) -> dict:
+    """Gelöschte Projekte endgültig entfernen – eines oder alle. Bestehende Projekte bleiben unberührt."""
+    n = 0
+    for d in (BACKUP_DIR.iterdir() if BACKUP_DIR.is_dir() else []):
+        if d.is_dir() and not (PROJ_DIR / (d.name + ".json")).exists() and (pid is None or d.name == proj_path(pid).stem):
+            shutil.rmtree(d, ignore_errors=True)
+            n += 1
+    return {"removed": n}
+
+
 # ───────────────────────────── Aufräumen im Hintergrund ─────────────────────────────
 
 THUMB_MAX_AGE = 30 * 86400      # Vorschaubilder, die 30 Tage nicht gebraucht wurden, werden entfernt (entstehen bei Bedarf neu)
@@ -2391,7 +2531,7 @@ def housekeeping() -> None:
                     x.unlink(missing_ok=True)
             if d.is_dir() and not (PROJ_DIR / (d.name + ".json")).exists():
                 newest = max((x.stat().st_mtime for x in d.iterdir()), default=0)
-                if now - newest > 30 * 86400:
+                if now - newest > TRASH_DAYS * 86400:
                     shutil.rmtree(d, ignore_errors=True)
     except OSError as e:
         log(f"Aufräumen (Sicherungen): {e!r}")
@@ -2399,8 +2539,13 @@ def housekeeping() -> None:
         freed += sweep_orphans(now)
     except Exception as e:  # noqa: BLE001
         log(f"Aufräumen (verwaiste Dateien): {e!r}")
+    freed += trim_log()
     if freed > 1_000_000:
         log(f"Aufgeräumt: {freed / 1e6:.0f} MB an Zwischenspeicher, Teilstücken und verwaisten Dateien freigegeben")
+    try:   # einmal am Tag nach einer neueren Version sehen (nur die installierte Windows-App; abschaltbar)
+        update_check()
+    except Exception as e:  # noqa: BLE001 – offline oder GitHub nicht erreichbar: beim nächsten Start wieder
+        log(f"Versionsprüfung nicht möglich: {e!r}")
 
 
 SWEEP_EVERY = 7 * 86400         # die Suche nach verwaisten Vorschau-Dateien höchstens einmal je Woche
@@ -2448,6 +2593,708 @@ def sweep_orphans(now: float) -> int:
                     continue
     stamp.write_text(time.strftime("%Y-%m-%d %H:%M:%S"), encoding="utf-8")
     return freed
+
+
+# ───────────────────────────── Speicher verwalten ─────────────────────────────
+# Übersicht, was im Datenordner wie viel Platz belegt, und gezieltes Löschen. Gelöscht wird nur, was HoneyCut selbst erzeugt
+# hat und worauf kein Projekt, keine frühere Fassung und kein Projekt im Papierkorb mehr verweist. Was gelöscht werden darf,
+# rechnet der Server bei jedem Aufruf neu aus – die Oberfläche nennt nur die Gruppe.
+
+_SLIDE_RE = re.compile(r"folie-[A-Za-z0-9_.\-]+?\.png")
+
+
+def _du(d: Path) -> tuple[int, int]:
+    """(Bytes, Anzahl) aller Dateien unter d."""
+    size = n = 0
+    stack = [d]
+    while stack:
+        try:
+            with os.scandir(stack.pop()) as it:
+                for e in it:
+                    if e.is_dir(follow_symlinks=False):
+                        stack.append(Path(e.path))
+                    elif e.is_file(follow_symlinks=False):
+                        size += e.stat(follow_symlinks=False).st_size
+                        n += 1
+        except OSError:
+            continue
+    return size, n
+
+
+def storage_refs() -> dict[str, set[tuple]]:
+    """Erzeugte Dateien (Vorschau-Dateien, freigestellte Kopien, Folienbilder) → wer sie verwendet, als (Art, Projektname):
+    Art 0 = ein Projekt, 1 = eine frühere Fassung eines Projekts, 2 = ein Projekt im Papierkorb. Ein unlesbares Projekt
+    löst eine Ausnahme aus: Dann wird nichts als „unbenutzt“ eingestuft."""
+    import gzip
+    names = {p["id"]: p["name"] or "Projekt" for p in list_projects()}
+    refs: dict[str, set[tuple]] = {}
+
+    def add(txt: str, who: tuple):
+        for n in set(_REF_RE.findall(txt)) | set(_SLIDE_RE.findall(txt)):
+            refs.setdefault(n, set()).add(who)
+    for f in PROJ_DIR.glob("*.json"):
+        add(f.read_text(encoding="utf-8"), (0, names.get(f.stem, f.stem)))
+    for f in (BACKUP_DIR.glob("*/*.json.gz") if BACKUP_DIR.is_dir() else []):
+        try:
+            txt = gzip.open(f, "rb").read().decode("utf-8", "replace")
+        except (OSError, EOFError):
+            continue
+        add(txt, (1, names[f.parent.name]) if f.parent.name in names else (2, ""))
+    return refs
+
+
+def _used_by(who: set[tuple]) -> list[str]:
+    """Verwendung in Worten, fertig für „verwendet von …“."""
+    now = sorted(n for k, n in who if k == 0)
+    out = [f"„{n}“" for n in now]
+    out += [f"einer früheren Fassung von „{n}“" for n in sorted({n for k, n in who if k == 1} - set(now))]
+    if any(k == 2 for k, _ in who):
+        out.append("einem Projekt im Papierkorb")
+    return out
+
+
+def _hf_model_dirs(name: str) -> list[Path]:
+    key = MODEL_REPO.get(name, f"Systran/faster-whisper-{name}").replace("/", "--").lower()
+    try:
+        return [d for d in hf_cache_dir().glob("models--*") if d.name.lower().endswith(key)]
+    except OSError:
+        return []
+
+
+FRESH = 600   # so lange gilt eine eben erzeugte Datei als „in Arbeit“: Sie steht womöglich noch in keinem gespeicherten Projekt
+
+
+def _is_fresh(x: Path) -> bool:
+    try:
+        return time.time() - x.stat().st_mtime < FRESH
+    except OSError:
+        return True
+
+
+def storage_info() -> dict:
+    problem = ""
+    try:
+        refs = storage_refs()
+    except Exception as e:  # noqa: BLE001 – unlesbares Projekt: nichts gilt als unbenutzt
+        log(f"Speicher verwalten: Verweise nicht lesbar ({e!r})")
+        refs, problem = None, "Ein Projekt ließ sich nicht lesen. Solange das so ist, gibt HoneyCut hier nichts frei, was zu einem Projekt gehören könnte."
+    free_ok = refs is not None
+    refs = refs or {}
+    groups = []
+    b, n = _du(CACHE_DIR / "thumbs")
+    groups.append({"key": "thumbs", "label": "Vorschaubilder der Zeitleiste", "bytes": b, "count": n, "freeable": b,
+                   "hint": "Entstehen beim Öffnen eines Projekts von selbst neu."})
+
+    def files(d: Path, pat: str):
+        out = []
+        for x in (sorted(d.glob(pat)) if d.is_dir() else []):
+            if x.is_file() and ".tmp." not in x.name:
+                used = _used_by(refs.get(x.name, set())) if free_ok else ["?"]
+                if not used and _is_fresh(x):
+                    used = ["einem laufenden Vorgang (eben erst entstanden)"]
+                out.append({"name": x.name, "bytes": x.stat().st_size, "used": used, "at": int(x.stat().st_mtime * 1000)})
+        return out
+    px = files(CACHE_DIR / "proxies", "*.mp4")
+    groups.append({"key": "proxies", "label": "Vorschau-Dateien", "bytes": sum(i["bytes"] for i in px), "count": len(px),
+                   "freeable": sum(i["bytes"] for i in px if not i["used"]), "nfree": sum(1 for i in px if not i["used"]),
+                   "hint": "Verkleinerte Kopien für Videos, die sich in der Vorschau nicht abspielen ließen."})
+    mt = files(DATA_DIR / "freigestellt", "*.mp4")
+    groups.append({"key": "matte", "label": "Freigestellte Kopien", "bytes": sum(i["bytes"] for i in mt), "count": len(mt),
+                   "freeable": sum(i["bytes"] for i in mt if not i["used"]), "nfree": sum(1 for i in mt if not i["used"]), "items": mt, "warn": True,
+                   "hint": "Kopien von Videos mit entferntem Hintergrund. Löschen lässt sich nur, was kein Projekt mehr verwendet."})
+    fol = DATA_DIR / "folien"
+    sl = [x for d in (fol.iterdir() if fol.is_dir() else []) if d.is_dir() for x in d.glob("*.png")]
+    old = [x for x in sl if x.name.startswith("folie-") and x.name not in refs and not _is_fresh(x)] if free_ok else []
+    groups.append({"key": "slides", "label": "Folienbilder", "bytes": sum(x.stat().st_size for x in sl), "count": len(sl),
+                   "freeable": sum(x.stat().st_size for x in old), "nfree": len(old), "warn": True,
+                   "hint": "Bei jeder Änderung einer Folie entsteht ein neues Bild; die früheren bleiben liegen."})
+    models = []
+    for name, label, _mb in MODELS:
+        if name in bundled_models():
+            continue
+        size = sum(_du(d)[0] for d in _hf_model_dirs(name))
+        if size:
+            models.append({"name": name, "label": label, "bytes": size})
+    groups.append({"key": "models", "label": "Nachgeladene Whisper-Modelle", "bytes": sum(m["bytes"] for m in models), "count": len(models), "items": models,
+                   "hint": "Lassen sich in den Einstellungen jederzeit wieder laden."})
+    b, n = _du(BACKUP_DIR)
+    groups.append({"key": "backups", "label": "Frühere Fassungen und Papierkorb", "bytes": b, "count": n, "trash": trash_count(),
+                   "hint": "Sechs Fassungen je Projekt; der Papierkorb leert sich nach 30 Tagen von selbst."})
+    b, n = _du(DATA_DIR / "models")
+    if b:
+        groups.append({"key": "extra", "label": "Weitere Modelle", "bytes": b, "count": n, "hint": "Für das automatische Freistellen und die Übersetzung."})
+    b, n = _du(PROJ_DIR)
+    groups.append({"key": "projects", "label": "Projektdateien", "bytes": b, "count": n, "hint": "Schnitt, Transkript und Untertitel deiner Projekte."})
+    b, n = _du(DATA_DIR / "webview")
+    if b:
+        groups.append({"key": "webview", "label": "Zwischenspeicher des Programmfensters", "bytes": b, "count": n, "hint": "Wird vom Fenster selbst verwaltet."})
+    try:
+        free = shutil.disk_usage(DATA_DIR).free
+    except OSError:
+        free = 0
+    return {"free": free, "folder": norm_path(str(DATA_DIR)), "groups": groups, "total": sum(g["bytes"] for g in groups), "problem": problem}
+
+
+def storage_clear(what: str, name: str = "") -> dict:
+    freed = n = 0
+
+    def kill(x: Path):
+        nonlocal freed, n
+        try:
+            size = x.stat().st_size
+            x.unlink()
+            freed += size
+            n += 1
+        except OSError:
+            pass
+    if what == "thumbs":
+        d = CACHE_DIR / "thumbs"
+        for x in (d.iterdir() if d.is_dir() else []):
+            if x.is_file() and ".tmp." not in x.name:   # ein Bild, das gerade entsteht, bleibt
+                kill(x)
+    elif what in ("proxies", "matte", "slides"):
+        refs = storage_refs()   # frisch gerechnet; ein unlesbares Projekt bricht hier ab, bevor etwas gelöscht ist
+        if what == "slides":
+            fol = DATA_DIR / "folien"
+            for d in (fol.iterdir() if fol.is_dir() else []):
+                if not d.is_dir():
+                    continue
+                for x in d.glob("folie-*.png"):
+                    if x.name not in refs and not _is_fresh(x):
+                        kill(x)
+                try:
+                    if not any(d.iterdir()):
+                        d.rmdir()
+                except OSError:
+                    pass
+        else:
+            d = CACHE_DIR / "proxies" if what == "proxies" else DATA_DIR / "freigestellt"
+            for x in (d.glob("*.mp4") if d.is_dir() else []):
+                if x.name not in refs and ".tmp." not in x.name and (not name or x.name == name) and not _is_fresh(x):
+                    kill(x)
+    elif what == "model":
+        if name not in [m[0] for m in MODELS] or name in bundled_models():
+            raise ValueError("Dieses Modell lässt sich nicht löschen.")
+        if any(j["status"] == "running" and j["kind"] in ("transcribe", "download") for j in list(JOBS.values())):
+            raise ValueError("Gerade läuft eine Transkription oder ein Download. Bitte danach noch einmal versuchen.")
+        with _model_lock:
+            for k in [k for k in _model_cache if name in str(k)]:
+                _model_cache.pop(k, None)   # geladenes Modell loslassen, damit seine Dateien frei werden
+        for d in _hf_model_dirs(name):
+            b, k = _du(d)
+            gone = d.with_name(d.name + ".loeschen")   # erst umbenennen: Das gelingt nur, wenn keine Datei mehr in Gebrauch ist
+            shutil.rmtree(gone, ignore_errors=True)
+            try:
+                d.rename(gone)
+            except OSError:
+                raise ValueError("Das Modell ist gerade in Gebrauch. Bitte HoneyCut neu starten und es dann löschen.")
+            shutil.rmtree(gone, ignore_errors=True)
+            freed += b
+            n += k
+        _models_cache["v"] = None
+    else:
+        raise ValueError("Unbekannte Gruppe.")
+    log(f"Speicher verwalten: {what}{' ' + name if name else ''} – {n} Dateien, {freed / 1e6:.0f} MB freigegeben")
+    return {"freed": freed, "count": n}
+
+
+# ───────────────────────────── Einstellungen (bleiben über Neustarts erhalten) ─────────────────────────────
+
+SETTINGS_PATH = DATA_DIR / "einstellungen.json"
+_settings_lock = threading.Lock()
+_settings: dict | None = None
+
+
+def settings_get() -> dict:
+    global _settings
+    with _settings_lock:
+        if _settings is None:
+            try:
+                _settings = json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
+                if not isinstance(_settings, dict):
+                    _settings = {}
+            except (OSError, ValueError):
+                _settings = {}
+        return dict(_settings)
+
+
+def settings_set(**patch) -> dict:
+    global _settings
+    settings_get()
+    with _settings_lock:
+        _settings.update(patch)
+        try:
+            tmp = SETTINGS_PATH.with_suffix(".tmp")
+            tmp.write_text(json.dumps(_settings, ensure_ascii=False, indent=1), encoding="utf-8")
+            replace_retry(tmp, SETTINGS_PATH)
+        except OSError as e:
+            log(f"Einstellungen nicht gespeichert: {e!r}")
+        return dict(_settings)
+
+
+# ───────────────────────────── Hinweis auf neue Versionen ─────────────────────────────
+# Die installierte Windows-App sieht höchstens einmal am Tag bei GitHub nach, ob ein neuerer Installer bereitsteht
+# (abschaltbar in den Einstellungen). Übertragen wird dabei nichts außer den beiden Abfragen selbst:
+# die Liste der Veröffentlichungen und die Datei NEUIGKEITEN.md mit den Änderungen in Stichpunkten.
+
+UPDATE_API = os.environ.get("HONEYCUT_UPDATE_API") or "https://api.github.com/repos/honeybalecta/textschnitt/releases?per_page=30"
+UPDATE_NOTES = os.environ.get("HONEYCUT_UPDATE_NOTES") or "https://raw.githubusercontent.com/honeybalecta/textschnitt/main/NEUIGKEITEN.md"
+UPDATE_EVERY = 20 * 3600
+UPDATE_SITE = "https://github.com/honeybalecta/textschnitt/"   # nur Adressen darunter werden im Browser geöffnet
+_update_lock = threading.Lock()
+
+
+def _ver(s: str) -> tuple:
+    m = re.fullmatch(r"v?(\d+)\.(\d+)(?:\.(\d+))?", (s or "").strip())
+    return tuple(int(x or 0) for x in m.groups()) if m else ()
+
+
+def parse_notes(md: str) -> dict[str, dict]:
+    """NEUIGKEITEN.md → {Version: {"title": …, "points": […]}}. Je Version eine Zeile „## 2.26.0 · Titel“, darunter Stichpunkte."""
+    out: dict[str, dict] = {}
+    cur = None
+    for line in md.splitlines():
+        m = re.match(r"^##\s+v?(\d+\.\d+(?:\.\d+)?)\s*(?:[·–—:-]\s*(.*))?$", line.strip())
+        if m:
+            cur = out.setdefault(m.group(1), {"title": (m.group(2) or "").strip()[:120], "points": []})
+            continue
+        if line.startswith("#"):
+            cur = None
+            continue
+        m = re.match(r"^\s*[-*]\s+(.*)$", line)
+        if m and cur is not None and len(cur["points"]) < 12:
+            cur["points"].append(m.group(1).strip()[:400])
+    return out
+
+
+def _http_get(url: str, timeout: float = 8.0) -> bytes:
+    import urllib.request
+    req = urllib.request.Request(url, headers={"User-Agent": f"HoneyCut/{VERSION}", "Accept": "application/vnd.github+json, text/plain, */*"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return r.read(3_000_000)
+
+
+def update_supported() -> bool:
+    return (FROZEN and platform.system() == "Windows") or bool(os.environ.get("HONEYCUT_UPDATE_API"))
+
+
+def update_state() -> dict:
+    st = settings_get()
+    latest = st.get("updateLatest") or None
+    if not isinstance(latest, dict) or _ver(str(latest.get("version", ""))) <= _ver(VERSION):
+        latest = None       # nichts Neueres bekannt (oder inzwischen installiert)
+    return {"supported": update_supported(), "enabled": st.get("updates", True) is not False, "current": VERSION, "latest": latest,
+            "checked": int(float(st.get("updateChecked") or 0) * 1000), "skip": str(st.get("updateSkip") or "")}
+
+
+def update_check(force: bool = False) -> dict:
+    st = settings_get()
+    if not update_supported():
+        return update_state()
+    if not force and (st.get("updates", True) is False or time.time() - float(st.get("updateChecked") or 0) < UPDATE_EVERY):
+        return update_state()
+    with _update_lock:
+        rels = json.loads(_http_get(UPDATE_API).decode("utf-8"))
+        cur = _ver(VERSION)
+        best = None
+        for rel in rels if isinstance(rels, list) else []:
+            if not isinstance(rel, dict):
+                continue
+            tag = str(rel.get("tag_name") or "")
+            v = _ver(tag) if tag.startswith("v") else ()      # „android-v…“ sind die Android-Fassungen
+            if not v or rel.get("draft") or rel.get("prerelease"):
+                continue
+            exe = next((a for a in rel.get("assets") or [] if str(a.get("name", "")).lower().endswith(".exe")), None)
+            if exe and (best is None or v > best[0]):
+                best = (v, rel, exe)
+        latest = None
+        if best and best[0] > cur:
+            v, rel, exe = best
+            notes = []
+            try:
+                known = parse_notes(_http_get(UPDATE_NOTES).decode("utf-8", "replace"))
+                notes = [{"version": k, **known[k]} for k in sorted(known, key=_ver, reverse=True) if cur < _ver(k) <= v]
+            except Exception as e:  # noqa: BLE001 – ohne Stichpunkte geht es auch
+                log(f"Neuigkeiten nicht abrufbar: {e!r}")
+            latest = {"version": ".".join(str(x) for x in v), "page": str(rel.get("html_url") or ""),
+                      "installer": str(exe.get("browser_download_url") or ""), "size": int(exe.get("size") or 0),
+                      "published": str(rel.get("published_at") or ""), "notes": notes[:8]}
+        settings_set(updateChecked=time.time(), updateLatest=latest)
+        log("Versionsprüfung: " + (f"{latest['version']} steht bereit" if latest else "HoneyCut ist aktuell"))
+    return update_state()
+
+
+def update_open(what: str) -> dict:
+    """Den Installer oder die Seite der neuen Version im Standardbrowser öffnen."""
+    latest = update_state()["latest"] or {}
+    url = str(latest.get("installer" if what == "installer" else "page") or "")
+    if not url.startswith(UPDATE_SITE):
+        raise ValueError("Für diese Version ist keine Adresse bei GitHub hinterlegt.")
+    webbrowser.open(url)
+    return {"ok": True, "url": url}
+
+
+# ───────────────────────────── Fehlerbericht ─────────────────────────────
+
+def _ram_bytes() -> int:
+    try:
+        if platform.system() == "Windows":
+            import ctypes
+
+            class MEMORYSTATUSEX(ctypes.Structure):
+                _fields_ = [("dwLength", ctypes.c_ulong), ("dwMemoryLoad", ctypes.c_ulong), ("ullTotalPhys", ctypes.c_ulonglong),
+                            ("ullAvailPhys", ctypes.c_ulonglong), ("ullTotalPageFile", ctypes.c_ulonglong), ("ullAvailPageFile", ctypes.c_ulonglong),
+                            ("ullTotalVirtual", ctypes.c_ulonglong), ("ullAvailVirtual", ctypes.c_ulonglong), ("sullAvailExtendedVirtual", ctypes.c_ulonglong)]
+            m = MEMORYSTATUSEX()
+            m.dwLength = ctypes.sizeof(MEMORYSTATUSEX)
+            ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(m))
+            return int(m.ullTotalPhys)
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            if line.startswith("MemTotal:"):
+                return int(line.split()[1]) * 1024
+    except Exception:  # noqa: BLE001
+        pass
+    return 0
+
+
+def report_text(ui: dict | None = None) -> str:
+    """Systemangaben und das Protokoll als ein Text – für die Fehlersuche. Enthält Datei- und Projektnamen, aber weder
+    Videos noch Transkripte."""
+    out: list[str] = []
+    add = out.append
+
+    def safe(label: str, fn):
+        try:
+            v = fn()
+        except Exception as e:  # noqa: BLE001
+            v = f"nicht ermittelbar ({e!r})"
+        add(f"{label}: {v}")
+
+    def mod(name: str) -> str:
+        try:
+            m = __import__(name)
+            return str(getattr(m, "__version__", "vorhanden"))
+        except Exception:  # noqa: BLE001
+            return "nicht installiert"
+    add("HoneyCut – Fehlerbericht")
+    add(f"Erstellt: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+    add("Enthält Systemangaben und das Protokoll mit Datei- und Projektnamen. Videos, Transkripte und Texte sind nicht enthalten.")
+    add("")
+    add("── Programm ──")
+    add(f"Version: {VERSION} ({'installierte App' if FROZEN else 'aus dem Quelltext gestartet'})")
+    add(f"Fenster: {'eigenes Programmfenster' if APP_HOOKS.get('focus') else 'Browser'}")
+    safe("ffmpeg", lambda: (subprocess.run([FFMPEG, "-version"], capture_output=True, text=True, timeout=10, **NOWIN).stdout.splitlines() or ["?"])[0])
+    add(f"faster-whisper: {mod('faster_whisper')} · ctranslate2: {mod('ctranslate2')} · onnxruntime: {mod('onnxruntime')}")
+    safe("Grafikkarte für die Transkription", lambda: "ja" if __import__("ctranslate2").get_cuda_device_count() > 0 else "nein (Prozessor)")
+    safe("Whisper-Modelle", lambda: ", ".join(f"{m['name']} ({'eingebaut' if m['bundled'] else 'geladen' if m['installed'] else 'nicht geladen'})" for m in models_list()) or "keine")
+    safe("Freistellen", lambda: "verfügbar" if matte_available() else "nicht verfügbar")
+    safe("Übersetzen", lambda: ", ".join(translate_pairs()) if translate_available() else "nicht verfügbar")
+    safe("HoneyDeck", lambda: (lambda d: f"{(d / 'version.txt').read_text(encoding='utf-8').strip()} ({d})" if d else "nicht installiert")(deck_dir()))
+    add("")
+    add("── System ──")
+    add(f"Betriebssystem: {platform.system()} {platform.release()} ({platform.version()}), {platform.machine()}")
+    add(f"Prozessor: {platform.processor() or '?'} · {os.cpu_count() or '?'} Kerne")
+    ram = _ram_bytes()
+    if ram:
+        add(f"Arbeitsspeicher: {ram / 1e9:.1f} GB")
+    add(f"Python: {sys.version.split()[0]}")
+    for k, v in (ui or {}).items():
+        add(f"{str(k)[:40]}: {str(v)[:300]}")
+    add("")
+    add("── Daten ──")
+    add(f"Datenordner: {DATA_DIR}")
+    try:
+        info = storage_info()
+        add(f"Frei auf dem Laufwerk: {info['free'] / 1e9:.1f} GB")
+        for g in info["groups"]:
+            add(f"{g['label']}: {g['bytes'] / 1e6:.1f} MB in {g['count']} Dateien" + (f", davon {g['freeable'] / 1e6:.1f} MB freigebbar" if g.get("freeable") else ""))
+        if info.get("problem"):
+            add(info["problem"])
+    except Exception as e:  # noqa: BLE001
+        add(f"Speicherübersicht nicht ermittelbar ({e!r})")
+    safe("Projekte", lambda: f"{len(list_projects())}, im Papierkorb {trash_count()}")
+    add("")
+    add("── Aufträge seit dem Start ──")
+    jobs = sorted(JOBS.values(), key=lambda j: j.get("started", 0))
+    for j in jobs[-40:]:
+        add(f"{time.strftime('%H:%M:%S', time.localtime(j.get('started', 0)))}  {j['kind']}: {j['status']}"
+            + (f" · {j['message']}" if j.get("message") else "") + (f" · Fehler: {j['error']}" if j.get("error") else ""))
+    if not jobs:
+        add("keine")
+    add("")
+    try:
+        with _log_lock:
+            size = LOG_PATH.stat().st_size
+            with open(LOG_PATH, "rb") as f:
+                f.seek(max(0, size - 400_000))
+                tail = f.read().decode("utf-8", "replace")
+        lines = tail.splitlines()[(1 if size > 400_000 else 0):]
+        add(f"── Protokoll (die letzten {len(lines)} Zeilen) ──")
+        out.extend(lines)
+    except OSError:
+        add("── Protokoll ──")
+        add("Es gibt noch kein Protokoll.")
+    return "\n".join(out) + "\n"
+
+
+def trim_log(limit: int = 5_000_000, keep: int = 2_000_000) -> int:
+    """Das Protokoll wächst sonst unbegrenzt: ab 5 MB bleiben nur die letzten 2 MB."""
+    try:
+        with _log_lock:
+            size = LOG_PATH.stat().st_size
+            if size <= limit:
+                return 0
+            with open(LOG_PATH, "rb") as f:
+                f.seek(size - keep)
+                tail = f.read()
+            tail = tail[tail.find(b"\n") + 1:]
+            tmp = LOG_PATH.with_suffix(".tmp")
+            tmp.write_bytes(tail)
+            os.replace(tmp, LOG_PATH)
+            return size - len(tail)
+    except OSError:
+        return 0
+
+
+# ───────────────────────────── Alle Projekte sichern, Sicherung einspielen ─────────────────────────────
+# Eine ZIP-Datei mit allen Projekten, ihren Folienbildern und den importierten Schriften – ohne die Videos. Gedacht für
+# die externe Festplatte oder die Cloud. Beim Einspielen bleibt alles Vorhandene erhalten: Fehlende Projekte kommen dazu;
+# ist ein Projekt hier schon vorhanden, bleibt der neuere Stand stehen und der ältere liegt bei den früheren Fassungen.
+
+BACKUP_FORMAT = "honeycut-sicherung"
+
+
+def _js_hash(s: str) -> str:
+    """Dieselbe Prüfsumme wie hashStr() in der Oberfläche (FNV-1a über UTF-16) – daraus entstehen die Schlüssel eigener Schriften."""
+    h = 2166136261
+    b = s.encode("utf-16-le")
+    for i in range(0, len(b), 2):
+        h ^= b[i] | (b[i + 1] << 8)
+        h = (h * 16777619) & 0xFFFFFFFF
+    digits = "0123456789abcdefghijklmnopqrstuvwxyz"
+    out = ""
+    while True:
+        h, r = divmod(h, 36)
+        out = digits[r] + out
+        if not h:
+            return out
+
+
+def _rel_under(s: str, root: str) -> str | None:
+    """Teilpfad von s unterhalb von root (mit „/“ getrennt) oder None – unabhängig von der Schreibweise der Trenner."""
+    a, r = s.replace("\\", "/"), root.replace("\\", "/").rstrip("/") + "/"
+    win = len(r) > 2 and r[1] == ":"
+    if (a.lower() if win else a).startswith(r.lower() if win else r):
+        return a[len(r):]
+    return None
+
+
+def _walk_strings(o, fn):
+    """Alle Zeichenketten in o durch fn(wert) ersetzen (fn gibt den neuen Wert oder None für „unverändert“ zurück)."""
+    it = o.items() if isinstance(o, dict) else enumerate(o) if isinstance(o, list) else ()
+    for k, v in it:
+        if isinstance(v, str):
+            n = fn(v)
+            if n is not None:
+                o[k] = n
+        elif isinstance(v, (dict, list)):
+            _walk_strings(v, fn)
+
+
+def backup_all_job(job: dict, dest: str, prefs: dict | None = None):
+    import zipfile
+    root = norm_path(str(DATA_DIR))
+    files = sorted(PROJ_DIR.glob("*.json"))
+    listing, skipped, slides = [], [], set()
+    tmp = Path(dest + ".part")
+    try:
+        with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as z:
+            for k, f in enumerate(files):
+                if job["cancel"]:
+                    raise RuntimeError("Abgebrochen")
+                job["progress"] = 0.9 * k / max(1, len(files))
+                job["message"] = f"Projekt {k + 1} von {len(files)}"
+                try:
+                    with _proj_lock:
+                        txt = f.read_text(encoding="utf-8")
+                    obj = json.loads(txt)
+                    if not isinstance(obj, dict):
+                        raise ValueError("kein Projekt")
+                except (OSError, ValueError) as e:
+                    skipped.append(f.stem)
+                    log(f"Sicherung: {f.name} übersprungen ({e!r})")
+                    continue
+                z.writestr(f"projekte/{f.name}", txt)
+                listing.append({"id": f.stem, "name": str(obj.get("name") or "Projekt"), "updated": int(obj.get("updated") or f.stat().st_mtime * 1000)})
+
+                def note(v: str):   # Folienbilder und eigene Bilder, die das Projekt aus dem Datenordner verwendet
+                    rel = _rel_under(v, root) if len(v) < 600 else None
+                    if rel and rel.startswith("folien/") and rel not in slides and (DATA_DIR / rel).is_file():
+                        slides.add(rel)
+                _walk_strings(obj, note)
+            for rel in sorted(slides):
+                if job["cancel"]:
+                    raise RuntimeError("Abgebrochen")
+                z.write(DATA_DIR / rel, rel, zipfile.ZIP_STORED)   # PNG ist schon gepackt
+            job["progress"], job["message"] = 0.95, "Schriften"
+            fonts = fonts_list()
+            for ft in fonts:
+                z.write(ft["uri"], "schriften/" + ft["name"])
+            if prefs:
+                z.writestr("einstellungen.json", json.dumps(prefs, ensure_ascii=False))
+            z.writestr("sicherung.json", json.dumps({
+                "format": BACKUP_FORMAT, "v": 1, "app": VERSION, "created": int(time.time() * 1000), "dataDir": root,
+                "projects": listing, "fonts": [{"name": ft["name"], "uri": ft["uri"]} for ft in fonts], "slides": len(slides)}, ensure_ascii=False, indent=1))
+        os.replace(tmp, dest)
+    finally:
+        tmp.unlink(missing_ok=True)
+    CREATED.add(norm_path(dest))
+    log(f"Alle Projekte gesichert: {len(listing)} Projekte, {len(slides)} Bilder, {len(fonts)} Schriften → {dest}")
+    return {"path": norm_path(dest), "bytes": os.path.getsize(dest), "projects": len(listing), "slides": len(slides), "fonts": len(fonts), "skipped": skipped}
+
+
+def _stash_version(f: Path, txt: str, at_ms: float) -> None:
+    """Einen (älteren) Stand zu den früheren Fassungen eines Projekts legen."""
+    import gzip
+    d = backup_dir(f)
+    d.mkdir(parents=True, exist_ok=True)
+    t = (at_ms / 1000) if at_ms else time.time()
+    while True:
+        dst = d / (time.strftime("%Y%m%d-%H%M%S", time.localtime(t)) + ".json.gz")
+        if dst.exists():
+            r = _read_backup(dst)
+            if r and r[0] == txt:
+                return          # liegt schon dort (dieselbe Sicherung wurde schon einmal eingespielt)
+        elif not (d / dst.name.replace(".json.gz", "-geloescht.json.gz")).exists():
+            break
+        t += 1
+    part = dst.with_suffix(".part")
+    part.write_bytes(gzip.compress(txt.encode("utf-8"), 5))
+    os.replace(part, dst)
+
+
+def backup_restore_job(job: dict, src: str):
+    import zipfile
+    try:
+        z = zipfile.ZipFile(src)
+    except (OSError, zipfile.BadZipFile):
+        raise ValueError("Diese Datei ist keine HoneyCut-Sicherung.")
+    with z:
+        try:
+            meta = json.loads(z.read("sicherung.json").decode("utf-8"))
+        except (KeyError, ValueError):
+            meta = None
+        if not isinstance(meta, dict) or meta.get("format") != BACKUP_FORMAT:
+            raise ValueError("Diese Datei ist keine HoneyCut-Sicherung.")
+        infos = {i.filename: i for i in z.infolist() if not i.is_dir()}
+        root = norm_path(str(DATA_DIR))
+        old_root = str(meta.get("dataDir") or "")
+        moved = bool(old_root) and _rel_under(root + "/x", old_root) != "x"    # Sicherung stammt aus einem anderen Datenordner
+
+        # Schriften zuerst: Ihre Schlüssel hängen am Speicherort – nach einem Umzug bekommen die Projekte die neuen
+        fonts, keys = 0, {}
+        have = {x["name"] for x in fonts_list()}
+        old_uri = {str(x.get("name")): str(x.get("uri") or "") for x in meta.get("fonts") or [] if isinstance(x, dict)}
+        with tempfile.TemporaryDirectory(prefix="textschnitt_") as td:
+            for name, i in infos.items():
+                m = re.fullmatch(r"schriften/([^/\\]{1,150})", name)
+                if not m or Path(m.group(1)).suffix.lower() not in FONT_EXT or i.file_size > 80_000_000:
+                    continue
+                t = Path(td) / re.sub(r"[^\w.\- ]", "_", m.group(1))
+                t.write_bytes(z.read(i))
+                got = font_import([str(t)])
+                if got:
+                    fonts += got["name"] not in have
+                    have.add(got["name"])
+                    if old_uri.get(m.group(1)) and old_uri[m.group(1)] != got["uri"]:
+                        keys["u" + _js_hash(old_uri[m.group(1)])] = "u" + _js_hash(got["uri"])
+
+        slides = 0
+        for name, i in infos.items():
+            m = re.fullmatch(r"folien/([A-Za-z0-9_-]{1,40})/([\w.\-]{1,120}\.png)", name)
+            if not m or i.file_size > 80_000_000:
+                continue
+            dst = DATA_DIR / "folien" / m.group(1) / m.group(2)
+            if not dst.exists():
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                part = dst.with_suffix(".part")
+                part.write_bytes(z.read(i))
+                os.replace(part, dst)
+                slides += 1
+
+        def rebase(v: str):
+            if v in keys:
+                return keys[v]
+            rel = _rel_under(v, old_root) if moved and len(v) < 600 else None
+            return norm_path(str(DATA_DIR / rel)) if rel else None
+
+        res = {"added": [], "updated": [], "updatedIds": [], "kept": [], "same": 0, "failed": [], "fonts": fonts, "slides": slides}
+        todo = [(n, i) for n, i in sorted(infos.items()) if re.fullmatch(r"projekte/[A-Za-z0-9_-]{1,40}\.json", n)]
+        for k, (name, i) in enumerate(todo):
+            if job["cancel"]:
+                raise RuntimeError("Abgebrochen")
+            job["progress"] = 0.1 + 0.9 * k / max(1, len(todo))
+            job["message"] = f"Projekt {k + 1} von {len(todo)}"
+            pid = Path(name).stem
+            try:
+                if i.file_size > 600_000_000:
+                    raise ValueError("zu groß")
+                obj = json.loads(z.read(i).decode("utf-8"))
+                if not isinstance(obj, dict):
+                    raise ValueError("kein Projekt")
+                obj["id"] = obj.get("id") or pid
+                if moved or keys:
+                    _walk_strings(obj, rebase)
+                txt = json.dumps(obj, ensure_ascii=False)
+                label = str(obj.get("name") or "Projekt")
+                f = proj_path(pid)
+                cur = None
+                if f.exists():
+                    try:
+                        cur = json.loads(f.read_text(encoding="utf-8"))
+                    except (OSError, ValueError):
+                        cur = None      # unlesbar: die Fassung aus der Sicherung nimmt den Platz ein, der alte Stand wird zurückgelegt
+                    if isinstance(cur, dict):
+                        a, b = int(cur.get("updated") or 0), int(obj.get("updated") or 0)
+                        if a == b:
+                            res["same"] += 1
+                            continue
+                        if a > b:
+                            _stash_version(f, txt, b)
+                            res["kept"].append(label)
+                            continue
+                    with _proj_lock:
+                        backup_project(f, force=True)
+                    save_project(pid, txt, obj, backup=False)
+                    res["updated"].append(label)
+                    res["updatedIds"].append(pid)
+                else:
+                    save_project(pid, txt, obj, backup=False)
+                    res["added"].append(label)
+            except Exception as e:  # noqa: BLE001 – ein kaputtes Projekt hält die übrigen nicht auf
+                log(f"Sicherung einspielen: {name} übersprungen ({e!r})")
+                res["failed"].append(pid)
+        try:
+            res["prefs"] = json.loads(z.read("einstellungen.json").decode("utf-8")) if "einstellungen.json" in infos else {}
+        except ValueError:
+            res["prefs"] = {}
+    res["created"] = int(meta.get("created") or 0)
+    res["total"] = len(todo)
+    log(f"Sicherung eingespielt: {len(res['added'])} neu, {len(res['updated'])} aktualisiert, {len(res['kept'])} hier neuer, "
+        f"{res['same']} unverändert, {len(res['failed'])} unlesbar – {src}")
+    return res
+
+
+def open_dialog_backup() -> str | None:
+    if APP_HOOKS.get("pick"):
+        r = APP_HOOKS["pick"]("backup") or []
+        return r[0] if r else None
+    code = ("import tkinter as tk, json\nfrom tkinter import filedialog\nr=tk.Tk();r.withdraw()\nr.attributes('-topmost',True)\n"
+            "f=filedialog.askopenfilename(title='Sicherung wählen',filetypes=[('HoneyCut-Sicherung','*.zip'),('Alle','*.*')])\nprint(json.dumps(f or ''))")
+    res = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    if res.returncode:
+        raise RuntimeError("Kein Dateidialog verfügbar.")
+    return json.loads(res.stdout.strip() or '""') or None
 
 
 # ───────────────────────────── Dateiauswahl, Ordner öffnen ─────────────────────────────
@@ -2587,6 +3434,11 @@ DECK_TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; char
               ".md": "text/plain; charset=utf-8", ".webmanifest": "application/manifest+json", ".json": "application/json"}
 
 
+def _with_ext(dest: str, ext: str) -> str:
+    """Dateiname aus einem Speichern-Dialog: die erwartete Endung ergänzen, falls sie fehlt."""
+    return dest if dest.lower().endswith(ext) else dest + ext
+
+
 def save_any_dialog(name: str) -> str | None:
     """Speichern-Dialog für beliebige Dateien (Bilder, PDF, ZIP, .honeydeck aus HoneyDeck)."""
     if APP_HOOKS.get("save_any"):
@@ -2722,6 +3574,13 @@ def package_import_job(job: dict, path: str):
             mp[h["n"]] = allow(tgt)
     log(f"Projekt importiert: {len(mp)} Dateien nach {dest_dir}")
     return {"header": header, "map": mp, "folder": norm_path(str(dest_dir))}
+
+
+def open_data_dir():
+    if platform.system() == "Windows":
+        os.startfile(str(DATA_DIR))  # type: ignore[attr-defined]
+    else:
+        subprocess.Popen(["open" if platform.system() == "Darwin" else "xdg-open", str(DATA_DIR)])
 
 
 def reveal(path: str):
@@ -2929,6 +3788,16 @@ class Handler(BaseHTTPRequestHandler):
                 return self._text(load_project(q.get("id", "")))
             if rest == "api/models":
                 return self._json(models_list())
+            if rest == "api/project/versions":
+                return self._json(project_versions(q.get("id", "")))
+            if rest == "api/trash":
+                return self._json(trash_list())
+            if rest == "api/trash/count":
+                return self._json({"n": trash_count()})
+            if rest == "api/storage":
+                return self._json(storage_info())
+            if rest == "api/update":
+                return self._json(update_state())
             if rest == "api/bus":
                 return self._json(bus_get(q.get("p", ""), int(q.get("since", "-1")), q.get("from", "")))
             if rest == "api/job":
@@ -2999,6 +3868,49 @@ class Handler(BaseHTTPRequestHandler):
                 delete_project(q.get("id", ""))
                 return self._json({"ok": True})
             data = json.loads(raw or b"{}")
+            if rest == "api/project/restore":
+                return self._json(restore_version(str(data.get("id") or ""), str(data.get("file") or ""), bool(data.get("copy"))))
+            if rest == "api/trash/restore":
+                return self._json(trash_restore(str(data.get("id") or "")))
+            if rest == "api/storage/clear":
+                return self._json(storage_clear(str(data.get("what") or ""), str(data.get("name") or "")))
+            if rest == "api/storage/open":
+                open_data_dir()
+                return self._json({"ok": True})
+            if rest == "api/update/check":
+                return self._json(update_check(force=True))
+            if rest == "api/update/open":
+                return self._json(update_open(str(data.get("what") or "installer")))
+            if rest == "api/update/set":   # Prüfung ein-/ausschalten, eine Version überspringen
+                patch = {}
+                if "enabled" in data:
+                    patch["updates"] = bool(data["enabled"])
+                if "skip" in data:
+                    patch["updateSkip"] = str(data["skip"] or "")[:20]
+                settings_set(**patch)
+                return self._json(update_state())
+            if rest == "api/report":
+                dest = save_any_dialog(f"HoneyCut-Fehlerbericht-{time.strftime('%Y-%m-%d-%H%M')}.txt")
+                if not dest:
+                    return self._json({"ok": False})
+                dest = _with_ext(dest, ".txt")
+                Path(dest).write_text(report_text(data.get("ui") if isinstance(data.get("ui"), dict) else None), encoding="utf-8")
+                CREATED.add(norm_path(dest))
+                return self._json({"ok": True, "path": norm_path(dest)})
+            if rest == "api/backup/export":
+                dest = save_any_dialog(f"HoneyCut-Sicherung-{time.strftime('%Y-%m-%d')}.zip")
+                if not dest:
+                    return self._json(None)
+                job = run_job(new_job("backup-export"), backup_all_job, _with_ext(dest, ".zip"), data.get("prefs") if isinstance(data.get("prefs"), dict) else None)
+                return self._json({"job": job["id"]})
+            if rest == "api/backup/import":
+                src = open_dialog_backup()
+                if not src:
+                    return self._json(None)
+                job = run_job(new_job("backup-import"), backup_restore_job, src)
+                return self._json({"job": job["id"]})
+            if rest == "api/trash/purge":
+                return self._json(trash_purge(None if data.get("all") else str(data.get("id") or "-")))
             if rest == "api/fullscreen":
                 fn = APP_HOOKS.get("fullscreen")
                 return self._json({"ok": bool(fn and fn(bool(data.get("on"))))})
@@ -3012,7 +3924,7 @@ class Handler(BaseHTTPRequestHandler):
                 dest = save_dialog(re.sub(r'[\\/:*?"<>|]', "_", data.get("name") or "Projekt")[:80] + ".honeycut")
                 if not dest:
                     return self._json(None)
-                job = run_job(new_job("package-export"), package_export_job, data, dest)
+                job = run_job(new_job("package-export"), package_export_job, data, _with_ext(dest, ".honeycut"))
                 return self._json({"job": job["id"]})
             if rest == "api/package/import":
                 src = open_dialog_package()

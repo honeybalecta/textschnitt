@@ -76,6 +76,27 @@ h4{margin:0;font-size:13px;letter-spacing:.04em;text-transform:uppercase;color:v
 .proj-item .meta{flex:1;min-width:0}
 .proj-item b{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .proj-item .del{border:0;background:transparent;color:var(--muted);font-size:18px;padding:8px}
+/* Projektname an Ort und Stelle bearbeiten (Projektliste und Kopfzeile) */
+.name-edit{flex:1;min-width:0;width:100%;font:inherit;font-weight:600;color:var(--text);background:var(--surface-2);border:1px solid var(--rot);border-radius:6px;padding:3px 8px;outline:none}
+.proj-item .name-edit{display:block;margin:-4px 0 -4px -9px;width:calc(100% + 9px)}
+#projName{cursor:text}
+/* Verwaltung: Listen in den Blättern für Fassungen, Papierkorb und Speicher */
+.mg-item{display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:10px 0;border-top:1px solid var(--line)}
+.mg-item .meta{flex:1 1 220px;min-width:0}
+.mg-item .meta b{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mg-list{margin:10px 0 12px;border-bottom:1px solid var(--line)}
+.st-sub{flex:1 1 100%;margin:0 0 2px 12px;padding-left:12px;border-left:2px solid var(--line)}
+.st-row{display:flex;align-items:center;gap:8px;padding:5px 0}
+.st-row .meta{flex:1;min-width:0}
+.st-row .meta span{display:block}
+.trash-link{display:flex;margin:14px 12px 0}
+.upd{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin:12px 12px 4px;padding:10px 12px;border:1px solid var(--rot);border-radius:12px;background:var(--surface)}
+.upd .meta{flex:1 1 200px;min-width:0}.upd .meta b{display:block}
+.upd-notes{margin:6px 0 14px;padding-left:20px}.upd-notes li{margin:3px 0}
+#modelSheet > h3{font-size:17px;letter-spacing:0;text-transform:none;color:var(--text);margin-bottom:4px}
+#setMore h4,#modelSheet > h4,#updNotes h4{margin:14px 0 2px}
+#setMore .mg-item .meta b{white-space:normal}
+#setMore .mg-item label.row{margin-top:6px;gap:6px}
 .empty-home{padding:40px 24px;text-align:center}
 .empty-home p{color:var(--muted)}
 .fab{position:fixed;right:16px;bottom:calc(18px + var(--safe-b));background:var(--honig);color:var(--on-accent);border:0;border-radius:28px;padding:0 22px;height:52px;font-weight:600;font-size:15px;box-shadow:0 6px 18px rgba(0,0,0,.35);display:inline-flex;align-items:center;gap:8px}

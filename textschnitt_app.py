@@ -34,6 +34,11 @@ VIDEO_TYPES = ("Video und Audio (*.mp4;*.mov;*.mkv;*.m4v;*.webm;*.avi;*.mts;*.m2
 FONT_TYPES = ("Schriften (*.ttf;*.otf)", "Alle Dateien (*.*)")
 CLIP_TYPES = ("Videos und Bilder (*.mp4;*.mov;*.mkv;*.m4v;*.webm;*.avi;*.jpg;*.jpeg;*.png;*.webp;*.bmp;*.gif)",
               "Alle Dateien (*.*)")
+# Medienablage: mehrere Videos, Bilder und Tondateien auf einmal
+CLIPS_TYPES = ("Videos Bilder und Ton (*.mp4;*.mov;*.mkv;*.m4v;*.webm;*.avi;*.jpg;*.jpeg;*.png;*.webp;*.bmp;*.gif;*.mp3;*.wav;*.m4a;*.flac;*.aac;*.ogg)",
+               "Alle Dateien (*.*)")
+PACKAGE_TYPES = ("HoneyCut Projekt (*.honeycut)", "Alle Dateien (*.*)")
+BACKUP_TYPES = ("HoneyCut Sicherung (*.zip)", "Alle Dateien (*.*)")
 
 
 def fail(msg: str):
@@ -197,9 +202,8 @@ def main():
     window.events.shown += lambda: fenster_einrichten(window, TITLE, True)
 
     def pick(kind: str):
-        multi = kind == "videos"
-        types = FONT_TYPES if kind == "font" else CLIP_TYPES if kind == "clip" else VIDEO_TYPES
-        multi = multi or kind == "font"
+        multi = kind in ("videos", "clips", "font")
+        types = {"font": FONT_TYPES, "clip": CLIP_TYPES, "clips": CLIPS_TYPES, "package": PACKAGE_TYPES, "backup": BACKUP_TYPES}.get(kind, VIDEO_TYPES)
         try:
             res = window.create_file_dialog(webview.OPEN_DIALOG, allow_multiple=multi, file_types=types)
         except Exception:
@@ -254,7 +258,17 @@ def main():
             return None
         return res[0] if isinstance(res, (list, tuple)) else res
 
-    T.APP_HOOKS.update(pick=pick, focus=focus, open_files=open_files, open_window=open_window, fullscreen=fullscreen, save_any=save_any)
+    def save(name: str):
+        """Speichern-Dialog für Projektpakete (.honeycut)."""
+        try:
+            res = window.create_file_dialog(webview.SAVE_DIALOG, save_filename=name, file_types=PACKAGE_TYPES)
+        except Exception:
+            res = window.create_file_dialog(webview.SAVE_DIALOG, save_filename=name)
+        if not res:
+            return None
+        return res[0] if isinstance(res, (list, tuple)) else res
+
+    T.APP_HOOKS.update(pick=pick, focus=focus, open_files=open_files, open_window=open_window, fullscreen=fullscreen, save_any=save_any, save=save)
     if args:  # beim Start übergebene Dateien öffnen, sobald die Oberfläche geladen ist
         window.events.loaded += lambda: threading.Timer(0.8, T.handle_open_paths, args=(args,)).start()
 

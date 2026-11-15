@@ -1,0 +1,71 @@
+name: Prüfläufe
+
+on:
+  workflow_dispatch:
+    inputs:
+      basis:
+        description: "Vergleich mit dieser früheren Fassung (Git-Angabe, leer = letzte Windows-Version)"
+        required: false
+        default: ""
+  push:
+    branches: [main]
+    paths: ["textschnitt.py", "core/**", "tests/**", ".github/workflows/test.yml"]
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: ffmpeg, numpy und Playwright
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg > /dev/null
+          pip install -q numpy
+          cd tests && npm install --no-audit --no-fund
+          ffmpeg -version | head -1
+          google-chrome --version || true
+
+      # Vergleichsfassung: bei einem Push der Stand davor, sonst die letzte veröffentlichte Windows-Version
+      - name: Vergleichsfassung bestimmen
+        run: |
+          REF="${{ github.event.inputs.basis }}"
+          [ -n "$REF" ] || REF="${{ github.event.before }}"
+          if [ -z "$REF" ] || ! git rev-parse -q --verify "$REF^{commit}" > /dev/null 2>&1; then
+            REF="$(git tag --list 'v*' --sort=-v:refname | head -1)"
+          fi
+          echo "HC_BASIS=$REF" >> "$GITHUB_ENV"
+          echo "Vergleich mit: ${REF:-–}"
+
+      - name: Prüfläufe
+        run: tests/lauf.sh
+
+      - name: Bericht als Kommentar
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p tests/.work/out
+          [ -f tests/.work/out/bericht.md ] || echo "Die Prüfläufe liefen nicht durch (siehe Log)." > tests/.work/out/bericht.md
+          gh api "repos/${{ github.repository }}/commits/${{ github.sha }}/comments" -F body=@tests/.work/out/bericht.md > /dev/null || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: prueflaeufe
+          path: |
+            tests/.work/out
+            !tests/.work/out/**/*.mp4

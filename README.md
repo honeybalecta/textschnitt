@@ -17,12 +17,13 @@ Die Plattformen stellen dem Kern dieselbe Schnittstelle `window.TS` bereit (Date
 
 ## Installieren
 
-- **Windows**: Installer unter [Releases](https://github.com/honeybalecta/textschnitt/releases) (`Textschnitt-Setup-….exe`). Whisper-Modell „small“ und ffmpeg sind dabei, alles läuft offline.
-- **Android**: APK unter Releases (`Textschnitt-Android-….apk`), Android 10 oder neuer.
+- **Windows**: Installer unter [Releases](https://github.com/honeybalecta/textschnitt/releases) (`HoneyCut-Setup-….exe`). Whisper-Modell „small“ und ffmpeg sind dabei, alles läuft offline.
+- **Android**: APK unter Releases (`HoneyCut-Android-….apk`), Android 10 oder neuer.
 - **Browser**: https://honeybalecta.github.io/textschnitt/ – ohne Installation. Videos bleiben auf dem Gerät; die Whisper-Modelle tiny und base liefert die Seite selbst aus (einmal geladen, dann im Browser gespeichert); nur das größere Modell small kommt von Hugging Face. Am besten in aktuellem Chrome oder Edge (mit Grafikkarte deutlich schneller); läuft nach dem ersten Besuch auch offline und lässt sich als App installieren.
 
 ## Arbeiten
 
+- **Projekte**: In der Projektliste benennt der Stift ein Projekt um; im offenen Projekt genügt ein Klick auf den Namen in der Kopfzeile. Der Export schlägt den neuen Namen gleich als Dateinamen vor.
 - **Neues Projekt**: ein oder mehrere Videos wählen. Mehrere werden hintereinandergehängt und gemeinsam transkribiert; weitere lassen sich später mit „＋ Video anhängen“ ergänzen.
 - **Text**: Wörter anklicken/antippen oder mit gedrückter Maustaste bzw. nach kurzem Gedrückthalten mit dem Finger über mehrere Wörter ziehen, dann löschen. Markierten Text an eine andere Stelle ziehen verschiebt den Abschnitt. Suchen (`Strg+F`) und Ersetzen (`Strg+H`), Doppelklick korrigiert ein Wort.
 - **Aufräumen**: „Füllwörter weg“, „Wiederholungen weg“ (wiederholte Anläufe – der letzte Versuch bleibt stehen) und „Pausen kürzen auf …“ bis „ganz weg“ – auf Wunsch automatisch direkt nach der Transkription. Wird Text gelöscht, verschwinden Pausen, die danach leer stehen bleiben würden, gleich mit (z. B. am Videoanfang).
@@ -47,10 +48,13 @@ Die Plattformen stellen dem Kern dieselbe Schnittstelle `window.TS` bereit (Date
 Alles liegt in `%LOCALAPPDATA%\Textschnitt`: `projects\` (ein Projekt je Datei), `sicherungen\`, `cache\` (Vorschaubilder, Vorschau-Dateien), `folien\`, `freigestellt\`, dazu das Protokoll `textschnitt.log`.
 
 - **Speichern**: Ein Projektstand wird erst vollständig auf den Datenträger geschrieben und ersetzt dann die bisherige Datei – ein Absturz oder Stromausfall mitten im Speichern lässt die letzte gute Fassung stehen. Kommt ein Stand unvollständig an, wird er abgewiesen. Klappt das Speichern nicht (Datenträger voll, Ordner gesperrt), steht in der Kopfzeile ein rotes „!“ mit dem Grund, und HoneyCut versucht es von selbst weiter.
-- **Frühere Fassungen**: Höchstens alle 15 Minuten wandert die vorige Fassung eines Projekts gepackt nach `sicherungen\<Projekt>\` (die letzten sechs bleiben). Ist eine Projektdatei einmal unlesbar, nimmt HoneyCut beim Öffnen von selbst die jüngste lesbare Fassung; die defekte Datei bleibt als `.defekt` daneben liegen.
-- **Gelöschte Projekte**: Die letzte Fassung bleibt noch 30 Tage in `sicherungen\<Projekt>\…-geloescht.json.gz`. Zurückholen: Datei entpacken und als `<Projekt>.json` nach `projects\` legen.
-- **Aufräumen**: Beim Start räumt HoneyCut im Hintergrund auf – Vorschaubilder, die 30 Tage nicht gebraucht wurden (insgesamt höchstens 1,5 GB), liegengebliebene Teilstücke abgebrochener Vorgänge und Vorschau-Dateien, auf die kein Projekt mehr verweist. Eigene Videos, Exporte, Folienbilder und freigestellte Kopien werden nie angefasst.
-- **Protokoll**: `textschnitt.log` enthält auch Meldungen der Oberfläche (unerwartete Fehler, hängende Wiedergabe mit dem Zustand des Videos) – hilfreich, wenn etwas nicht läuft wie gedacht.
+- **Frühere Fassungen**: Höchstens alle 15 Minuten wandert die vorige Fassung eines Projekts gepackt nach `sicherungen\<Projekt>\` (die letzten sechs bleiben). Die Uhr in der Projektliste zeigt sie mit Datum, Länge und Zahl der Schnitte: „Als Kopie öffnen“ legt ein eigenes Projekt an, „Zurückholen“ setzt das Projekt auf diesen Stand und legt den bisherigen selbst als Fassung zurück. Ist eine Projektdatei einmal unlesbar, nimmt HoneyCut beim Öffnen von selbst die jüngste lesbare Fassung; die defekte Datei bleibt als `.defekt` daneben liegen.
+- **Papierkorb**: Gelöschte Projekte bleiben 30 Tage erhalten. „Papierkorb“ unter der Projektliste oder in den Einstellungen stellt sie mit einem Klick wieder her oder löscht sie endgültig.
+- **Speicher** (Einstellungen → Speicher): zeigt, was HoneyCut belegt – Vorschaubilder, Vorschau-Dateien, freigestellte Kopien, Folienbilder, nachgeladene Modelle, Fassungen, Projektdateien – und gibt gezielt frei, was kein Projekt, keine frühere Fassung und kein Projekt im Papierkorb mehr verwendet. Bei freigestellten Kopien und Folienbildern fragt HoneyCut nach: Ein früher exportiertes CapCut- oder Concat-Projekt kann noch darauf zugreifen.
+- **Alle Projekte sichern** (Einstellungen): eine ZIP-Datei mit allen Projekten, ihren Folienbildern, den importierten Schriften, eigenen Designprofilen und Farbfavoriten, ohne die Videos. „Sicherung einspielen“ holt daraus zurück, was fehlt. Liegt ein Projekt hier schon vor, bleibt der neuere Stand stehen und der andere liegt bei den früheren Fassungen. Auf einem anderen Rechner passen sich die Pfade der Folienbilder und Schriften an den neuen Datenordner an.
+- **Aufräumen**: Beim Start räumt HoneyCut im Hintergrund auf – Vorschaubilder, die 30 Tage nicht gebraucht wurden (insgesamt höchstens 1,5 GB), liegengebliebene Teilstücke abgebrochener Vorgänge, Vorschau-Dateien, auf die kein Projekt mehr verweist, und ein Protokoll über 5 MB. Eigene Videos, Exporte, Folienbilder und freigestellte Kopien werden dabei nie angefasst.
+- **Protokoll und Fehlerbericht**: `textschnitt.log` enthält auch Meldungen der Oberfläche (unerwartete Fehler, hängende Wiedergabe mit dem Zustand des Videos). „Fehlerbericht“ in den Einstellungen speichert das Protokoll zusammen mit Version, System und Speicherübersicht als eine Textdatei – mit Datei- und Projektnamen, ohne Videos, Transkripte oder Texte.
+- **Neue Versionen** (Windows-App): HoneyCut sieht höchstens einmal am Tag bei GitHub nach, ob ein neuerer Installer bereitsteht, und zeigt dann auf der Startseite einen Hinweis mit den Änderungen in Stichpunkten. Abgerufen werden nur die Liste der Veröffentlichungen und `NEUIGKEITEN.md`; in den Einstellungen lässt sich das abschalten.
 
 ## Exporte
 
@@ -70,3 +74,5 @@ Weiche Zoomfahrten werden in CapCut und Concat als Zoom-Sprung angelegt; Freiste
 
 - Windows/macOS/Linux ohne Installer: `pip install -r requirements.txt`, ffmpeg in den PATH, dann `python textschnitt.py` (Browser) oder `pythonw textschnitt_app.pyw` (Fenster).
 - Builds laufen über GitHub Actions: Änderungen an `core/` bauen beide Plattformen neu. Versionen: `packaging/app-version.txt` (Windows), `android/version.txt` (Android).
+- **Neuigkeiten**: `NEUIGKEITEN.md` nennt je Version die Änderungen in Stichpunkten („## 2.26.0 · Titel“, darunter eine Liste). Die Windows-App zeigt daraus, was seit der installierten Version dazugekommen ist.
+- **Prüfläufe**: `tests/lauf.sh` erzeugt Testmedien, startet das echte Backend mit einer nachgestellten Transkription und prüft in Chrome die Bedienung – Bearbeiten beim Abspielen und im Stand, Rückgängig, mehrere Fenster, Speicherfehler, Umbenennen, Fassungen, Papierkorb, Speicher, Sicherung, Versionshinweis – dazu das Backend ohne Browser. Mit `HC_BASIS=<Git-Angabe>` kommt der Vergleich mit einer früheren Fassung dazu: Exportplan, Bedienschritte und echte Exporte sollen gleich bleiben. Auf GitHub läuft das bei jeder Änderung an `core/`, `textschnitt.py` oder `tests/` mit (`.github/workflows/test.yml`); Einzelheiten in `tests/README.md`.

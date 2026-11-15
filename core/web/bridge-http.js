@@ -55,6 +55,30 @@
     envelope: uri => jobOf(call('POST', 'envelope', {uri})),
     // Datei aus HoneyDeck speichern: Dialog im Backend, Rückgabe = Meldung für den Hinweis
     saveFile: (name, mime, b64) => { try { const r = JSON.parse(call('POST', 'savefile', {name, data: b64})); return r.ok ? 'Gespeichert: ' + r.path : ''; } catch(e){ return 'Speichern fehlgeschlagen: ' + e.message; } },
+    // Frühere Fassungen und Papierkorb (liegen im Datenordner unter sicherungen/)
+    versions: id => call('GET', 'project/versions?id=' + q(id)),
+    restoreVersion: (id, file, copy) => call('POST', 'project/restore', {id, file, copy: !!copy}),
+    trash: () => call('GET', 'trash'),
+    trashCount: () => { try { return JSON.parse(call('GET', 'trash/count')).n || 0; } catch(_){ return 0; } },
+    trashRestore: id => call('POST', 'trash/restore', {id}),
+    trashPurge: id => call('POST', 'trash/purge', id ? {id} : {all: true}),
+    // Speicher verwalten: Die Übersicht zählt Dateien zusammen und kommt deshalb im Hintergrund (Promise)
+    storage: () => fetch(api + 'storage').then(r => r.json()).then(d => { if (d && d.error) throw new Error(d.error); return d; }),
+    storageClear: (what, name) => call('POST', 'storage/clear', {what, name: name || ''}),
+    storageOpen: () => { call('POST', 'storage/open', {}); },
+    // Alle Projekte sichern / Sicherung einspielen: Dateidialog im Backend, danach läuft ein Job (Antwort wie bei pick)
+    backupAll(id, prefs){ fetch(api + 'backup/export', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({prefs: prefs || {}})})
+      .then(r => r.text()).then(t => TSApp.onPicked(id, t && t !== 'null' ? t : null)).catch(() => TSApp.onPicked(id, null)); },
+    backupRestore(id){ fetch(api + 'backup/import', {method:'POST', headers:{'Content-Type':'application/json'}, body: '{}'})
+      .then(r => r.text()).then(t => TSApp.onPicked(id, t && t !== 'null' ? t : null)).catch(() => TSApp.onPicked(id, null)); },
+    // Fehlerbericht: Protokoll und Systemangaben als eine Datei (Speichern-Dialog im Backend)
+    saveReport(id, ui){ fetch(api + 'report', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ui: ui || {}})})
+      .then(r => r.text()).then(t => TSApp.onPicked(id, t && t !== 'null' ? t : null)).catch(() => TSApp.onPicked(id, null)); },
+    // Hinweis auf neue Versionen (nur die installierte Windows-App fragt bei GitHub nach)
+    updateInfo: () => call('GET', 'update'),
+    updateCheck: () => fetch(api + 'update/check', {method:'POST', headers:{'Content-Type':'application/json'}, body: '{}'}).then(r => r.json()).then(d => { if (d && d.error) throw new Error(d.error); return d; }),
+    updateSet: patch => call('POST', 'update/set', patch),
+    updateOpen: what => { call('POST', 'update/open', {what}); },
     // Auffälligkeiten der Oberfläche ins Protokoll (textschnitt.log) schreiben – für die Fehlersuche; darf nie stören
     log: msg => { try { fetch(api + 'log', {method:'POST', body: String(msg).slice(0, 800), keepalive: true}).catch(() => {}); } catch(_){} },
     openWindow: (project, view) => { try { return JSON.parse(call('POST', 'window', {project, view})).url || ''; } catch(_){ return ''; } },
