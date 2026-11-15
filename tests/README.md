@@ -17,13 +17,16 @@ Gebraucht werden python3 mit numpy, ffmpeg, Node und Google Chrome (`HC_CHROME=/
 
 | Datei | Inhalt |
 |---|---|
-| `backend_test.py` | Backend ohne Browser: sicheres Speichern, frühere Fassungen, Papierkorb, Speicher verwalten, alle Projekte sichern und einspielen (auch in einen anderen Datenordner), Projekt weitergeben mit eingebetteten Bildern (das Verhalten von Windows bei überlangen Pfaden ist nachgestellt), Vorschaubild der Projektliste, Textzeile und Untertitel im Export (Untertiteldatei, eingebrannt, Concat), Hinweis auf neue Versionen, Fehlerbericht |
+| `backend_test.py` | Backend ohne Browser: sicheres Speichern, frühere Fassungen, Papierkorb, Speicher verwalten, alle Projekte sichern und einspielen (auch in einen anderen Datenordner), Projekt weitergeben mit eingebetteten Bildern (das Verhalten von Windows bei überlangen Pfaden ist nachgestellt), Vorschaubild der Projektliste, Textzeile und Untertitel im Export (Untertiteldatei, eingebrannt, Concat), Quellenzeilen und Textfassung, Schrift im Export (Maße der Schriftdateien, Größe und Umbruch wie in der Vorschau, eingebettete Schrift, Nachprüfung am Protokoll von ffmpeg, echte Probe-Exporte, Hinweis bei fehlender Schrift, Name der SRT-Datei), Hinweis auf neue Versionen, Fehlerbericht |
 | `p_umbenennen.mjs` | Projekte umbenennen in der Liste und im offenen Projekt |
 | `p_fassungen.mjs` | Frühere Fassungen und Papierkorb in der Oberfläche, auch mit dem Projekt in einem zweiten Fenster |
 | `p_verwaltung.mjs` | Einstellungen: Speicher, Sicherung, Fehlerbericht, Hinweis auf neue Versionen |
 | `p_paket.mjs` | Projekt weitergeben: Paket schreiben und wieder einlesen, mit eingebettetem Folienbild, Wasserzeichen und eigenen Untertitel-Looks |
 | `p_helfer.mjs` | Kleine Helfer: Projektliste (Suche, Reihenfolge, Vorschaubild, Duplizieren), weitere Sprachen, eigene Füllwörter, Satz und Absatz auswählen, Kapitel und Notizen, Lesbarkeit der Untertitel, eigene Looks, Längen-Ampel, Schutzzonen, dauerhafte Textzeile (auch im echten Export und in CapCut), Titelbild |
 | `p_schutz.mjs` | Rückgängig für Format, Ausschnitt und Lautstärke; Abgleich mehrerer Fenster; sichtbare Speicherfehler |
+| `p_quellen.mjs` | Quellen und Belege: Quellen zu Aussagen (Zeile im Bild, Quellenliste), „Beleg nötig“ mit Hinweis vor dem Export, Bauchbinden (beim ersten Auftritt und von Hand), Prüfung auf Barrierefreiheit, Textfassung – auch in echten Exporten und in CapCut |
+| `p_schnittleiste.mjs` | Schnitt-Zeitleiste im Text-Reiter: Hauptspur und Wörter, Schnitte an Kanten und Abspiellinie, keine weiteren Studio-Werkzeuge; breit und am Handy |
+| `p_schrift.mjs` | Schrift im Export: Vorschau und exportiertes Video zeigen die Untertitel gleich groß, an derselben Stelle und gleich umbrochen (Standardschrift, gewählte Schriften, Kasten, Hochformat) – gemessen am fertigen Bild; Hinweis, wenn eine Schriftdatei fehlt; Name der SRT-Datei |
 | `p_stand.mjs` | Bearbeiten im Stand: Die Abspiellinie bleibt auf demselben Bild (zwölf Fälle je Projekt) |
 | `p_wiedergabe.mjs` | Bearbeiten beim Abspielen: Die Wiedergabe läuft weiter (achtzehn Fälle je Projekt) |
 | `v_plan.mjs` | Vergleich mit einer früheren Fassung: Exportplan, Untertitel, Zeitleiste und Umrechnungen aller Testprojekte |

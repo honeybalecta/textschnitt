@@ -211,7 +211,7 @@ const late = await ev(([a, b]) => { const m = P.marks.find(x => x.text === 'Woru
   m.at = tokens[a].ws; m2.at = tokens[b].ws; const r = { rows: chapterText().split('\n'), iss: chapterIssues().join(' | ') }; m.at = at0; m2.at = at2; return r; }, [W[30], W[36]]);
 chk('späterer Beginn: „0:00 Einstieg“ steht davor, mit Erklärung; zu kurze Kapitel werden genannt', late.rows[0] === '0:00 Einstieg' && late.rows.length === 4 && /beginnt mit „0:00 Einstieg“/.test(late.iss) && /Das Kapitel „Worum es geht“ ist kürzer als zehn Sekunden/.test(late.iss), late);
 // Zeitskala im Studio
-await ev(() => { setTab('studio'); seekOut(0, false); }); await sleep(700);
+await ev(() => { setTab('studio'); seekOut(0, false); tlReveal(); }); await sleep(700);   // die Zeitleiste folgt der Abspiellinie, wie nach jedem Sprung in der Oberfläche
 const flags = await ev(() => ({ chap: [...document.querySelectorAll('#ruler .rmk.chap span')].map(s => s.textContent), bar: !!document.querySelector('#barMarks'), tools: [...document.querySelectorAll('#paneStudio button')].map(b => b.textContent.trim()).filter(t => ['Kapitel', 'Notiz', 'Titelbild'].includes(t)) }));
 chk('Zeitskala im Studio zeigt Fähnchen, Werkzeuge für Kapitel, Notiz und Titelbild sind da', flags.chap.includes('Worum es geht') && flags.bar && flags.tools.length >= 3, flags);
 await shot('marken-studio');

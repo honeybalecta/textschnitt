@@ -118,6 +118,11 @@ def selftest(out_path: str) -> int:
         rep["translate_probe"] = T.translate_job(job, ["Die Mieten sind stark gestiegen."], "de", "en")["texts"][0]
         if not rep["translate_probe"]:
             raise RuntimeError("Übersetzung liefert nichts")
+        # Schrift im Export: Die gewählte Schrift muss im fertigen Video stehen, so groß wie in der Vorschau – mit dem
+        # mitgelieferten ffmpeg, in der gebauten App. Kam sie nicht an, stand stillschweigend die Standardschrift im Bild.
+        rep["schrift_export"] = T.font_selftest()
+        if not rep["schrift_export"].get("ok"):
+            raise RuntimeError(f"Schrift im Export stimmt nicht: {rep['schrift_export']}")
         rep["ok"] = True
     except Exception:
         rep["ok"] = False

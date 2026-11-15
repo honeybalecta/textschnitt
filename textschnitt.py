@@ -37,7 +37,7 @@ os.environ.setdefault("HF_HUB_DISABLE_IMPLICIT_TOKEN", "1")
 import warnings  # noqa: E402
 warnings.filterwarnings("ignore", module="huggingface_hub")
 
-VERSION = "2.27.0"
+VERSION = "2.28.0"
 APP_DIR = Path(__file__).resolve().parent
 FROZEN = bool(getattr(sys, "frozen", False))          # als installierte .exe gebaut
 RES_DIR = Path(getattr(sys, "_MEIPASS", APP_DIR))      # mitgelieferte Dateien (Oberfläche, ffmpeg, Modelle)
@@ -947,6 +947,8 @@ def clean_cues(raw) -> list[dict]:
             if c.get("outlineColor"):
                 o["outlineColor"] = str(c["outlineColor"])
             # Dauerhafte Textzeile: sitzt an einer Ecke (anchor = o/u + l/m/r) mit Randabstand mx/my als Anteil von Breite/Höhe
+            if c.get("src"):   # Quellenzeile: wie die Textzeile an einer Ecke, auf einer eigenen Textspur
+                o["src"] = True
             if c.get("line"):
                 o["line"] = True
                 a = str(c.get("anchor") or "")
@@ -976,67 +978,384 @@ def sub_px(style: dict, w: int, h: int) -> float:
     return SUB_SIZES.get(style.get("size", "mittel"), 0.058) * min(w, h) * (1.25 if h > w else 1.0)
 
 
+class FontFace:
+    """Was der Export über eine Schriftdatei (TTF/OTF) wissen muss: Namen, Strichstärke, Höhenmaße und Laufweiten.
+
+    libass sucht eine Schrift unter dem Familiennamen, der in der Datei steht, und rechnet die Schriftgröße auf die Zellenhöhe
+    um (OS/2 winAscent + winDescent). Die Vorschau im Programmfenster rechnet wie jeder Browser mit dem Geviert. Ohne
+    Umrechnung stand eine gewählte Schrift deshalb deutlich kleiner im Video als in der Vorschau (Poppins: 57 %)."""
+
+    def __init__(self, data: bytes):
+        import struct
+        u = struct.unpack
+        self.data = data
+        tabs = {}
+        for i in range(u(">H", data[4:6])[0]):
+            tag, _cs, off, ln = u(">4sIII", data[12 + 16 * i:28 + 16 * i])
+            tabs[tag] = (off, ln)
+        names = {}
+        if b"name" in tabs:
+            off, _ = tabs[b"name"]
+            _fmt, cnt, so = u(">HHH", data[off:off + 6])
+            for i in range(cnt):
+                pid, _eid, lid, nid, ln, o = u(">HHHHHH", data[off + 6 + 12 * i:off + 18 + 12 * i])
+                if nid not in (1, 2, 6, 16, 17):
+                    continue
+                raw = data[off + so + o:off + so + o + ln]
+                try:
+                    txt = raw.decode("utf-16-be") if pid in (0, 3) else raw.decode("mac_roman")
+                except Exception:  # noqa: BLE001
+                    continue
+                pri = 2 if (pid == 3 and lid == 0x409) else 1 if pid in (0, 3) else 0
+                if nid not in names or pri > names[nid][1]:
+                    names[nid] = (txt.strip(), pri)
+        self.family = names.get(1, ("", 0))[0]
+        self.ps = names.get(6, ("", 0))[0]          # PostScript-Name: daran erkennt der Export, welche Datei libass genommen hat
+        sub = names.get(2, ("", 0))[0].lower()
+        upm = u(">H", data[tabs[b"head"][0] + 18:tabs[b"head"][0] + 20])[0] if b"head" in tabs else 0
+        self.upm = upm or 1000
+        h_asc = h_desc = n_h = 0
+        if b"hhea" in tabs:
+            o = tabs[b"hhea"][0]
+            h_asc, h_desc = u(">hh", data[o + 4:o + 8])
+            n_h = u(">H", data[o + 34:o + 36])[0]
+        weight, fs_sel, t_asc, t_desc, w_asc, w_desc = 400, 0, 0, 0, 0, 0
+        if b"OS/2" in tabs:
+            o, ln = tabs[b"OS/2"]
+            weight = u(">H", data[o + 4:o + 6])[0]
+            if ln >= 78:
+                fs_sel = u(">H", data[o + 62:o + 64])[0]
+                t_asc, t_desc, _gap, w_asc, w_desc = u(">hhhHH", data[o + 68:o + 78])
+        self.bold = ("bold" in sub) or (weight >= 600 and sub in ("", "regular"))
+        k = float(self.upm)
+        # Zelle, auf die libass die Schriftgröße bezieht (wie GDI): win-Werte, ersatzweise hhea
+        self.cell = (w_asc / k, w_desc / k) if w_asc + w_desc > 0 else (h_asc / k, -h_desc / k)
+        # Ober- und Unterlänge, mit denen der Browser der Vorschau die Zeile setzt: die Typo-Werte, wenn die Schrift das verlangt;
+        # sonst unter Windows (WebView2) die win-Werte, überall sonst hhea
+        if fs_sel & 0x80 and t_asc - t_desc > 0:
+            self.css = (t_asc / k, -t_desc / k)
+        elif os.name == "nt" and w_asc + w_desc > 0:
+            self.css = (w_asc / k, w_desc / k)
+        elif h_asc - h_desc > 0:
+            self.css = (h_asc / k, -h_desc / k)
+        else:
+            self.css = self.cell
+        self.ok = self.cell[0] + self.cell[1] > 0.2 and b"hmtx" in tabs and b"cmap" in tabs and n_h > 0
+        self._hmtx, self._nh = (tabs[b"hmtx"][0] if b"hmtx" in tabs else 0), n_h
+        self._cmap = None        # (Format, Anfang der Untertabelle)
+        if b"cmap" in tabs:
+            off, _ = tabs[b"cmap"]
+            best = -1
+            for i in range(u(">H", data[off + 2:off + 4])[0]):
+                pid, eid, so = u(">HHI", data[off + 4 + 8 * i:off + 12 + 8 * i])
+                fmt = u(">H", data[off + so:off + so + 2])[0]
+                rank = 3 if fmt == 12 and (pid, eid) in ((3, 10), (0, 4), (0, 6)) else 2 if fmt == 4 and (pid, eid) == (3, 1) else 1 if fmt == 4 and pid == 0 else -1
+                if rank > best:
+                    best, self._cmap = rank, (fmt, off + so)
+        self._adv: dict[str, float] = {}
+
+    def _glyph(self, cp: int) -> int:
+        import struct
+        u, d = struct.unpack, self.data
+        if not self._cmap:
+            return 0
+        fmt, o = self._cmap
+        if fmt == 12:
+            n = u(">I", d[o + 12:o + 16])[0]
+            lo, hi = 0, n - 1
+            while lo <= hi:
+                m = (lo + hi) // 2
+                a, e, g = u(">III", d[o + 16 + 12 * m:o + 28 + 12 * m])
+                if cp < a:
+                    hi = m - 1
+                elif cp > e:
+                    lo = m + 1
+                else:
+                    return g + cp - a
+            return 0
+        if cp > 0xFFFF:
+            return 0
+        seg = u(">H", d[o + 6:o + 8])[0] // 2
+        ends, starts, deltas, ranges = o + 14, o + 16 + 2 * seg, o + 16 + 4 * seg, o + 16 + 6 * seg
+        lo, hi = 0, seg - 1
+        while lo < hi:   # erster Abschnitt, dessen Ende nicht vor dem Zeichen liegt
+            m = (lo + hi) // 2
+            if u(">H", d[ends + 2 * m:ends + 2 * m + 2])[0] < cp:
+                lo = m + 1
+            else:
+                hi = m
+        if lo >= seg or u(">H", d[starts + 2 * lo:starts + 2 * lo + 2])[0] > cp:
+            return 0
+        delta, ro = u(">H", d[deltas + 2 * lo:deltas + 2 * lo + 2])[0], u(">H", d[ranges + 2 * lo:ranges + 2 * lo + 2])[0]
+        if not ro:
+            return (cp + delta) & 0xFFFF
+        p = ranges + 2 * lo + ro + 2 * (cp - u(">H", d[starts + 2 * lo:starts + 2 * lo + 2])[0])
+        g = u(">H", d[p:p + 2])[0] if p + 2 <= len(d) else 0
+        return (g + delta) & 0xFFFF if g else 0
+
+    def width(self, text: str) -> float:
+        """Laufweite eines Textes in Geviert (ohne Unterschneidung – libass setzt ebenso)."""
+        import struct
+        total = 0.0
+        for ch in text:
+            w = self._adv.get(ch)
+            if w is None:
+                g = self._glyph(ord(ch) if ch not in "\t " else 32)
+                if g:
+                    p = self._hmtx + 4 * min(g, self._nh - 1)
+                    w = struct.unpack(">H", self.data[p:p + 2])[0] / self.upm
+                else:   # Zeichen fehlt in der Schrift (z. B. ein Emoji): libass nimmt dafür eine andere, die Breite ist geschätzt
+                    w = 1.0 if ord(ch) > 0x2E7F else 0.6
+                self._adv[ch] = w
+            total += w
+        return total
+
+
 def font_names(path: Path) -> tuple[str, bool]:
     """Familienname und Fettschnitt aus der Schriftdatei (TTF/OTF, Tabellen „name“ und „OS/2“).
     libass sucht im fontsdir nach dem Namen, der in der Datei steht – der Anzeigename der Oberfläche
     (z. B. „TS Anton“) passt nicht, dann nahm ffmpeg stillschweigend die Standardschrift."""
-    import struct
-    data = path.read_bytes()
-    n = struct.unpack(">H", data[4:6])[0]
-    tabs = {}
-    for i in range(n):
-        tag, _cs, off, ln = struct.unpack(">4sIII", data[12 + 16 * i:28 + 16 * i])
-        tabs[tag] = (off, ln)
-    names = {}
-    if b"name" in tabs:
-        off, _ = tabs[b"name"]
-        _fmt, cnt, so = struct.unpack(">HHH", data[off:off + 6])
-        for i in range(cnt):
-            pid, eid, lid, nid, ln, o = struct.unpack(">HHHHHH", data[off + 6 + 12 * i:off + 18 + 12 * i])
-            if nid not in (1, 2, 16, 17):
-                continue
-            raw = data[off + so + o:off + so + o + ln]
-            try:
-                txt = raw.decode("utf-16-be") if pid in (0, 3) else raw.decode("mac_roman")
-            except Exception:  # noqa: BLE001
-                continue
-            pri = 2 if (pid == 3 and lid == 0x409) else 1 if pid in (0, 3) else 0
-            if nid not in names or pri > names[nid][1]:
-                names[nid] = (txt.strip(), pri)
-    fam = names.get(1, ("", 0))[0]
-    sub = names.get(2, ("", 0))[0].lower()
-    weight = 400
-    if b"OS/2" in tabs:
-        off, _ = tabs[b"OS/2"]
-        weight = struct.unpack(">H", data[off + 4:off + 6])[0]
-    return fam, ("bold" in sub) or (weight >= 600 and sub in ("", "regular"))
+    f = FontFace(path.read_bytes())
+    return f.family, f.bold
 
 
-def collect_fonts(fonts: dict, dest: Path) -> dict:
-    """Benötigte Schriftdateien in den Export-Ordner kopieren; liefert {Schlüssel: Familienname}."""
-    names = {}
-    dest.mkdir(parents=True, exist_ok=True)
+class FontSet(dict):
+    """Die Schriften eines Exports: {Schlüssel: (Familienname, fett)} – so, wie write_ass sie einsetzt. Dazu je Schrift die
+    Maße und der Inhalt der Datei (zum Einbetten in die Untertiteldatei) und die Liste der Schriften, die fehlen."""
+
+    def __init__(self):
+        super().__init__()
+        self.face: dict[str, FontFace] = {}
+        self.label: dict[str, str] = {}     # Familienname in der Datei → Name, wie er in der Oberfläche steht
+        self.missing: list[str] = []
+
+
+FONT_EMBED_MAX = 12 << 20   # größere Schriftdateien liegen nur im Schriftordner des Exports, nicht zusätzlich in der Untertiteldatei
+_SSA64 = bytes.maketrans(b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/", bytes(range(33, 97)))
+
+
+def font_label(f: dict, key: str) -> str:
+    name = str((f or {}).get("family") or key)
+    return name[3:] if name.startswith("TS ") else name
+
+
+def collect_fonts(fonts: dict, dest: Path) -> FontSet:
+    """Benötigte Schriftdateien für den Export bereitstellen; liefert {Schlüssel: (Familienname, fett)} samt Maßen.
+    Jede Schrift wird im Protokoll vermerkt – auch, wenn sie fehlt: Dann steht die Standardschrift im Video, und der Export
+    sagt das hinterher dazu (siehe font_check)."""
+    names = FontSet()
+    try:
+        dest.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        log(f"Schriftordner {dest}: {e!r}")
     for key, f in (fonts or {}).items():
+        label = font_label(f if isinstance(f, dict) else {}, str(key))
         try:
             src = WEB_DIR / "fonts" / Path(f["file"]).name if f.get("file") else Path(norm_path(f.get("uri", "")))
             if not src.is_file():
+                log(f"Schrift „{label}“ ({key}): Datei fehlt – {src}")
+                names.missing.append(label)
                 continue
-            dest.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(src, dest / f"{key}{src.suffix.lower()}")
+            data = src.read_bytes()
+            try:   # Kopie im Schriftordner des Exports (fontsdir); scheitert sie, bleibt die eingebettete Fassung
+                (dest / (re.sub(r"[^A-Za-z0-9_-]", "_", str(key)) + src.suffix.lower())).write_bytes(data)
+            except OSError as e:
+                log(f"Schrift „{label}“ ({key}): Kopie in den Export-Ordner scheitert – {e!r}")
+            fam, bold, face = "", False, None
             try:
-                fam, bold = font_names(src)
+                face = FontFace(data)
+                fam, bold = face.family, face.bold
             except Exception as e:  # noqa: BLE001
-                log(f"Schriftname {src.name}: {e}")
-                fam, bold = "", False
-            names[key] = ((fam or str(f.get("family") or "")).replace(",", " "), bold if fam else bool(f.get("bold")))
+                log(f"Schrift „{label}“ ({key}): Datei {src.name} nicht lesbar – {e!r}")
+            fam = (fam or str(f.get("family") or "")).replace(",", " ")
+            names[key] = (fam, bold if face and face.family else bool(f.get("bold")))
+            names.label[fam] = label
+            if face:
+                names.face[key] = face
+            log(f"Schrift „{label}“ ({key}): {src.name}, {len(data) // 1024} kB, Familie „{fam}“"
+                + (f", PostScript-Name „{face.ps}“, Zelle {sum(face.cell):.3f} Geviert" if face else ""))
         except Exception as e:  # noqa: BLE001
-            log(f"Schrift {key}: {e}")
+            log(f"Schrift „{label}“ ({key}): {e!r}")
+            names.missing.append(label)
     return names
 
 
+def font_check(err: str, fonts) -> list[str]:
+    """Liest aus der Ausgabe von ffmpeg, welche Schrift libass je Familie genommen hat („fontselect: (Familie, …) -> …“).
+    Liefert die Anzeigenamen der Schriften, die NICHT aus der mitgegebenen Datei kamen. Die erste Zeile je Familie zählt:
+    Weitere Zeilen stehen für einzelne Zeichen, die der Schrift fehlen (z. B. Emojis)."""
+    faces = getattr(fonts, "face", {}) or {}
+
+    def plain(s):   # Schreibweise angleichen: Manche Schriftdateien führen den Namen in zwei Tabellen leicht verschieden
+        return re.sub(r"[^a-z0-9]", "", s.lower())
+    want = {fonts[k][0]: plain(f.ps) for k, f in faces.items() if k in fonts and plain(f.ps)}
+    bad, seen = [], set()
+    for m in re.finditer(r"fontselect: \((.*?), (\d+), (\d+)\) -> (.*), (-?\d+), (.*)", err or ""):
+        fam, path, ps = m.group(1), m.group(4).strip(), m.group(6).strip()
+        if fam in seen or fam not in want:
+            continue
+        seen.add(fam)
+        if want[fam] not in (plain(ps), plain(path)):
+            bad.append(fonts.label.get(fam, fam))
+            log(f"Schrift „{fam}“ ist im Video nicht angekommen – libass meldet: {m.group(0)}")
+    for ln in (err or "").splitlines():
+        if "fontselect:" in ln or "font provider" in ln or ("font" in ln.lower() and ("rror" in ln or "ailed" in ln)):
+            log("libass: " + ln.split("] ", 1)[-1].strip()[:300])
+    return bad
+
+
+SUB_LINE = 1.12   # Zeilenhöhe der Vorschau (CSS line-height) in Geviert
+_SYS_FACES: dict[str, FontFace | None] = {}
+
+
+def standard_face() -> FontFace | None:
+    """Maße der Standardschrift im Video: Arial fett. Unter Linux (dort laufen die Prüfläufe) die Schrift, die fontconfig
+    dafür einsetzt. Fehlt die Datei, setzt write_ass die Standardschrift auf dem alten Weg."""
+    if "std" not in _SYS_FACES:
+        face = None
+        try:
+            if os.name == "nt":
+                files = [Path(os.environ.get("WINDIR") or r"C:\Windows") / "Fonts" / "arialbd.ttf"]
+            else:
+                r = subprocess.run(["fc-match", "-f", "%{file}", "Arial:bold"], capture_output=True, text=True, timeout=5)
+                files = [Path(r.stdout.strip())] if r.returncode == 0 and r.stdout.strip() else []
+            for p in files:
+                if p.is_file():
+                    f = FontFace(p.read_bytes())
+                    if f.ok:
+                        face = f
+                        break
+        except Exception as e:  # noqa: BLE001
+            log(f"Standardschrift: Maße nicht lesbar – {e!r}")
+        _SYS_FACES["std"] = face
+    return _SYS_FACES["std"]
+
+
+def wrap_px(text: str, face: FontFace, px: float, limit: float) -> list[str]:
+    """Eine Zeile umbrechen wie der Browser der Vorschau: so viele Wörter, wie in die Breite passen."""
+    words = []
+    for wd in text.split():
+        # Schriften ohne Wortzwischenräume (Chinesisch, Japanisch …): Der Browser bricht dort nach jedem Zeichen um
+        if face.width(wd) * px > limit and any(ord(ch) >= 0x2E80 for ch in wd):
+            words += [(ch, "") for ch in wd[:-1]] + [(wd[-1], " ")]
+        else:
+            words.append((wd, " "))
+    if not words:
+        return [""]
+    out, cur, glue = [], words[0][0], words[0][1]
+    for wd, sep in words[1:]:
+        t = cur + glue + wd
+        if face.width(t) * px > limit:
+            out.append(cur)
+            cur = wd
+        else:
+            cur = t
+        glue = sep
+    out.append(cur)
+    return out
+
+
+def ass_rrect(bw: float, bh: float, rad: float) -> str:
+    """Rechteck mit runden Ecken als ASS-Zeichnung (\\p4: Angaben in Achtel-Pixeln)."""
+    rad = max(0.0, min(rad, bw / 2, bh / 2))
+    k = rad * 0.5523
+
+    def p(*v):
+        return " ".join(str(int(round(x * 8))) for x in v)
+    return (f"m {p(rad, 0)} l {p(bw - rad, 0)} b {p(bw - rad + k, 0, bw, rad - k, bw, rad)} l {p(bw, bh - rad)} "
+            f"b {p(bw, bh - rad + k, bw - rad + k, bh, bw - rad, bh)} l {p(rad, bh)} b {p(rad - k, bh, 0, bh - rad + k, 0, bh - rad)} "
+            f"l {p(0, rad)} b {p(0, rad - k, rad - k, 0, rad, 0)}")
+
+
+def ass_layout(c: dict, style: dict, face: FontFace, name: tuple, w: int, h: int) -> dict:
+    """Lage eines Untertitels, eines Titels oder einer Textzeile, gesetzt wie in der Vorschau (und wie Android und Browser
+    exportieren): gleiche Schriftgröße (Geviert statt Zelle), gleiche Zeilenhöhe, Umbruch bei 88 % der Breite."""
+    title = bool(c.get("title"))
+    px = c["size"] * min(w, h) * (1.25 if h > w else 1.0) if c.get("size") else sub_px(style, w, h)
+    bg = bool(c.get("bg"))
+    pad_x, pad_y = (px * 0.3, px * 0.1) if bg else (0.0, 0.0)
+    rows = [r.strip() for r in c["text"].replace("{", "(").replace("}", ")").split("\n")]
+    wrapped = False
+    if not title:   # Titel und Textzeile sind in der Oberfläche schon passend umbrochen; Untertitel bricht dort der Browser um
+        # Die Vorschau bricht bei 88 % der Breite um. Gemessen wird hier ohne Unterschneidung (etwa 1 % breiter); die
+        # Standardschrift (Arial) läuft außerdem rund 2 % breiter als die Schrift, die die Vorschau dafür zeigt.
+        limit = (0.90 if name[0] == "Arial" else 0.888) * w - 2 * pad_x
+        split = [wrap_px(r, face, px, limit) for r in rows]
+        wrapped = any(len(x) > 1 for x in split)
+        rows = [x for part in split for x in part]
+    cw = max((face.width(r) * px for r in rows), default=0.0)
+    ch = len(rows) * SUB_LINE * px
+    box_w, box_h = (max(cw, 0.88 * w - 2 * pad_x) if wrapped else cw) + 2 * pad_x, ch + 2 * pad_y
+    al, a = "m", str(c.get("anchor") or "")
+    if len(a) == 2:      # Textzeile: an der Ecke, mit Randabstand
+        al = a[1]
+        cy = c["my"] * h + pad_y + ch / 2 if a[0] == "o" else h - c["my"] * h - pad_y - ch / 2
+        x = c["mx"] * w + pad_x if al == "l" else w - c["mx"] * w - pad_x if al == "r" else w / 2
+        bx = c["mx"] * w if al == "l" else w - c["mx"] * w - box_w if al == "r" else w / 2 - box_w / 2
+    elif title:          # Titel stehen, wo sie hingezogen wurden
+        x, cy = c["x"] * w, c["y"] * h
+        bx = x - box_w / 2
+    else:                # Untertitel bleiben im Bild (2 % Rand), wie in der Vorschau
+        m = 0.02
+        x = min(max(c["x"] * w, box_w / 2 + m * w), w - box_w / 2 - m * w) if box_w <= w * (1 - 2 * m) else w / 2
+        cy = min(max(c["y"] * h, box_h / 2 + m * h), h - box_h / 2 - m * h)
+        bx = x - box_w / 2
+    return {"c": c, "face": face, "name": name, "title": title, "px": px, "bg": bg, "rows": rows, "ch": ch, "box_w": box_w, "box_h": box_h,
+            "al": al, "x": x, "cy": cy, "bx": bx}
+
+
+def ass_spread(group: list[dict], h: int) -> None:
+    """Untertitel, die gleichzeitig stehen (Original und Übersetzung): Die Oberfläche rechnet ihre Lage ohne den Umbruch
+    bei 88 % der Breite. Bricht eine Zeile dabei um, wird der Block höher – dann rücken die Blöcke auseinander statt übereinander."""
+    group.sort(key=lambda g: g["cy"])
+    for up, lo in zip(group, group[1:]):
+        over = (up["cy"] + up["box_h"] / 2 + up["px"] * 0.2) - (lo["cy"] - lo["box_h"] / 2)
+        if over > 0:
+            up["cy"] -= over / 2
+            lo["cy"] += over / 2
+    m = 0.02 * h
+    low = group[-1]["cy"] + group[-1]["box_h"] / 2 - (h - m)
+    if low > 0:     # unten aus dem Bild: alle zusammen nach oben
+        for g in group:
+            g["cy"] -= low
+    top = m - (group[0]["cy"] - group[0]["box_h"] / 2)
+    if top > 0:
+        for g in group:
+            g["cy"] += top
+
+
+def ass_events(g: dict, style: dict, t0: str, t1: str) -> list[str]:
+    """Die Einträge zu einer Lage aus ass_layout: der Kasten als eigene Fläche, darüber jede Zeile mit fester Lage –
+    der Zeilenabstand von libass hängt sonst an der Zelle der Schrift."""
+    c, face, title, px = g["c"], g["face"], g["title"], g["px"]
+    fam, bold = g["name"]
+    col = c.get("color") or style.get("color") or "#FFFFFF"
+    ocol = c.get("outlineColor") or ("#000000" if title else style.get("outlineColor") or "#000000")
+    out_on = bool(c["outline"]) if c.get("outline") is not None else bool(style.get("outline", True))
+    cr, cg, cb = hex_rgb(col)
+    qr, qg, qb = hex_rgb(ocol)
+    look = (f"\\fn{fam}\\b{1 if bold else 0}\\fs{px * sum(face.cell):.2f}\\1c&H{cb:02X}{cg:02X}{cr:02X}&\\3c&H{qb:02X}{qg:02X}{qr:02X}&"
+            + (f"\\bord{max(1.0, px / 14):.1f}\\shad0" if out_on else "\\bord0\\shad0" if title else f"\\bord0\\shad{max(1.0, px / 20):.1f}"))
+    ev = []
+    if g["bg"]:
+        ev.append(f"Dialogue: 0,{t0},{t1},Default,,0,0,0,,{{\\an7\\pos({g['bx']:.1f},{g['cy'] - g['box_h'] / 2:.1f})\\bord0\\shad0\\1c&H000000&"
+                  f"\\1a&H{0x73 if title else 0x66:02X}&\\p4}}{ass_rrect(g['box_w'], g['box_h'], px * (0.15 if title else 0.18))}{{\\p0}}")
+    # Grundlinie: Der Browser setzt Ober- und Unterlänge mittig in die Zeile, libass richtet die Zelle der Schrift aus
+    shift = ((face.css[0] - face.css[1]) - (face.cell[0] - face.cell[1])) / 2 * px
+    an = 4 if g["al"] == "l" else 6 if g["al"] == "r" else 5
+    for k, row in enumerate(g["rows"]):
+        if row:
+            y = g["cy"] - g["ch"] / 2 + (k + 0.5) * SUB_LINE * px + shift
+            ev.append(f"Dialogue: 1,{t0},{t1},Default,,0,0,0,,{{\\an{an}\\pos({g['x']:.1f},{y:.1f}){look}}}{row}")
+    return ev
+
+
 def write_ass(cues: list[dict], style: dict, out: Path, w: int, h: int, fonts: dict | None = None):
-    """ASS-Untertitel mit fester Position je Zeile (\\an5\\pos = Mittelpunkt), wie in der Vorschau."""
+    """ASS-Untertitel mit fester Lage je Zeile, gesetzt wie in der Vorschau (ass_layout, ass_events). Die mitgegebenen
+    Schriftdateien stehen zusätzlich in der Datei selbst (Abschnitt [Fonts])."""
     fonts = fonts or {}
+    faces = getattr(fonts, "face", None) or {}
+    used: set[str] = set()
     size = sub_px(style, w, h)
     fam, fbold = fonts.get(style.get("font") or "") or ("", False)
     r, g, b = hex_rgb(style.get("color", "#FFFFFF"))
@@ -1051,7 +1370,7 @@ def write_ass(cues: list[dict], style: dict, out: Path, w: int, h: int, fonts: d
         ss, cs = divmod(cs, 100)
         return f"{hh}:{mm:02d}:{ss:02d}.{cs:02d}"
     lines = ["[Script Info]", "ScriptType: v4.00+", f"PlayResX: {w}", f"PlayResY: {h}", "WrapStyle: 2",
-             "ScaledBorderAndShadow: yes", "", "[V4+ Styles]",
+             "ScaledBorderAndShadow: yes", "Kerning: yes", "", "[V4+ Styles]",
              "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, "
              "Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, "
              "Alignment, MarginL, MarginR, MarginV, Encoding",
@@ -1061,7 +1380,32 @@ def write_ass(cues: list[dict], style: dict, out: Path, w: int, h: int, fonts: d
              f"Style: Box,{fam or 'Arial'},{size:.0f},&H00{b:02X}{g:02X}{r:02X},&H00FFFFFF,&H64000000,&H64000000,"
              f"{-1 if fbold or not fam else 0},0,0,0,100,100,0,0,3,{max(2.0, size / 6):.1f},0,5,0,0,0,1",
              "", "[Events]", "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"]
+    # Lage je Eintrag wie in der Vorschau – für mitgegebene Schriften und für die Standardschrift (Arial fett). Nur wenn sich
+    # die Maße einer Schrift nicht lesen lassen, setzt der alte Weg weiter unten den Eintrag (Größe nach Zelle, ohne Umbruch).
+    lay: dict[int, dict] = {}
     for c in cues:
+        key = (c.get("font") or "") if (c.get("title") or "font" in c) else (style.get("font") or "")
+        face, name = None, ("Arial", True)
+        if key and key in fonts:
+            used.add(key)
+            if key in faces and faces[key].ok and fonts[key][0]:
+                face, name = faces[key], fonts[key]
+        else:   # Standardschrift – auch dann, wenn eine gewählte Schrift fehlt
+            face = standard_face()
+        if face is not None:
+            lay[id(c)] = ass_layout(c, style, face, name, w, h)
+    same: dict[tuple, list[dict]] = {}
+    for c in cues:
+        if id(c) in lay and not c.get("title"):
+            same.setdefault((round(c["start"], 3), round(c["end"], 3)), []).append(lay[id(c)])
+    for group in same.values():
+        if len(group) > 1:
+            ass_spread(group, h)
+    for c in cues:
+        placed = lay.get(id(c))
+        if placed is not None:
+            lines += ass_events(placed, style, ts(c["start"]), ts(c["end"]))
+            continue
         rows = c["text"].split("\n")
         csize = c["size"] * min(w, h) * (1.25 if h > w else 1.0) if c.get("size") else size
         bw = max(len(x) for x in rows) * csize * 0.56
@@ -1099,6 +1443,19 @@ def write_ass(cues: list[dict], style: dict, out: Path, w: int, h: int, fonts: d
             sty = "Box"
             ov = re.sub(r"\\(bord|shad)[0-9.]+", "", ov) + f"\\bord{max(2.0, csize / 6):.1f}\\shad0"
         lines.append(f"Dialogue: 0,{ts(c['start'])},{ts(c['end'])},{sty},,0,0,0,,{{{ov}}}{txt}")
+    # Die gebrauchten Schriften stehen auch in der Datei selbst: Der Schriftordner des Exports (fontsdir) ist dann der zweite Weg.
+    sec = []
+    for n, key in enumerate(sorted(used)):
+        face = faces.get(key)
+        if face is None or len(face.data) > FONT_EMBED_MAX:
+            continue
+        if getattr(face, "ssa", None) is None:
+            face.ssa = base64.b64encode(face.data).rstrip(b"=").translate(_SSA64).decode("ascii")
+        sec.append(f"fontname: schrift{n}_0.ttf")
+        sec += [face.ssa[j:j + 80] for j in range(0, len(face.ssa), 80)]
+    if sec:
+        at = lines.index("[Events]")
+        lines[at:at] = ["[Fonts]"] + sec + [""]
     out.write_text("\n".join(lines) + "\n", encoding="utf-8-sig")
 
 
@@ -1567,17 +1924,24 @@ def ffmpeg_graph(job, inputs, graph, tail, total, tmp, base=0.0, span=1.0):
     log(f"ffmpeg startet: {sum(1 for a in inputs if a == '-i')} Eingaben, Graph {len(graph)} Zeichen\n{graph[:20000]}")
     flag = ["-/filter_complex", str(script)] if ffmpeg_major() >= 7 else ["-filter_complex_script", str(script)]
     try:
-        run_ffmpeg(inputs + flag + tail, total, job, base, span, cwd=tmp)
+        return run_ffmpeg(inputs + flag + tail, total, job, base, span, cwd=tmp)
     except RuntimeError as e:
         if "Unrecognized option" in str(e) or "Option not found" in str(e):
             other = ["-filter_complex_script", str(script)] if flag[0].startswith("-/") else ["-/filter_complex", str(script)]
-            run_ffmpeg(inputs + other + tail, total, job, base, span, cwd=tmp)
-        else:
-            raise
+            return run_ffmpeg(inputs + other + tail, total, job, base, span, cwd=tmp)
+        raise
 
 
-def render_plan(job: dict, plan: dict, out: Path, with_video: bool, cues: list[dict]):
+def render_plan(job: dict, plan: dict, out: Path, with_video: bool, cues: list[dict]) -> list[str]:
+    """Rechnet Video oder Ton. Liefert die Namen der Schriften, die im Video nicht angekommen sind (fehlende Datei oder von
+    libass nicht genommen) – dort steht dann die Standardschrift, und der Export sagt das dazu."""
     tmp = Path(tempfile.mkdtemp(prefix="textschnitt_"))
+    lost: list[str] = []
+
+    def checked(err, fonts):
+        for name in font_check(err or "", fonts):
+            if name not in lost:
+                lost.append(name)
     try:
         W, H = int(plan["width"]) // 2 * 2, int(plan["height"]) // 2 * 2
         total = float(plan.get("total") or 1)
@@ -1587,6 +1951,7 @@ def render_plan(job: dict, plan: dict, out: Path, with_video: bool, cues: list[d
         burn = with_video and bool(cues)
         subs = plan.get("subs") or {}
         fonts = collect_fonts(subs.get("fonts") or {}, tmp / "fonts") if burn else {}
+        lost += [n for n in getattr(fonts, "missing", []) if n not in lost]
         vtail = ["-c:v", "libx264", "-crf", QUALITY_CRF.get(plan.get("quality"), "20"), "-preset", "medium",
                  "-pix_fmt", "yuv420p", "-r", f"{float(plan.get('fps') or 30):.3f}"]
         segs = plan["segments"]
@@ -1594,7 +1959,7 @@ def render_plan(job: dict, plan: dict, out: Path, with_video: bool, cues: list[d
             inputs, graph = build_graph(plan, False, None)
             tail = ["-map", "[aout]", "-vn"] + AUDIO_CODECS.get(plan.get("audioFormat") or "wav", AUDIO_CODECS["wav"]) + [str(out)]
             ffmpeg_graph(job, inputs, graph, tail, total, tmp)
-            return
+            return lost
         if len(segs) <= CHUNK:
             ass = None
             if burn:
@@ -1602,8 +1967,8 @@ def render_plan(job: dict, plan: dict, out: Path, with_video: bool, cues: list[d
                 write_ass(cues, subs.get("style") or {}, tmp / ass, W, H, fonts)
             inputs, graph = build_graph(plan, True, ass)
             tail = ["-map", "[vout]", "-map", "[aout]"] + vtail + ["-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(out)]
-            ffmpeg_graph(job, inputs, graph, tail, total, tmp)
-            return
+            checked(ffmpeg_graph(job, inputs, graph, tail, total, tmp), fonts)
+            return lost
         # Viele Abschnitte: in Stücken zu je CHUNK Abschnitten fertig rechnen (gleiche Qualität, Ton unkomprimiert),
         # dann ohne erneutes Kodieren aneinanderhängen. So bleibt der Speicherbedarf klein.
         parts, o0 = [], 0.0
@@ -1621,7 +1986,7 @@ def render_plan(job: dict, plan: dict, out: Path, with_video: bool, cues: list[d
             part = tmp / f"stueck_{n:03d}.mkv"
             tail = ["-map", "[vout]", "-map", "[aout]"] + vtail + ["-c:a", "pcm_s16le", str(part)]
             job["message"] = f"Exportiere Teil {n + 1} von {len(groups)} …"
-            ffmpeg_graph(job, inputs, graph, tail, dur, tmp, base=0.97 * o0 / total, span=0.97 * dur / total)
+            checked(ffmpeg_graph(job, inputs, graph, tail, dur, tmp, base=0.97 * o0 / total, span=0.97 * dur / total), fonts)
             parts.append(part)
             o0 += dur
         lst = tmp / "stuecke.txt"
@@ -1629,6 +1994,7 @@ def render_plan(job: dict, plan: dict, out: Path, with_video: bool, cues: list[d
         job["message"] = "Teile werden zusammengefügt …"
         run_ffmpeg(["-f", "concat", "-safe", "0", "-i", str(lst), "-map", "0:v", "-map", "0:a", "-c:v", "copy",
                     "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(out)], total, job, 0.97, 0.03, cwd=tmp)
+        return lost
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -1835,7 +2201,7 @@ def write_concat(plan: dict, name: str, cues: list[dict], style: dict) -> Path:
         d = min(cu["end"], cursor) - cu["start"]
         if d <= 0:
             continue
-        clips.append({**base, "id": f"c{len(clips) + 1}", "trackId": "T4" if cu.get("line") else "T3", "kind": "text", "mediaId": "",
+        clips.append({**base, "id": f"c{len(clips) + 1}", "trackId": "T5" if cu.get("src") else "T4" if cu.get("line") else "T3", "kind": "text", "mediaId": "",
                       "name": cu["text"].split("\n")[0][:40], "start": round(cu["start"], 6), "duration": round(d, 6),
                       "offsetX": round(cu["x"] - 0.5, 4), "offsetY": round(cu["y"] - 0.5, 4),
                       "text": {"content": cu["text"], "fontSize": round(cu["size"] * 0.78, 4) if cu.get("size") else CONCAT_SIZES.get(style.get("size", "mittel"), 0.045),
@@ -1847,9 +2213,10 @@ def write_concat(plan: dict, name: str, cues: list[dict], style: dict) -> Path:
         if c["kind"] == "text":
             c.pop("sourceStart", None)
             c.pop("preservePitch", None)
-    # Spuren: T1 Hauptspur, Videospuren V1…, T3 Untertitel und Titel, T4 Textzeile (Reihenfolge der Liste = Stapel)
+    # Spuren: T1 Hauptspur, Videospuren V1…, T3 Untertitel und Titel, T4 Textzeile, T5 Quellenzeilen (Reihenfolge der Liste = Stapel)
+    text_tracks = (3, 4, 5) if any(c.get("src") for c in cues) else (3, 4)
     tracks = [{"id": "T1", "muted": False, "visible": True}] + [{"id": f"V{k}", "muted": False, "visible": True} for k in sorted(ovl_tracks)] + \
-             [{"id": f"T{i}", "muted": False, "visible": True} for i in (3, 4)] + [{"id": f"A{k}", "muted": False, "visible": True} for k in sorted(aud_tracks)]
+             [{"id": f"T{i}", "muted": False, "visible": True} for i in text_tracks] + [{"id": f"A{k}", "muted": False, "visible": True} for k in sorted(aud_tracks)]
     timeline = {"id": "TL1", "name": "Timeline 1", "tracks": tracks, "clips": clips, "video": video}
     doc = {"activeTimelineId": "TL1", "clips": clips, "concat": "0.1.0", "fonts": [], "media": media,
            "name": folder.name, "timelines": [timeline], "tracks": tracks, "version": 1, "video": video}
@@ -2051,7 +2418,9 @@ def write_capcut(plan: dict, root: Path, name: str, cues: list[dict], style: dic
         tracks.append({"attribute": 0, "flag": 0, "id": uuid.uuid4().hex, "is_default_name": False, "name": f"Ton {trk}",
                        "segments": aud_by[trk], "type": "audio"})
     # Textspuren: Untertitel und Titel auf einer, die dauerhafte Textzeile auf einer eigenen (so lässt sie sich in CapCut für sich ausblenden)
-    for tname, tcues in (("Untertitel", [c for c in cues if not c.get("line")]), ("Textzeile", [c for c in cues if c.get("line")])):
+    # und die Quellenzeilen auf einer dritten: Sie überschneiden sich zeitlich mit der Textzeile
+    for tname, tcues in (("Untertitel", [c for c in cues if not c.get("line")]), ("Textzeile", [c for c in cues if c.get("line") and not c.get("src")]),
+                         ("Quellen", [c for c in cues if c.get("line") and c.get("src")])):
         if not tcues:
             continue
         tsegs = []
@@ -2132,7 +2501,12 @@ def export_job(job: dict, plan: dict):
         outdir.mkdir(exist_ok=True)
         if fmt == "video":
             out = outdir / f"{stem}.mp4"
-            render_plan(job, plan, out, True, cues)
+            lost = render_plan(job, plan, out, True, cues)
+            if lost:   # die Standardschrift steht im Video: nicht stillschweigend, die Oberfläche zeigt den Hinweis beim Ergebnis
+                names = " und ".join([", ".join(f"„{n}“" for n in lost[:-1]), f"„{lost[-1]}“"] if len(lost) > 1 else [f"„{lost[0]}“"])
+                result["warn"] = (f"Achtung: Die Schrift {names} ließ sich beim Export nicht laden. Im Video steht dafür die Standardschrift. "
+                                  "Einzelheiten zeigt der Fehlerbericht (Einstellungen → Fehlerbericht).")
+                log("Export: " + result["warn"])
         else:
             out = outdir / f"{stem}.{plan.get('audioFormat') or 'wav'}"
             render_plan(job, plan, out, False, [])
@@ -2160,15 +2534,82 @@ def export_job(job: dict, plan: dict):
         raise RuntimeError(f"Unbekanntes Format: {fmt}")
     if spoken_cues(cues) and fmt != "concat":   # die SRT-Datei enthält die Untertitel; Titel und Textzeile stehen im Bild
         outdir.mkdir(exist_ok=True)
-        srt = outdir / f"{stem}.srt"
+        # Sind die Untertitel ins Video eingebrannt, trägt die SRT-Datei einen anderen Namen als das Video: Viele
+        # Abspielprogramme (z. B. VLC) blenden eine gleichnamige SRT-Datei von selbst ein – dann stünden die Untertitel doppelt
+        # im Bild, die eingeblendeten in der Schrift des Abspielprogramms. Die frühere Datei desselben Exports weicht.
+        plain, apart = outdir / f"{stem}.srt", outdir / f"Untertitel – {stem}.srt"
+        srt, old = (apart, plain) if fmt == "video" and plan.get("burn", True) else (plain, apart)
         write_srt(spoken_cues(cues), srt)
+        try:
+            old.unlink(missing_ok=True)
+        except OSError as e:
+            log(f"SRT-Datei {old.name} ließ sich nicht entfernen: {e!r}")
         files.append(srt)
+    # Textfassung (gesprochener Text mit Kapiteln, Sprecher:innen und Quellen): liegt neben dem Video bzw. der Tonspur
+    tf = plan.get("textfile")
+    if fmt in ("video", "audio") and isinstance(tf, dict) and str(tf.get("text") or "").strip():
+        txt = outdir / f"{stem} – Textfassung.txt"
+        txt.write_text(str(tf["text"]).replace("\r\n", "\n"), encoding="utf-8")
+        files.append(txt)
     for f in files + [outdir]:
         CREATED.add(norm_path(str(f)))
     allow(files[0]) if files and files[0].is_file() else None
     result.update(files=[str(f) for f in files], folder=str(outdir))
     log(f"Export erstellt: {', '.join(result['files'])}")
     return result
+
+
+PROBE_FONTS = {"poppins": "Poppins-Bold.ttf", "anton": "Anton-Regular.ttf"}
+
+
+def font_selftest(keys: tuple = ("poppins", "anton")) -> dict:
+    """Probe für den Selbsttest der gebauten App und für die Prüfläufe: exportiert ein kurzes Video mit eingebrannten
+    Untertiteln – ohne, in der Standardschrift und in mitgelieferten Schriften – und misst am fertigen Bild nach: Die gewählte
+    Schrift steht im Video (libass hat die mitgegebene Datei genommen) und der Text ist so breit, wie die Vorschau ihn zeigt."""
+    tmp = Path(tempfile.mkdtemp(prefix="textschnitt_probe_"))
+    w, h, text = 640, 360, "Hamburgefonstiv 123"
+    try:
+        video = tmp / "probe.mp4"
+        subprocess.run([FFMPEG, "-v", "error", "-y", "-f", "lavfi", "-i", f"color=c=0x305070:size={w}x{h}:rate=25", "-f", "lavfi", "-i", "sine=frequency=440",
+                        "-t", "2", "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", "-c:a", "aac", str(video)],
+                       check=True, capture_output=True, stdin=subprocess.DEVNULL, **NOWIN)
+        style = {"enabled": True, "mode": "lines", "size": "mittel", "x": 0.5, "y": 0.82, "color": "#FFFFFF", "outline": True}
+        px = sub_px(style, w, h)
+
+        def shot(font: str | None):
+            st = {**style, **({"font": font} if font else {})}
+            plan = {"format": "video", "name": "probe_" + (font or ("standard" if font == "" else "ohne")), "width": w, "height": h, "fps": 25, "total": 2,
+                    "segments": [{"kind": "main", "src": 0, "uri": str(video), "in": 0, "out": 2, "zooms": [], "hasAudio": True, "hasVideo": True,
+                                  "speed": 1, "vol": 1, "bright": 0, "contrast": 0, "sat": 0, "gray": False, "tx": 0, "ty": 0, "sc": 1}],
+                    "overlays": [], "burn": font is not None, "quality": "klein",
+                    "subs": {"cues": [{"start": 0.1, "end": 1.9, "text": text, "x": 0.5, "y": 0.82}], "style": st,
+                             "fonts": {font: {"family": "TS " + font, "file": PROBE_FONTS[font]}} if font else {}},
+                    "sources": [{"uri": str(video), "name": video.name, "duration": 2, "width": w, "height": h, "fps": 25, "hasAudio": True, "hasVideo": True}]}
+            res = export_job({"cancel": False, "progress": 0, "message": ""}, plan)
+            raw = subprocess.run([FFMPEG, "-v", "error", "-ss", "1", "-i", res["playable"], "-frames:v", "1", "-vf", f"crop={w}:120:0:{h - 120}",
+                                  "-f", "rawvideo", "-pix_fmt", "gray", "pipe:1"], capture_output=True, stdin=subprocess.DEVNULL, **NOWIN).stdout
+            return raw, res.get("warn")
+
+        def span(raw: bytes, ref: bytes) -> int:   # Breite der Stelle, an der sich das Bild durch den Untertitel ändert
+            cols = [x for x in range(w) if any(abs(raw[y * w + x] - ref[y * w + x]) > 40 for y in range(120))] if len(raw) == len(ref) == w * 120 else []
+            return cols[-1] - cols[0] + 1 if cols else 0
+
+        ref, _ = shot(None)
+        out: dict = {"ok": True, "schriften": {}}
+        frames = {}
+        for key in ("",) + tuple(keys):
+            raw, warn = shot(key)
+            frames[key] = raw
+            face = FontFace((WEB_DIR / "fonts" / PROBE_FONTS[key]).read_bytes()) if key else standard_face()
+            want = face.width(text) * px + 2 * max(1.0, px / 14) if face else 0
+            got = span(raw, ref)
+            other = sum(1 for a, b in zip(frames[""], raw) if abs(a - b) > 40) / max(1, len(raw)) if key and len(raw) == len(frames[""]) else None
+            good = not warn and got > 0 and (not want or abs(got / want - 1) < 0.08) and (other is None or other > 0.01)
+            out["schriften"][key or "standard"] = {"breite": got, "soll": round(want, 1), "hinweis": warn, "anders_als_standard": None if other is None else round(other, 4), "ok": good}
+            out["ok"] = out["ok"] and good
+        return out
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 # ───────────────────────────── Projekte ─────────────────────────────

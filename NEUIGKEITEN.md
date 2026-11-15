@@ -2,6 +2,17 @@
 
 Was sich mit jeder Version von HoneyCut ändert. Die Windows-App zeigt diese Stichpunkte an, sobald eine neuere Version bereitsteht.
 
+## 2.28.0 · Quellen und Belege
+- Quellen zu Aussagen (Taste R): Medium, Titel, Datum und Link hinterlegen; im Bild steht für die Dauer des Satzes eine dezente Quellenzeile, die Quellenliste lässt sich für die Beschreibung kopieren
+- „Beleg nötig“ (Umschalt+R): offene Stellen markieren; der Export fragt nach, solange Belege fehlen
+- Bauchbinden mit Name und Funktion im eigenen Design, für zugeordnete Personen von selbst beim ersten Auftritt
+- Prüfung auf Barrierefreiheit: Hinweis bei fehlenden, zu kleinen oder kontrastarmen Untertiteln, je mit Knopf zum Beheben
+- Textfassung des Videos als Textdatei neben dem Export, mit Kapiteln, Sprecher:innen und Quellen
+- Zeitleiste im Text-Reiter: Schnitte gleich dort nachziehen, teilen und kürzen; die Wörter stehen unter der Hauptspur
+- Windows: Untertitel, Titel und Textzeile stehen im Video so groß und so umbrochen wie in der Vorschau. Gewählte Schriften kamen bisher deutlich kleiner an (Poppins auf 57 % der eingestellten Größe), und lange Zeilen liefen im Hochformat aus dem Bild
+- Windows: Lässt sich eine gewählte Schrift nicht laden, sagt der Export es dazu; bisher stand dann stillschweigend die Standardschrift im Video
+- Windows: Bei eingebrannten Untertiteln heißt die SRT-Datei „Untertitel – Name.srt“. Abspielprogramme wie VLC blenden eine gleichnamige SRT-Datei von selbst ein, die Untertitel standen dann doppelt im Bild
+
 ## 2.27.0 · Kleine Helfer
 - Projektliste mit Suche, Reihenfolge nach Datum, Namen oder Länge, Vorschaubild und „Duplizieren“
 - Kapitel im Text setzen (Taste C): fertige Zeitstempel für die YouTube-Beschreibung, die dem Schnitt folgen

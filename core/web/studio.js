@@ -23,14 +23,16 @@ function itemOutRange(it){
 }
 
 // ───────── Zeichnen ─────────
-function renderStudio(){ renderTimeline(); renderBin(); }
+function renderStudio(){ renderTimeline(); if (!tlLite()) renderBin(); }
 function renderTimeline(){
-  if (!P || !studioOn()) return;
+  if (!P || !tlOn()) return;
   const pad = padL();
   measureTl(TL.mode === 'center' ? Math.round(outPos * TL.pps) : null);   // fester Zeiger: gleich wird dorthin gescrollt
   tlInner.style.width = Math.ceil(total * TL.pps + pad + half() + 40) + 'px';
   $('#tlTotal').textContent = '/ ' + fmtS(total);
-  renderRuler(pad); renderMain(pad); renderOvl(pad); renderAud(pad); renderFx(pad); renderTitles(pad); renderTxt(pad);
+  // Schnitt-Zeitleiste im Text-Reiter: nur Zeitskala, Hauptspur und die Wörter darunter
+  const lite = tlLite(); if (lite && TL.sel && TL.sel.kind !== 'main') TL.sel = null;
+  renderRuler(pad); renderMain(pad); if (lite) renderWords(pad); else { renderOvl(pad); renderAud(pad); renderFx(pad); renderTitles(pad); renderTxt(pad); }
   paintLinks(); restoreSel(); updateTools(); paintBar();
   if (TL.mode === 'center') syncScroll(outPos, true); else placeHead(outPos);
 }
@@ -63,8 +65,33 @@ function renderRuler(pad){
 }
 // Nach dem Scrollen: reicht die angelegte Zeitskala noch? (mit 600 Bildpunkten Vorlauf)
 function rulerFollow(){
-  const R = rulerRange; if (!R || !P || !studioOn()) return;
+  const R = rulerRange; if (!R || !P || !tlOn()) return;
   if ((R[0] > 0 && TLV.l < R[0] + 600) || TLV.r > R[1] - 600) renderRuler(R[2]);
+  const Wd = wordsRange; if (Wd && tlLite() && ((Wd[0] > 0 && TLV.l < Wd[0] + 600) || TLV.r > Wd[1] - 600)) renderWords(Wd[2]);
+}
+// Wörter unter der Hauptspur (nur in der Schnitt-Zeitleiste des Text-Reiters): Sie zeigen, wo ein Schnitt im Verhältnis zu den
+// Wörtern sitzt. Angeschnittene Wörter sind hervorgehoben, im Text gelöschte, die noch zu hören sind, durchgestrichen.
+// Angelegt wird wie bei der Zeitskala nur der sichtbare Teil und ein Stück daneben.
+let wordsRange = null;
+function renderWords(pad){
+  const tr = $('#trWords'); tr.textContent = ''; wordsRange = null; if (!tlLite() || !tokens.length) return;
+  const x0 = Math.max(0, TLV.l - RULER_PAD), x1 = TLV.r + RULER_PAD, o0 = (x0 - pad) / TL.pps, o1 = (x1 - pad) / TL.pps, frag = document.createDocumentFragment();
+  wordsRange = [x0, x1, pad];
+  if (TL.pps < 22){ tr.classList.add('far'); return; }   // weit herausgezoomt wären die Wörter nicht zu lesen
+  tr.classList.remove('far');
+  for (const g of timeline){
+    if (g.kind !== 'main') continue; const sp = g.speed || 1; if (g.o + segDur(g) < o0 || g.o > o1) continue;
+    for (let i = Math.max(0, tokAtSrc(g.in + 0.001)); i < tokens.length && tokens[i].s < g.out; i++){
+      const t = tokens[i]; if (t.src !== g.si || !isTextTok(i) || !tokText(t)) continue;
+      const a = Math.max(wS(t), g.in), e = Math.min(wE(t), g.out); if (e - a < 0.015) continue;
+      const o = g.o + (a - g.in) / sp, w = (e - a) / sp; if (o + w < o0 || o > o1) continue;
+      const gone = deleted.has(i), part = !gone && (a > wS(t) + 0.03 || e < wE(t) - 0.03);
+      const el = document.createElement('span'); el.className = 'wd' + (gone ? ' gone' : part ? ' part' : ''); el.dataset.i = i;
+      el.title = gone ? 'Im Text gelöscht, hier aber noch zu hören – die Kante des Clips ziehen' : part ? 'Angeschnitten: Ein Teil des Worts fehlt – die Kante des Clips ziehen' : '';
+      el.style.left = (pad + o * TL.pps) + 'px'; el.style.width = Math.max(2, w * TL.pps - 1) + 'px'; el.textContent = tokText(t); frag.append(el);
+    }
+  }
+  tr.append(frag);
 }
 function blk(cls, o, d, pad, attrs){
   const b = document.createElement('div'); b.className = 'blk ' + cls;
@@ -226,7 +253,7 @@ function renderAud(pad){
     const tr = $('#trAud' + (a.x.track || 1)); if (!tr) continue;
     const b = blk('aud', a.at, a.end - a.at, pad, {id: a.x.id});
     { const it = a.x, span = Math.max(0.01, (it.out ?? (a.end - a.at)) - (it.in || 0)); b._m = {inS: it.in || 0, d: span, speed: span / Math.max(0.01, a.end - a.at), src: {uri: it.clip.uri}};
-      if (!envDone.has(it.clip.uri) && window.envOfUri && !P.sources.some(x => x.uri === it.clip.uri)) envOfUri(it.clip.uri).then(e => { if (e && !envDone.has(it.clip.uri)){ envDone.set(it.clip.uri, e); if (studioOn()) renderTimeline(); } });
+      if (!envDone.has(it.clip.uri) && window.envOfUri && !P.sources.some(x => x.uri === it.clip.uri)) envOfUri(it.clip.uri).then(e => { if (e && !envDone.has(it.clip.uri)){ envDone.set(it.clip.uri, e); if (tlOn()) renderTimeline(); } });
       paintMedia(b, b._m); }
     b.insertAdjacentHTML('beforeend', `<span class="txt"></span>`); b.querySelector('.txt').textContent = '♪ ' + a.x.clip.name + ((a.x.vol ?? 1) !== 1 ? ` · ${Math.round((a.x.vol ?? 1) * 100)} %` : '');
     tr.append(b);
@@ -257,9 +284,14 @@ function renderTitles(pad){
   for (const t of P.items.filter(x => x.type === 'title')){
     const [a, e] = itemOutRange(t);
     const b = blk('title', a, e - a, pad, {id: t.id});
-    b.insertAdjacentHTML('beforeend', `<span class="txt"></span>`); b.querySelector('.txt').textContent = 'T ' + (t.text || 'Titel');
+    b.insertAdjacentHTML('beforeend', `<span class="txt"></span>`); b.querySelector('.txt').textContent = t.lt ? 'Bauchbinde · ' + (t.name || '') : 'T ' + (t.text || 'Titel');
+    if (t.lt) b.classList.add('lt');
     tr.append(b);
   }
+  // Bauchbinden, die von selbst beim ersten Auftritt einer Person erscheinen: zur Übersicht, ohne Griffe
+  tr.querySelectorAll('.lt-auto').forEach(x => x.remove());
+  for (const x of lowerList()) if (x.spk){ const g = document.createElement('div'); g.className = 'lt-auto'; g.style.left = (pad + x.a * TL.pps) + 'px'; g.style.width = Math.max(4, (x.e - x.a) * TL.pps - 2) + 'px';
+    g.title = `Bauchbinde von ${x.name}: erscheint beim ersten Auftritt. Anklicken öffnet die Bauchbinden.`; g.textContent = 'Bauchbinde · ' + x.name; tr.append(g); }
 }
 function renderTxt(pad){
   const tr = $('#trTxt'); tr.innerHTML = '';
@@ -318,7 +350,7 @@ tlEl.addEventListener('scroll', () => {
   const first = TL.seekPending == null; TL.seekPending = o;
   if (first) requestAnimationFrame(() => { const v = TL.seekPending; TL.seekPending = null; seekOut(v, false); TL.expect = Math.round(v * TL.pps); });
 }, {passive:true});
-(function follow(){ if (P && studioOn() && playing && !TL.drag) followHead(outPos); requestAnimationFrame(follow); })();
+(function follow(){ if (P && tlOn() && playing && !TL.drag) followHead(outPos); requestAnimationFrame(follow); })();
 function setMode(m){ TL.mode = m; try { localStorage.setItem('ts-tl-mode', m); } catch(_){} tlEl.classList.toggle('mode-move', m === 'move'); renderTimeline(); revealHead(outPos); }
 tlEl.classList.toggle('mode-move', TL.mode === 'move');
 // Zeit unter einem Bildschirm-X
@@ -408,6 +440,10 @@ tlInner.addEventListener('click', e => {
     if (e.target.dataset.o != null){ go(+e.target.dataset.o); return; }
     const it = P.items.find(x => x.id === b.dataset.id), a = it && ovOf(it); if (a) go(a.at + +e.target.dataset.t); return; }
   if (TL.pick){ if (k){ if (TL.pick.has(k)) TL.pick.delete(k); else TL.pick.add(k); paintLinks(); updateTools(); } return; }
+  if (tlLite()){   // Schnitt-Zeitleiste: Wort anklicken markiert es im Text, Einschübe sind hier nicht auswählbar
+    const wd = e.target.closest('.wd'); if (wd){ const i = +wd.dataset.i; selA = selB = i; showSel(); if (spans[i]) spans[i].scrollIntoView({block: 'center', behavior: 'smooth'});
+      if (playing) pausePlay(); seekOut(srcToOut(snapSrc(wS(tokens[i]))), false); placeHead(outPos); return; }
+    if (b && !b.classList.contains('main')){ select(null); return; } }
   if (k && (e.ctrlKey || e.metaKey || e.shiftKey) && selKey() && selKey() !== k){ startPick(k); return; }
   if (!b){ select(null); if (TL.mode === 'move' && !e.target.closest('.ruler')){ if (playing) pausePlay(); seekOut(timeAtX(e.clientX), false); placeHead(outPos); } return; }
   if (b.classList.contains('sel') && TL.justSelected){ TL.justSelected = false; return; }
@@ -472,6 +508,7 @@ tlInner.addEventListener('pointerdown', e => {
     const nb = e.target.closest('.blk'); if (!nb) return; selectBlock(nb); TL.justSelected = true; b = selBlock(); if (!b) return; }
   if (!b) return;
   const h = e.target.closest('.h');
+  if (tlLite() && (!h || !TL.sel || TL.sel.kind !== 'main')) return;   // Schnitt-Zeitleiste: nur die Kanten lassen sich ziehen
   const s = TL.sel, it = s.kind === 'ovl' || s.kind === 'aud' || s.kind === 'zoom' || s.kind === 'fx' || s.kind === 'title' ? selItem() : null;
   const start = () => {
     TL.drag = {b, side: h ? (h.classList.contains('l') ? 'l' : 'r') : 'm', x0: e.clientX, sl0: tlEl.scrollLeft, left0: parseFloat(b.style.left), w0: parseFloat(b.style.width), moved: false, d: 0, pts: snapPoints(it)};
@@ -663,12 +700,19 @@ function linkedDrag(side, d){
 // ───────── Werkzeuge ─────────
 const T = (icon, label, fn, cls = '') => ({icon, label, fn, cls});
 function toolList(){
+  if (tlLite()) return toolListLite();
   if (TL.pick) return [T('🔗', `Verbinden (${TL.pick.size})`, doLink), T('✕', 'Abbrechen', endPick)];
   if (Crop.it){ const fa = clipAspect(Crop.it.clip), R = (lbl, v) => T(Crop.ratio != null && v != null && Math.abs(Crop.ratio - v) < 1e-3 ? '◆' : '◰', lbl, () => { cropRatio(v); updateTools(); });
     return [T('✓', 'Fertig', () => endCrop(true), 'primary'), R('Frei', null), R('Original', fa), R('1:1', 1), R('9:16', 9 / 16), R('16:9', 16 / 9), R('4:5', 0.8),
       T('↺', 'Ganzes Bild', () => { resetCrop(); updateTools(); }), T('✕', 'Abbrechen', () => endCrop(false))]; }
   const lt = linkTools(), cp = TL.sel ? [T('⧉', 'Kopieren', copySel), T('⧉', 'Duplizieren', duplicateSel)] : [];
   return [...toolListBase(), ...cp, ...(CLIP ? [T('📋', 'Einfügen', () => pasteClip())] : []), ...lt];
+}
+// Schnitt-Zeitleiste im Text-Reiter: nur teilen, löschen und die Kanten bildgenau versetzen
+function toolListLite(){
+  const s = TL.sel, cut = [T('✂', 'Teilen', splitHere), T('⌫', 'Bis hier weg', () => (s ? cutSel('l') : cutTo('l'))), T('⌦', 'Ab hier weg', () => (s ? cutSel('r') : cutTo('r')))];
+  if (!s || s.kind !== 'main') return cut;
+  return [...cut, T('🗑', 'Löschen', delSel, 'danger'), T('⇤', 'Anfang −1', () => nudge('l', -1)), T('⇥', 'Anfang +1', () => nudge('l', 1)), T('⇤', 'Ende −1', () => nudge('r', -1)), T('⇥', 'Ende +1', () => nudge('r', 1))];
 }
 function linkTools(){
   const k = selKey(), o = k && objOfKey(k); if (!o) return [];
@@ -695,7 +739,7 @@ function toolListBase(){
   if (s.kind === 'zoom'){ const it = selItem(); return [T('◎', 'Mittelpunkt', () => openItem(it.id)), T('⟳', it.kind === 'punch' ? 'Sprung' : it.kind === 'in' ? 'Fahrt rein' : 'Fahrt raus', cycleZoomKind),
     T('−', 'Schwächer', () => zoomStrength(-0.05)), T('＋', 'Stärker', () => zoomStrength(0.05)), T('🗑', 'Löschen', delSel, 'danger'), ...cuts]; }
   if (s.kind === 'fx'){ const it = selItem(); return [T('⚙', 'Anpassen', () => openFxItem(it)), T('🗑', 'Löschen', delSel, 'danger'), ...cuts]; }
-  if (s.kind === 'title'){ const it = selItem(); return [T('✎', 'Text & Stil', () => editTitle(it.id)), T('🗑', 'Löschen', delSel, 'danger'), ...cuts]; }
+  if (s.kind === 'title'){ const it = selItem(); return [T('✎', it.lt ? 'Name & Funktion' : 'Text & Stil', () => editTitle(it.id)), T('🗑', 'Löschen', delSel, 'danger'), ...cuts]; }
   if (s.kind === 'cue'){ const c = selCue(); return [T('✎', 'Text', editCue), T('✂', 'Teilen', splitCue), ...cuts, T(c && c.off ? '👁' : '⦸', c && c.off ? 'Einblenden' : 'Ausblenden', () => { commit(() => c.off = !c.off, false); }),
     ...(c && c.own ? [T('🗑', 'Löschen', delSel, 'danger')] : [T('⇄', 'Vom Text lösen', () => { commit(() => detachCue(c), false); toast('Eigener Untertitel – Text und Zeit hängen nicht mehr am Transkript'); })]),
     ...(c && c.x != null ? [T('⌖', 'Position ↺', () => { commit(() => { delete c.x; delete c.y; }, false); placeOverlay(); })] : []),
@@ -708,10 +752,12 @@ function updateTools(){
   for (const t of toolList()){ const b = document.createElement('button'); b.className = 'tool ' + t.cls; b.innerHTML = `<i>${t.icon}</i>${t.label}`; b.onclick = t.fn; box.append(b); }
   $('#selLbl').textContent = !s ? 'Abspiellinie' : s.kind === 'main' ? 'Clip' : s.kind === 'insert' ? 'Einschub' : s.kind === 'cue' ? 'Untertitel' : TYPE_LBL[(selItem() || {}).type] || '';
   const info = $('#tlInfo');
-  if (!s) info.textContent = FINE ? 'Klick in die Spur setzt den Zeiger · Clip anklicken oder ziehen · Rechtsklick für Werkzeuge · ⌨ zeigt alle Tastenkürzel' : 'Wische zum Spulen · zwei Finger zoomen · Clip antippen zum Bearbeiten';
+  if (tlLite()) info.textContent = g && s.kind === 'main' ? `${fmtS(g.o)} – ${fmtS(g.o + segDur(g))} (${fmtD(segDur(g))} s) · Griffe an den Kanten ziehen verschiebt den Schnitt · „Anfang/Ende ±1“ versetzt ihn um ein Bild`
+    : FINE ? 'Clip anklicken, dann die Griffe an den Kanten ziehen · Klick in die Zeitskala setzt den Zeiger · , und . schneiden bis zur bzw. ab der Abspiellinie' : 'Clip antippen, dann die Griffe an den Kanten ziehen · wischen zum Spulen';
+  else if (!s) info.textContent = FINE ? 'Klick in die Spur setzt den Zeiger · Clip anklicken oder ziehen · Rechtsklick für Werkzeuge · ⌨ zeigt alle Tastenkürzel' : 'Wische zum Spulen · zwei Finger zoomen · Clip antippen zum Bearbeiten';
   else if (g) info.textContent = `${fmtS(g.o)} – ${fmtS(g.o + segDur(g))} (${fmtD(segDur(g))} s)${g.fx && fxBadges(g.fx) ? ' · ' + fxBadges(g.fx) : ''} · Griffe ziehen zum Trimmen · Clip ${FINE ? 'ziehen' : 'halten und ziehen'} zum Umsortieren`;
   else if (s.kind === 'cue'){ const c = selCue(), t = c && cueTimes(c); info.textContent = t ? `${fmtS(t.s)} – ${fmtS(t.e)}${isFree(c) ? ' · Zeit frei gesetzt' : ''} · ziehen verschiebt, Griffe ändern Anfang/Ende – der Schnitt bleibt gleich · im Bild ziehen setzt die Position nur für diesen` : 'Untertitel'; }
-  else { const it = selItem(); if (it){ const [a, e] = itemOutRange(it); info.textContent = `${fmtS(a)} – ${fmtS(e)} · ${FINE ? 'ziehen' : 'halten und ziehen'} zum Verschieben, Griffe zum Trimmen${it.type === 'title' ? ' · im Bild ziehen zum Platzieren, Doppelklick zum Bearbeiten' : ''}`; } }
+  else { const it = selItem(); if (it){ const [a, e] = itemOutRange(it); info.textContent = `${fmtS(a)} – ${fmtS(e)} · ${FINE ? 'ziehen' : 'halten und ziehen'} zum Verschieben, Griffe zum Trimmen${it.type === 'title' ? (it.lt ? ' · Doppelklick zum Bearbeiten' : ' · im Bild ziehen zum Platzieren, Doppelklick zum Bearbeiten') : ''}`; } }
 }
 function paintBar(){
   $('#modeBtn').classList.toggle('on', TL.mode === 'move'); $('#modeBtn').title = TL.mode === 'move' ? 'Zeiger läuft über die Spur (klicken: fester Zeiger in der Mitte)' : 'Fester Zeiger, Spur bewegt sich (klicken: laufender Zeiger)';
@@ -800,12 +846,14 @@ function addClip(){
     <button class="tile" data-t="pip"><b>Einblendung</b><span>Bild oder Video frei im Bild – Größe und Lage frei wählbar</span></button>
     <button class="tile" data-t="audio"><b>Nur Ton</b><span>Nur die Tonspur der Datei, auf einer Tonspur – das Bild bleibt weg</span></button>
     <button class="tile" data-t="wm"><b>Wasserzeichen</b><span>${P.watermark ? 'Logo bearbeiten – liegt über dem ganzen Video' : 'Logo oder Bild, das die ganze Zeit im Bild liegt – ohne eigene Spur'}</span></button>
-    <button class="tile" data-t="tline"><b>Textzeile</b><span>${P.textline ? 'Textzeile bearbeiten – steht über die ganze Länge im Bild' : 'Kleine Zeile über die ganze Länge, z. B. Kanalname oder „V. i. S. d. P.“'}</span></button></div>`;
+    <button class="tile" data-t="tline"><b>Textzeile</b><span>${P.textline ? 'Textzeile bearbeiten – steht über die ganze Länge im Bild' : 'Kleine Zeile über die ganze Länge, z. B. Kanalname oder „V. i. S. d. P.“'}</span></button>
+    <button class="tile" data-t="lower"><b>Bauchbinde</b><span>Name und Funktion einer Person, im Design deiner Folien</span></button></div>`;
   openSheet(false);
   body.onclick = async e => {
     const b = e.target.closest('[data-t]'); if (!b) return; const type = b.dataset.t;
     if (type === 'wm') return openWatermark();
     if (type === 'tline') return openTextline();
+    if (type === 'lower') return openLower();
     $('#sheet').classList.add('hidden'); $('#sheetBack').classList.add('hidden');
     const o = outPos, clip = await pickMedia('clip'); if (!clip) return;
     placeMedia(clip, type, o, null, true);
@@ -976,6 +1024,7 @@ function addTitle(){
 }
 function editTitle(id){
   const it = P.items.find(x => x.id === id); if (!it) return;
+  if (it.lt) return editLower(id);
   const body = $('#sheetBody');
   body.innerHTML = `<h3>Titel</h3><textarea id="ttText" rows="2" style="width:100%;font:17px/1.3 var(--ui)"></textarea>
     <div class="grid2" style="margin-top:10px">
@@ -1188,6 +1237,7 @@ function makeClip(o1, o2, fmt, name){
   c.items = c.items.filter(x => { if (x.type === 'insert') return true; const [a, e] = window.itemOutRange ? itemOutRange(x) : [0, 1e9]; return e > o1 + 0.05 && a < o2 - 0.05; });
   c.cues = c.cues.filter(x => { if (!x.own) return true; const t = cueTimes(x); return t && t.e > o1 && t.s < o2; });
   c.marks = (c.marks || []).filter(m => { const o = markOut(m); return o >= o1 - 0.05 && o < o2 - 0.05 && !isSrcDeleted(m.at); });
+  c.refs = (c.refs || []).filter(r => { const o = refOut(r); return !refGone(r) && o >= o1 - 0.05 && o < o2 - 0.05; });
   c.format = fmt || null;
   c.sub_style = {...c.sub_style, ...CLIP_LOOKS[fmt ? 'punch' : 'classic'], y: fmt === '9:16' || fmt === '4:5' ? 0.7 : 0.86, x: 0.5, pos: 'frei', look: fmt ? 'punch' : 'classic'};
   c.regen = true;
@@ -1469,6 +1519,7 @@ const KEYS = [
   ['Strg + F', 'im Text suchen (Enter: nächster Treffer, dann Entf löscht)'], ['Strg + H', 'suchen und ersetzen'], ['Doppelklick auf ein Wort', 'Wort korrigieren'],
   ['A', 'Markierung im Text auf den ganzen Satz ausweiten, nochmal: auf den Absatz'], ['Umschalt + Entf', 'nur das Markierte behalten, alles andere löschen'],
   ['C / B', 'Kapitel / Notiz an der Markierung oder an der Abspiellinie'],
+  ['R', 'Quelle zur markierten Aussage hinterlegen · mit Umschalt: als „Beleg nötig“ markieren (im Text)'],
   ['Markierten Text ziehen', 'Abschnitt verschieben'], ['Clip in der Zeitleiste ziehen', 'Clips umsortieren'],
   ['Strg + B', 'an der Abspiellinie teilen'], ['Strg + C / X / V', 'Element kopieren / ausschneiden / an der Abspiellinie einfügen'], ['Strg + D', 'Element duplizieren (direkt dahinter)'], ['Q / W', 'links / rechts der Abspiellinie löschen (mit ausgewähltem Element: nur dessen Teil)'],
   ['Entf / Rücktaste', 'Auswahl löschen'], ['Alt + ← / →', 'Auswahl um ein Bild verschieben'],
@@ -1489,7 +1540,7 @@ $('#keysBtn').onclick = () => {
   openSheet(false);
 };
 
-function stepFrames(n){ if (playing) pausePlay(); seekOut(clamp(outPos + n / fps(), 0, total), false); if (studioOn()) revealHead(outPos); }
+function stepFrames(n){ if (playing) pausePlay(); seekOut(clamp(outPos + n / fps(), 0, total), false); if (tlOn()) revealHead(outPos); }
 function editPoints(){
   const pts = new Set([0, total]);
   timeline.forEach(g => { pts.add(+g.o.toFixed(3)); pts.add(+(g.o + segDur(g)).toFixed(3)); });
@@ -1499,7 +1550,7 @@ function editPoints(){
 function jumpEdit(dir){
   const pts = editPoints(), o = outPos;
   const t = dir < 0 ? [...pts].reverse().find(p => p < o - 0.02) : pts.find(p => p > o + 0.02);
-  if (t == null) return; if (playing) pausePlay(); seekOut(Math.min(t, Math.max(0, total - 0.01)), false); if (studioOn()) revealHead(outPos);
+  if (t == null) return; if (playing) pausePlay(); seekOut(Math.min(t, Math.max(0, total - 0.01)), false); if (tlOn()) revealHead(outPos);
 }
 // Kante der Auswahl an die Abspiellinie holen (wie Trimmen in CapCut)
 function trimToPlayhead(side){
@@ -1558,6 +1609,7 @@ document.addEventListener('keydown', e => {
     case 'a': case 'A': if (tab === 'text' && tokens.length){ handled(); growSel(); } return;   // Markierung auf Satz bzw. Absatz ausweiten
     case 'c': case 'C': if (tab === 'text' || studioOn()){ handled(); addMark('chap'); } return;
     case 'b': case 'B': if (tab === 'text' || studioOn()){ handled(); addMark('note'); } return;
+    case 'r': case 'R': if (tab === 'text' && tokens.length){ handled(); addRef(e.shiftKey); } return;   // Quelle zur Markierung; mit Umschalt: als „Beleg nötig“ markieren
     case 'q': case 'Q': handled(); cutTo('l'); return;
     case 'w': case 'W': handled(); cutTo('r'); return;
     case ',': handled(); trimToPlayhead('l'); return;
@@ -1597,9 +1649,10 @@ $('#ruler').addEventListener('click', e => {
   const o = timeAtX(e.clientX);
   if (playing) pausePlay(); seekOut(o, false); if (TL.mode === 'center') syncScroll(outPos, true); else placeHead(outPos); e.stopPropagation();
 });
+$('#trTitle').addEventListener('click', e => { if (e.target.closest('.lt-auto')){ e.stopPropagation(); openLower(); } });
 // Doppelklick: Untertitel oder Titel bearbeiten, Clip anpassen
 tlInner.addEventListener('dblclick', e => {
-  const b = e.target.closest('.blk'); if (!b) return;
+  const b = e.target.closest('.blk'); if (!b || tlLite()) return;
   if (b.classList.contains('cue')){ select({kind:'cue', id:b.dataset.cid}); editCue(); }
   else if (b.classList.contains('title')){ select({kind:'title', id:b.dataset.id}); editTitle(b.dataset.id); }
   else if (b.classList.contains('fx')){ select({kind:'fx', id:b.dataset.id}); openFxItem(selItem()); }
@@ -1607,7 +1660,20 @@ tlInner.addEventListener('dblclick', e => {
 });
 
 // Zeitleiste im Clip-Reiter ein-/ausklappen (gemerkt pro Gerät)
-function setTlFold(min){ $('#proj').classList.toggle('tl-min', !!min); try { localStorage.setItem('hc-clip-tl', min ? '1' : '0'); } catch(_){}
-  $('#tlFold em').textContent = min ? 'antippen zum Ausklappen' : 'antippen zum Einklappen'; setTimeout(fitStage, 0); if (!min && P && studioOn()) setTimeout(renderTimeline, 30); }
+// Der Stand wird je Reiter gemerkt: im Clip-Reiter (hc-clip-tl) ist sie anfangs offen, im Text-Reiter (hc-text-tl) auf breiten
+// Bildschirmen offen und am Handy eingeklappt – dort nimmt sie dem Text sonst zu viel Platz.
+const tlFoldKey = () => tab === 'text' ? 'hc-text-tl' : 'hc-clip-tl';
+function tlFoldMin(){
+  if (tab !== 'text' && tab !== 'clip') return false;
+  let v = null; try { v = localStorage.getItem(tlFoldKey()); } catch(_){}
+  return v != null ? v === '1' : tab === 'text' && !isWide();
+}
+function applyTlFold(){
+  const min = tlFoldMin(); $('#proj').classList.toggle('tl-min', min);
+  $('#tlFold em').textContent = min ? 'antippen zum Ausklappen' : 'antippen zum Einklappen';
+  $('#tlFold span').textContent = tab === 'text' ? 'Zeitleiste · Schnitt' : 'Zeitleiste';
+}
+window.applyTlFold = applyTlFold;
+function setTlFold(min){ try { localStorage.setItem(tlFoldKey(), min ? '1' : '0'); } catch(_){} applyTlFold(); setTimeout(fitStage, 0); if (!min && P && tlOn()) setTimeout(renderStudio, 30); }
 $('#tlFold').onclick = () => setTlFold(!$('#proj').classList.contains('tl-min'));
-try { setTlFold(localStorage.getItem('hc-clip-tl') === '1'); } catch(_){ setTlFold(false); }
+applyTlFold();

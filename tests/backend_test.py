@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Prüfungen des Backends ohne Browser: sicheres Speichern, frühere Fassungen, Papierkorb, Speicher verwalten,
 alle Projekte sichern und einspielen, Projekt weitergeben, Vorschaubild der Projektliste, Textzeile und Untertitel im Export,
-Hinweis auf neue Versionen, Fehlerbericht.
+Quellenzeilen und Textfassung, Schrift im Export (Größe und Umbruch wie in der Vorschau), Hinweis auf neue Versionen, Fehlerbericht.
 Läuft in einem frischen Datenordner; nichts verlässt den Rechner (GitHub ist nachgestellt).
 Aufruf: python3 tests/backend_test.py"""
 import gzip
@@ -372,13 +372,22 @@ def kleine_helfer():
     chk("die SRT-Datei enthält nur die Untertitel", srt.read_text(encoding="utf-8").strip().split("\n") == ["1", "00:00:01,500 --> 00:00:02,500", "gesprochen"], srt.read_text(encoding="utf-8")[:80].replace("\n", " | "))
     ass = TMP / "helfer.ass"
     T.write_ass(cues, {"size": "mittel"}, ass, 1080, 1920, {})
-    ev = {ln.split("}", 1)[1]: ln for ln in ass.read_text(encoding="utf-8-sig").splitlines() if ln.startswith("Dialogue:")}
-    pad = max(2.0, 0.028 * 1080 * 1.25 / 6)   # Rand des Kastens
-    chk("eingebrannt sitzt die Textzeile an ihrer Ecke: oben rechts mit Kasten um dessen Rand nach innen",
-        f"\\an9\\pos({1080 - 0.06 * 1080 - pad:.0f},{0.08 * 1920 + pad:.0f})" in ev["@kanal · V. i. S. d. P."] and ",Box,," in ev["@kanal · V. i. S. d. P."], ev["@kanal · V. i. S. d. P."][:110])
-    chk("unten links und unten in der Mitte", f"\\an1\\pos({0.035 * 1080:.0f},{1920 - 0.02 * 1920:.0f})" in ev["unten links"] and f"\\an2\\pos(540,{1920 - 0.02 * 1920:.0f})" in ev["unten Mitte"],
-        [ev["unten links"][:90], ev["unten Mitte"][:90]])
-    chk("Titel und Untertitel bleiben über ihren Mittelpunkt gesetzt", "\\an5\\pos(540,576)" in ev["Ein Titel"] and "\\an5\\pos(" in ev["gesprochen"] and "\\an5" in ev["kaputt"])
+    alle = [ln for ln in ass.read_text(encoding="utf-8-sig").splitlines() if ln.startswith("Dialogue:")]
+    ev = {ln.split("}", 1)[1]: ln for ln in alle}
+    # Lage wie in der Vorschau: Schriftgröße px (Geviert), Zeilenhöhe 1,12 px, Kasten mit 0,3 px / 0,1 px Rand; die Zeile sitzt an ihrer Ecke
+    px, std = 0.028 * 1080 * 1.25, T.standard_face()
+    shift = ((std.css[0] - std.css[1]) - (std.cell[0] - std.cell[1])) / 2 * px
+    kasten = [ln for ln in alle if "\\p4}" in ln]
+    chk("eingebrannt sitzt die Textzeile an ihrer Ecke: oben rechts, mit Kasten um dessen Rand nach innen",
+        f"\\an6\\pos({1080 - 0.06 * 1080 - 0.3 * px:.1f},{0.08 * 1920 + 0.1 * px + 0.56 * px + shift:.1f})" in ev["@kanal · V. i. S. d. P."] and len(kasten) == 1
+        and f",{0.08 * 1920:.1f})" in kasten[0] and "\\1a&H73&" in kasten[0] and kasten[0].startswith("Dialogue: 0,") and ev["@kanal · V. i. S. d. P."].startswith("Dialogue: 1,"),
+        [ev["@kanal · V. i. S. d. P."][:110], kasten[:1]])
+    chk("unten links und unten in der Mitte", f"\\an4\\pos({0.035 * 1080:.1f},{1920 - 0.02 * 1920 - 0.56 * px + shift:.1f})" in ev["unten links"]
+        and f"\\an5\\pos(540.0,{1920 - 0.02 * 1920 - 0.56 * px + shift:.1f})" in ev["unten Mitte"], [ev["unten links"][:90], ev["unten Mitte"][:90]])
+    chk("Titel und Untertitel bleiben über ihren Mittelpunkt gesetzt", "\\an5\\pos(540.0,576.0)" in ev["Ein Titel"] and "\\an5\\pos(540.0," in ev["gesprochen"] and "\\an5" in ev["kaputt"],
+        [ev["Ein Titel"][:80], ev["gesprochen"][:80]])
+    chk("die Schriftgröße bezieht sich auf das Geviert wie in der Vorschau (libass rechnet in Zellenhöhe)",
+        f"\\fnArial\\b1\\fs{0.075 * 1080 * 1.25 * sum(std.cell):.2f}" in ev["Ein Titel"] and f"\\fs{0.058 * 1080 * 1.25 * sum(std.cell):.2f}" in ev["gesprochen"], ev["Ein Titel"][:120])
     # Concat: die Textzeile bekommt ihre eigene Spur, die SRT-Datei daneben enthält nur die Untertitel
     probe0, root0 = T.probe, T.concat_root
     T.probe = lambda p: {"duration": 10.0, "hasVideo": True, "hasAudio": True, "width": 1080, "height": 1920, "fps": 30.0}
@@ -391,6 +400,171 @@ def kleine_helfer():
     tracks = {c["text"]["content"]: c["trackId"] for c in doc["clips"] if c["kind"] == "text"}
     chk("Concat: Textzeilen liegen auf T4, Titel und Untertitel auf T3", tracks == {"@kanal · V. i. S. d. P.": "T4", "unten links": "T4", "unten Mitte": "T4", "kaputt": "T4", "Ein Titel": "T3", "gesprochen": "T3"}, tracks)
     chk("Concat: die SRT-Datei daneben enthält nur die Untertitel", (folder / "helfer.srt").read_text(encoding="utf-8").count("-->") == 1)
+
+
+def quellen_und_belege():
+    """2.28: Quellenzeilen im Export (Ecke, eigene Spur, nicht in der SRT-Datei); Textfassung neben dem Video."""
+    vid = T.norm_path(str(TMP / "videos" / "quellen.mp4"))
+    mk(Path(vid), b"x")
+    raw = [{"start": 1, "end": 4, "text": "Quelle: Statistisches Bundesamt, 12.03.2025", "x": 0.3, "y": 0.06, "size": 0.024, "title": True, "line": True, "src": True, "anchor": "ol", "mx": 0.035, "my": 0.04, "outline": True, "font": ""},
+           {"start": 0, "end": 10, "text": "@kanal", "x": 0.2, "y": 0.9, "size": 0.028, "title": True, "line": True, "anchor": "ul", "mx": 0.035, "my": 0.02, "font": ""},
+           {"start": 1.5, "end": 2.5, "text": "gesprochen"}]
+    cues = T.clean_cues(raw)
+    by = {c["text"]: c for c in cues}
+    q = by["Quelle: Statistisches Bundesamt, 12.03.2025"]
+    chk("Quellenzeile: Kennzeichen, Ecke und Randabstand kommen im Export an", q.get("src") is True and q.get("line") is True and q["anchor"] == "ol" and q["mx"] == 0.035 and q["my"] == 0.04
+        and "src" not in by["@kanal"] and "src" not in by["gesprochen"])
+    chk("Quellenzeilen gehören zum Bild und stehen nicht in den Untertiteln", [c["text"] for c in T.spoken_cues(cues)] == ["gesprochen"])
+    ass = TMP / "quellen.ass"
+    T.write_ass(cues, {"size": "mittel"}, ass, 1920, 1080, {})
+    ev = {ln.split("}", 1)[1]: ln for ln in ass.read_text(encoding="utf-8-sig").splitlines() if ln.startswith("Dialogue:")}
+    px = 0.024 * 1080
+    chk("eingebrannt sitzt die Quellenzeile oben links an ihrem Rand, für die Dauer des Satzes",
+        f"\\an4\\pos({0.035 * 1920:.1f},{0.04 * 1080 + 0.56 * px:.1f})" in ev[q["text"]] and "0:00:01.00,0:00:04.00" in ev[q["text"]], ev[q["text"]][:120])
+    probe0, root0, render0 = T.probe, T.concat_root, T.render_plan
+    T.probe = lambda p: {"duration": 10.0, "hasVideo": True, "hasAudio": True, "width": 1920, "height": 1080, "fps": 30.0}
+    T.concat_root = lambda: TMP / "Concat"
+    plan = {"width": 1920, "height": 1080, "fps": 30, "segments": [{"uri": vid, "in": 0, "out": 10, "kind": "main"}], "overlays": []}
+    try:
+        folder = T.write_concat(plan, "quellen", cues, {"size": "mittel"})
+        folder2 = T.write_concat(plan, "ohne_quellen", [c for c in cues if not c.get("src")], {"size": "mittel"})
+    finally:
+        T.probe, T.concat_root = probe0, root0
+    doc, doc2 = (json.loads((f / "concat.json").read_text(encoding="utf-8")) for f in (folder, folder2))
+    tracks = {c["text"]["content"]: c["trackId"] for c in doc["clips"] if c["kind"] == "text"}
+    chk("Concat: Quellenzeilen liegen auf T5, die Textzeile auf T4, Untertitel auf T3", tracks == {q["text"]: "T5", "@kanal": "T4", "gesprochen": "T3"}, tracks)
+    ids = lambda d: [t["id"] for t in d["tracks"] if t["id"].startswith("T")]
+    chk("Concat: die Spur T5 gibt es nur mit Quellenzeilen", ids(doc) == ["T1", "T3", "T4", "T5"] and ids(doc2) == ["T1", "T3", "T4"], [ids(doc), ids(doc2)])
+    # Textfassung: liegt neben dem Video und steht in der Liste der Dateien
+    made = []
+    T.render_plan = lambda job, plan, out, with_video, cues: (made.append(out), Path(out).write_bytes(b"video"))
+    text = "Mieten in der Stadt\nTextfassung des Videos · 0:10\n\nAnna Beispiel (Sprecherin): Die Mieten steigen. [1]\n\nQuellen\n[1] Statistisches Bundesamt (2025)\n"
+    base = {"format": "video", "name": "Mieten: Film?", "segments": [{"uri": vid, "in": 0, "out": 10}], "sources": [{"uri": vid}], "subs": {"cues": raw, "style": {}}}
+    try:
+        r1 = T.export_job(job(), {**base, "textfile": {"name": "egal.txt", "text": text}})
+        r2 = T.export_job(job(), {**base, "name": "Ohne Text"})
+        r3 = T.export_job(job(), {**base, "name": "Leer", "textfile": {"text": "  "}})
+        r4 = T.export_job(job(), {**base, "format": "audio", "audioFormat": "mp3", "name": "Nur Ton", "textfile": {"text": text}})
+    finally:
+        T.render_plan = render0
+    txt = [Path(f) for f in r1["files"] if f.endswith(".txt")]
+    chk("Export: Die Textfassung liegt als Textdatei neben dem Video, benannt nach dem Export",
+        len(txt) == 1 and txt[0].name == "Mieten_ Film_ – Textfassung.txt" and txt[0].parent == Path(r1["playable"]).parent and txt[0].read_text(encoding="utf-8") == text, [f for f in r1["files"]])
+    chk("Export: ohne Textfassung im Plan (oder mit leerem Text) entsteht keine Textdatei", not any(f.endswith(".txt") for f in r2["files"] + r3["files"]), r2["files"] + r3["files"])
+    chk("Export: Die Textfassung gibt es auch zur Tonspur", any(f.endswith("Nur Ton – Textfassung.txt") for f in r4["files"]) and any(f.endswith("Nur Ton.mp3") for f in r4["files"]), r4["files"])
+    chk("Export: Die SRT-Datei enthält weiter nur die Untertitel", Path(next(f for f in r1["files"] if f.endswith(".srt"))).read_text(encoding="utf-8").count("-->") == 1)
+
+
+def schrift_im_export():
+    """2.28: Die gewählte Schrift steht im Video – so groß und so umbrochen wie in der Vorschau. Fehlt sie, sagt der Export es dazu.
+    Sind die Untertitel eingebrannt, heißt die SRT-Datei anders als das Video."""
+    import base64
+    fdir = T.WEB_DIR / "fonts"
+    pop, inter = T.FontFace((fdir / "Poppins-Bold.ttf").read_bytes()), T.FontFace((fdir / "Inter-Bold.ttf").read_bytes())
+    chk("Schriftdatei: Familie, PostScript-Name und Schnitt werden gelesen", pop.family == "TS Poppins" and pop.ps == "TSPoppins-Regular" and pop.bold is False and pop.ok
+        and T.font_names(fdir / "Anton-Regular.ttf") == ("TS Anton", False), [pop.family, pop.ps, pop.bold])
+    chk("Höhenmaße: die Zelle, auf die libass die Größe bezieht, und Ober-/Unterlänge wie im Browser der Vorschau",
+        abs(sum(pop.cell) - 1.762) < 0.002 and abs(pop.css[0] - 1.05) < 0.002 and abs(pop.css[1] - 0.35) < 0.002, [pop.cell, pop.css])
+    chk("Laufweiten aus beiden Arten von Zeichentabellen (Format 4 und 12), auch für Umlaute und Sonderzeichen",
+        pop._cmap[0] == 4 and inter._cmap[0] == 12 and all(0.15 < f.width(ch) < 1.3 for f in (pop, inter) for ch in "aWÄß€„“–")
+        and abs(pop.width("Hamburg") - sum(pop.width(c) for c in "Hamburg")) < 1e-9 and pop.width("😀") == 1.0, [pop.width("W"), inter.width("W")])
+    std = T.standard_face()
+    chk("die Standardschrift (Arial fett) wird mit ihren Maßen gefunden", std is not None and std.ok and std.bold and abs(sum(std.cell) - 1.117) < 0.01, std and [std.family, std.cell])
+    logs = []
+    log0, T.log = T.log, logs.append
+    try:
+        dest = TMP / "schrift" / "fonts"
+        fs = T.collect_fonts({"poppins": {"family": "TS Poppins", "file": "Poppins-Bold.ttf"}, "fehlt": {"family": "TS Gibtsnicht", "file": "Gibtsnicht.ttf"},
+                              "weg": {"family": "Meine Schrift", "uri": str(TMP / "nirgends.ttf")}}, dest)
+    finally:
+        T.log = log0
+    chk("mitgelieferte Schrift: Familienname aus der Datei, Kopie im Schriftordner des Exports, Maße liegen vor",
+        fs["poppins"] == ("TS Poppins", False) and (dest / "poppins.ttf").read_bytes() == (fdir / "Poppins-Bold.ttf").read_bytes() and fs.face["poppins"].ps == "TSPoppins-Regular")
+    chk("fehlende Schriftdateien werden mit ihrem Namen aus der Oberfläche gemeldet und stehen im Protokoll",
+        fs.missing == ["Gibtsnicht", "Meine Schrift"] and "fehlt" not in fs and "weg" not in fs and sum("Datei fehlt" in x for x in logs) == 2, [fs.missing, logs])
+    style = {"size": "mittel", "font": "poppins", "color": "#FFFFFF", "outline": True}
+    lang = "Eine ziemlich lange Zeile die im Hochformat nicht mehr in die Breite passt"
+    cues = T.clean_cues([{"start": 0, "end": 2, "text": "Kurz", "x": 0.5, "y": 0.88},
+                         {"start": 2, "end": 4, "text": lang + "\nzweite Zeile", "x": 0.5, "y": 0.88},
+                         {"start": 4, "end": 6, "text": "Mit Kasten", "x": 0.5, "y": 0.5, "bg": True},
+                         {"start": 6, "end": 8, "text": "Standard bleibt Arial", "x": 0.5, "y": 0.5, "font": ""}])
+    ass = TMP / "schrift.ass"
+    T.write_ass(cues, style, ass, 1080, 1920, fs)
+    txt = ass.read_text(encoding="utf-8-sig")
+    ev = [ln for ln in txt.splitlines() if ln.startswith("Dialogue:")]
+    px = 0.058 * 1080 * 1.25
+    ypos = lambda ln: float(ln.split("\\pos(")[1].split(")")[0].split(",")[1])   # noqa: E731
+    kurz = next(ln for ln in ev if ln.endswith("}Kurz"))
+    chk("gewählte Schrift: Familienname aus der Datei, Größe auf das Geviert umgerechnet (Poppins: Zelle 1,762 Geviert)",
+        f"\\fnTS Poppins\\b0\\fs{px * sum(pop.cell):.2f}" in kurz and "\\an5\\pos(540.0," in kurz, kurz[:150])
+    rows = [ln for ln in ev if ",0:00:02.00,0:00:04.00," in ln]
+    texts, ys = [ln.split("}", 1)[1] for ln in rows], [ypos(ln) for ln in rows]
+    chk("zu lange Zeilen brechen bei 88 % der Breite um, jede Zeile passt ins Bild",
+        len(texts) >= 4 and texts[-1] == "zweite Zeile" and " ".join(texts[:-1]) == lang and all(pop.width(r) * px <= 0.888 * 1080 for r in texts), texts)
+    sh = ((pop.css[0] - pop.css[1]) - (pop.cell[0] - pop.cell[1])) / 2 * px    # Versatz der Grundlinie: Zelle (libass) gegen Zeile (Browser)
+    chk("Zeilenabstand wie in der Vorschau (1,12 der Schriftgröße), der Block endet am Rand von 2 %",
+        all(abs((b - a) - 1.12 * px) < 0.11 for a, b in zip(ys, ys[1:])) and abs(ys[-1] - sh + 0.56 * px - 1920 * 0.98) < 0.2, [ys, sh])
+    box = [ln for ln in ev if ",0:00:04.00,0:00:06.00," in ln]
+    chk("Kasten: eine eigene Fläche mit runden Ecken unter dem Text (60 % deckend)",
+        len(box) == 2 and box[0].startswith("Dialogue: 0,") and "\\p4}m " in box[0] and " b " in box[0] and "\\1a&H66&" in box[0] and box[1].startswith("Dialogue: 1,") and box[1].endswith("}Mit Kasten"),
+        [b[:130] for b in box])
+    stdl = next(ln for ln in ev if ln.endswith("}Standard bleibt Arial"))
+    chk("ein Untertitel mit eigener Standardschrift steht in Arial fett, ebenfalls auf das Geviert gerechnet", f"\\fnArial\\b1\\fs{px * sum(std.cell):.2f}" in stdl, stdl[:140])
+    sec = txt.split("[Fonts]\n", 1)[1].split("\n\n[Events]", 1)[0].split("\n")
+    data = "".join(sec[1:]).encode("ascii").translate(bytes.maketrans(bytes(range(33, 97)), b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"))
+    chk("die gebrauchte Schrift steht zusätzlich in der Untertiteldatei selbst (Abschnitt [Fonts]), Zeilen zu 80 Zeichen",
+        sec[0].startswith("fontname: ") and txt.count("fontname: ") == 1 and base64.b64decode(data + b"=" * (-len(data) % 4)) == (fdir / "Poppins-Bold.ttf").read_bytes()
+        and max(len(x) for x in sec[1:]) == 80)
+    T.write_ass(T.clean_cues([{"start": 0, "end": 2, "text": "Nur Standard", "x": 0.5, "y": 0.88}]), {"size": "mittel"}, ass, 1080, 1920, fs)
+    chk("ohne gewählte Schrift wird keine Schriftdatei eingebettet", "[Fonts]" not in ass.read_text(encoding="utf-8-sig"))
+    # Original und Übersetzung stehen gleichzeitig: Bricht eine Zeile um, rücken die Blöcke auseinander
+    pair = T.clean_cues([{"start": 0, "end": 2, "text": lang + " und noch etwas länger wird", "x": 0.5, "y": 0.80},
+                         {"start": 0, "end": 2, "text": "A rather long line that wraps in portrait format as well and goes on", "x": 0.5, "y": 0.86, "size": 0.045, "font": "poppins", "color": "#CFC6B0"}])
+    T.write_ass(pair, style, ass, 1080, 1920, fs)
+    ev = [ln for ln in ass.read_text(encoding="utf-8-sig").splitlines() if ln.startswith("Dialogue:")]
+    px2 = 0.045 * 1080 * 1.25
+    up, lo = [ypos(ln) for ln in ev if "\\1c&HFFFFFF&" in ln], [ypos(ln) for ln in ev if "\\1c&HB0C6CF&" in ln]
+    chk("gleichzeitige Untertitel (Original und Übersetzung) überdecken einander nach dem Umbruch nicht und bleiben im Bild",
+        len(up) >= 3 and len(lo) >= 2 and max(up) + 0.56 * px < min(lo) - 0.56 * px2 and max(lo) + 0.56 * px2 <= 1920 * 0.98 + 0.096 * px2 + 1, [up, lo])
+    win = ("[Parsed_subtitles_0 @ 000002cf] Using font provider directwrite (with GDI)\n"
+           "[Parsed_subtitles_0 @ 000002cf] fontselect: (TS Poppins, 400, 0) -> TSPoppins-Regular, 0, TSPoppins-Regular\n")
+    lin = "[Parsed_subtitles_1 @ 0x55d] fontselect: (TS Poppins, 400, 0) -> /tmp/x/fonts/poppins.ttf, 0, TSPoppins-Regular\n"
+    bad = "[Parsed_subtitles_0 @ 000002cf] fontselect: (TS Poppins, 400, 0) -> C:\\WINDOWS\\Fonts\\arial.ttf, 0, ArialMT\n"
+    emoji = win + "[Parsed_subtitles_0 @ 000002cf] fontselect: (TS Poppins, 400, 0) -> C:\\WINDOWS\\Fonts\\seguiemj.ttf, 0, SegoeUIEmoji\n"
+    chk("Nachprüfung am Protokoll von ffmpeg: libass hat die mitgegebene Datei genommen (Windows und Linux); der Ersatz für einzelne Zeichen zählt nicht",
+        T.font_check(win, fs) == [] and T.font_check(lin, fs) == [] and T.font_check(emoji, fs) == [] and T.font_check("", fs) == [] and T.font_check(bad, {}) == [])
+    chk("Nachprüfung: Nimmt libass eine andere Schrift, wird sie mit ihrem Namen aus der Oberfläche gemeldet", T.font_check(bad, fs) == ["Poppins"], T.font_check(bad, fs))
+    # echte Exporte (kurze Probevideos)
+    probe = T.font_selftest()
+    chk("echter Export: Standardschrift und gewählte Schriften stehen im Video – so breit, wie die Vorschau sie zeigt (höchstens 8 % Abweichung)", probe["ok"], probe)
+    video = TMP / "videos" / "schrift.mp4"
+    video.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run([T.FFMPEG, "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=0x305070:size=640x360:rate=25", "-f", "lavfi", "-i", "sine=frequency=440", "-t", "2",
+                    "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", "-c:a", "aac", str(video)], check=True, capture_output=True)
+
+    def plan(name, font, fonts, burn=True, fmt="video"):
+        return {"format": fmt, "name": name, "width": 640, "height": 360, "fps": 25, "total": 2, "audioFormat": "mp3",
+                "segments": [{"kind": "main", "src": 0, "uri": str(video), "in": 0, "out": 2, "zooms": [], "hasAudio": True, "hasVideo": True, "speed": 1, "vol": 1,
+                              "bright": 0, "contrast": 0, "sat": 0, "gray": False, "tx": 0, "ty": 0, "sc": 1}],
+                "overlays": [], "burn": burn, "quality": "klein",
+                "subs": {"cues": [{"start": 0.1, "end": 1.9, "text": "Hamburgefonstiv 123", "x": 0.5, "y": 0.82}],
+                         "style": {"size": "mittel", "color": "#FFFFFF", "outline": True, **({"font": font} if font else {})}, "fonts": fonts},
+                "sources": [{"uri": str(video), "name": "schrift.mp4", "duration": 2, "width": 640, "height": 360, "fps": 25, "hasAudio": True, "hasVideo": True}]}
+    names = lambda r: [Path(f).name for f in r["files"]]   # noqa: E731
+    r1 = T.export_job(job(), plan("ohne_schrift", "fehlt", {"fehlt": {"family": "TS Gibtsnicht", "file": "Gibtsnicht.ttf"}}))
+    chk("fehlt die Schriftdatei, steht die Standardschrift im Video – und der Export sagt es dazu",
+        "„Gibtsnicht“" in (r1.get("warn") or "") and "Standardschrift" in r1["warn"] and "Fehlerbericht" in r1["warn"] and Path(r1["playable"]).stat().st_size > 2000, r1.get("warn"))
+    r2 = T.export_job(job(), plan("mit_schrift", "poppins", {"poppins": {"family": "TS Poppins", "file": "Poppins-Bold.ttf"}}, burn=False))
+    out = Path(r2["folder"])
+    chk("ohne Einbrennen heißt die SRT-Datei wie das Video (Abspielprogramme blenden sie dann von selbst ein)", names(r2) == ["mit_schrift.mp4", "mit_schrift.srt"] and "warn" not in r2, names(r2))
+    r3 = T.export_job(job(), plan("mit_schrift", "poppins", {"poppins": {"family": "TS Poppins", "file": "Poppins-Bold.ttf"}}))
+    chk("eingebrannt: kein Hinweis, die SRT-Datei heißt anders als das Video, die gleichnamige vom früheren Export ist weg",
+        "warn" not in r3 and names(r3) == ["mit_schrift.mp4", "Untertitel – mit_schrift.srt"] and not (out / "mit_schrift.srt").exists() and (out / "Untertitel – mit_schrift.srt").read_text(encoding="utf-8").count("-->") == 1,
+        [names(r3), r3.get("warn"), sorted(p.name for p in out.iterdir())])
+    r4 = T.export_job(job(), plan("mit_schrift", "poppins", {"poppins": {"family": "TS Poppins", "file": "Poppins-Bold.ttf"}}, burn=False))
+    chk("wieder ohne Einbrennen: zurück zum Namen des Videos, die andere Datei weicht", names(r4) == ["mit_schrift.mp4", "mit_schrift.srt"] and not (out / "Untertitel – mit_schrift.srt").exists())
+    r5 = T.export_job(job(), plan("nur_ton", "", {}, fmt="audio"))
+    chk("zur Tonspur heißt die SRT-Datei wie die Tonspur", names(r5) == ["nur_ton.mp3", "nur_ton.srt"], names(r5))
 
 
 def umzug():
@@ -495,7 +669,7 @@ def bericht_und_protokoll():
 if MODE == "umzug":
     umzug()
     sys.exit(1 if BAD else 0)
-for part in (speichern_und_fassungen, speicher, sicherung, projektpakete, kleine_helfer, neue_versionen, bericht_und_protokoll):
+for part in (speichern_und_fassungen, speicher, sicherung, projektpakete, kleine_helfer, quellen_und_belege, schrift_im_export, neue_versionen, bericht_und_protokoll):
     print(f"── {part.__name__.replace('_', ' ')} ──", flush=True)
     part()
 print(f"ERGEBNIS Backend ohne Browser: {N} geprüft, {BAD} Fehler")
