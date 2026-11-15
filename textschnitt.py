@@ -37,7 +37,7 @@ os.environ.setdefault("HF_HUB_DISABLE_IMPLICIT_TOKEN", "1")
 import warnings  # noqa: E402
 warnings.filterwarnings("ignore", module="huggingface_hub")
 
-VERSION = "2.24.2"
+VERSION = "2.25.0"
 APP_DIR = Path(__file__).resolve().parent
 FROZEN = bool(getattr(sys, "frozen", False))          # als installierte .exe gebaut
 RES_DIR = Path(getattr(sys, "_MEIPASS", APP_DIR))      # mitgelieferte Dateien (Oberfläche, ffmpeg, Modelle)
@@ -228,7 +228,26 @@ def concat_root() -> Path:
 
 # ───────────────────────────── Jobs ─────────────────────────────
 
+JOB_KEEP = 1800            # so lange (Sekunden) bleibt ein fertiger, bereits abgeholter Auftrag noch abfragbar
+JOB_KEEP_ASR = 12 * 3600   # Transkriptionen länger: falls das Fenster nach dem Abholen abstürzt, lässt sich das Ergebnis erneut holen
+JOB_KEEP_LOST = 6 * 3600   # nie abgeholte Ergebnisse (Fenster wurde geschlossen) – außer Transkriptionen, die bleiben
+
+
+def prune_jobs() -> None:
+    """Fertige Aufträge samt Ergebnis (Lautstärkeverläufe, Übersetzungen, Transkripte) nach einer Weile vergessen –
+    sonst wächst der Speicherbedarf mit jedem Auftrag einer langen Sitzung. Eine fertige Transkription, die noch niemand
+    abgeholt hat, bleibt in jedem Fall: Sie wird beim nächsten Öffnen des Projekts übernommen, auch Tage später."""
+    now = time.time()
+    for jid, job in list(JOBS.items()):
+        if job["status"] == "running":
+            continue
+        age, asr = now - job.get("ended", now), job.get("kind") == "transcribe"
+        if (job.get("fetched") and age > (JOB_KEEP_ASR if asr else JOB_KEEP)) or (not asr and age > JOB_KEEP_LOST):
+            JOBS.pop(jid, None)
+
+
 def new_job(kind: str) -> dict:
+    prune_jobs()
     jid = uuid.uuid4().hex[:10]
     job = {"id": jid, "kind": kind, "status": "running", "progress": 0.0, "message": "", "result": None,
            "error": None, "cancel": False, "started": time.time()}
@@ -241,13 +260,15 @@ def run_job(job: dict, fn, *args):
         log(f"Job {job['kind']} gestartet")
         try:
             job["result"] = fn(job, *args)
+            job["ended"] = time.time()
             job["status"] = "cancelled" if job["cancel"] else "done"
             job["progress"] = 1.0
             log(f"Job {job['kind']} fertig nach {time.time() - job['started']:.0f} s")
         except BaseException as e:  # noqa: BLE001
             import traceback
-            job["status"] = "cancelled" if job["cancel"] else "error"
+            job["ended"] = time.time()
             job["error"] = str(e) or e.__class__.__name__
+            job["status"] = "cancelled" if job["cancel"] else "error"
             log(f"Job {job['kind']} FEHLER: {e!r}\n{traceback.format_exc()}")
     threading.Thread(target=target, daemon=True).start()
     return job
@@ -547,22 +568,58 @@ def envelope_job(job: dict, path: str):
 
 BUS: dict[str, dict] = {}
 _bus_lock = threading.Lock()
+BUS_ALIVE = 180.0   # so lange gilt ein Fenster nach seiner letzten Abfrage als offen. Großzügig, weil verdeckte oder minimierte
+                    # Fenster ihre Zeitgeber stark drosseln (bis auf eine Abfrage je Minute). Wer schließt, meldet sich ab.
 
 
-def bus_post(pid: str, sender: str, msg: str):
+def _bus_peers(b: dict, sender: str, now: float) -> int:
+    return sum(1 for w, t in b["seen"].items() if w != sender and now - t < BUS_ALIVE)
+
+
+def bus_post(pid: str, sender: str, msg: str, kind: str = ""):
+    """Nachricht für die anderen Fenster desselben Projekts. Hört keines zu, wird nichts aufbewahrt – früher sammelte
+    sich hier bei jeder Änderung ein kompletter Projektstand an (bis zu 300 Stück je Projekt, über Stunden viele MB).
+    Von Stand und Abspielposition zählt je Fenster nur die neueste Meldung: Sie ersetzt die vorige, statt sich dahinter
+    einzureihen. So bekommt auch ein Fenster, das eine Weile nicht nachgefragt hat, sicher den letzten Stand."""
     with _bus_lock:
-        b = BUS.setdefault(pid, {"seq": 0, "msgs": []})
+        b = BUS.setdefault(pid, {"seq": 0, "msgs": [], "seen": {}, "joins": 0})
         b["seq"] += 1
-        b["msgs"].append((b["seq"], sender, msg))
-        del b["msgs"][:-300]
+        if not _bus_peers(b, sender, time.time()):
+            return
+        if kind in ("state", "pos"):
+            b["msgs"] = [m for m in b["msgs"] if not (m[1] == sender and m[3] == kind)]
+        b["msgs"].append((b["seq"], sender, msg, kind))
+        del b["msgs"][:-60]
+
+
+def bus_bye(pid: str, sender: str):
+    with _bus_lock:
+        b = BUS.get(pid)
+        if b:
+            b["seen"].pop(sender, None)
+            if not b["seen"]:
+                del BUS[pid]
 
 
 def bus_get(pid: str, since: int, sender: str) -> dict:
+    now = time.time()
     with _bus_lock:
-        b = BUS.get(pid) or {"seq": 0, "msgs": []}
-        if since < 0:
-            return {"seq": b["seq"], "msgs": []}
-        return {"seq": b["seq"], "msgs": [m for s, f, m in b["msgs"] if s > since and f != sender]}
+        for k in [k for k, v in BUS.items() if k != pid and (not v["seen"] or now - max(v["seen"].values()) > BUS_ALIVE)]:
+            del BUS[k]   # Projekte, die niemand mehr offen hat
+        b = BUS.setdefault(pid, {"seq": 0, "msgs": [], "seen": {}, "joins": 0})
+        for w in [w for w, t in b["seen"].items() if now - t >= BUS_ALIVE]:
+            del b["seen"][w]
+        new = sender not in b["seen"]   # dieses Fenster ist gerade dazugekommen (oder nach langer Pause zurück)
+        if new:
+            b["joins"] += 1
+        b["seen"][sender] = now
+        peers = _bus_peers(b, sender, now)
+        if not peers:
+            b["msgs"].clear()
+        # „joins“ zählt, wie oft ein Fenster dazugekommen ist: Steigt die Zahl, schicken die übrigen Fenster dem neuen ihren
+        # Stand (es selbst erkennt sich an „new“ und schickt nichts – sein Stand ist der ältere).
+        msgs = [] if since < 0 else [m[2] for m in b["msgs"] if m[0] > since and m[1] != sender]
+        return {"seq": b["seq"], "msgs": msgs, "peers": peers, "joins": b["joins"], "new": new}
 
 
 VIEW_LBL = {"text": "Text", "subs": "Untertitel", "studio": "Studio", "export": "Export"}
@@ -572,9 +629,17 @@ def proxy_job(job: dict, path: str):
     path = norm_path(path)
     info = probe(path)
     out = CACHE_DIR / "proxies" / (hashlib.sha1(path.encode("utf-8")).hexdigest()[:16] + ".mp4")
+    tmp = out.with_suffix(".tmp.mp4")   # erst fertigstellen, dann umbenennen – ein Abbruch hinterlässt keine halbe Vorschau-Datei
     job["message"] = "Erstelle Vorschau-Datei …"
-    run_ffmpeg(["-i", path, "-vf", "scale=-2:'min(720,ih)'", "-c:v", "libx264", "-preset", "veryfast", "-crf", "26",
-                "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", str(out)], info["duration"], job)
+    try:
+        run_ffmpeg(["-i", path, "-vf", "scale=-2:'min(720,ih)'", "-c:v", "libx264", "-preset", "veryfast", "-crf", "26",
+                    "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", str(tmp)], info["duration"], job)
+        replace_retry(tmp, out)
+    finally:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
     return {"path": allow(out)}
 
 
@@ -622,20 +687,28 @@ def matte_job(job: dict, path: str):
         dst = DATA_DIR / "models" / MATTE_MODEL
         dst.parent.mkdir(parents=True, exist_ok=True)
         tmp = dst.with_suffix(".part")
-        with urllib.request.urlopen(MATTE_URL, timeout=60) as r, open(tmp, "wb") as f:
-            total = int(r.headers.get("Content-Length") or 0)
-            got = 0
-            while True:
-                chunk = r.read(1 << 20)
-                if not chunk:
-                    break
-                f.write(chunk)
-                got += len(chunk)
-                if total:
-                    job["message"] = f"Lade Modell zum Freistellen (einmalig): {got / 1e6:.0f} von {total / 1e6:.0f} MB"
-                if job["cancel"]:
-                    raise RuntimeError("Abgebrochen")
-        tmp.replace(dst)
+        try:
+            with urllib.request.urlopen(MATTE_URL, timeout=60) as r, open(tmp, "wb") as f:
+                total = int(r.headers.get("Content-Length") or 0)
+                got = 0
+                while True:
+                    chunk = r.read(1 << 20)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    got += len(chunk)
+                    if total:
+                        job["message"] = f"Lade Modell zum Freistellen (einmalig): {got / 1e6:.0f} von {total / 1e6:.0f} MB"
+                    if job["cancel"]:
+                        raise RuntimeError("Abgebrochen")
+            if total and got != total:
+                raise RuntimeError("Das Modell zum Freistellen wurde nicht vollständig geladen – bitte noch einmal versuchen.")
+            tmp.replace(dst)
+        finally:
+            try:
+                tmp.unlink(missing_ok=True)   # nach Abbruch oder Fehler kein halbes Modell liegen lassen
+            except OSError:
+                pass
         model = dst
     W, H, fps, dur = info["width"], info["height"], float(info["fps"]), float(info["duration"])
     # Modellauflösung: höchstens 960 px Kante; downsample_ratio so, dass das grobe Netz um 384 px rechnet
@@ -676,6 +749,27 @@ def matte_job(job: dict, path: str):
                 job["message"] = f"Person wird freigestellt … {done:.0f} von {dur:.0f} s (noch etwa {left / 60:.0f} min)" if left > 90 else f"Person wird freigestellt … {done:.0f} von {dur:.0f} s"
             if job["cancel"]:
                 raise RuntimeError("Abgebrochen")
+    except BaseException as e:
+        # Abbruch oder Fehler: beide ffmpeg-Prozesse beenden und das angefangene Ergebnis entfernen (sonst blieben
+        # nach jedem Abbruch mehrere hundert MB liegen)
+        detail = ""
+        for proc in (dec, enc):
+            try:
+                proc.kill()
+            except Exception:
+                pass
+        try:
+            detail = enc.stderr.read().decode("utf-8", "replace").strip()[-300:]
+            enc.wait(timeout=15)
+        except Exception:
+            pass
+        try:
+            tmp_out.unlink(missing_ok=True)
+        except OSError:
+            pass
+        if isinstance(e, OSError) and not job["cancel"]:   # z. B. „Broken pipe“: der eigentliche Grund steht in der ffmpeg-Ausgabe
+            raise RuntimeError("Freistellen fehlgeschlagen: " + (detail or str(e))) from e
+        raise
     finally:
         try:
             dec.stdout.close()
@@ -686,10 +780,12 @@ def matte_job(job: dict, path: str):
             enc.stdin.close()
         except Exception:
             pass
-        if job["cancel"]:
-            enc.terminate()
     err = enc.stderr.read().decode("utf-8", "replace")
     if enc.wait() != 0 or not tmp_out.exists():
+        try:
+            tmp_out.unlink(missing_ok=True)
+        except OSError:
+            pass
         raise RuntimeError("Freistellen fehlgeschlagen: " + err.strip()[-300:])
     tmp_out.replace(out)
     log(f"Freigestellt: {path} → {out} ({n} Bilder, {time.time() - t0:.0f} s)")
@@ -773,8 +869,13 @@ def thumb(path: str, t: float, h: int) -> Path | None:
         return None
     key = hashlib.sha1(f"{path}|{mt}|{t:.1f}|{h}".encode("utf-8")).hexdigest()
     out = CACHE_DIR / "thumbs" / f"{key}.jpg"
-    if out.exists():
+    try:
+        age = time.time() - out.stat().st_mtime
+        if age > 86400:   # gebraucht: Zeitstempel auffrischen, damit das Aufräumen nur wirklich Ungenutztes entfernt
+            os.utime(out)
         return out
+    except OSError:
+        pass
     info = probe(path)
     if not info["hasVideo"]:
         return None
@@ -783,11 +884,19 @@ def thumb(path: str, t: float, h: int) -> Path | None:
             return out
         tmp = out.with_suffix(".tmp.jpg")
         seek = [] if info["kind"] == "image" else ["-ss", f"{max(0.0, min(t, info['duration'] - 0.05)):.2f}"]
-        subprocess.run([FFMPEG, "-v", "error", "-y"] + seek + ["-i", path, "-frames:v", "1", "-vf", f"scale=-2:{h}",
-                        "-q:v", "6", str(tmp)], capture_output=True, **NOWIN)
-        if tmp.exists() and tmp.stat().st_size:
-            tmp.replace(out)
-            return out
+        try:
+            subprocess.run([FFMPEG, "-v", "error", "-y", "-nostdin"] + seek + ["-i", path, "-frames:v", "1", "-vf", f"scale=-2:{h}",
+                            "-q:v", "6", str(tmp)], capture_output=True, stdin=subprocess.DEVNULL, timeout=25, **NOWIN)
+        except subprocess.TimeoutExpired:
+            # Datei hängt (z. B. Cloud-Ordner, der erst geladen werden muss): aufgeben statt alle weiteren Vorschaubilder zu blockieren
+            log(f"Vorschaubild abgebrochen (25 s ohne Ergebnis): {Path(path).name} bei {t:.1f} s")
+        try:
+            if tmp.exists() and tmp.stat().st_size:
+                tmp.replace(out)
+                return out
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
     return None
 
 
@@ -2023,6 +2132,13 @@ def export_job(job: dict, plan: dict):
 
 # ───────────────────────────── Projekte ─────────────────────────────
 
+BACKUP_DIR = DATA_DIR / "sicherungen"   # frühere Fassungen der Projekte (je Projekt ein Ordner, gepackt)
+BACKUP_EVERY = 15 * 60                  # frühestens alle 15 Minuten eine weitere Fassung zurücklegen
+BACKUP_KEEP = 6                         # so viele Fassungen je Projekt bleiben
+_proj_lock = threading.Lock()
+_list_cache: dict[str, tuple] = {}      # Dateiname → (Änderungszeit, Größe, Kurzinfo)
+
+
 def proj_path(pid: str) -> Path:
     return PROJ_DIR / (re.sub(r"[^A-Za-z0-9_-]", "", pid)[:40] + ".json")
 
@@ -2039,28 +2155,137 @@ def collect_uris(obj, out: set):
             collect_uris(v, out)
 
 
+def project_summary(p: dict) -> dict:
+    srcs = p.get("sources") or ([p["main"]] if p.get("main") else [])
+    return {"id": p["id"], "name": p.get("name", ""), "updated": p.get("updated", 0),
+            "duration": sum(float(s.get("duration") or 0) for s in srcs), "sources": len(srcs),
+            "transcribed": bool(p.get("tokens"))}
+
+
 def list_projects() -> list[dict]:
-    out = []
+    """Kurzinfos aller Projekte für die Startseite. Eine Projektdatei wird nur dann neu gelesen, wenn sie sich geändert
+    hat – vorher wurden bei jedem Aufruf alle Projekte vollständig eingelesen (je Projekt bis zu mehreren MB)."""
+    out, seen = [], set()
     for f in PROJ_DIR.glob("*.json"):
         try:
-            p = json.loads(f.read_text(encoding="utf-8"))
-            srcs = p.get("sources") or ([p["main"]] if p.get("main") else [])
-            out.append({"id": p["id"], "name": p.get("name", ""), "updated": p.get("updated", 0),
-                        "duration": sum(float(s.get("duration") or 0) for s in srcs), "sources": len(srcs),
-                        "transcribed": bool(p.get("tokens"))})
+            st = f.stat()
+            seen.add(f.name)
+            c = _list_cache.get(f.name)
+            if not c or c[0] != st.st_mtime_ns or c[1] != st.st_size:
+                c = (st.st_mtime_ns, st.st_size, project_summary(json.loads(f.read_text(encoding="utf-8"))))
+                _list_cache[f.name] = c
+            out.append(dict(c[2]))
         except Exception:
             continue
+    for k in set(_list_cache) - seen:
+        _list_cache.pop(k, None)
     return out
+
+
+def backup_dir(f: Path) -> Path:
+    return BACKUP_DIR / f.stem
+
+
+_last_backup: dict[str, float] = {}     # Dateiname → Zeitpunkt der letzten Sicherung in dieser Sitzung
+
+
+def backup_project(f: Path, force: bool = False, tag: str = "") -> None:
+    """Die bisherige Fassung zurücklegen, bevor sie überschrieben wird – höchstens alle 15 Minuten, die letzten sechs bleiben.
+    So lässt sich ein Projekt auch dann retten, wenn ein Stand einmal kaputt gespeichert wurde. Gelesen wird sofort,
+    gepackt und geschrieben im Hintergrund, damit das Speichern selbst nicht länger dauert."""
+    import gzip
+    try:
+        if not f.exists() or f.stat().st_size < 2:
+            return
+        d = backup_dir(f)
+        now = time.time()
+        if not force:
+            last = _last_backup.get(f.name)
+            if last is None:
+                old = sorted(d.glob("*.json.gz")) if d.is_dir() else []
+                last = old[-1].stat().st_mtime if old else 0
+            if now - last < BACKUP_EVERY:
+                _last_backup[f.name] = last
+                return
+        _last_backup[f.name] = now
+        data = f.read_bytes()
+        dst = d / (time.strftime("%Y%m%d-%H%M%S") + tag + ".json.gz")
+
+        def work():
+            try:
+                d.mkdir(parents=True, exist_ok=True)
+                part = dst.with_suffix(".part")
+                with open(part, "wb") as fh:
+                    fh.write(gzip.compress(data, 5))
+                    fh.flush()
+                    os.fsync(fh.fileno())
+                os.replace(part, dst)
+                for x in sorted(d.glob("*.json.gz"))[:-BACKUP_KEEP]:
+                    x.unlink(missing_ok=True)
+            except Exception as e:  # noqa: BLE001 – eine misslungene Sicherung darf das Speichern nicht verhindern
+                log(f"Sicherung von {f.name} nicht möglich: {e!r}")
+        if force:
+            work()
+        else:
+            threading.Thread(target=work, daemon=True).start()
+    except Exception as e:  # noqa: BLE001
+        log(f"Sicherung von {f.name} nicht möglich: {e!r}")
+
+
+def restore_backup(f: Path):
+    """Jüngste lesbare frühere Fassung eines Projekts: (Text, Dateiname) oder None."""
+    import gzip
+    d = backup_dir(f)
+    for x in sorted(d.glob("*.json.gz"), reverse=True) if d.is_dir() else []:
+        try:
+            txt = gzip.open(x, "rb").read().decode("utf-8")
+            if isinstance(json.loads(txt), dict):
+                return txt, x.name
+        except Exception:  # noqa: BLE001
+            continue
+    return None
+
+
+def replace_retry(tmp: Path, f: Path) -> None:
+    """Datei ersetzen. Unter Windows schlägt das fehl, solange ein anderes Programm (Virenscanner, Suchindex) die Zieldatei
+    kurz geöffnet hält – dann wenige Male nachfassen statt den Speichervorgang aufzugeben."""
+    for k in range(8):
+        try:
+            os.replace(tmp, f)
+            return
+        except PermissionError:
+            if k == 7:
+                raise
+            time.sleep(0.05 * (k + 1))
 
 
 def load_project(pid: str) -> str:
     f = proj_path(pid)
     if not f.exists():
         return ""
-    txt = f.read_text(encoding="utf-8")
+    obj = None
+    try:
+        txt = f.read_text(encoding="utf-8")
+        obj = json.loads(txt)
+    except (ValueError, OSError):
+        txt = ""
+    if not isinstance(obj, dict):
+        # Projektdatei unlesbar (abgebrochener Schreibvorgang, voller Datenträger): jüngste frühere Fassung nehmen
+        rec = restore_backup(f)
+        if not rec:
+            log(f"Projekt {f.name} ist unlesbar und es gibt keine frühere Fassung.")
+            return txt
+        txt = rec[0]
+        obj = json.loads(txt)
+        try:
+            shutil.copyfile(f, f.with_suffix(".defekt"))
+            save_project(pid, txt, obj, backup=False)
+        except Exception as e:  # noqa: BLE001
+            log(f"Wiederhergestellte Fassung ließ sich nicht zurückschreiben: {e!r}")
+        log(f"Projekt {f.name} war unlesbar – frühere Fassung {rec[1]} wiederhergestellt.")
     try:
         uris: set = set()
-        collect_uris(json.loads(txt), uris)
+        collect_uris(obj, uris)
         for u in uris:
             allow(u)
     except Exception:
@@ -2068,11 +2293,161 @@ def load_project(pid: str) -> str:
     return txt
 
 
-def save_project(pid: str, txt: str):
+def save_project(pid: str, txt: str, obj=None, backup: bool = True):
+    """Projekt sicher speichern: vollständig in eine Nebendatei schreiben, dann die bisherige Datei ersetzen.
+    Ein unvollständig angekommener oder unlesbarer Stand wird abgewiesen – die letzte gute Fassung bleibt stehen."""
+    if obj is None:
+        try:
+            obj = json.loads(txt)
+        except ValueError:
+            raise ValueError("Der Projektstand kam unvollständig an und wurde nicht gespeichert.")
+    if not isinstance(obj, dict) or not obj.get("id"):
+        raise ValueError("Der Projektstand ist unvollständig und wurde nicht gespeichert.")
+    if not re.sub(r"[^A-Za-z0-9_-]", "", pid):
+        raise ValueError("Projekt ohne Kennung.")
     f = proj_path(pid)
-    tmp = f.with_suffix(".tmp")
-    tmp.write_text(txt, encoding="utf-8")
-    tmp.replace(f)
+    with _proj_lock:
+        if backup:
+            backup_project(f)
+        tmp = f.with_suffix(".tmp")
+        with open(tmp, "wb") as fh:
+            fh.write(txt.encode("utf-8"))
+            fh.flush()
+            try:
+                os.fsync(fh.fileno())   # erst wirklich auf dem Datenträger, dann die bisherige Fassung ersetzen (Stromausfall, Absturz)
+            except OSError:
+                pass
+        replace_retry(tmp, f)
+        try:
+            st = f.stat()
+            _list_cache[f.name] = (st.st_mtime_ns, st.st_size, project_summary(obj))
+        except Exception:  # noqa: BLE001
+            _list_cache.pop(f.name, None)
+
+
+def delete_project(pid: str) -> None:
+    """Projekt löschen. Die letzte Fassung bleibt noch 30 Tage bei den Sicherungen (falls es ein Versehen war)."""
+    f = proj_path(pid)
+    with _proj_lock:
+        backup_project(f, force=True, tag="-geloescht")
+        f.unlink(missing_ok=True)
+        _list_cache.pop(f.name, None)
+
+
+# ───────────────────────────── Aufräumen im Hintergrund ─────────────────────────────
+
+THUMB_MAX_AGE = 30 * 86400      # Vorschaubilder, die 30 Tage nicht gebraucht wurden, werden entfernt (entstehen bei Bedarf neu)
+THUMB_MAX_BYTES = 1_500_000_000  # und insgesamt höchstens 1,5 GB – die ältesten zuerst
+
+
+def housekeeping() -> None:
+    """Einmal je Programmstart, im Hintergrund: Zwischenspeicher begrenzen und liegengebliebene Hilfsdateien entfernen.
+    Angefasst werden nur Dateien, die HoneyCut selbst erzeugt hat und jederzeit neu erzeugen kann."""
+    now = time.time()
+    freed = 0
+    try:
+        files = []
+        for x in (CACHE_DIR / "thumbs").iterdir():
+            try:
+                st = x.stat()
+            except OSError:
+                continue
+            if now - st.st_mtime > THUMB_MAX_AGE or (x.name.endswith(".tmp.jpg") and now - st.st_mtime > 3600):
+                x.unlink(missing_ok=True)
+                freed += st.st_size
+            else:
+                files.append((st.st_mtime, st.st_size, x))
+        total = sum(n for _, n, _ in files)
+        for _, n, x in sorted(files, key=lambda t: t[0]):
+            if total <= THUMB_MAX_BYTES:
+                break
+            x.unlink(missing_ok=True)
+            total -= n
+            freed += n
+    except OSError as e:
+        log(f"Aufräumen (Vorschaubilder): {e!r}")
+    try:   # liegengebliebene Teilstücke abgebrochener Vorgänge (älter als ein Tag)
+        for d, pat in ((DATA_DIR / "freigestellt", "*.tmp.mp4"), (CACHE_DIR / "proxies", "*.tmp.mp4"),
+                       (DATA_DIR / "models", "*.part"), (PROJ_DIR, "*.tmp")):
+            for x in d.glob(pat) if d.is_dir() else []:
+                st = x.stat()
+                if now - st.st_mtime > 86400:
+                    x.unlink(missing_ok=True)
+                    freed += st.st_size
+        for x in Path(tempfile.gettempdir()).glob("textschnitt_*"):
+            try:
+                st = x.stat()
+                if now - st.st_mtime > 86400:
+                    freed += st.st_size if x.is_file() else 0
+                    shutil.rmtree(x, ignore_errors=True) if x.is_dir() else x.unlink(missing_ok=True)
+            except OSError:
+                continue
+    except OSError as e:
+        log(f"Aufräumen (Teilstücke): {e!r}")
+    try:   # Sicherungen gelöschter Projekte nach 30 Tagen entfernen
+        for d in BACKUP_DIR.iterdir() if BACKUP_DIR.is_dir() else []:
+            for x in d.glob("*.part") if d.is_dir() else []:
+                if now - x.stat().st_mtime > 3600:
+                    x.unlink(missing_ok=True)
+            if d.is_dir() and not (PROJ_DIR / (d.name + ".json")).exists():
+                newest = max((x.stat().st_mtime for x in d.iterdir()), default=0)
+                if now - newest > 30 * 86400:
+                    shutil.rmtree(d, ignore_errors=True)
+    except OSError as e:
+        log(f"Aufräumen (Sicherungen): {e!r}")
+    try:
+        freed += sweep_orphans(now)
+    except Exception as e:  # noqa: BLE001
+        log(f"Aufräumen (verwaiste Dateien): {e!r}")
+    if freed > 1_000_000:
+        log(f"Aufgeräumt: {freed / 1e6:.0f} MB an Zwischenspeicher, Teilstücken und verwaisten Dateien freigegeben")
+
+
+SWEEP_EVERY = 7 * 86400         # die Suche nach verwaisten Vorschau-Dateien höchstens einmal je Woche
+ORPHAN_AGE = 30 * 86400         # … und erst 30 Tage nach der letzten Verwendung
+_REF_RE = re.compile(r"[0-9a-f]{16}\.mp4")
+
+
+def sweep_orphans(now: float) -> int:
+    """Vorschau-Dateien entfernen (verkleinerte Kopien für Videos, die sich in der Vorschau nicht abspielen ließen), auf die
+    kein Projekt mehr verweist – das Video wurde ersetzt oder das Projekt gelöscht. Als „verwendet“ zählt alles, was in
+    irgendeinem Projekt oder in einer Sicherung steht. Lässt sich ein Projekt nicht lesen, wird nichts entfernt.
+    Bewusst NICHT angefasst werden Folienbilder und freigestellte Kopien: Auf sie können bereits exportierte CapCut- und
+    Concat-Projekte verweisen."""
+    import gzip
+    stamp = CACHE_DIR / "aufgeraeumt.txt"
+    try:
+        if now - stamp.stat().st_mtime < SWEEP_EVERY:
+            return 0
+    except OSError:
+        pass
+    cand: list[tuple[Path, int]] = []
+    for x in (CACHE_DIR / "proxies").glob("*.mp4"):
+        st = x.stat()
+        if not x.name.endswith(".tmp.mp4") and now - max(st.st_mtime, st.st_atime) > ORPHAN_AGE:
+            cand.append((x, st.st_size))
+    freed = 0
+    if cand:
+        used: set[str] = set()
+        for f in PROJ_DIR.glob("*.json"):       # jedes Projekt muss lesbar sein – sonst lieber nichts entfernen
+            used.update(_REF_RE.findall(f.read_text(encoding="utf-8")))
+            time.sleep(0.02)
+        if any(x.name not in used for x, _ in cand):
+            for f in (BACKUP_DIR.glob("*/*.json.gz") if BACKUP_DIR.is_dir() else []):
+                try:
+                    used.update(_REF_RE.findall(gzip.open(f, "rb").read().decode("utf-8", "replace")))
+                except (OSError, EOFError):
+                    continue
+                time.sleep(0.02)
+        for x, size in cand:
+            if x.name not in used:
+                try:
+                    x.unlink()
+                    freed += size
+                except OSError:
+                    continue
+    stamp.write_text(time.strftime("%Y-%m-%d %H:%M:%S"), encoding="utf-8")
+    return freed
 
 
 # ───────────────────────────── Dateiauswahl, Ordner öffnen ─────────────────────────────
@@ -2404,6 +2779,12 @@ MEDIA_CHUNK = 8 << 20   # 8 MB je Antwort auf offene Bereichsanfragen
 class Handler(BaseHTTPRequestHandler):
     server_version = "HoneyCut/2"
     protocol_version = "HTTP/1.1"
+    # Antworten sofort und möglichst in einem Stück senden. Ohne das hält das Betriebssystem das zweite kleine Paket
+    # (den Inhalt) zurück, bis das erste (die Kopfzeilen) bestätigt ist – und die Gegenseite bestätigt erst nach rund
+    # 40 ms. Jede kurze Antwort (Auftragsstatus, Speichern, Vorschaubild) dauerte dadurch 40 ms länger als nötig, und
+    # weil die Oberfläche auf viele dieser Antworten wartet, stand sie jedes Mal so lange still.
+    disable_nagle_algorithm = True
+    wbufsize = 1 << 16
 
     def log_message(self, fmt, *args):
         pass
@@ -2554,7 +2935,9 @@ class Handler(BaseHTTPRequestHandler):
                 job = JOBS.get(q.get("id", ""))
                 if not job:
                     return self._text("null")
-                return self._json({k: v for k, v in job.items() if k != "cancel"})
+                if job["status"] != "running":
+                    job["fetched"] = time.time()   # Ergebnis wurde abgeholt (siehe prune_jobs)
+                return self._json({k: v for k, v in job.items() if k not in ("cancel", "fetched", "ended")})
             return self._json({"error": "Nicht gefunden"}, 404)
         except (ConnectionError, OSError) as e:
             if isinstance(e, FileNotFoundError):
@@ -2587,20 +2970,33 @@ class Handler(BaseHTTPRequestHandler):
                 Path(dest).write_bytes(base64.b64decode(data.get("data") or ""))
                 return self._json({"ok": True, "path": dest})
             if rest == "api/project":
-                save_project(q.get("id", ""), raw.decode("utf-8"))
+                if len(raw) != int(self.headers.get("Content-Length") or 0):
+                    raise ValueError("Der Projektstand kam unvollständig an und wurde nicht gespeichert.")
+                txt = raw.decode("utf-8")
+                try:
+                    obj = json.loads(txt)
+                except ValueError:
+                    raise ValueError("Der Projektstand kam unvollständig an und wurde nicht gespeichert.")
+                save_project(q.get("id", ""), txt, obj)
                 try:
                     uris: set = set()
-                    collect_uris(json.loads(raw), uris)
+                    collect_uris(obj, uris)
                     for x in uris:
                         allow(x)
                 except Exception:
                     pass
                 return self._text('"ok"')
+            if rest == "api/log":   # Meldungen der Oberfläche (unerwartete Fehler, Auffälligkeiten beim Abspielen) für die Fehlersuche
+                log("Oberfläche: " + raw.decode("utf-8", "replace")[:800].replace("\n", " ⏎ "))
+                return self._json({"ok": True})
             if rest == "api/bus":
-                bus_post(q.get("p", ""), q.get("from", ""), raw.decode("utf-8"))
+                if q.get("bye"):
+                    bus_bye(q.get("p", ""), q.get("from", ""))
+                else:
+                    bus_post(q.get("p", ""), q.get("from", ""), raw.decode("utf-8"), q.get("k", ""))
                 return self._json({"ok": True})
             if rest == "api/project/delete":
-                proj_path(q.get("id", "")).unlink(missing_ok=True)
+                delete_project(q.get("id", ""))
                 return self._json({"ok": True})
             data = json.loads(raw or b"{}")
             if rest == "api/fullscreen":
@@ -2678,9 +3074,19 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"error": str(e)}, 400)
 
 
+_housekept = False
+
+
 def make_server(port: int) -> ThreadingHTTPServer:
+    global _housekept
     ThreadingHTTPServer.daemon_threads = True
-    return ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    srv = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    if not _housekept:   # einmal je Programmstart, eine halbe Minute nach dem Start und ohne den Start aufzuhalten
+        _housekept = True
+        t = threading.Timer(30, housekeeping)
+        t.daemon = True
+        t.start()
+    return srv
 
 
 def app_url(port: int) -> str:

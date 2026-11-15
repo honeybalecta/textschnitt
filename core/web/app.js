@@ -25,6 +25,26 @@ const sentEnd = w => /[.?!…]$/.test(w || '') && !/^\d+\.$/.test(w || '');   //
 const tokText = t => (P && P.edits && P.edits[t.i] != null) ? P.edits[t.i] : t.text;
 const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;'}[c]));
 function toast(msg){ const t = $('#toast'); t.textContent = msg; t.classList.add('on'); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('on'), 2600); }
+// Text nur dann ins Dokument schreiben, wenn er sich geändert hat – und dann in den vorhandenen Textknoten.
+// „el.textContent = …“ ersetzt den Textknoten jedes Mal, auch bei gleichem Text. In der Abspielschleife hieß das:
+// bei jedem Bild neue Knoten, neue Stil- und Layoutberechnung, neues Zeichnen – für Anzeigen, die sich gar nicht ändern.
+function setText(el, s){
+  s = String(s); const n = el.firstChild;
+  if (n && n.nodeType === 3 && !n.nextSibling){ if (n.data !== s) n.data = s; }
+  else if (s || n) el.textContent = s;
+}
+
+// ───────── Protokoll für die Fehlersuche ─────────
+// Unerwartete Fehler und Auffälligkeiten beim Abspielen landen in der Konsole und – wo die Plattform es anbietet (Windows:
+// textschnitt.log) – im Protokoll. Jede Meldung höchstens einmal, insgesamt höchstens 40 je Sitzung.
+const hcLogged = new Set();
+function hcLog(msg){
+  msg = String(msg).slice(0, 600); if (hcLogged.has(msg) || hcLogged.size >= 40) return; hcLogged.add(msg);
+  try { console.warn('[hc] ' + msg); } catch(_){}
+  try { if (TS.log) TS.log(msg); } catch(_){}
+}
+addEventListener('error', e => { if (e && e.message) hcLog(`Fehler: ${e.message} (${String(e.filename || '').split('/').pop()}:${e.lineno || 0})`); });
+addEventListener('unhandledrejection', e => { const r = e && e.reason; hcLog('Fehler (Promise): ' + (r && (r.stack || r.message) || r)); });
 
 // ───────── Brücke zur Plattform ─────────
 const pending = new Map();
@@ -39,8 +59,12 @@ window.TSApp = {
 };
 function pickMedia(kind){ return new Promise(res => { const id = newId(); pending.set(id, res); TS.pick(id, kind); }); }
 function watchJob(id, onTick, onDone, onFail){
+  let miss = 0;
   const tick = () => {
-    const j = J(TS.job(id)); if (!j) return onFail({error:'Job verloren'});
+    // Schlägt eine einzelne Abfrage fehl (Backend kurz beschäftigt), wird weitergefragt – früher blieb die Anzeige dann für immer stehen
+    let j; try { j = J(TS.job(id)); } catch(e){ if (++miss <= 6) return setTimeout(tick, 700); hcLog('Auftrag nicht abfragbar: ' + (e && e.message)); return onFail({error:'Der Auftrag ließ sich nicht mehr abfragen'}); }
+    miss = 0;
+    if (!j) return onFail({error:'Job verloren'});
     onTick(j);
     if (j.status === 'running') return setTimeout(tick, 500);
     if (j.status === 'done') onDone(j); else onFail(j);
@@ -384,14 +408,16 @@ function openProject(id, keep){
 }
 function openProjectNow(id, keep){
   const keepTab = keep ? tab : null, keepPos = keep ? outPos : 0;
-  P = J(TS.loadProject(id)); if (!P) return toast('Projekt konnte nicht geladen werden');
+  let np = null; try { np = J(TS.loadProject(id)); } catch(e){ hcLog('Projekt laden: ' + (e && e.message)); }
+  if (!np || typeof np !== 'object') return toast('Projekt konnte nicht geladen werden');   // das offene Projekt bleibt dabei unberührt
+  P = np; clearTimeout(saveRetryT); saveFails = 0; $('#saved').classList.remove('err'); $('#saved').textContent = '';
   if (!P.sources){ P.sources = [P.main]; P.sources[0].tr = !!(P.tokens || []).length; delete P.main; }   // altes Format (ein Video)
   P.adj ||= {}; P.speakers ||= []; P.slides ||= []; P.items ||= []; P.dels ||= []; P.splits ||= []; P.edits ||= {}; P.moves ||= []; P.trims ||= {}; P.settings ||= {pad:0.06}; P.cues ||= [];
   if (P.settings.burn == null) P.settings.burn = true;
   P.sub_style = {...DEF_STYLE, ...(P.sub_style || {})}; if (P.sub_style.y == null) P.sub_style.y = POS_Y[P.sub_style.pos] ?? 0.88;
   tokens = P.tokens || []; tokens.forEach(t => { if (t.src == null) t.src = 0; });
   deleted = new Set(P.deleted || []); undo = []; redo = [];
-  layoutSources(); vSi = -1; vPending = null;
+  layoutSources(); vSi = -1; vPending = null; cueCache.at = -1; subShown = null;
   $('#home').classList.add('hidden'); $('#proj').classList.remove('hidden');
   $('#projName').textContent = P.name; $('#exName').value = P.name + '_geschnitten';
   const [ow, oh] = baseDims(); $('#exRes').options[0].textContent = `Original (${ow}×${oh})`;
@@ -432,7 +458,11 @@ $('#proj').addEventListener('pointerdown', () => { if ($('#proj').classList.cont
 const OPEN_KEY = 'hc-open';
 addEventListener('pagehide', () => rememberOpen()); document.addEventListener('visibilitychange', () => { if (document.hidden) rememberOpen(); });
 function rememberOpen(){ if (!P || document.body.classList.contains('solo')) return; try { localStorage.setItem(OPEN_KEY, JSON.stringify({id: P.id, tab, pos: outPos, at: Date.now()})); } catch(_){} }
-function closeProject(){ try { localStorage.removeItem(OPEN_KEY); } catch(_){} setFull(false); pausePlay(); saveNow(); allLayers(releaseMedia); for (const el of audLayers.values()) releaseMedia(el); audLayers.clear(); busPid = null; P = null; V.removeAttribute('src'); V.load(); vSi = -1; hideOverlay(); showHome(); }
+function closeProject(){
+  pausePlay();
+  if (!saveNow() && !confirm('Der letzte Stand ließ sich nicht speichern (' + ($('#saved').title || 'Grund unbekannt') + ').\n\nOK: trotzdem schließen – die letzten Änderungen gehen verloren.\nAbbrechen: im Projekt bleiben.')) return;
+  clearTimeout(saveRetryT); saveFails = 0; busBye();
+  try { localStorage.removeItem(OPEN_KEY); } catch(_){} setFull(false); allLayers(releaseMedia); for (const el of audLayers.values()) releaseMedia(el); audLayers.clear(); busPid = null; P = null; V.removeAttribute('src'); V.load(); vSi = -1; hideOverlay(); showHome(); }
 $('#backBtn').onclick = closeProject;
 const fillsWrap = () => isWide() || matchMedia('(orientation: landscape) and (max-height: 599px)').matches;
 // Bühne: ein 16:9-Feld. Hochformat-Videos lassen links und rechts Platz – dort sitzt zusätzliche Steuerung.
@@ -640,25 +670,45 @@ function rebuildTokens(){
 }
 
 // ───────── Mehrere Fenster: Abgleich über das Desktop-Backend ─────────
+// Solange kein zweites Fenster dasselbe Projekt offen hat, wird nichts gemeldet und nur selten nachgefragt. Vorher ging
+// nach jeder Änderung der komplette Bearbeitungsstand ans Backend und beim Abspielen fünfmal je Sekunde die Position –
+// auch wenn niemand zuhörte.
 const WIN = newId();
 let busPid = null, busSeq = -1, busT = null, applyingRemote = false, posSent = {o:-1, at:0};
+let busPeers = 0, busJoins = -1;   // andere Fenster mit demselben Projekt (Desktop; im Browser meldet der Kanal selbst nur an offene Fenster)
+const busOn = () => !!(CAP.bus && P && (TS.busPost || busPeers > 0));
 function busSend(msg){
-  if (!CAP.bus || !P) return;
+  if (!busOn()) return;
   if (TS.busPost) return TS.busPost(P.id, WIN, JSON.stringify(msg));
-  fetch('api/bus?p=' + encodeURIComponent(P.id) + '&from=' + WIN, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(msg)}).catch(() => {});
+  fetch('api/bus?p=' + encodeURIComponent(P.id) + '&from=' + WIN + '&k=' + msg.t, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(msg)}).catch(() => {});
 }
+// Abmelden, wenn das Projekt oder das Fenster geschlossen wird – die anderen Fenster hören dann sofort auf zu melden
+function busBye(){
+  if (!busPid || TS.busPost || !CAP.bus) return;
+  try { navigator.sendBeacon('api/bus?p=' + encodeURIComponent(busPid) + '&from=' + WIN + '&bye=1', ''); } catch(_){}
+}
+addEventListener('pagehide', busBye);
 let busGen = 0;
 function busStart(){
-  if (!CAP.bus || !P || busPid === P.id) return; busPid = P.id; busSeq = -1;
+  if (!CAP.bus || !P || busPid === P.id) return; busBye(); busPid = P.id; busSeq = -1; busPeers = 0; busJoins = -1;
   const pid = P.id, gen = ++busGen;
   if (TS.busListen){ TS.busListen(pid, WIN, m => { if (busPid === pid && gen === busGen) busApply(J(m)); }); return; }
   (async function poll(){
     while (busPid === pid && gen === busGen){
       try {
         const r = await fetch(`api/bus?p=${encodeURIComponent(pid)}&since=${busSeq}&from=${WIN}`); const j = await r.json();
-        busSeq = j.seq; for (const m of j.msgs || []) if (busPid === pid) busApply(J(m));
+        if (busPid !== pid || gen !== busGen) break;
+        // Ist ein weiteres Fenster dazugekommen? Dann hat es den zuletzt gespeicherten Stand geladen – ihm den aktuellen geben.
+        // Das neue Fenster selbst (j.new) schickt nichts: Sein Stand ist der ältere.
+        const came = !j.new && j.joins != null && busJoins >= 0 && j.joins > busJoins;
+        busSeq = j.seq; busPeers = j.peers == null ? 1 : j.peers; if (j.joins != null) busJoins = j.joins;
+        // Selbst gerade dazugekommen: nicht die eigene Anfangsposition verkünden (früher sprang dadurch das erste Fenster
+        // an den Anfang, sobald ein zweites aufging) – das neue Fenster übernimmt die Stelle der vorhandenen.
+        if (j.new && busPeers > 0) posSent = {o: outPos, at: performance.now()};
+        for (const m of j.msgs || []) if (busPid === pid) busApply(J(m));
+        if (came && busPeers > 0 && P && P.id === pid){ busSend({t:'state', snap: snapshot()}); if (!playing) busSend({t:'pos', o: outPos, playing: false}); posSent = {o: outPos, at: performance.now()}; }
       } catch(_){}
-      await new Promise(r => setTimeout(r, 350));
+      await new Promise(r => setTimeout(r, busPeers ? 350 : 1500));
     }
   })();
 }
@@ -673,35 +723,119 @@ function busApply(m){
 }
 // Abspielposition an die anderen Fenster melden (höchstens alle 200 ms)
 (function posLoop(){
-  if (CAP.bus && P && Math.abs(outPos - posSent.o) > 0.02 && performance.now() - posSent.at > 200){ posSent = {o: outPos, at: performance.now()}; busSend({t:'pos', o: outPos, playing}); }
+  if (busOn() && Math.abs(outPos - posSent.o) > 0.02 && performance.now() - posSent.at > 200){ posSent = {o: outPos, at: performance.now()}; busSend({t:'pos', o: outPos, playing}); }
   setTimeout(posLoop, 100);
 })();
 
 // ───────── Speichern & Rückgängig ─────────
 function tokMarks(){ const o = {}; for (const t of tokens) if (t.spk || t.ks) o[t.i] = [t.spk || 0, t.ks ? 1 : 0]; return o; }
-function snapshot(){ return JSON.stringify({d:[...deleted], t:P.trims, c:P.cues, i:P.items, a:P.adj, x:P.dels, y:P.splits, s:P.sub_style, e:P.edits, m:P.moves, k:P.speakers, w:tokMarks(), f:P.slides, wm:P.watermark || null, tr:P.trans || null}); }
+// Zum Stand gehören auch Format, Bildausschnitt und die Lautstärke der Hauptvideos (fm, fr, sv). Sie fehlten: „Rückgängig“
+// nach einem Formatwechsel, nach dem Verschieben des Ausschnitts oder nach „Alle angleichen“ tat nichts bzw. nur die Hälfte.
+function snapshot(){ return JSON.stringify({d:[...deleted], t:P.trims, c:P.cues, i:P.items, a:P.adj, x:P.dels, y:P.splits, s:P.sub_style, e:P.edits, m:P.moves, k:P.speakers, w:tokMarks(), f:P.slides, wm:P.watermark || null, tr:P.trans || null,
+  fm:P.format || null, fr:P.frame || null, sv:P.sources.map(x => x.vol == null ? null : x.vol)}); }
 function restore(s){ const o = JSON.parse(s); deleted = new Set(o.d); P.trims = o.t; P.cues = o.c; P.items = o.i; P.adj = o.a; P.dels = o.x || []; P.splits = o.y || [];
   if (o.s) P.sub_style = o.s; P.edits = o.e || {}; P.moves = o.m || [];
+  const fmCh = 'fm' in o && (P.format || null) !== (o.fm || null), frCh = 'fr' in o && JSON.stringify(P.frame || null) !== JSON.stringify(o.fr || null);
+  if ('fm' in o) P.format = o.fm || null; if ('fr' in o) P.frame = o.fr || null;
+  if (o.sv) o.sv.forEach((v, k) => { const x = P.sources[k]; if (!x) return; if (v == null) delete x.vol; else x.vol = v; });
   if (o.f) P.slides = o.f; if (o.k) P.speakers = o.k;
   if ('wm' in o){ if (o.wm) P.watermark = o.wm; else delete P.watermark; } if ('tr' in o){ if (o.tr) P.trans = o.tr; else delete P.trans; trMemo.list = null; } if (o.w){ for (const t of tokens){ const m = o.w[t.i]; if (m){ if (m[0]) t.spk = m[0]; else delete t.spk; if (m[1]) t.ks = true; else delete t.ks; } else { delete t.spk; delete t.ks; } } }
   const reorder = JSON.stringify(P.moves) !== lastOrderKey; syncStyleInputs(); changed(true);
-  if (reorder && tokens.length) renderTranscript(); else tokens.forEach(t => paint(t.i)); }
+  if (reorder && tokens.length) renderTranscript(); else tokens.forEach(t => paint(t.i));
+  if (fmCh || frCh) frameRestored(fmCh); }
+// Format oder Bildausschnitt kamen mit einem früheren Stand zurück: Bühne, Export-Angaben, Clip-Reiter und Folien nachziehen
+function frameRestored(fmCh){
+  if (fmCh){ fitStage(); setTimeout(fitStage, 50); renderExportForm(); if (window.slSyncAll) slSyncAll();
+    if (!P.format && window.setCanvasEdit) setCanvasEdit(false); }
+  applyMainTransform(); placeBox(); if (window.placeCanvasBox) placeCanvasBox();
+  if (tab === 'clip' && window.renderClip) renderClip();
+  if (!playing) seekOut(outPos, false);
+}
 function commit(fn, rerender = true){ undo.push(snapshot()); if (undo.length > 200) undo.shift(); redo = []; fn(); changed(rerender); }
 $('#undoBtn').onclick = () => { if (!undo.length || !P) return; redo.push(snapshot()); restore(undo.pop()); };
 $('#redoBtn').onclick = () => { if (!redo.length || !P) return; undo.push(snapshot()); restore(redo.pop()); };
+// Wiedergabe, Abspiellinie und Schnitt beieinander halten. Nach einer Änderung stimmt die Nummer des laufenden Abschnitts
+// (curSeg) nicht mehr unbedingt – Abschnitte kommen hinzu oder fallen weg –, und dieselbe Ausgabezeit zeigt auf andere Bilder,
+// sobald davor etwas geschnitten wurde. Früher blieb beides einfach stehen: Die laufende Wiedergabe sprang an falsche Stellen,
+// spielte gerade Gelöschtes noch ab (während die Zeitanzeige stand) oder blieb ganz hängen; im Stand zeigte das Bild weiter
+// die alte Stelle, während die Abspiellinie in der Zeitleiste schon über etwas anderem lag – „Teilen“ oder „Bis hier weg“
+// griffen dann daneben.
+// Jetzt gilt in beiden Fällen: Die Abspiellinie bleibt auf demselben Bild der Quelle. Was davor geschnitten wird, verschiebt nur
+// die Zeitanzeige; ist die Stelle selbst weggefallen, geht es an der nächsten behaltenen Stelle weiter.
+function liveAnchor(){
+  if (!timeline.length) return null;
+  if (playing){ const g = timeline[curSeg]; if (!g) return null;
+    return g.kind === 'main' ? {main: true, src: vT()} : {main: false, id: g.item.id, local: segLocal(g)}; }
+  // Im Stand aus der Ausgabezeit gerechnet (das Videoelement kann noch im Sprung sein); einen Hauch im Inneren des Abschnitts,
+  // damit eine Stelle genau auf einem Schnitt beim richtigen der beiden Nachbarn bleibt
+  const g = timeline[segAtOut(outPos)]; if (!g) return null;
+  const d = segDur(g), local = g.in + clamp(outPos - g.o, Math.min(1e-4, d / 2), Math.max(d / 2, d - 1e-4)) * (g.speed || 1);
+  return g.kind === 'main' ? {main: true, src: local} : {main: false, id: g.item.id, local};
+}
+function resyncPlay(a){
+  if (!timeline.length){ curSeg = 0; outPos = 0; updateHead(0); return; }   // alles weggeschnitten
+  let o = outPos;
+  if (a){
+    if (a.main) o = srcToOut(snapSrc(a.src));
+    else { const g = timeline.find(x => x.kind === 'insert' && x.item.id === a.id); o = g ? g.o + clamp(a.local - g.in, 0, g.out - g.in) : Math.min(outPos, total); }
+  }
+  if (playing && a){
+    if (o >= total - 0.02){ pausePlay(); seekOut(Math.max(0, total - 0.01), false); return; }   // dahinter kommt nichts mehr
+    seekOut(o, true); return;
+  }
+  // Im Stand: Kleinste Verschiebungen (unter einem Bild) lassen die Abspiellinie, wo sie ist. Zeigt das Bild schon die richtige
+  // Stelle, wird nicht neu gesprungen – nur die Anzeigen ziehen nach.
+  o = clamp(o, 0, Math.max(0, total - 0.01)); if (Math.abs(o - outPos) < 0.012) o = clamp(outPos, 0, Math.max(0, total - 0.01));
+  const k = segAtOut(o), g = timeline[k], want = g.in + (o - g.o) * (g.speed || 1);
+  const hid = el => el.classList.contains('hidden');
+  const shown = g.kind === 'main' ? vSi === g.si && hid(IV) && hid(II) && Math.abs(vT() - want) < 0.05
+    : o === outPos && (isImg(g.item.clip) ? !hid(II) && II.dataset.src === MEDIA(g.uri) : !hid(IV) && IV.dataset.src === MEDIA(g.uri) && Math.abs(IV.currentTime - want) < 0.05);
+  // Die neue Stelle wird den anderen Fenstern nicht eigens gemeldet: Sie bekommen die Änderung selbst und rücken dabei
+  // genauso nach. (Eine Positionsmeldung, die vor der Änderung ankäme, würde dort noch auf den alten Schnitt angewendet.)
+  if (!shown){ seekOut(o, false); posSent = {o: outPos, at: performance.now()}; if (studioOn() && window.syncScroll) syncScroll(outPos, true); return; }
+  curSeg = k;
+  if (o !== outPos){ outPos = o; posSent = {o, at: performance.now()}; updateOverlay(o); updateZoom(); updateSubs(o); updateTitles(o); updateHead(o); if (studioOn() && window.syncScroll) syncScroll(o, true); }
+}
+// Regler und Textfelder in den Dialogen (Anpassung, Titel, Lautstärke): Während des Ziehens bzw. Tippens folgen Bild und Ton
+// sofort; die Zeitleiste wird erst nach einer kurzen Pause neu gezeichnet. Vorher wurde sie bei jedem Reglerschritt und
+// jedem Tastendruck komplett neu aufgebaut – bei langen Projekten hing der Regler dadurch spürbar nach.
+let tlHold = false, tlLateT = 0;
+function changedLive(){
+  tlHold = true; try { changed(false); } finally { tlHold = false; }
+  clearTimeout(tlLateT); tlLateT = setTimeout(() => { if (P && studioOn() && window.renderStudio) renderStudio(); }, 220);
+}
 function changed(rerender = true){
+  if (!tlHold) clearTimeout(tlLateT);
+  const anchor = liveAnchor();
   recompute(rerender && studioOn() && !!window.renderStudio);   // die Zeitleiste zeichnet renderStudio gleich danach – nicht doppelt
+  resyncPlay(anchor);
   if (rerender){ if (tab === 'subs') renderSubs(); if (studioOn() && window.renderStudio) renderStudio(); }
   else if (tab === 'subs') updateSubsList();
   cueCache.at = -1; if (!playing) updateSubs(outPos);
   if (tab === 'export') renderExport();
   clearTimeout(saveT); $('#saved').textContent = '…'; saveT = setTimeout(saveNow, 700);
-  if (!applyingRemote){ clearTimeout(busT); busT = setTimeout(() => busSend({t:'state', snap: snapshot()}), 120); }
+  if (!applyingRemote && busOn()){ clearTimeout(busT); busT = setTimeout(() => { if (busOn()) busSend({t:'state', snap: snapshot()}); }, 120); }
 }
+// Speichern. Schlägt es fehl (Datenträger voll, Ordner gesperrt, Backend nicht erreichbar), stand früher nur ein „!“ in der
+// Kopfzeile und es blieb dabei, bis zufällig die nächste Änderung kam. Jetzt: deutlicher Hinweis mit dem Grund, und es wird
+// von selbst weiter versucht, bis es klappt. Rückgabe: ob gespeichert wurde.
+let saveFails = 0, saveRetryT = 0;
 function saveNow(){
-  if (!P) return; clearTimeout(saveT);
+  if (!P) return true; clearTimeout(saveT); clearTimeout(saveRetryT);
   P.tokens = tokens; P.deleted = [...deleted]; P.updated = Date.now();
-  try { TS.saveProject(P.id, JSON.stringify(P)); $('#saved').textContent = '✓'; } catch(e){ $('#saved').textContent = '!'; }
+  const el = $('#saved');
+  try {
+    TS.saveProject(P.id, JSON.stringify(P)); el.textContent = '✓'; el.classList.remove('err'); el.title = 'Gespeichert';
+    if (saveFails){ saveFails = 0; toast('Wieder gespeichert'); }
+    return true;
+  } catch(e){
+    const why = (e && e.message) || String(e), pid = P.id;
+    saveFails++; el.textContent = '!'; el.classList.add('err'); el.title = 'Nicht gespeichert: ' + why;
+    hcLog('Speichern fehlgeschlagen: ' + why);
+    if (saveFails === 1 || saveFails % 8 === 0) toast('Nicht gespeichert: ' + why.slice(0, 120) + ' – es wird weiter versucht');
+    saveRetryT = setTimeout(() => { if (P && P.id === pid) saveNow(); }, Math.min(20000, 1500 * saveFails));
+    return false;
+  }
 }
 
 // ───────── Wörter → Tokens ─────────
@@ -989,8 +1123,8 @@ function zoomAt(src){
 }
 function recompute(noTL){
   computeRanges(); computePieces(); computeOrder(); buildTimeline(); syncLinks(); computeOverlays(); computeAudios(); drawScrub();
-  if (!noTL && studioOn() && window.renderTimeline) renderTimeline();
-  $('#tTot').textContent = fmtT(total); $('#sideTot').textContent = fmtT(total);
+  if (!noTL && !tlHold && studioOn() && window.renderTimeline) renderTimeline();
+  setText($('#tTot'), fmtT(total)); setText($('#sideTot'), fmtT(total));
 }
 // ───────── Verbundene Objekte ─────────
 // Einblendungen, Titel, Zooms, Anpassungen und Untertitel lassen sich verbinden (lk = Gruppe). Ein Mitglied führt (lead),
@@ -1136,6 +1270,10 @@ $('#sideFont').onclick = () => { if (P) openFontSheet(); };
 // erst erneut starten, dann die Quelle an derselben Stelle neu laden – ohne dass das Programm neu gestartet werden muss.
 // Hilft ein erneutes play() nicht, wird an derselben Stelle neu gesprungen – genau das, was „Pause und wieder Abspielen“
 // von Hand bewirkt (der Decoder wird neu aufgesetzt). Erst wenn auch das dreimal nicht hilft, wird die Quelle neu geladen.
+function vState(){
+  let b = ''; try { for (let i = 0; i < V.buffered.length; i++) b += V.buffered.start(i).toFixed(1) + '–' + V.buffered.end(i).toFixed(1) + ' '; } catch(_){}
+  return `Stelle ${V.currentTime.toFixed(2)} s, readyState ${V.readyState}, networkState ${V.networkState}, paused ${V.paused}, seeking ${V.seeking}, ended ${V.ended}${V.error ? ', Fehler ' + V.error.code : ''}, geladen [${b.trim()}]`;
+}
 function playWatch(){
   const now = performance.now(), ct = V.currentTime;
   if (Math.abs(ct - WD.v) > 0.02){ WD.v = ct; WD.t = now; WD.n = 0; return; }   // kleine Sprünge stammen vom Wächter selbst
@@ -1144,12 +1282,15 @@ function playWatch(){
   if (now - WD.t < 800) return;
   WD.t = now; WD.n++;
   if (WD.n === 1){ V.play().catch(() => {}); return; }
-  if (WD.n <= 3){ try { V.currentTime = ct + 0.001; } catch(_){} vClock = {ct:-1, at:0}; V.play().catch(() => {}); return; }
-  const si = vSi; if (si < 0) return; WD.n = 0; vSi = -1; seekV(si, ct, true);
+  if (WD.n <= 3){ if (WD.n === 2) hcLog('Wiedergabe steht – wird neu angesprungen. ' + vState());
+    try { V.currentTime = ct + 0.001; } catch(_){} vClock = {ct:-1, at:0}; V.play().catch(() => {}); return; }
+  const si = vSi; if (si < 0) return; hcLog('Wiedergabe steht weiter – die Quelle wird neu geladen. ' + vState()); WD.n = 0; vSi = -1; seekV(si, ct, true);
 }
-function loop(){
+function loopStep(){
   if (P && timeline.length && playing){
-    const g = timeline[curSeg], el = g.kind === 'main' ? V : (isImg(g.item.clip) ? null : IV);
+    let g = timeline[curSeg];
+    if (!g){ curSeg = segAtOut(outPos); g = timeline[curSeg]; if (!g) return; }   // Abschnitt gibt es nicht mehr: neu bestimmen
+    const el = g.kind === 'main' ? V : (isImg(g.item.clip) ? null : IV);
     if (g.kind === 'main' && vSi !== g.si) seekV(g.si, g.in - P.sources[g.si].off, true);
     if (segLocal(g) >= g.out - 0.012 || (el && el.ended && vPending == null)) advanceSeg();
     if (g.kind === 'main' && vPending == null) playWatch();
@@ -1161,10 +1302,24 @@ function loop(){
     }
   }
   if (keyLayers.size || vKey || (P && timeline.length && mainKeyOf(timeline[curSeg]))) drawKeyFrames();
+}
+// Die Schleife darf nie abreißen: Ein Fehler in einem einzelnen Durchlauf wurde früher nicht abgefangen – danach lief zwar
+// das Video weiter, aber Zeitanzeige, Schnitte und Einblendungen standen still, bis das Programm neu gestartet wurde.
+function loop(){
+  try { loopStep(); }
+  catch(e){ hcLog('Abspielschleife: ' + (e && (e.stack || e.message) || e)); try { if (P && timeline.length) curSeg = segAtOut(clamp(outPos, 0, Math.max(0, total - 0.01))); } catch(_){} }
   requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);
-function updateHead(o){ $('#head').style.left = (total ? o / total * 100 : 0) + '%'; $('#tNow').textContent = fmtT(o); $('#sideNow').textContent = fmtS(o); }
+// Abspielmarke im Balken und die Zeitanzeigen. Die Marke wird in Schritten von einem Zwanzigstel Prozent gesetzt
+// (bei 1000 px Breite ein halber Bildpunkt) – so ändert sich ihre Lage nur, wenn man es auch sieht.
+const headEl = $('#head'), tNowEl = $('#tNow'), sideNowEl = $('#sideNow');
+let headPct = '';
+function updateHead(o){
+  const p = (total ? Math.round(o / total * 2000) / 20 : 0) + '%';
+  if (p !== headPct){ headPct = p; headEl.style.left = p; }
+  setText(tNowEl, fmtT(o)); setText(sideNowEl, fmtS(o));
+}
 // ───────── Elemente auf den Videospuren (Spur 1, 2, …; die Hauptspur ist 0) ─────────
 // Jedes Element kann frei liegen: Mittelpunkt x/y und Breite w (Anteil des Bildes), Seitenverhältnis des Clips.
 // Keyframes kf = [{t, x, y, w}] (t in Sekunden ab Beginn des Elements) bewegen es über die Zeit.
@@ -1473,7 +1628,7 @@ function placeWatermark(W, H){
   const url = MEDIA(P.watermark.clip.uri); if (el.dataset.src !== url){ el.src = url; el.dataset.src = url; }
   const r = wmRect(W, H);
   Object.assign(el.style, {left: (r.cx - r.w / 2) + 'px', top: (r.cy - r.h / 2) + 'px', width: r.w + 'px', height: r.h + 'px', opacity: String(P.watermark.op ?? WM_DEF.op)});
-  el.classList.remove('hidden');
+  if (el.classList.contains('hidden')) el.classList.remove('hidden');
 }
 function wmPlan(W, H){
   if (!wmOn() || !(total > 0)) return [];
@@ -1509,7 +1664,7 @@ function updateOverlay(o){
   act.forEach((a, k) => {
     const it = a.x, el = layerFor(it), url = MEDIA(it.clip.uri);
     if (el.dataset.src !== url){ el.src = url; el.dataset.src = url; }
-    el.classList.remove('hidden');
+    if (el.classList.contains('hidden')) el.classList.remove('hidden');
     const v = PipDrag.on && PipDrag.it === it ? PipDrag : elVals(it, o - a.at), r = elRect(it, v, W, H) || (hasCrop(it) || Crop.it === it ? elRect(it, coverVals(it), W, H) : null);
     placeLayer(el, it, r); syncKeyLayer(el, it);
     if (el.tagName !== 'VIDEO') return;
@@ -1773,7 +1928,7 @@ function updateTitles(o){
   for (const {x} of act){
     let el = titleEls.get(x.id);
     if (!el){ el = document.createElement('div'); el.className = 'titlebox'; el.dataset.id = x.id; box.append(el); titleEls.set(x.id, el); }
-    if (!(TitleDrag.on && TitleDrag.id === x.id)){ el.textContent = x.text || 'Titel'; el.style.left = (x.x * W) + 'px'; el.style.top = (x.y * H) + 'px'; }
+    if (!(TitleDrag.on && TitleDrag.id === x.id)){ setText(el, x.text || 'Titel'); el.style.left = (x.x * W) + 'px'; el.style.top = (x.y * H) + 'px'; }
     const px = (SIZE_F[x.size] || 0.058) * Math.min(W, H) * (H > W ? 1.25 : 1) * (x.scale || 1), ol = Math.max(1, px / 14);
     el.style.fontSize = px.toFixed(1) + 'px'; el.style.color = x.color || '#FFFFFF'; el.style.fontFamily = fontCss(x.font); el.style.fontWeight = fontWeight(x.font, 800);
     el.style.textShadow = x.outline !== false ? [[-1,-1],[1,-1],[-1,1],[1,1],[0,-1.4],[0,1.4],[-1.4,0],[1.4,0]].map(([a, b]) => `${(a*ol).toFixed(1)}px ${(b*ol).toFixed(1)}px 0 #000`).join(',') : 'none';
@@ -2920,14 +3075,22 @@ function computedCues(){
   return list.filter(x => x.e - x.s > 0.05);
 }
 let cueCache = {at:-1, list:[]}, cueEls = new Map(), lastCue = null, shownCue = null, shownRange = null;
+// Was gerade im Bild steht (Eintrag der berechneten Liste, oder false = nichts). Solange derselbe Untertitel läuft,
+// bleibt das Dokument unberührt – früher wurden Text und Lage bei jedem Bild neu gesetzt.
+let subShown = null;
 function updateSubs(o){
   const ov = $('#subOv');
-  if (!P || !P.cues.length || S().enabled === false){ ov.textContent = ''; shownCue = null; return; }
-  const now = performance.now(); if (now - cueCache.at > 400) cueCache = {at:now, list:computedCues()};
-  const cur = cueCache.list.find(x => o >= x.s && o < x.e);
-  if (!SubDrag.on){ const tr = cur ? trTexts(cueCache.list)[cueCache.list.indexOf(cur)] : null, html = cur ? subHtml(cur.text, tr, cueStyle(cur.c)) : null;
-    if (html != null){ if (ov.innerHTML !== html) ov.innerHTML = html; } else ov.textContent = cur ? subDisplay(cur.text, tr) : ''; const prevSp = cueSpk(shownCue); shownCue = cur ? cur.c : null; shownRange = cur ? [cur.s, cur.e] : null;
-    if (cueSpk(shownCue) !== prevSp) styleOverlay(); else placeOverlay(); }
+  if (!P || !P.cues.length || S().enabled === false){ if (subShown !== false){ ov.textContent = ''; subShown = false; } shownCue = null; return; }
+  // Liste der Untertitel: nach jeder Änderung neu (dann steht at auf −1). Im Stand zusätzlich alle 0,4 s, beim Abspielen
+  // nur alle 3 s – die Neuberechnung mitten im Abspielen kostete bei langen Projekten regelmäßig Bilder.
+  const now = performance.now(); if (cueCache.at < 0 || now - cueCache.at > (playing ? 3000 : 400)) cueCache = {at:now, list:computedCues()};
+  const list = cueCache.list, cur = list.find(x => o >= x.s && o < x.e) || null;
+  if (!SubDrag.on && !(subShown && subShown.cur === cur && subShown.list === list)){
+    const tr = cur ? trTexts(list)[list.indexOf(cur)] : null, html = cur ? subHtml(cur.text, tr, cueStyle(cur.c)) : null;
+    if (html != null) ov.innerHTML = html; else ov.textContent = cur ? subDisplay(cur.text, tr) : '';
+    const prevSp = cueSpk(shownCue); shownCue = cur ? cur.c : null; shownRange = cur ? [cur.s, cur.e] : null;
+    if (cueSpk(shownCue) !== prevSp) styleOverlay(); else placeOverlay();
+    subShown = {cur, list}; }
   const id = cur ? cur.c.id : null;
   if (id !== lastCue && tab === 'subs'){
     if (lastCue && cueEls.get(lastCue)) cueEls.get(lastCue).classList.remove('now');

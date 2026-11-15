@@ -19,7 +19,7 @@
   --anthrazit:#131312; --creme:#EDE7DA; --sand:#CFC6B0; --rot:#E5402A; --rot-hell:#B8301D; --grau:#A9A397; --gruen:#3E8A55;
   --honig:var(--rot); --honig-d:#F0705C; --tinte:var(--anthrazit); --papier:var(--creme); --on-accent:#FFF6EE;
   --bg:#131312; --surface:#1C1C1A; --surface-2:#262623; --surface-3:#30302C; --line:#34332F;
-  --text:var(--creme); --muted:var(--grau); --del:#F0705C; --del-bg:rgba(229,64,42,.12);
+  --text:var(--creme); --muted:var(--grau); --del:#F0705C; --del-bg:rgba(229,64,42,.12); --del-dim:rgba(240,112,92,.55); --del-bg-dim:rgba(229,64,42,.066);
   --now:rgba(207,198,176,.18); --sel:rgba(229,64,42,.32);
   --ui:"Inter",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; --read:"Lora",Georgia,"Noto Serif",serif; --mono:ui-monospace,"JetBrains Mono","Roboto Mono",monospace;
   --r:12px; --safe-b:env(safe-area-inset-bottom,0px);
@@ -50,6 +50,7 @@ h2{margin:0 0 6px}
 .brand svg{width:28px;height:28px}
 .title{flex:1;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .saved{font-size:11px;color:var(--muted)}
+.saved.err{color:var(--on-accent);background:var(--rot);border-radius:999px;padding:1px 7px;font-weight:700}
 .icon-btn{border:0;background:transparent;font-size:22px;width:40px;height:40px;border-radius:10px;line-height:1}
 .icon-btn:active{background:var(--surface-2)}
 .btn{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:0 14px;min-height:var(--ctl);font-size:14px;font-weight:500;white-space:nowrap}
@@ -138,10 +139,12 @@ h4{margin:0;font-size:13px;letter-spacing:.04em;text-transform:uppercase;color:v
 .tk.pause{font:12px var(--mono);color:var(--muted);border:1px dashed var(--line);padding:1px 7px;border-radius:20px;white-space:nowrap;vertical-align:1px}
 .tk.pause.trim{border-style:solid;border-color:var(--honig)}
 .tk.unk{font:12px var(--mono);color:#fff;background:#b8561d;border:1px solid #b8561d;padding:1px 7px;border-radius:20px;white-space:nowrap;vertical-align:1px}
-.tk.unk.del{background:var(--del-bg);color:var(--del);border-color:transparent}
-.tk.del{color:var(--del);text-decoration:line-through;opacity:.55;background:var(--del-bg)}
+/* Gelöschte Wörter: blasser über die Farbe statt über „opacity“. Mit opacity bekam jedes gelöschte Wort eine eigene
+   Ebene für den Bildaufbau – bei einigen hundert gelöschten Wörtern kostete das beim Abspielen im Text-Reiter die halbe Bildrate. */
+.tk.unk.del{background:var(--del-bg-dim);color:var(--del-dim);border-color:transparent}
+.tk.del{color:var(--del-dim);text-decoration:line-through;background:var(--del-bg-dim)}
 .hide-del .tk.del{display:none}
-.tk.sel{background:var(--sel);opacity:1}
+.tk.sel{background:var(--sel)}
 .tk.now{box-shadow:0 2px 0 var(--honig)}
 /* Auswahlleiste: Symbole mit kurzer Beschriftung, eine Zeile, bei Platzmangel seitlich scrollbar */
 .selbar{position:fixed;left:0;right:0;bottom:calc(var(--tabs-h) + var(--safe-b));display:flex;gap:2px;align-items:center;padding:6px 4px 6px 10px;background:var(--surface);border-top:1px solid var(--line);box-shadow:0 -4px 14px rgba(0,0,0,.08);z-index:21}
@@ -249,7 +252,7 @@ input[type=range]{width:100%;accent-color:var(--honig)}
 .tl{overflow-x:auto;overflow-y:hidden;scrollbar-width:thin;scrollbar-color:#4a4755 transparent;-webkit-overflow-scrolling:touch;touch-action:pan-x;height:100%}
 .tl::-webkit-scrollbar{height:8px}.tl::-webkit-scrollbar-thumb{background:#4a4755;border-radius:4px}
 .tl-inner{position:relative;height:calc(var(--rh) + var(--mh) + var(--oh) + var(--fh) + var(--th) * 2 + 30px);background:repeating-linear-gradient(90deg,transparent 0 59px,rgba(255,255,255,.03) 59px 60px)}
-.playline{position:absolute;top:0;bottom:0;left:50%;width:2px;margin-left:-1px;background:#fff;box-shadow:0 0 0 1px rgba(0,0,0,.5);pointer-events:none;z-index:9}
+.playline{position:absolute;top:0;bottom:0;left:50%;width:2px;margin-left:-1px;background:#fff;box-shadow:0 0 0 1px rgba(0,0,0,.5);pointer-events:none;z-index:9;will-change:transform}
 .playline .knob{position:absolute;top:0;left:-7px;width:16px;height:16px;background:#fff;clip-path:polygon(0 0,100% 0,100% 55%,50% 100%,0 55%)}
 .tl.mode-move ~ .playline{pointer-events:auto;cursor:ew-resize}
 .tl.mode-move ~ .playline .knob{background:var(--honig)}
@@ -271,6 +274,8 @@ input[type=range]{width:100%;accent-color:var(--honig)}
 .blk.main.alt{box-shadow:inset 0 3px 0 var(--honig)}
 .blk.main.audio{background:repeating-linear-gradient(90deg,#2b2833 0 6px,#3a3542 6px 8px)}
 .blk.insert{background:#24406b}
+/* Vorschaubilder und Tonverlauf liegen in Kacheln (.mtile), die erst beim Sichtbarwerden gefüllt werden */
+.blk .mtile{position:absolute;top:0;bottom:0;overflow:hidden;pointer-events:none}
 .blk .thumbs{position:absolute;inset:0;display:flex;pointer-events:none}
 .blk .thumbs img{height:100%;object-fit:cover;flex:none;opacity:.92}
 .blk .wave{position:absolute;left:0;bottom:0;pointer-events:none}
@@ -655,7 +660,7 @@ input[type=checkbox],input[type=radio]{accent-color:var(--rot)}
 .cue.kept{opacity:1}.cue.kept .t::after{content:' · Untertitel behalten';color:var(--sand)}
 /* weggeschnitten, Untertitel bleibt */
 .tk.del.ks{text-decoration-style:dotted;background:rgba(207,198,176,.12);border-radius:3px}
-.tk.del.ks{border-bottom:2px solid var(--sand);opacity:.9}
+.tk.del.ks{border-bottom:2px solid var(--sand)}
 /* Clip-Studio */
 .clip-pane .card{margin-bottom:10px}
 .clip-pane h4{margin:0;font-size:13px;letter-spacing:.04em;text-transform:uppercase;color:var(--sand)}
@@ -863,3 +868,23 @@ body.has-deck #paneSlides>:not(.deck-frame){display:none!important}
 .fav-chip:hover button{display:block}
 @media (pointer:coarse){ .fav-chip button{display:block} .fav-chip{width:34px;height:34px} }
 input[type=color]:disabled{opacity:.35}
+/* Gelöschte Wörter – Farben aller Zustände an einer Stelle (am Ende, damit die Reihenfolge der Regeln oben keine Rolle spielt).
+   Blass = 55 % der jeweiligen Farbe; markiert = volle Farbe (wie früher mit opacity:.55 bzw. opacity:1). */
+.transcript .tk.del{color:var(--del-dim)}
+.transcript .tk.del.filler{color:rgba(207,198,176,.55)}
+.transcript .tk.del.added{color:rgba(237,231,218,.55)}
+.transcript .tk.del.ks{color:rgba(240,112,92,.9)}
+.transcript .tk.del.sel{color:var(--del)}
+.transcript .tk.del.sel.filler{color:var(--sand)}
+.transcript .tk.del.sel.added{color:var(--creme)}
+/* … und ihre Ränder und Unterstreichungen ebenso (Pausen-Marken, ergänzte, korrigierte und wiederholte Wörter) */
+.transcript .tk.del.pause{border-color:rgba(52,51,47,.55)}
+.transcript .tk.del.pause.trim{border-color:rgba(229,64,42,.55)}
+.transcript .tk.del.sel.pause{border-color:var(--line)}
+.transcript .tk.del.sel.pause.trim{border-color:var(--honig)}
+.transcript .tk.del.added{border-bottom-color:rgba(207,198,176,.55)}
+.transcript .tk.del.sel.added{border-bottom-color:var(--sand)}
+.transcript .tk.del.edited{text-decoration-color:rgba(70,130,220,.33)}
+.transcript .tk.del.sel.edited{text-decoration-color:rgba(70,130,220,.6)}
+.transcript .tk.del.rep{text-decoration-color:rgba(207,198,176,.33)}
+.transcript .tk.del.sel.rep{text-decoration-color:rgba(207,198,176,.6)}

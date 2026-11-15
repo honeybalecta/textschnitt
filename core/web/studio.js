@@ -4,7 +4,7 @@
    „fest“ (Handy: Zeiger in der Mitte, die Spur wird darunter bewegt). */
 const TL = {pps: 60, sel: null, expect: -1, drag: null, pinch: null, seekPending: null, mode: FINE ? 'move' : 'center', snap: true, justSelected: false};
 try { const m = localStorage.getItem('ts-tl-mode'); if (m === 'move' || m === 'center') TL.mode = m; TL.snap = localStorage.getItem('ts-tl-snap') !== '0'; } catch(_){}
-const tlEl = $('#tl'), tlInner = $('#tlInner'), tlBox = $('.tl-box'), playline = $('.playline');
+const tlEl = $('#tl'), tlInner = $('#tlInner'), tlBox = $('.tl-box'), playline = $('.playline'), tlTimeEl = $('#tlTime');
 const half = () => tlEl.clientWidth / 2;
 const padL = () => TL.mode === 'center' ? half() : 14;
 const fps = () => (P && primary().fps) || 30;
@@ -27,25 +27,39 @@ function renderStudio(){ renderTimeline(); renderBin(); }
 function renderTimeline(){
   if (!P || !studioOn()) return;
   const pad = padL();
+  measureTl(TL.mode === 'center' ? Math.round(outPos * TL.pps) : null);   // fester Zeiger: gleich wird dorthin gescrollt
   tlInner.style.width = Math.ceil(total * TL.pps + pad + half() + 40) + 'px';
   $('#tlTotal').textContent = '/ ' + fmtS(total);
   renderRuler(pad); renderMain(pad); renderOvl(pad); renderAud(pad); renderFx(pad); renderTitles(pad); renderTxt(pad);
   paintLinks(); restoreSel(); updateTools(); paintBar();
   if (TL.mode === 'center') syncScroll(outPos, true); else placeHead(outPos);
 }
+// Zeitskala: Striche nur für den sichtbaren Teil und ein Stück daneben. Beim Scrollen wird nachgelegt (siehe Scroll-Ereignis).
+// Für die ganze Länge wären es bei starker Vergrößerung Zehntausende Elemente – das bremste jedes Neuzeichnen.
+const RULER_PAD = 2500;
+let rulerRange = null;   // [von, bis, pad] in Bildpunkten des Inhalts
 function renderRuler(pad){
   const r = $('#ruler'); r.innerHTML = '';
   const steps = [0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600];
   const step = steps.find(s => s * TL.pps >= 64) || 7200, minor = step / 5;
+  const x0 = Math.max(0, TLV.l - RULER_PAD), x1 = TLV.r + RULER_PAD;
+  const k0 = Math.max(0, Math.floor((x0 - pad) / TL.pps / step)), tEnd = Math.min(total, (x1 - pad) / TL.pps);
   const frag = document.createDocumentFragment();
-  for (let t = 0; t <= total + 1e-6; t += step){
+  for (let k = k0; k * step <= tEnd + 1e-6; k++){
+    const t = k * step;
     const d = document.createElement('div'); d.className = 'tk'; d.style.left = (pad + t * TL.pps) + 'px';
     d.textContent = step < 1 ? fmtS(t) : fmtT(t); frag.append(d);
-    if (minor * TL.pps >= 8) for (let k = 1; k < 5 && t + k * minor < total; k++){
-      const m = document.createElement('div'); m.className = 'tk m'; m.style.left = (pad + (t + k * minor) * TL.pps) + 'px'; frag.append(m); }
+    if (minor * TL.pps >= 8) for (let j = 1; j < 5 && t + j * minor < total; j++){
+      const m = document.createElement('div'); m.className = 'tk m'; m.style.left = (pad + (t + j * minor) * TL.pps) + 'px'; frag.append(m); }
   }
   const end = document.createElement('div'); end.className = 'tl-end'; end.style.left = (pad + total * TL.pps) + 'px'; frag.append(end);
   r.append(frag);
+  rulerRange = [x0, x1, pad];
+}
+// Nach dem Scrollen: reicht die angelegte Zeitskala noch? (mit 600 Bildpunkten Vorlauf)
+function rulerFollow(){
+  const R = rulerRange; if (!R || !P || !studioOn()) return;
+  if ((R[0] > 0 && TLV.l < R[0] + 600) || TLV.r > R[1] - 600) renderRuler(R[2]);
 }
 function blk(cls, o, d, pad, attrs){
   const b = document.createElement('div'); b.className = 'blk ' + cls;
@@ -66,49 +80,81 @@ function thPump(){
   }
 }
 function thSet(img, u){ if (!thIO || !/^(https?:|[a-z]+\?|thumb)/.test(u) || u.startsWith('data:') || u.startsWith('blob:')) { img.src = u; return; } img.dataset.u = u; thIO.observe(img); }
-function thumbs(b, uri, inS, d, aspect, speed = 1){
-  const h = 60, tw = Math.max(34, Math.round(h * aspect)), w = d / speed * TL.pps, n = Math.min(400, Math.ceil(w / tw));
-  const q = Math.max(0.25, tw / TL.pps / 2);
+// ── Vorschaubilder und Tonverlauf der Clips ──
+// Ein Clip wird in Kacheln von höchstens TILE Bildpunkten Breite gezeichnet. Kacheln im sichtbaren Bereich (und ein Stück
+// daneben) entstehen sofort, alle übrigen erst, wenn sie beim Scrollen in die Nähe kommen. Früher wurden bei jeder Änderung
+// alle Clips der ganzen Zeitleiste auf einmal gezeichnet (bei langen Projekten eine halbe Sekunde und mehr je Änderung);
+// sehr lange Clips bekamen dabei gar keinen Tonverlauf, weil die Zeichenfläche zu breit wurde, und Vorschaubilder nur am Anfang.
+const TILE = 2048, TILE_NEAR = 900;
+const TLV = {l: 0, r: 4000, mh: 64, oh: 38, ah: 38};   // sichtbarer Teil der Spur (Bildpunkte im Inhalt) und Spurhöhen
+// Einmal je Zeichnen messen – vor den Änderungen am Dokument. (Die Spurhöhe je Clip aus dem Stil zu lesen, zwang den Browser
+// früher bei jedem einzelnen Clip zu einer kompletten Stilberechnung: das war der größte Zeitfresser der Zeitleiste.)
+function measureTl(scrollX){
+  const cs = getComputedStyle(tlInner), num = (n, d) => parseFloat(cs.getPropertyValue(n)) || d;
+  TLV.mh = num('--mh', 60); TLV.oh = num('--oh', 60); TLV.ah = num('--ah', 60);
+  TLV.l = scrollX != null ? scrollX : tlEl.scrollLeft; TLV.r = TLV.l + (tlEl.clientWidth || 2000);
+}
+const tileIO = 'IntersectionObserver' in window ? new IntersectionObserver(es => { for (const e of es) if (e.isIntersecting){ tileIO.unobserve(e.target); fillTile(e.target); } }, {root: tlEl, rootMargin: `0px ${TILE_NEAR}px`}) : null;
+function fillTile(t){
+  const f = t._f; if (!f || t._done) return; t._done = true;
+  if (f.thumbs) tileThumbs(t, f);
+  if (f.m.src) tileWave(t, f);
+}
+function tileThumbs(t, f){
+  const {m, inS, d, speed, x0, x1} = f, h = 60, tw = Math.max(34, Math.round(h * (m.aspect || 16 / 9))), q = Math.max(0.25, tw / TL.pps / 2);
+  const i0 = Math.floor(x0 / tw), i1 = Math.ceil(x1 / tw);
   const box = document.createElement('div'); box.className = 'thumbs';
-  for (let i = 0; i < n; i++){
-    const t = Math.round((inS + (i + 0.5) * tw / TL.pps * speed) / q) * q;
+  if (i0 * tw !== x0){ box.style.left = (i0 * tw - x0) + 'px'; box.style.right = 'auto'; }   // Bild über der Kachelgrenze: links angeschnitten
+  for (let i = i0; i < i1; i++){
+    const tm = Math.round((inS + (i + 0.5) * tw / TL.pps * speed) / q) * q;
     const img = document.createElement('img'); img.loading = 'lazy'; img.decoding = 'async'; img.style.width = tw + 'px'; img.alt = '';
-    const u = THUMB(uri, Math.min(t, inS + d), 120); if (u && u.then) u.then(x => { if (x) img.src = x; }); else thSet(img, u); box.append(img);
+    const u = THUMB(m.uri, Math.min(tm, inS + d), 120); if (u && u.then) u.then(x => { if (x) img.src = x; }); else thSet(img, u); box.append(img);
   }
-  b.prepend(box);
+  t.prepend(box);
 }
 // Lautstärkeverlauf unten im Clip – so sieht man, wo wirklich gesprochen wird
-function wave(b, src, inS, d, speed = 1){
+function tileWave(t, f){
+  let src = f.m.src;
   if (src && !src.env && src.uri){ const ps = P.sources.find(x => x.uri === src.uri && x.env); if (ps) src = ps; }
   const a = src && src.env ? envArr(src) : src && envDone.get(src.uri); if (!a) return;
   // Höhe nach Block: Tonspur ganz, Hauptspur gut ein Drittel, Videospuren knapp die Hälfte; gezeichnet in Gerätepixeln (scharf am Handy)
-  const full = b.classList.contains('aud'), ovl = b.classList.contains('ovl'), cs = getComputedStyle(tlInner);
-  const bh = parseFloat(cs.getPropertyValue(full ? '--ah' : ovl ? '--oh' : '--mh')) || 60, h = full ? Math.max(14, bh - 6) : Math.max(16, Math.round(bh * (ovl ? 0.45 : 0.36)));
-  const w = Math.max(2, Math.round(d / speed * TL.pps)), dpr = Math.min(3, devicePixelRatio || 1), c = document.createElement('canvas'); c.className = 'wave';
-  c.width = Math.round(w * dpr); c.height = Math.round(h * dpr); c.style.width = w + 'px'; c.style.height = h + 'px';
+  const full = f.b.classList.contains('aud'), ovl = f.b.classList.contains('ovl');
+  const bh = full ? TLV.ah : ovl ? TLV.oh : TLV.mh, h = full ? Math.max(14, bh - 6) : Math.max(16, Math.round(bh * (ovl ? 0.45 : 0.36)));
+  const w = f.x1 - f.x0, dpr = Math.min(3, devicePixelRatio || 1), c = document.createElement('canvas'); c.className = 'wave';
+  c.width = Math.max(1, Math.round(w * dpr)); c.height = Math.round(h * dpr); c.style.width = w + 'px'; c.style.height = h + 'px';
   const ctx = c.getContext('2d'); ctx.scale(dpr, dpr);
   const bs = (src && src.env && burstsOf(src)) || [];
   // Leicht abgedunkelter Streifen als Hintergrund, Ton als Säulen: Sprache in Orange, Übriges in Creme
   ctx.fillStyle = full ? 'rgba(0,0,0,0)' : 'rgba(0,0,0,.42)'; ctx.fillRect(0, 0, w, h);
-  const step = 1 / dpr;
+  const step = 1 / dpr, k = f.speed / TL.pps, n = a.length, quiet = [], loud = []; let bi = 0;
   for (let x = 0; x < w; x += step){
-    const t0 = inS + x / TL.pps * speed, t1 = inS + (x + step) / TL.pps * speed; let m = 0;
-    for (let i = Math.floor(t0 * 100); i <= Math.floor(t1 * 100) && i < a.length; i++) m = Math.max(m, a[i]);
-    const v = Math.max(0, (m / 2.8 - 90 + 60) / 60);
-    const sp = bs.some(x => t0 < x[1] && t1 > x[0]);
-    ctx.fillStyle = sp ? 'rgba(240,160,30,.95)' : 'rgba(237,231,218,.62)';
-    const y = Math.max(v > 0.02 ? 1 : 0, v * (h - 2)); ctx.fillRect(x, h - y, step, y);
+    const t0 = f.inS + (f.x0 + x) * k, t1 = f.inS + (f.x0 + x + step) * k; let m = 0;
+    for (let i = Math.max(0, Math.floor(t0 * 100)), e = Math.min(n - 1, Math.floor(t1 * 100)); i <= e; i++) if (a[i] > m) m = a[i];
+    const v = Math.max(0, (m / 2.8 - 90 + 60) / 60), y = Math.max(v > 0.02 ? 1 : 0, v * (h - 2)); if (!y) continue;
+    while (bi < bs.length && bs[bi][1] <= t0) bi++;   // Sprachabschnitte sind nach Zeit sortiert: mitlaufender Zeiger statt Suche je Säule
+    (bi < bs.length && bs[bi][0] < t1 ? loud : quiet).push(x, y);
   }
-  b.append(c);
+  // erst alle hellen, dann alle orangefarbenen Säulen: zwei Farbwechsel statt tausender
+  ctx.fillStyle = 'rgba(237,231,218,.62)'; for (let i = 0; i < quiet.length; i += 2) ctx.fillRect(quiet[i], h - quiet[i + 1], step, quiet[i + 1]);
+  ctx.fillStyle = 'rgba(240,160,30,.95)'; for (let i = 0; i < loud.length; i += 2) ctx.fillRect(loud[i], h - loud[i + 1], step, loud[i + 1]);
+  t.append(c);
 }
 // Vorschaubilder und Tonverlauf eines Clips; dl/dr verschieben Anfang/Ende (beim Ziehen an den Griffen)
 const envDone = new Map();   // fertig berechnete Lautstärkeverläufe von Medien, die keine Quelle sind
 function paintMedia(b, m, dl = 0, dr = 0){
-  if (!m) return; b.querySelectorAll(':scope > .thumbs, :scope > .wave').forEach(x => x.remove());
-  const inS = Math.max(0, m.inS + dl), d = Math.max(0.01, m.d - dl + dr);
+  if (!m) return;
+  b.querySelectorAll(':scope > .mtile').forEach(x => { if (tileIO) tileIO.unobserve(x); x.remove(); });
+  const inS = Math.max(0, m.inS + dl), d = Math.max(0.01, m.d - dl + dr), speed = m.speed || 1;
   if (m.img){ b.style.backgroundImage = `url("${MEDIA(m.img)}")`; b.classList.add('imgblk'); }
-  else if (m.uri) thumbs(b, m.uri, inS, d, m.aspect || 16 / 9, m.speed || 1);
-  if (m.src) wave(b, m.src, inS, d, m.speed || 1);
+  const thumbs = !m.img && !!m.uri; if (!thumbs && !m.src) return;
+  const w = Math.max(2, d / speed * TL.pps), left = parseFloat(b.style.left) || 0, frag = document.createDocumentFragment();
+  for (let x0 = 0; x0 < w; x0 += TILE){
+    const x1 = Math.min(w, x0 + TILE), t = document.createElement('div'); t.className = 'mtile'; t.style.left = x0 + 'px'; t.style.width = (x1 - x0) + 'px';
+    t._f = {b, m, inS, d, speed, x0, x1, thumbs};
+    frag.append(t);
+    if (!tileIO || (left + x1 > TLV.l - TILE_NEAR && left + x0 < TLV.r + TILE_NEAR)) fillTile(t); else tileIO.observe(t);
+  }
+  b.prepend(frag);
 }
 const fxBadges = fx => { if (!fx) return ''; const b = []; if (fx.speed && Math.abs(fx.speed - 1) > 0.001) b.push(`${(+fx.speed).toFixed(2).replace(/\.?0+$/, '').replace('.', ',')}×`);
   if (fx.vol != null && Math.abs(fx.vol - 1) > 0.001) b.push(fx.vol <= 0.001 ? '🔇' : `🔊${Math.round(fx.vol * 100)}%`); if (fx.gray) b.push('S/W'); else if (fx.bright || fx.contrast || fx.sat) b.push('🎨'); return b.join(' '); };
@@ -225,12 +271,16 @@ function renderTxt(pad){
 }
 
 // ───────── Zeiger ─────────
+// Die Abspiellinie wird über „transform“ verschoben (eigene Ebene, siehe .playline im CSS): Das kostet beim Abspielen
+// kein Layout und kein Neuzeichnen der Zeitleiste – mit „left“ wurde die ganze Spuransicht bei jedem Bild neu gemalt.
+let headX = null;
 function placeHead(o){
-  $('#tlTime').textContent = fmtS(o);
-  if (TL.mode === 'center'){ playline.style.left = '50%'; return; }
-  const x = padL() + o * TL.pps - tlEl.scrollLeft;
-  playline.style.left = x + 'px';
-  playline.classList.toggle('hidden', x < -2 || x > tlEl.clientWidth + 2);
+  setText(tlTimeEl, fmtS(o));
+  if (TL.mode === 'center'){ if (headX !== 'c'){ headX = 'c'; playline.style.left = '50%'; playline.style.transform = ''; playline.classList.remove('hidden'); } return; }
+  const x = padL() + o * TL.pps - tlEl.scrollLeft, hide = x < -2 || x > tlEl.clientWidth + 2, k = Math.round(x * 4) / 4;   // erst lesen, dann schreiben
+  if (headX === 'c' || headX === null) playline.style.left = '0px';
+  if (k !== headX){ headX = k; playline.style.transform = `translate3d(${k}px,0,0)`; }
+  playline.classList.toggle('hidden', hide);
 }
 // Beim Abspielen folgen: fester Zeiger → Spur scrollt; bewegter Zeiger → Seitenwechsel am Rand
 function followHead(o){
@@ -243,7 +293,7 @@ function syncScroll(o, force){
   if (TL.mode !== 'center'){ placeHead(o); return; }
   const x = Math.round(o * TL.pps);
   if (force || Math.abs(tlEl.scrollLeft - x) >= 1){ TL.expect = x; tlEl.scrollLeft = x; }
-  $('#tlTime').textContent = fmtS(o);
+  setText(tlTimeEl, fmtS(o));
 }
 // Zeiger sichtbar machen (nach Tastatur-Spulen o. ä.)
 function revealHead(o){
@@ -253,12 +303,13 @@ function revealHead(o){
   placeHead(o);
 }
 tlEl.addEventListener('scroll', () => {
+  TLV.l = tlEl.scrollLeft; TLV.r = TLV.l + (tlEl.clientWidth || 2000); rulerFollow();
   if (TL.mode !== 'center'){ placeHead(outPos); return; }
   if (Math.abs(tlEl.scrollLeft - TL.expect) < 1.5 || TL.pinch) return;
   TL.expect = -1;
   const o = clamp(tlEl.scrollLeft / TL.pps, 0, total);
   if (playing) pausePlay();
-  $('#tlTime').textContent = fmtS(o);
+  setText(tlTimeEl, fmtS(o));
   const first = TL.seekPending == null; TL.seekPending = o;
   if (first) requestAnimationFrame(() => { const v = TL.seekPending; TL.seekPending = null; seekOut(v, false); TL.expect = Math.round(v * TL.pps); });
 }, {passive:true});
@@ -322,9 +373,12 @@ const blkKey = b => b.dataset.cid ? 'c:' + b.dataset.cid : b.dataset.id ? 'i:' +
 const objOfKey = k => k[0] === 'c' ? P.cues.find(c => c.id === k.slice(2)) : P.items.find(x => x.id === k.slice(2));
 const selKey = () => { const s = TL.sel; if (!s || s.kind === 'main' || s.kind === 'insert') return null; return (s.kind === 'cue' ? 'c:' : 'i:') + s.id; };
 function paintLinks(){
-  tlInner.querySelectorAll('.blk').forEach(b => { const k = blkKey(b), o = k && objOfKey(k);
+  // Objekte einmal nach Kennung ablegen – vorher wurde für jeden Block die ganze Liste durchsucht
+  const byKey = new Map(); for (const c of P.cues) byKey.set('c:' + c.id, c); for (const x of P.items) byKey.set('i:' + x.id, x);
+  const sk = TL.sel && selKey(), sel = sk ? byKey.get(sk) : null;
+  tlInner.querySelectorAll('.blk').forEach(b => { const k = blkKey(b), o = k && byKey.get(k);
     b.classList.toggle('linked', !!(o && o.lk)); b.classList.toggle('pick', !!(TL.pick && k && TL.pick.has(k)));
-    const sel = TL.sel && selKey() && objOfKey(selKey()); b.classList.toggle('grp', !!(o && o.lk && sel && sel !== o && sel.lk === o.lk));
+    b.classList.toggle('grp', !!(o && o.lk && sel && sel !== o && sel.lk === o.lk));
     if (o && o.lk && !b.querySelector('.lnk')) b.insertAdjacentHTML('afterbegin', `<i class="lnk">${icon('🔗')}</i>`); });
 }
 function startPick(extra){
@@ -479,7 +533,7 @@ function endDrag(){
   TL.hold = null; clearTimeout(TL.holdT);
   if (TL.touchDrag){ TL.touchDrag = false; tlInner.querySelectorAll('.blk.lift').forEach(x => x.classList.remove('lift')); }
   const g = TL.drag; if (!g) return; cancelAnimationFrame(g.raf);
-  setTimeout(() => { TL.drag = null; }, 0);
+  setTimeout(() => { if (TL.drag === g) TL.drag = null; }, 0);   // nur diesen Griff beenden – nicht einen, der inzwischen neu begonnen hat
   tlInner.querySelectorAll('.t-ovl.drop').forEach(x => x.classList.remove('drop'));
   if (g.trk && TL.sel && TL.sel.kind === 'ovl'){ const it = selItem(); if (it && g.trk !== elTrack(it)){
     const d = g.moved ? g.d : 0; commit(() => { it.track = g.trk; if (Math.abs(d) > 1e-4){ const [a] = itemOutRange(it); it.at = +outToSrc(a + d).toFixed(3); } }, true); return; } }
@@ -932,7 +986,7 @@ function editTitle(id){
   $('#ttFont').addEventListener('change', async () => { if ($('#ttFont').value !== '__import') return; const f = await importFont(); fillFontSelects(); $('#ttFont').value = f ? f.key : (it.font || ''); upd(); });
   openSheet(true);
   const before = snapshot();
-  const upd = () => { it.text = $('#ttText').value; it.size = $('#ttSize').value; it.scale = +$('#ttScale').value; it.color = $('#ttColor').value.toUpperCase(); it.dur = clamp(+$('#ttDur').value || 3, 0.3, 600); it.outline = $('#ttOutline').checked; it.bg = $('#ttBg').checked; if ($('#ttFont').value !== '__import') it.font = $('#ttFont').value; changed(true); updateTitles(outPos); };
+  const upd = () => { it.text = $('#ttText').value; it.size = $('#ttSize').value; it.scale = +$('#ttScale').value; it.color = $('#ttColor').value.toUpperCase(); it.dur = clamp(+$('#ttDur').value || 3, 0.3, 600); it.outline = $('#ttOutline').checked; it.bg = $('#ttBg').checked; if ($('#ttFont').value !== '__import') it.font = $('#ttFont').value; changedLive(); updateTitles(outPos); };
   ['ttText', 'ttSize', 'ttScale', 'ttColor', 'ttFont', 'ttDur', 'ttOutline', 'ttBg'].forEach(i => { $('#' + i).addEventListener('input', upd); $('#' + i).addEventListener('change', upd); });
   $('#ttOk').onclick = () => { undo.push(before); redo = []; closeSheet(); };
   $('#ttDel').onclick = () => { closeSheet(); commit(() => P.items = P.items.filter(x => x !== it)); updateTitles(outPos); };
@@ -969,7 +1023,7 @@ function openFxItem(it){
     $('#fxVol').value = f.vol; $('#fxVolV').textContent = Math.round(f.vol * 100) + '%'; $('#fxBright').value = f.bright; $('#fxBrightV').textContent = Math.round(f.bright * 100); $('#fxContrast').value = f.contrast; $('#fxContrastV').textContent = Math.round(f.contrast * 100);
     $('#fxSat').value = f.sat; $('#fxSatV').textContent = f.sat; $('#fxGray').checked = !!f.gray; };
   paint();
-  const upd = () => { it.fx.vol = +$('#fxVol').value; it.fx.bright = +$('#fxBright').value; it.fx.contrast = +$('#fxContrast').value; it.fx.sat = +$('#fxSat').value; it.fx.gray = $('#fxGray').checked; paint(); changed(true); seekOut(outPos, false); };
+  const upd = () => { it.fx.vol = +$('#fxVol').value; it.fx.bright = +$('#fxBright').value; it.fx.contrast = +$('#fxContrast').value; it.fx.sat = +$('#fxSat').value; it.fx.gray = $('#fxGray').checked; paint(); changedLive(); seekOut(outPos, false); };
   ['fxVol', 'fxBright', 'fxContrast', 'fxSat', 'fxGray'].forEach(i => $('#' + i).addEventListener('input', upd));
   $('#fxSpeed').onclick = e => { const b = e.target.closest('button'); if (!b) return; it.fx.speed = +b.dataset.v; paint(); changed(true); seekOut(outPos, false); };
   $('#fxReset').onclick = () => { it.fx = {...FX_DEF}; paint(); keyUi.paint(); changed(true); seekOut(outPos, false); drawKeyFrames(); if (window.renderTimeline) renderTimeline(); };
@@ -1366,7 +1420,7 @@ function openVolumes(){
     row.querySelector('b').textContent = c.name; row.querySelector('.muted').textContent = c.kind + (c.muted ? ' · stumm' : '');
     const r = row.querySelector('input'), v = row.querySelector('.vol-v'); r.value = Math.round(c.get() * 100); v.textContent = pct(c.get());
     r.onpointerdown = () => { r._b = snapshot(); };
-    r.oninput = () => { c.set(+r.value / 100); v.textContent = pct(+r.value / 100); changed(false); seekOut(outPos, false); };
+    r.oninput = () => { c.set(+r.value / 100); v.textContent = pct(+r.value / 100); changedLive(); seekOut(outPos, false); };
     r.onchange = () => { if (r._b){ undo.push(r._b); redo = []; r._b = null; } renderTimeline(); };
     row.dataset.key = c.key; box.append(row);
   }

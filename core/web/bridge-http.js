@@ -55,6 +55,8 @@
     envelope: uri => jobOf(call('POST', 'envelope', {uri})),
     // Datei aus HoneyDeck speichern: Dialog im Backend, Rückgabe = Meldung für den Hinweis
     saveFile: (name, mime, b64) => { try { const r = JSON.parse(call('POST', 'savefile', {name, data: b64})); return r.ok ? 'Gespeichert: ' + r.path : ''; } catch(e){ return 'Speichern fehlgeschlagen: ' + e.message; } },
+    // Auffälligkeiten der Oberfläche ins Protokoll (textschnitt.log) schreiben – für die Fehlersuche; darf nie stören
+    log: msg => { try { fetch(api + 'log', {method:'POST', body: String(msg).slice(0, 800), keepalive: true}).catch(() => {}); } catch(_){} },
     openWindow: (project, view) => { try { return JSON.parse(call('POST', 'window', {project, view})).url || ''; } catch(_){ return ''; } },
   };
 })();

@@ -37,9 +37,20 @@ Die Plattformen stellen dem Kern dieselbe Schnittstelle `window.TS` bereit (Date
 - **Stil der Übersetzung**: eigene Schrift, Farbe, Größe, Umrandung, Kasten und Lage (unter/über dem Original).
 - **Lautstärke vereinheitlichen** (Export, standardmäßig an): Sprache aller Clips auf dieselbe Lautheit, das Ganze auf etwa −14 LUFS; Musik und B-Roll behalten ihr Verhältnis.
 - **Nur Ton**: Von einem importierten Video lässt sich auch nur die Tonspur auf eine Tonspur legen (Ablage → ♪ „Nur den Ton“, oder das Video auf „Ton 1“ ziehen).
-- **Fenster**: Text, Untertitel, Studio und Export sind eigene Reiter; am Desktop lässt sich jeder mit ⧉ in ein eigenes Fenster abdocken (z. B. für einen zweiten Bildschirm). Alle Fenster bleiben synchron.
+- **Fenster**: Text, Untertitel, Studio und Export sind eigene Reiter; am Desktop lässt sich jeder mit ⧉ in ein eigenes Fenster abdocken (z. B. für einen zweiten Bildschirm). Alle Fenster bleiben synchron. Ein neues Fenster übernimmt Stand und Abspielstelle der vorhandenen; Formatwechsel und Lautstärken werden mit abgeglichen.
+- **Abspiellinie**: Sie bleibt beim Bearbeiten auf demselben Bild – beim Abspielen wie im Stand. Wird davor etwas geschnitten, verschiebt sich nur die Zeitanzeige; fällt die Stelle selbst weg, geht es an der nächsten behaltenen weiter. „Rückgängig“ umfasst auch Format, Bildausschnitt und die Lautstärke der Hauptvideos.
 - **Untertitel**: Aufteilung in Zeilen oder ein Wort pro Untertitel, Text bearbeiten, Stil wählen. **Direkt im Bild ziehen**, um sie zu platzieren – alle gemeinsam oder (im Studio ausgewählt) einzeln.
 - Tastenkürzel wie in CapCut (`⌨` in der Kopfzeile zeigt alle): `Leertaste`, `←/→` bildweise, `Strg+B` teilen, `Q/W` links/rechts löschen, `Entf`, `Strg+Z`.
+
+## Daten, Sicherungen, Aufräumen (Windows)
+
+Alles liegt in `%LOCALAPPDATA%\Textschnitt`: `projects\` (ein Projekt je Datei), `sicherungen\`, `cache\` (Vorschaubilder, Vorschau-Dateien), `folien\`, `freigestellt\`, dazu das Protokoll `textschnitt.log`.
+
+- **Speichern**: Ein Projektstand wird erst vollständig auf den Datenträger geschrieben und ersetzt dann die bisherige Datei – ein Absturz oder Stromausfall mitten im Speichern lässt die letzte gute Fassung stehen. Kommt ein Stand unvollständig an, wird er abgewiesen. Klappt das Speichern nicht (Datenträger voll, Ordner gesperrt), steht in der Kopfzeile ein rotes „!“ mit dem Grund, und HoneyCut versucht es von selbst weiter.
+- **Frühere Fassungen**: Höchstens alle 15 Minuten wandert die vorige Fassung eines Projekts gepackt nach `sicherungen\<Projekt>\` (die letzten sechs bleiben). Ist eine Projektdatei einmal unlesbar, nimmt HoneyCut beim Öffnen von selbst die jüngste lesbare Fassung; die defekte Datei bleibt als `.defekt` daneben liegen.
+- **Gelöschte Projekte**: Die letzte Fassung bleibt noch 30 Tage in `sicherungen\<Projekt>\…-geloescht.json.gz`. Zurückholen: Datei entpacken und als `<Projekt>.json` nach `projects\` legen.
+- **Aufräumen**: Beim Start räumt HoneyCut im Hintergrund auf – Vorschaubilder, die 30 Tage nicht gebraucht wurden (insgesamt höchstens 1,5 GB), liegengebliebene Teilstücke abgebrochener Vorgänge und Vorschau-Dateien, auf die kein Projekt mehr verweist. Eigene Videos, Exporte, Folienbilder und freigestellte Kopien werden nie angefasst.
+- **Protokoll**: `textschnitt.log` enthält auch Meldungen der Oberfläche (unerwartete Fehler, hängende Wiedergabe mit dem Zustand des Videos) – hilfreich, wenn etwas nicht läuft wie gedacht.
 
 ## Exporte
 
