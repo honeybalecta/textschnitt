@@ -1,0 +1,350 @@
+{
+ "steps": [
+  {
+   "step": "Schrift wählen: Standard",
+   "font": "",
+   "select": "",
+   "ovFamily": "var(--ui)",
+   "loaded": [
+    "Inter",
+    "Lora"
+   ]
+  },
+  {
+   "step": "Export: ui_standard",
+   "fmt": "video",
+   "burnBox": true,
+   "level": true,
+   "msg": "Fertig – gespeichert in C:\\Users\\runneradmin\\Videos\\Mein Video äöü\\kurz_honeycut",
+   "files": [
+    "C:\\Users\\runneradmin\\Videos\\Mein Video äöü\\kurz_honeycut\\ui_standard.mp4",
+    "C:\\Users\\runneradmin\\Videos\\Mein Video äöü\\kurz_honeycut\\ui_standard.srt"
+   ],
+   "burn": true,
+   "nSeg": 1,
+   "total": 180,
+   "style": {
+    "enabled": true,
+    "mode": "lines",
+    "chars": 32,
+    "lines": 2,
+    "dur": 4,
+    "size": "mittel",
+    "pos": "unten",
+    "x": 0.5,
+    "y": 0.88,
+    "color": "#FFFFFF",
+    "outline": true,
+    "font": ""
+   },
+   "fonts": {},
+   "nCues": 49,
+   "cue0": {
+    "start": 0.57,
+    "end": 4.09,
+    "text": "Seit mehr anderes das warum\nseit dieser warum warum.",
+    "x": 0.5,
+    "y": 0.88
+   },
+   "cueFonts": [
+    "(ohne)"
+   ],
+   "w": 640,
+   "h": 360,
+   "mids": [
+    5.56,
+    88.55,
+    174.36
+   ]
+  },
+  {
+   "step": "Schrift wählen: poppins",
+   "font": "poppins",
+   "select": "poppins",
+   "ovFamily": "\"TSF-poppins\", var(--ui)",
+   "loaded": [
+    "Inter",
+    "Lora"
+   ]
+  },
+  {
+   "step": "Export: ui_poppins",
+   "fmt": "video",
+   "burnBox": true,
+   "level": true,
+   "msg": "Fertig – gespeichert in C:\\Users\\runneradmin\\Videos\\Mein Video äöü\\kurz_honeycut",
+   "files": [
+    "C:\\Users\\runneradmin\\Videos\\Mein Video äöü\\kurz_honeycut\\ui_poppins.mp4",
+    "C:\\Users\\runneradmin\\Videos\\Mein Video äöü\\kurz_honeycut\\ui_poppins.srt"
+   ],
+   "burn": true,
+   "nSeg": 1,
+   "total": 180,
+   "style": {
+    "enabled": true,
+    "mode": "lines",
+    "chars": 32,
+    "lines": 2,
+    "dur": 4,
+    "size": "mittel",
+    "pos": "unten",
+    "x": 0.5,
+    "y": 0.88,
+    "color": "#FFFFFF",
+    "outline": true,
+    "font": "poppins"
+   },
+   "fonts": {
+    "poppins": {
+     "family": "TS Poppins",
+     "file": "Poppins-Bold.ttf"
+    }
+   },
+   "nCues": 49,
+   "cue0": {
+    "start": 0.57,
+    "end": 4.09,
+    "text": "Seit mehr anderes das warum\nseit dieser warum warum.",
+    "x": 0.5,
+    "y": 0.88
+   },
+   "cueFonts": [
+    "(ohne)"
+   ],
+   "w": 640,
+   "h": 360,
+   "mids": [
+    5.56,
+    88.55,
+    174.36
+   ]
+  },
+  {
+   "step": "Schrift wählen: anton",
+   "font": "anton",
+   "select": "anton",
+   "ovFamily": "\"TSF-anton\", var(--ui)",
+   "loaded": [
+    "Inter",
+    "Lora"
+   ]
+  },
+  {
+   "step": "Export: ui_anton",
+   "fmt": "video",
+   "burnBox": true,
+   "level": true,
+   "msg": "Fertig – gespeichert in C:\\Users\\runneradmin\\Videos\\Mein Video äöü\\kurz_honeycut",
+   "files": [
+    "C:\\Users\\runneradmin\\Videos\\Mein Video äöü\\kurz_honeycut\\ui_anton.mp4",
+    "C:\\Users\\runneradmin\\Videos\\Mein Video äöü\\kurz_honeycut\\ui_anton.srt"
+   ],
+   "burn": true,
+   "nSeg": 1,
+   "total": 180,
+   "style": {
+    "enabled": true,
+    "mode": "lines",
+    "chars": 32,
+    "lines": 2,
+    "dur": 4,
+    "size": "mittel",
+    "pos": "unten",
+    "x": 0.5,
+    "y": 0.88,
+    "color": "#FFFFFF",
+    "outline": true,
+    "font": "anton"
+   },
+   "fonts": {
+    "anton": {
+     "family": "TS Anton",
+     "file": "Anton-Regular.ttf"
+    }
+   },
+   "nCues": 49,
+   "cue0": {
+    "start": 0.57,
+    "end": 4.09,
+    "text": "Seit mehr anderes das warum\nseit dieser warum warum.",
+    "x": 0.5,
+    "y": 0.88
+   },
+   "cueFonts": [
+    "(ohne)"
+   ],
+   "w": 640,
+   "h": 360,
+   "mids": [
+    5.56,
+    88.55,
+    174.36
+   ]
+  },
+  {
+   "step": "Schneiden",
+   "geloescht": 40,
+   "abschnitte": 23
+  },
+  {
+   "step": "Schrift wählen: Standard",
+   "font": "",
+   "select": "",
+   "ovFamily": "var(--ui)",
+   "loaded": [
+    "Inter",
+    "Lora"
+   ]
+  },
+  {
+   "step": "Export: ui_schnitt_standard",
+   "fmt": "video",
+   "burnBox": true,
+   "level": true,
+   "msg": "Fertig – gespeichert in C:\\Users\\runneradmin\\Videos\\Mein Video äöü\\kurz_honeycut",
+   "files": [
+    "C:\\Users\\runneradmin\\Videos\\Mein Video äöü\\kurz_honeycut\\ui_schnitt_standard.mp4",
+    "C:\\Users\\runneradmin\\Videos\\Mein Video äöü\\kurz_honeycut\\ui_schnitt_standard.srt"
+   ],
+   "burn": true,
+   "nSeg": 23,
+   "total": 164.256,
+   "style": {
+    "enabled": true,
+    "mode": "lines",
+    "chars": 32,
+    "lines": 2,
+    "dur": 4,
+    "size": "mittel",
+    "pos": "unten",
+    "x": 0.5,
+    "y": 0.88,
+    "color": "#FFFFFF",
+    "outline": true,
+    "font": ""
+   },
+   "fonts": {},
+   "nCues": 49,
+   "cue0": {
+    "start": 0.57,
+    "end": 4.09,
+    "text": "Seit mehr anderes das warum\nseit dieser warum warum.",
+    "x": 0.5,
+    "y": 0.88
+   },
+   "cueFonts": [
+    "(ohne)"
+   ],
+   "w": 640,
+   "h": 360,
+   "mids": [
+    5.42,
+    80.42,
+    158.61
+   ]
+  },
+  {
+   "step": "Schrift wählen: poppins",
+   "font": "poppins",
+   "select": "poppins",
+   "ovFamily": "\"TSF-poppins\", var(--ui)",
+   "loaded": [
+    "Inter",
+    "Lora"
+   ]
+  },
+  {
+   "step": "Export: ui_schnitt_poppins",
+   "fmt": "video",
+   "burnBox": true,
+   "level": true,
+   "msg": "Fertig – gespeichert in C:\\Users\\runneradmin\\Videos\\Mein Video äöü\\kurz_honeycut",
+   "files": [
+    "C:\\Users\\runneradmin\\Videos\\Mein Video äöü\\kurz_honeycut\\ui_schnitt_poppins.mp4",
+    "C:\\Users\\runneradmin\\Videos\\Mein Video äöü\\kurz_honeycut\\ui_schnitt_poppins.srt"
+   ],
+   "burn": true,
+   "nSeg": 23,
+   "total": 164.256,
+   "style": {
+    "enabled": true,
+    "mode": "lines",
+    "chars": 32,
+    "lines": 2,
+    "dur": 4,
+    "size": "mittel",
+    "pos": "unten",
+    "x": 0.5,
+    "y": 0.88,
+    "color": "#FFFFFF",
+    "outline": true,
+    "font": "poppins"
+   },
+   "fonts": {
+    "poppins": {
+     "family": "TS Poppins",
+     "file": "Poppins-Bold.ttf"
+    }
+   },
+   "nCues": 49,
+   "cue0": {
+    "start": 0.57,
+    "end": 4.09,
+    "text": "Seit mehr anderes das warum\nseit dieser warum warum.",
+    "x": 0.5,
+    "y": 0.88
+   },
+   "cueFonts": [
+    "(ohne)"
+   ],
+   "w": 640,
+   "h": 360,
+   "mids": [
+    5.42,
+    80.42,
+    158.61
+   ]
+  }
+ ],
+ "logs": [
+  "error: Failed to load resource: the server responded with a status of 404 (Not Found)",
+  "error: Failed to load resource: the server responded with a status of 404 (Not Found)"
+ ],
+ "browser": "msedge",
+ "browserVersion": "156.0.4314.58",
+ "platform": "{\"platform\":\"desktop\",\"version\":\"2.27.0\",\"title\":\"HoneyCut\"}",
+ "opened": {
+  "name": "kurz",
+  "tokens": 357,
+  "cues": 49,
+  "style": {
+   "enabled": true,
+   "mode": "lines",
+   "chars": 32,
+   "lines": 2,
+   "dur": 4,
+   "size": "mittel",
+   "pos": "unten",
+   "x": 0.5,
+   "y": 0.88,
+   "color": "#FFFFFF",
+   "outline": true
+  },
+  "burn": true,
+  "fontOptions": [
+   "",
+   "inter",
+   "montserrat",
+   "poppins",
+   "robotocondensed",
+   "oswald",
+   "bebas",
+   "anton",
+   "archivo",
+   "lora",
+   "playfair",
+   "__import"
+  ]
+ },
+ "ok": true
+}

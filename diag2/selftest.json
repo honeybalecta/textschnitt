@@ -1,0 +1,25 @@
+{
+  "faster_whisper": "1.2.1",
+  "ctranslate2": "4.9.0",
+  "ffmpeg": "ffmpeg version 7.1-essentials_build-www.gyan.dev Copyright (c) 2000-2024 the FFmpeg developers",
+  "models": [
+    "small"
+  ],
+  "web": true,
+  "segments": 0,
+  "onnxruntime": "1.32.0",
+  "matte_model": "C:\\Users\\runneradmin\\AppData\\Local\\Programs\\HoneyCut\\_internal\\models\\rvm_mobilenetv3_fp32.onnx",
+  "matte_inputs": [
+    "src",
+    "r1i",
+    "r2i",
+    "r3i",
+    "r4i",
+    "downsample_ratio"
+  ],
+  "translate_pairs": [
+    "de-en"
+  ],
+  "translate_probe": "The rents have risen sharply.",
+  "ok": true
+}

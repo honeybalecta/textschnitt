@@ -1,0 +1,142 @@
+== Umgebung ==
+Windows: Windows-2025Server-10.0.26100-SP0 · Python des Prüfskripts: 3.12.10
+App: C:\Users\runneradmin\AppData\Local\Programs\HoneyCut\HoneyCut.exe vorhanden: True · ffmpeg: True
+Schriftdateien der installierten App: ['Anton-Regular.ttf', 'ArchivoBlack-Regular.ttf', 'BebasNeue-Regular.ttf', 'Inter-Bold.ttf', 'Inter-UI.ttf', 'Lora-Bold.ttf', 'Lora-UI.ttf', 'Montserrat-ExtraBold.ttf', 'Oswald-SemiBold.ttf', 'PlayfairDisplay-ExtraBold.ttf', 'Poppins-Bold.ttf', 'RobotoCondensed-Bold.ttf']
+Selbsttest der installierten App: {'ok': True, 'ffmpeg': 'ffmpeg version 7.1-essentials_build-www.gyan.dev Copyright (c) 2000-2024 the FFmpeg developers', 'faster_whisper': '1.2.1', 'web': True}
+
+== Vorbereitung ==
+  Testvideo kurz.mp4 (640x360, 180 s): rc 0 
+  Testvideo hoch kant.mp4 (540x960, 20 s): rc 0 
+  Projekt abgelegt: C:\Users\runneradmin\AppData\Local\Textschnitt\projects\h0xjo2pm.json
+  App gestartet: Prozess 1200 läuft: True · Port: 8765 · Zugang gefunden: True
+
+== A · Export über die Schnittstelle der installierten App (von Hand gebauter Plan) ==
+  quer     standard  exportiert: api_quer_standard.mp4
+  quer     poppins   exportiert: api_quer_poppins.mp4
+  quer     anton     exportiert: api_quer_anton.mp4
+  quer     playfair  exportiert: api_quer_playfair.mp4
+    quer: Standard ↔ poppins bei 2 s: 0.0581 → Schrift kommt an
+    quer: Standard ↔ anton bei 2 s: 0.0587 → Schrift kommt an
+    quer: Standard ↔ playfair bei 2 s: 0.0598 → Schrift kommt an
+  hoch     standard  exportiert: api_hoch_standard.mp4
+  hoch     poppins   exportiert: api_hoch_poppins.mp4
+    hoch: Standard ↔ poppins bei 2 s: 0.1219 → Schrift kommt an
+  stuecke  standard  exportiert: api_stuecke_standard.mp4
+  stuecke  poppins   exportiert: api_stuecke_poppins.mp4
+    stuecke: Standard ↔ poppins bei 2 s: 0.0578 → Schrift kommt an
+    stuecke: Standard ↔ poppins bei 6.6 s: 0.0578 → Schrift kommt an
+
+== B · Export über die echte Oberfläche der installierten App ==
+  Bedienung beendet: rc 0 
+  Browser: msedge 156.0.4314.58 · App: {"platform":"desktop","version":"2.27.0","title":"HoneyCut"} · ok: True 
+  Projekt geöffnet: {'name': 'kurz', 'tokens': 357, 'cues': 49, 'style': {'enabled': True, 'mode': 'lines', 'chars': 32, 'lines': 2, 'dur': 4, 'size': 'mittel', 'pos': 'unten', 'x': 0.5, 'y': 0.88, 'color': '#FFFFFF', 'outline': True}, 'burn': True, 'fontOptions': ['', 'inter', 'montserrat', 'poppins', 'robotocondensed', 'oswald', 'bebas', 'anton', 'archivo', 'lora', 'playfair', '__import']}
+  Schrift wählen: Standard: Stil '', Auswahlfeld '', Vorschau 'var(--ui)'
+  Export: ui_standard: 'Fertig – gespeichert in C:\\Users\\runneradmin\\Videos\\Mein Video äöü\\kurz_honeycut' · Format video · einbrennen True/True · 1 Abschnitte · 49 Untertitel
+      Stil im Plan: {'enabled': True, 'mode': 'lines', 'chars': 32, 'lines': 2, 'dur': 4, 'size': 'mittel', 'pos': 'unten', 'x': 0.5, 'y': 0.88, 'color': '#FFFFFF', 'outline': True, 'font': ''}
+      Schriften im Plan: {} · Schrift je Untertitel: ['(ohne)'] · erster Untertitel: {'start': 0.57, 'end': 4.09, 'text': 'Seit mehr anderes das warum\nseit dieser warum warum.', 'x': 0.5, 'y': 0.88}
+  Schrift wählen: poppins: Stil 'poppins', Auswahlfeld 'poppins', Vorschau '"TSF-poppins", var(--ui)'
+  Export: ui_poppins: 'Fertig – gespeichert in C:\\Users\\runneradmin\\Videos\\Mein Video äöü\\kurz_honeycut' · Format video · einbrennen True/True · 1 Abschnitte · 49 Untertitel
+      Stil im Plan: {'enabled': True, 'mode': 'lines', 'chars': 32, 'lines': 2, 'dur': 4, 'size': 'mittel', 'pos': 'unten', 'x': 0.5, 'y': 0.88, 'color': '#FFFFFF', 'outline': True, 'font': 'poppins'}
+      Schriften im Plan: {'poppins': {'family': 'TS Poppins', 'file': 'Poppins-Bold.ttf'}} · Schrift je Untertitel: ['(ohne)'] · erster Untertitel: {'start': 0.57, 'end': 4.09, 'text': 'Seit mehr anderes das warum\nseit dieser warum warum.', 'x': 0.5, 'y': 0.88}
+  Schrift wählen: anton: Stil 'anton', Auswahlfeld 'anton', Vorschau '"TSF-anton", var(--ui)'
+  Export: ui_anton: 'Fertig – gespeichert in C:\\Users\\runneradmin\\Videos\\Mein Video äöü\\kurz_honeycut' · Format video · einbrennen True/True · 1 Abschnitte · 49 Untertitel
+      Stil im Plan: {'enabled': True, 'mode': 'lines', 'chars': 32, 'lines': 2, 'dur': 4, 'size': 'mittel', 'pos': 'unten', 'x': 0.5, 'y': 0.88, 'color': '#FFFFFF', 'outline': True, 'font': 'anton'}
+      Schriften im Plan: {'anton': {'family': 'TS Anton', 'file': 'Anton-Regular.ttf'}} · Schrift je Untertitel: ['(ohne)'] · erster Untertitel: {'start': 0.57, 'end': 4.09, 'text': 'Seit mehr anderes das warum\nseit dieser warum warum.', 'x': 0.5, 'y': 0.88}
+  Schneiden: {'step': 'Schneiden', 'geloescht': 40, 'abschnitte': 23}
+  Schrift wählen: Standard: Stil '', Auswahlfeld '', Vorschau 'var(--ui)'
+  Export: ui_schnitt_standard: 'Fertig – gespeichert in C:\\Users\\runneradmin\\Videos\\Mein Video äöü\\kurz_honeycut' · Format video · einbrennen True/True · 23 Abschnitte · 49 Untertitel
+      Stil im Plan: {'enabled': True, 'mode': 'lines', 'chars': 32, 'lines': 2, 'dur': 4, 'size': 'mittel', 'pos': 'unten', 'x': 0.5, 'y': 0.88, 'color': '#FFFFFF', 'outline': True, 'font': ''}
+      Schriften im Plan: {} · Schrift je Untertitel: ['(ohne)'] · erster Untertitel: {'start': 0.57, 'end': 4.09, 'text': 'Seit mehr anderes das warum\nseit dieser warum warum.', 'x': 0.5, 'y': 0.88}
+  Schrift wählen: poppins: Stil 'poppins', Auswahlfeld 'poppins', Vorschau '"TSF-poppins", var(--ui)'
+  Export: ui_schnitt_poppins: 'Fertig – gespeichert in C:\\Users\\runneradmin\\Videos\\Mein Video äöü\\kurz_honeycut' · Format video · einbrennen True/True · 23 Abschnitte · 49 Untertitel
+      Stil im Plan: {'enabled': True, 'mode': 'lines', 'chars': 32, 'lines': 2, 'dur': 4, 'size': 'mittel', 'pos': 'unten', 'x': 0.5, 'y': 0.88, 'color': '#FFFFFF', 'outline': True, 'font': 'poppins'}
+      Schriften im Plan: {'poppins': {'family': 'TS Poppins', 'file': 'Poppins-Bold.ttf'}} · Schrift je Untertitel: ['(ohne)'] · erster Untertitel: {'start': 0.57, 'end': 4.09, 'text': 'Seit mehr anderes das warum\nseit dieser warum warum.', 'x': 0.5, 'y': 0.88}
+    Meldung der Seite: error: Failed to load resource: the server responded with a status of 404 (Not Found)
+    Meldung der Seite: error: Failed to load resource: the server responded with a status of 404 (Not Found)
+    ungeschnitten: Standard ↔ Poppins bei 5.6 s: 0.0380 → Schrift kommt an
+    ungeschnitten: Standard ↔ Poppins bei 88.5 s: 0.0371 → Schrift kommt an
+    ungeschnitten: Standard ↔ Poppins bei 174.4 s: 0.0355 → Schrift kommt an
+    ungeschnitten: Standard ↔ Anton bei 5.6 s: 0.0368 → Schrift kommt an
+    ungeschnitten: Standard ↔ Anton bei 88.5 s: 0.0344 → Schrift kommt an
+    ungeschnitten: Standard ↔ Anton bei 174.4 s: 0.0356 → Schrift kommt an
+    mit Schnitten: Standard ↔ Poppins bei 5.4 s: 0.0324 → Schrift kommt an
+    mit Schnitten: Standard ↔ Poppins bei 80.4 s: 0.0275 → Schrift kommt an
+    mit Schnitten: Standard ↔ Poppins bei 158.6 s: 0.0356 → Schrift kommt an
+
+== Protokoll der App (Auszug) ==
+  | 2026-11-15 17:53:46  Desktop-App gestartet auf Port 8765 – Python 3.12.10
+  | 2026-11-15 17:54:06  Job export gestartet
+  | 2026-11-15 17:54:06  Export video: 1 Abschnitte, 0 Overlays, 1 Untertitel
+  | [base]subtitles=filename=untertitel.ass:fontsdir=fonts[vout]
+  | 2026-11-15 17:54:06  Export erstellt: C:\Users\runneradmin\Videos\Mein Video äöü\kurz_honeycut\api_quer_standard.mp4, C:\Users\runneradmin\Videos\Mein Video äöü\kurz_honeycut\api_quer_standard.srt
+  | 2026-11-15 17:54:06  Job export fertig nach 1 s
+  | 2026-11-15 17:54:07  Job export gestartet
+  | 2026-11-15 17:54:07  Export video: 1 Abschnitte, 0 Overlays, 1 Untertitel
+  | [base]subtitles=filename=untertitel.ass:fontsdir=fonts[vout]
+  | 2026-11-15 17:54:08  Export erstellt: C:\Users\runneradmin\Videos\Mein Video äöü\kurz_honeycut\api_quer_poppins.mp4, C:\Users\runneradmin\Videos\Mein Video äöü\kurz_honeycut\api_quer_poppins.srt
+  | 2026-11-15 17:54:08  Job export fertig nach 1 s
+  | 2026-11-15 17:54:08  Job export gestartet
+  | 2026-11-15 17:54:08  Export video: 1 Abschnitte, 0 Overlays, 1 Untertitel
+  | [base]subtitles=filename=untertitel.ass:fontsdir=fonts[vout]
+  | 2026-11-15 17:54:09  Export erstellt: C:\Users\runneradmin\Videos\Mein Video äöü\kurz_honeycut\api_quer_anton.mp4, C:\Users\runneradmin\Videos\Mein Video äöü\kurz_honeycut\api_quer_anton.srt
+  | 2026-11-15 17:54:09  Job export fertig nach 1 s
+  | 2026-11-15 17:54:09  Job export gestartet
+  | 2026-11-15 17:54:09  Export video: 1 Abschnitte, 0 Overlays, 1 Untertitel
+  | [base]subtitles=filename=untertitel.ass:fontsdir=fonts[vout]
+  | 2026-11-15 17:54:10  Export erstellt: C:\Users\runneradmin\Videos\Mein Video äöü\kurz_honeycut\api_quer_playfair.mp4, C:\Users\runneradmin\Videos\Mein Video äöü\kurz_honeycut\api_quer_playfair.srt
+  | 2026-11-15 17:54:10  Job export fertig nach 1 s
+  | 2026-11-15 17:54:10  Job export gestartet
+  | 2026-11-15 17:54:10  Export video: 1 Abschnitte, 0 Overlays, 1 Untertitel
+  | [base]subtitles=filename=untertitel.ass:fontsdir=fonts[vout]
+  | 2026-11-15 17:54:11  Export erstellt: C:\Users\runneradmin\Videos\Mein Video äöü\hoch kant_honeycut\api_hoch_standard.mp4, C:\Users\runneradmin\Videos\Mein Video äöü\hoch kant_honeycut\api_hoch_standard.srt
+  | 2026-11-15 17:54:11  Job export fertig nach 1 s
+  | 2026-11-15 17:54:12  Job export gestartet
+  | 2026-11-15 17:54:12  Export video: 1 Abschnitte, 0 Overlays, 1 Untertitel
+  | [base]subtitles=filename=untertitel.ass:fontsdir=fonts[vout]
+  | 2026-11-15 17:54:13  Export erstellt: C:\Users\runneradmin\Videos\Mein Video äöü\hoch kant_honeycut\api_hoch_poppins.mp4, C:\Users\runneradmin\Videos\Mein Video äöü\hoch kant_honeycut\api_hoch_poppins.srt
+  | 2026-11-15 17:54:13  Job export fertig nach 1 s
+  | 2026-11-15 17:54:13  Job export gestartet
+  | 2026-11-15 17:54:13  Export video: 8 Abschnitte, 0 Overlays, 1 Untertitel
+  | [base]subtitles=filename=untertitel_0.ass:fontsdir=fonts[vout]
+  | [base]subtitles=filename=untertitel_1.ass:fontsdir=fonts[vout]
+  | 2026-11-15 17:54:15  Export erstellt: C:\Users\runneradmin\Videos\Mein Video äöü\kurz_honeycut\api_stuecke_standard.mp4, C:\Users\runneradmin\Videos\Mein Video äöü\kurz_honeycut\api_stuecke_standard.srt
+  | 2026-11-15 17:54:15  Job export fertig nach 2 s
+  | 2026-11-15 17:54:15  Job export gestartet
+  | 2026-11-15 17:54:15  Export video: 8 Abschnitte, 0 Overlays, 1 Untertitel
+  | [base]subtitles=filename=untertitel_0.ass:fontsdir=fonts[vout]
+  | [base]subtitles=filename=untertitel_1.ass:fontsdir=fonts[vout]
+  | 2026-11-15 17:54:17  Export erstellt: C:\Users\runneradmin\Videos\Mein Video äöü\kurz_honeycut\api_stuecke_poppins.mp4, C:\Users\runneradmin\Videos\Mein Video äöü\kurz_honeycut\api_stuecke_poppins.srt
+  | 2026-11-15 17:54:17  Job export fertig nach 2 s
+  | 2026-11-15 17:54:25  Job export gestartet
+  | 2026-11-15 17:54:25  Export video: 1 Abschnitte, 0 Overlays, 49 Untertitel
+  | [base]subtitles=filename=untertitel.ass:fontsdir=fonts[vout]
+  | 2026-11-15 17:54:45  Export erstellt: C:\Users\runneradmin\Videos\Mein Video äöü\kurz_honeycut\ui_standard.mp4, C:\Users\runneradmin\Videos\Mein Video äöü\kurz_honeycut\ui_standard.srt
+  | 2026-11-15 17:54:45  Job export fertig nach 20 s
+  | 2026-11-15 17:54:47  Job export gestartet
+  | 2026-11-15 17:54:47  Export video: 1 Abschnitte, 0 Overlays, 49 Untertitel
+  | [base]subtitles=filename=untertitel.ass:fontsdir=fonts[vout]
+  | 2026-11-15 17:55:07  Export erstellt: C:\Users\runneradmin\Videos\Mein Video äöü\kurz_honeycut\ui_poppins.mp4, C:\Users\runneradmin\Videos\Mein Video äöü\kurz_honeycut\ui_poppins.srt
+  | 2026-11-15 17:55:07  Job export fertig nach 20 s
+  | 2026-11-15 17:55:09  Job export gestartet
+  | 2026-11-15 17:55:09  Export video: 1 Abschnitte, 0 Overlays, 49 Untertitel
+  | [base]subtitles=filename=untertitel.ass:fontsdir=fonts[vout]
+  | 2026-11-15 17:55:33  Export erstellt: C:\Users\runneradmin\Videos\Mein Video äöü\kurz_honeycut\ui_anton.mp4, C:\Users\runneradmin\Videos\Mein Video äöü\kurz_honeycut\ui_anton.srt
+  | 2026-11-15 17:55:33  Job export fertig nach 24 s
+  | 2026-11-15 17:55:37  Job export gestartet
+  | 2026-11-15 17:55:37  Export video: 23 Abschnitte, 0 Overlays, 49 Untertitel
+  | [base]subtitles=filename=untertitel_0.ass:fontsdir=fonts[vout]
+  | [base]subtitles=filename=untertitel_1.ass:fontsdir=fonts[vout]
+  | [base]subtitles=filename=untertitel_2.ass:fontsdir=fonts[vout]
+  | [base]subtitles=filename=untertitel_3.ass:fontsdir=fonts[vout]
+  | 2026-11-15 17:56:01  Export erstellt: C:\Users\runneradmin\Videos\Mein Video äöü\kurz_honeycut\ui_schnitt_standard.mp4, C:\Users\runneradmin\Videos\Mein Video äöü\kurz_honeycut\ui_schnitt_standard.srt
+  | 2026-11-15 17:56:01  Job export fertig nach 24 s
+  | 2026-11-15 17:56:03  Job export gestartet
+  | 2026-11-15 17:56:03  Export video: 23 Abschnitte, 0 Overlays, 49 Untertitel
+  | [base]subtitles=filename=untertitel_0.ass:fontsdir=fonts[vout]
+  | [base]subtitles=filename=untertitel_1.ass:fontsdir=fonts[vout]
+  | [base]subtitles=filename=untertitel_2.ass:fontsdir=fonts[vout]
+  | [base]subtitles=filename=untertitel_3.ass:fontsdir=fonts[vout]
+  | 2026-11-15 17:56:26  Export erstellt: C:\Users\runneradmin\Videos\Mein Video äöü\kurz_honeycut\ui_schnitt_poppins.mp4, C:\Users\runneradmin\Videos\Mein Video äöü\kurz_honeycut\ui_schnitt_poppins.srt
+  | 2026-11-15 17:56:26  Job export fertig nach 23 s
+
+fertig
