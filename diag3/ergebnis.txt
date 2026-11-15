@@ -1,0 +1,173 @@
+== Umgebung ==
+Python 3.12.10 · win32 · ffmpeg: D:\a\textschnitt\textschnitt\dist\HoneyCut\_internal\ffmpeg\ffmpeg.exe
+gebaute App: True · _MEIPASS: D:\a\textschnitt\textschnitt\dist\HoneyCut\_internal · Programm: D:\a\textschnitt\textschnitt\dist\HoneyCut\HoneyCut.exe · Version: 2.27.0 · Arbeitsordner: D:\a\textschnitt\textschnitt
+ffmpeg version 7.1-essentials_build-www.gyan.dev Copyright (c) 2000-2024 the FFmpeg developers
+ffmpeg_major: 7 · WEB_DIR: D:\a\textschnitt\textschnitt\dist\HoneyCut\_internal\web · Schriften dort: ['Anton-Regular.ttf', 'ArchivoBlack-Regular.ttf', 'BebasNeue-Regular.ttf', 'Inter-Bold.ttf', 'Inter-UI.ttf', 'Lora-Bold.ttf', 'Lora-UI.ttf', 'Montserrat-ExtraBold.ttf', 'Oswald-SemiBold.ttf', 'PlayfairDisplay-ExtraBold.ttf', 'Poppins-Bold.ttf', 'RobotoCondensed-Bold.ttf']
+Testvideo: C:\Users\RUNNER~1\AppData\Local\Temp\diag schrift äö 5j73r3un\test.mp4 rc 0 
+
+== A · Der echte Weg der App: export_job mit eingebrannten Untertiteln ==
+  standard   exportiert: diag_standard.mp4 · Ausschnitt 76800 Bytes
+  poppins    exportiert: diag_poppins.mp4 · Ausschnitt 76800 Bytes
+  anton      exportiert: diag_anton.mp4 · Ausschnitt 76800 Bytes
+  playfair   exportiert: diag_playfair.mp4 · Ausschnitt 76800 Bytes
+  Unterschied Standard ↔ poppins: 0.0580  →  Schrift kommt an
+  Unterschied Standard ↔ anton: 0.0584  →  Schrift kommt an
+  Unterschied Standard ↔ playfair: 0.0594  →  Schrift kommt an
+
+== B · Dieselben Dateien wie im Export, ffmpeg mit ausführlichem Protokoll ==
+collect_fonts → {'poppins': ('TS Poppins', False)} · Dateien: [('poppins.ttf', 156052)]
+ASS: ['Style: Default,TS Poppins,21,&H00FFFFFF,&H00FFFFFF,&H00000000,&H96000000,0,0,0,0,100,100,0,0,1,1.5,0.0,5,0,0,0,1', 'Dialogue: 0,0:00:00.30,0:00:03.90,Default,,0,0,0,,{\\an5\\pos(320,295)}Schrift im Export\\NHamburgefonstiv ÄÖÜ 123']
+
+  [a relativ (wie die App) · -/filter_complex] rc=0 · Unterschied zu Standard: 0.0584 · Schrift kommt an
+    subtitles=filename=untertitel.ass:fontsdir=fonts
+    | [Parsed_subtitles_0 @ 000002cfe4901f80] libass API version: 0x1703000
+    | [Parsed_subtitles_0 @ 000002cfe4901f80] libass source: commit: 0.17.3-32-g5298859c298d3c570d8d7e3b883a0d63490659b8
+    | [Parsed_subtitles_0 @ 000002cfe4901f80] Loading font file 'fonts\poppins.ttf'
+    | [Parsed_subtitles_0 @ 000002cfe4901f80] Using font provider directwrite (with GDI)
+    | [Parsed_subtitles_0 @ 000002cfe49a6140] libass API version: 0x1703000
+    | [Parsed_subtitles_0 @ 000002cfe49a6140] libass source: commit: 0.17.3-32-g5298859c298d3c570d8d7e3b883a0d63490659b8
+    | [Parsed_subtitles_0 @ 000002cfe49a6140] Loading font file 'fonts\poppins.ttf'
+    | [Parsed_subtitles_0 @ 000002cfe49a6140] Using font provider directwrite (with GDI)
+    | [Parsed_subtitles_0 @ 000002cfe49a6140] fontselect: (TS Poppins, 400, 0) -> TSPoppins-Regular, 0, TSPoppins-Regular
+    | [in#0/mov,mp4,m4a,3gp,3g2,mj2 @ 000002cfe4901a00]   Input stream #0:0 (video): 99 packets read (333179 bytes); 84 frames decoded; 0 decode errors;
+
+  [a relativ (wie die App) · -vf] rc=0 · Unterschied zu Standard: 0.0584 · Schrift kommt an
+    subtitles=filename=untertitel.ass:fontsdir=fonts
+    | [Parsed_subtitles_0 @ 000001dc12fd0740] libass API version: 0x1703000
+    | [Parsed_subtitles_0 @ 000001dc12fd0740] libass source: commit: 0.17.3-32-g5298859c298d3c570d8d7e3b883a0d63490659b8
+    | [Parsed_subtitles_0 @ 000001dc12fd0740] Loading font file 'fonts\poppins.ttf'
+    | [Parsed_subtitles_0 @ 000001dc12fd0740] Using font provider directwrite (with GDI)
+    | [Parsed_subtitles_0 @ 000001dc136edcc0] libass API version: 0x1703000
+    | [Parsed_subtitles_0 @ 000001dc136edcc0] libass source: commit: 0.17.3-32-g5298859c298d3c570d8d7e3b883a0d63490659b8
+    | [Parsed_subtitles_0 @ 000001dc136edcc0] Loading font file 'fonts\poppins.ttf'
+    | [Parsed_subtitles_0 @ 000001dc136edcc0] Using font provider directwrite (with GDI)
+    | [Parsed_subtitles_0 @ 000001dc136edcc0] fontselect: (TS Poppins, 400, 0) -> TSPoppins-Regular, 0, TSPoppins-Regular
+    | [in#0/mov,mp4,m4a,3gp,3g2,mj2 @ 000001dc12fc0f00]   Input stream #0:0 (video): 99 packets read (333179 bytes); 84 frames decoded; 0 decode errors;
+
+  [b relativ mit ./ · -/filter_complex] rc=0 · Unterschied zu Standard: 0.0584 · Schrift kommt an
+    subtitles=filename=untertitel.ass:fontsdir=./fonts
+    | [Parsed_subtitles_0 @ 0000019f5c3b1f80] libass API version: 0x1703000
+    | [Parsed_subtitles_0 @ 0000019f5c3b1f80] libass source: commit: 0.17.3-32-g5298859c298d3c570d8d7e3b883a0d63490659b8
+    | [Parsed_subtitles_0 @ 0000019f5c3b1f80] Loading font file './fonts\poppins.ttf'
+    | [Parsed_subtitles_0 @ 0000019f5c3b1f80] Using font provider directwrite (with GDI)
+    | [Parsed_subtitles_0 @ 0000019f5c456200] libass API version: 0x1703000
+    | [Parsed_subtitles_0 @ 0000019f5c456200] libass source: commit: 0.17.3-32-g5298859c298d3c570d8d7e3b883a0d63490659b8
+    | [Parsed_subtitles_0 @ 0000019f5c456200] Loading font file './fonts\poppins.ttf'
+    | [Parsed_subtitles_0 @ 0000019f5c456200] Using font provider directwrite (with GDI)
+    | [Parsed_subtitles_0 @ 0000019f5c456200] fontselect: (TS Poppins, 400, 0) -> TSPoppins-Regular, 0, TSPoppins-Regular
+    | [in#0/mov,mp4,m4a,3gp,3g2,mj2 @ 0000019f5c3b1a00]   Input stream #0:0 (video): 99 packets read (333179 bytes); 84 frames decoded; 0 decode errors;
+
+  [b relativ mit ./ · -vf] rc=0 · Unterschied zu Standard: 0.0584 · Schrift kommt an
+    subtitles=filename=untertitel.ass:fontsdir=./fonts
+    | [Parsed_subtitles_0 @ 000002076a9c08c0] libass API version: 0x1703000
+    | [Parsed_subtitles_0 @ 000002076a9c08c0] libass source: commit: 0.17.3-32-g5298859c298d3c570d8d7e3b883a0d63490659b8
+    | [Parsed_subtitles_0 @ 000002076a9c08c0] Loading font file './fonts\poppins.ttf'
+    | [Parsed_subtitles_0 @ 000002076a9c08c0] Using font provider directwrite (with GDI)
+    | [Parsed_subtitles_0 @ 000002076a9c2600] libass API version: 0x1703000
+    | [Parsed_subtitles_0 @ 000002076a9c2600] libass source: commit: 0.17.3-32-g5298859c298d3c570d8d7e3b883a0d63490659b8
+    | [Parsed_subtitles_0 @ 000002076a9c2600] Loading font file './fonts\poppins.ttf'
+    | [Parsed_subtitles_0 @ 000002076a9c2600] Using font provider directwrite (with GDI)
+    | [Parsed_subtitles_0 @ 000002076a9c2600] fontselect: (TS Poppins, 400, 0) -> TSPoppins-Regular, 0, TSPoppins-Regular
+    | [in#0/mov,mp4,m4a,3gp,3g2,mj2 @ 000002076a9b0f00]   Input stream #0:0 (video): 99 packets read (333179 bytes); 84 frames decoded; 0 decode errors;
+
+  [c absolut, Doppelpunkt maskiert · -/filter_complex] rc=0 · Unterschied zu Standard: 0.0584 · Schrift kommt an
+    subtitles=filename=untertitel.ass:fontsdir='C\:/Users/RUNNER~1/AppData/Local/Temp/diag schrift äö 5j73r3un/nachbau/fonts'
+    | [Parsed_subtitles_0 @ 00000294893b20c0] libass API version: 0x1703000
+    | [Parsed_subtitles_0 @ 00000294893b20c0] libass source: commit: 0.17.3-32-g5298859c298d3c570d8d7e3b883a0d63490659b8
+    | [Parsed_subtitles_0 @ 00000294893b20c0] Loading font file 'C:/Users/RUNNER~1/AppData/Local/Temp/diag schrift äö 5j73r3un/nachbau/fonts\poppins.ttf'
+    | [Parsed_subtitles_0 @ 00000294893b20c0] Using font provider directwrite (with GDI)
+    | [Parsed_subtitles_0 @ 0000029489402e40] libass API version: 0x1703000
+    | [Parsed_subtitles_0 @ 0000029489402e40] libass source: commit: 0.17.3-32-g5298859c298d3c570d8d7e3b883a0d63490659b8
+    | [Parsed_subtitles_0 @ 0000029489402e40] Loading font file 'C:/Users/RUNNER~1/AppData/Local/Temp/diag schrift äö 5j73r3un/nachbau/fonts\poppins.ttf'
+    | [Parsed_subtitles_0 @ 0000029489402e40] Using font provider directwrite (with GDI)
+    | [Parsed_subtitles_0 @ 0000029489402e40] fontselect: (TS Poppins, 400, 0) -> TSPoppins-Regular, 0, TSPoppins-Regular
+    | [in#0/mov,mp4,m4a,3gp,3g2,mj2 @ 00000294893b1c80]   Input stream #0:0 (video): 99 packets read (333179 bytes); 84 frames decoded; 0 decode errors;
+
+  [c absolut, Doppelpunkt maskiert · -vf] rc=0 · Unterschied zu Standard: 0.0584 · Schrift kommt an
+    subtitles=filename=untertitel.ass:fontsdir='C\:/Users/RUNNER~1/AppData/Local/Temp/diag schrift äö 5j73r3un/nachbau/fonts'
+    | [Parsed_subtitles_0 @ 000001ed724edc00] libass API version: 0x1703000
+    | [Parsed_subtitles_0 @ 000001ed724edc00] libass source: commit: 0.17.3-32-g5298859c298d3c570d8d7e3b883a0d63490659b8
+    | [Parsed_subtitles_0 @ 000001ed724edc00] Loading font file 'C:/Users/RUNNER~1/AppData/Local/Temp/diag schrift äö 5j73r3un/nachbau/fonts\poppins.ttf'
+    | [Parsed_subtitles_0 @ 000001ed724edc00] Using font provider directwrite (with GDI)
+    | [Parsed_subtitles_0 @ 000001ed7328d340] libass API version: 0x1703000
+    | [Parsed_subtitles_0 @ 000001ed7328d340] libass source: commit: 0.17.3-32-g5298859c298d3c570d8d7e3b883a0d63490659b8
+    | [Parsed_subtitles_0 @ 000001ed7328d340] Loading font file 'C:/Users/RUNNER~1/AppData/Local/Temp/diag schrift äö 5j73r3un/nachbau/fonts\poppins.ttf'
+    | [Parsed_subtitles_0 @ 000001ed7328d340] Using font provider directwrite (with GDI)
+    | [Parsed_subtitles_0 @ 000001ed7328d340] fontselect: (TS Poppins, 400, 0) -> TSPoppins-Regular, 0, TSPoppins-Regular
+    | [in#0/mov,mp4,m4a,3gp,3g2,mj2 @ 000001ed72421040]   Input stream #0:0 (video): 99 packets read (333179 bytes); 84 frames decoded; 0 decode errors;
+
+  [d absolut, doppelt maskiert · -/filter_complex] rc=0 · Unterschied zu Standard: 0.0584 · Schrift kommt an
+    subtitles=filename=untertitel.ass:fontsdir=C\\:/Users/RUNNER~1/AppData/Local/Temp/diag\ schrift\ äö\ 5j73r3un/nachbau/fonts
+    | [Parsed_subtitles_0 @ 0000022502f720c0] libass API version: 0x1703000
+    | [Parsed_subtitles_0 @ 0000022502f720c0] libass source: commit: 0.17.3-32-g5298859c298d3c570d8d7e3b883a0d63490659b8
+    | [Parsed_subtitles_0 @ 0000022502f720c0] Loading font file 'C:/Users/RUNNER~1/AppData/Local/Temp/diag schrift äö 5j73r3un/nachbau/fonts\poppins.ttf'
+    | [Parsed_subtitles_0 @ 0000022502f720c0] Using font provider directwrite (with GDI)
+    | [Parsed_subtitles_0 @ 000002250312a4c0] libass API version: 0x1703000
+    | [Parsed_subtitles_0 @ 000002250312a4c0] libass source: commit: 0.17.3-32-g5298859c298d3c570d8d7e3b883a0d63490659b8
+    | [Parsed_subtitles_0 @ 000002250312a4c0] Loading font file 'C:/Users/RUNNER~1/AppData/Local/Temp/diag schrift äö 5j73r3un/nachbau/fonts\poppins.ttf'
+    | [Parsed_subtitles_0 @ 000002250312a4c0] Using font provider directwrite (with GDI)
+    | [Parsed_subtitles_0 @ 000002250312a4c0] fontselect: (TS Poppins, 400, 0) -> TSPoppins-Regular, 0, TSPoppins-Regular
+    | [in#0/mov,mp4,m4a,3gp,3g2,mj2 @ 0000022502f71c80]   Input stream #0:0 (video): 99 packets read (333179 bytes); 84 frames decoded; 0 decode errors;
+
+  [d absolut, doppelt maskiert · -vf] rc=0 · Unterschied zu Standard: 0.0584 · Schrift kommt an
+    subtitles=filename=untertitel.ass:fontsdir=C\\:/Users/RUNNER~1/AppData/Local/Temp/diag\ schrift\ äö\ 5j73r3un/nachbau/fonts
+    | [Parsed_subtitles_0 @ 00000201a24cdc00] libass API version: 0x1703000
+    | [Parsed_subtitles_0 @ 00000201a24cdc00] libass source: commit: 0.17.3-32-g5298859c298d3c570d8d7e3b883a0d63490659b8
+    | [Parsed_subtitles_0 @ 00000201a24cdc00] Loading font file 'C:/Users/RUNNER~1/AppData/Local/Temp/diag schrift äö 5j73r3un/nachbau/fonts\poppins.ttf'
+    | [Parsed_subtitles_0 @ 00000201a24cdc00] Using font provider directwrite (with GDI)
+    | [Parsed_subtitles_0 @ 00000201a2fb1f40] libass API version: 0x1703000
+    | [Parsed_subtitles_0 @ 00000201a2fb1f40] libass source: commit: 0.17.3-32-g5298859c298d3c570d8d7e3b883a0d63490659b8
+    | [Parsed_subtitles_0 @ 00000201a2fb1f40] Loading font file 'C:/Users/RUNNER~1/AppData/Local/Temp/diag schrift äö 5j73r3un/nachbau/fonts\poppins.ttf'
+    | [Parsed_subtitles_0 @ 00000201a2fb1f40] Using font provider directwrite (with GDI)
+    | [Parsed_subtitles_0 @ 00000201a2fb1f40] fontselect: (TS Poppins, 400, 0) -> TSPoppins-Regular, 0, TSPoppins-Regular
+    | [in#0/mov,mp4,m4a,3gp,3g2,mj2 @ 00000201a2401040]   Input stream #0:0 (video): 99 packets read (333179 bytes); 84 frames decoded; 0 decode errors;
+
+  [e Filter ass · -/filter_complex] rc=0 · Unterschied zu Standard: 0.0577 · Schrift kommt an
+    ass=filename=untertitel.ass:fontsdir=fonts
+    | [Parsed_ass_0 @ 000002762a281f80] libass API version: 0x1703000
+    | [Parsed_ass_0 @ 000002762a281f80] libass source: commit: 0.17.3-32-g5298859c298d3c570d8d7e3b883a0d63490659b8
+    | [Parsed_ass_0 @ 000002762a281f80] Loading font file 'fonts\poppins.ttf'
+    | [Parsed_ass_0 @ 000002762a281f80] Using font provider directwrite (with GDI)
+    | [Parsed_ass_0 @ 000002762b20ef00] libass API version: 0x1703000
+    | [Parsed_ass_0 @ 000002762b20ef00] libass source: commit: 0.17.3-32-g5298859c298d3c570d8d7e3b883a0d63490659b8
+    | [Parsed_ass_0 @ 000002762b20ef00] Loading font file 'fonts\poppins.ttf'
+    | [Parsed_ass_0 @ 000002762b20ef00] Using font provider directwrite (with GDI)
+    | [Parsed_ass_0 @ 000002762b20ef00] fontselect: (TS Poppins, 400, 0) -> TSPoppins-Regular, 0, TSPoppins-Regular
+    | [in#0/mov,mp4,m4a,3gp,3g2,mj2 @ 000002762a737e80]   Input stream #0:0 (video): 99 packets read (333179 bytes); 84 frames decoded; 0 decode errors;
+
+  [e Filter ass · -vf] rc=0 · Unterschied zu Standard: 0.0577 · Schrift kommt an
+    ass=filename=untertitel.ass:fontsdir=fonts
+    | [Parsed_ass_0 @ 00000132c7de07c0] libass API version: 0x1703000
+    | [Parsed_ass_0 @ 00000132c7de07c0] libass source: commit: 0.17.3-32-g5298859c298d3c570d8d7e3b883a0d63490659b8
+    | [Parsed_ass_0 @ 00000132c7de07c0] Loading font file 'fonts\poppins.ttf'
+    | [Parsed_ass_0 @ 00000132c7de07c0] Using font provider directwrite (with GDI)
+    | [Parsed_ass_0 @ 00000132c7de2240] libass API version: 0x1703000
+    | [Parsed_ass_0 @ 00000132c7de2240] libass source: commit: 0.17.3-32-g5298859c298d3c570d8d7e3b883a0d63490659b8
+    | [Parsed_ass_0 @ 00000132c7de2240] Loading font file 'fonts\poppins.ttf'
+    | [Parsed_ass_0 @ 00000132c7de2240] Using font provider directwrite (with GDI)
+    | [Parsed_ass_0 @ 00000132c7de2240] fontselect: (TS Poppins, 400, 0) -> TSPoppins-Regular, 0, TSPoppins-Regular
+    | [in#0/mov,mp4,m4a,3gp,3g2,mj2 @ 00000132c7dd0f00]   Input stream #0:0 (video): 99 packets read (333179 bytes); 84 frames decoded; 0 decode errors;
+
+== C · Schrift in die ASS-Datei eingebettet (ohne fontsdir) ==
+
+  [subtitles=filename=eingebettet.ass] rc=0 · Unterschied zu Standard: 0.0584 · Schrift kommt an
+    | [Parsed_subtitles_0 @ 00000134549a07c0] libass API version: 0x1703000
+    | [Parsed_subtitles_0 @ 00000134549a07c0] libass source: commit: 0.17.3-32-g5298859c298d3c570d8d7e3b883a0d63490659b8
+    | [Parsed_subtitles_0 @ 00000134549a07c0] Using font provider directwrite (with GDI)
+    | [Parsed_subtitles_0 @ 0000013454a0d680] libass API version: 0x1703000
+    | [Parsed_subtitles_0 @ 0000013454a0d680] libass source: commit: 0.17.3-32-g5298859c298d3c570d8d7e3b883a0d63490659b8
+    | [Parsed_subtitles_0 @ 0000013454a0d680] Using font provider directwrite (with GDI)
+    | [Parsed_subtitles_0 @ 0000013454a0d680] fontselect: (TS Poppins, 400, 0) -> TSPoppins-Regular, 0, TSPoppins-Regular
+    | [in#0/mov,mp4,m4a,3gp,3g2,mj2 @ 0000013454990f00]   Input stream #0:0 (video): 99 packets read (333179 bytes); 84 frames decoded; 0 decode errors;
+
+  [ass=filename=eingebettet.ass] rc=0 · Unterschied zu Standard: 0.0577 · Schrift kommt an
+    | [Parsed_ass_0 @ 0000027d976fecc0] libass API version: 0x1703000
+    | [Parsed_ass_0 @ 0000027d976fecc0] libass source: commit: 0.17.3-32-g5298859c298d3c570d8d7e3b883a0d63490659b8
+    | [Parsed_ass_0 @ 0000027d976fecc0] Using font provider directwrite (with GDI)
+    | [Parsed_ass_0 @ 0000027d976c2a00] libass API version: 0x1703000
+    | [Parsed_ass_0 @ 0000027d976c2a00] libass source: commit: 0.17.3-32-g5298859c298d3c570d8d7e3b883a0d63490659b8
+    | [Parsed_ass_0 @ 0000027d976c2a00] Using font provider directwrite (with GDI)
+    | [Parsed_ass_0 @ 0000027d976c2a00] fontselect: (TS Poppins, 400, 0) -> TSPoppins-Regular, 0, TSPoppins-Regular
+    | [in#0/mov,mp4,m4a,3gp,3g2,mj2 @ 0000027d97630ec0]   Input stream #0:0 (video): 99 packets read (333179 bytes); 84 frames decoded; 0 decode errors;
+
+fertig
