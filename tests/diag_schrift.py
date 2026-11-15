@@ -10,14 +10,15 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 FF = ROOT / "build" / "ffmpeg"
 EXE = ".exe" if os.name == "nt" else ""
-if (FF / f"ffmpeg{EXE}").exists():
+FROZEN = bool(getattr(sys, "frozen", False))   # in der gebauten App gestartet: dann zählt das mitgelieferte ffmpeg
+if not FROZEN and (FF / f"ffmpeg{EXE}").exists():
     os.environ["FFMPEG"] = str(FF / f"ffmpeg{EXE}")
     os.environ["FFPROBE"] = str(FF / f"ffprobe{EXE}")
 os.environ["TEXTSCHNITT_DATA"] = str(ROOT / "diag-daten")
 sys.path.insert(0, str(ROOT))
 import textschnitt as T  # noqa: E402
 
-OUT = ROOT / "diag"
+OUT = ROOT / (os.environ.get("DIAG_OUT") or "diag")
 OUT.mkdir(exist_ok=True)
 LOG = []
 
@@ -30,7 +31,8 @@ def P(*a):
 
 
 def run(cmd, cwd=None):
-    r = subprocess.run([str(c) for c in cmd], cwd=str(cwd) if cwd else None, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    r = subprocess.run([str(c) for c in cmd], cwd=str(cwd) if cwd else None, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                       stdin=subprocess.DEVNULL, creationflags=0x08000000 if os.name == "nt" else 0)
     return r.returncode, r.stdout, r.stderr
 
 
@@ -58,6 +60,7 @@ def diff(a, b):
 def main():
     P("== Umgebung ==")
     P("Python", sys.version.split()[0], "·", sys.platform, "· ffmpeg:", T.FFMPEG)
+    P("gebaute App:", FROZEN, "· _MEIPASS:", getattr(sys, "_MEIPASS", None), "· Programm:", sys.executable, "· Version:", T.VERSION, "· Arbeitsordner:", os.getcwd())
     rc, o, e = run([T.FFMPEG, "-hide_banner", "-version"])
     P((o or e).splitlines()[0] if (o or e) else "ffmpeg -version ohne Ausgabe")
     P("ffmpeg_major:", T.ffmpeg_major(), "· WEB_DIR:", T.WEB_DIR, "· Schriften dort:", sorted(p.name for p in (T.WEB_DIR / "fonts").glob("*.ttf")))
