@@ -126,6 +126,15 @@ def selftest(out_path: str) -> int:
         rep["schrift_export"] = T.font_selftest()
         if not rep["schrift_export"].get("ok"):
             raise RuntimeError(f"Schrift im Export stimmt nicht: {rep['schrift_export']}")
+        # Export über die Grafikkarte: Das mitgelieferte ffmpeg muss die Encoder von Nvidia, Intel und AMD kennen; die Suche nach
+        # einer nutzbaren Grafikkarte darf auf einem Rechner ohne sie nichts finden und nicht scheitern.
+        enc = subprocess.run([T.FFMPEG, "-hide_banner", "-encoders"], capture_output=True, text=True, **T.NOWIN).stdout
+        rep["gpu_encoder"] = [c for _, _, c in T.GPU_ENCODERS if f" {c} " in enc]
+        found = T.gpu_detect()
+        rep["gpu"] = found["label"] if found else None
+        rep["gpu_probe"] = list(T.GPU["tried"])
+        if os.name == "nt" and len(rep["gpu_encoder"]) < len(T.GPU_ENCODERS):
+            raise RuntimeError(f"Dem mitgelieferten ffmpeg fehlen Encoder für die Grafikkarte: {rep['gpu_encoder']}")
         rep["ok"] = True
     except Exception:
         rep["ok"] = False

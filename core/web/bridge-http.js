@@ -46,6 +46,7 @@
     transcribe: (uri, model, lang, fillers) => jobOf(call('POST', 'transcribe', {uri, model, lang, fillers, hint: asrHint})),
     transcribeRanges: (uri, model, lang, ranges) => jobOf(call('POST', 'transcribe', {uri, model, lang, fillers:false, hint: asrHint, ranges: JSON.parse(ranges)})),
     exportVideo: plan => jobOf(call('POST', 'export', plan)),
+    gpu: () => call('GET', 'gpu'),   // Grafikkarte für den Export: {state: pending|ready, name, label}
     makeProxy: uri => jobOf(call('POST', 'proxy', {uri})),
     autoMatte: uri => jobOf(call('POST', 'matte', {uri})),
     translate: (texts, src, tgt) => jobOf(call('POST', 'translate', {texts: JSON.parse(texts), src, tgt})),

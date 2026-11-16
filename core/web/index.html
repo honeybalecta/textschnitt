@@ -12,6 +12,7 @@
 <section id="home" class="screen">
   <header class="bar">
     <div class="brand"><svg viewBox="22 14 66 72" aria-hidden="true"><defs><clipPath id="tpm"><path d="M35.33 23L77.67 47.5Q82 50 77.67 52.5L35.33 77Q31 79.5 31 74.5L31 25.5Q31 20.5 35.33 23Z"/></clipPath></defs><g clip-path="url(#tpm)"><rect x="29" y="20.70" width="72" height="5.79" rx="2.90" fill="#EDE7DA"/><rect x="29" y="29.50" width="14" height="5.79" rx="2.90" fill="#EDE7DA"/><rect x="46" y="29.50" width="60" height="5.79" rx="2.90" fill="#EDE7DA"/><rect x="29" y="38.30" width="21" height="5.79" rx="2.90" fill="#EDE7DA"/><rect x="53" y="38.30" width="11" height="5.79" rx="2.90" fill="#EDE7DA"/><rect x="67" y="38.30" width="50" height="5.79" rx="2.90" fill="#EDE7DA"/><rect x="29" y="47.10" width="11" height="5.79" rx="2.90" fill="#EDE7DA"/><rect x="43" y="47.10" width="22" height="5.79" rx="2.90" fill="#E5402A"/><rect x="68" y="47.10" width="40" height="5.79" rx="2.90" fill="#EDE7DA"/><rect x="29" y="55.91" width="23" height="5.79" rx="2.90" fill="#EDE7DA"/><rect x="55" y="55.91" width="14" height="5.79" rx="2.90" fill="#EDE7DA"/><rect x="72" y="55.91" width="40" height="5.79" rx="2.90" fill="#EDE7DA"/><rect x="29" y="64.71" width="30" height="5.79" rx="2.90" fill="#EDE7DA"/><rect x="62" y="64.71" width="40" height="5.79" rx="2.90" fill="#EDE7DA"/><rect x="29" y="73.51" width="72" height="5.79" rx="2.90" fill="#EDE7DA"/></g></svg>HoneyCut</div>
+    <button class="icon-btn q-btn hidden" id="queueHome" title="Export-Warteschlange">⤓</button>
     <button class="icon-btn" id="houseHome" title="Hausstil und Bausteine verwalten">🎨</button>
     <button class="icon-btn" id="modelsBtn" title="Einstellungen: Whisper-Modelle, Speicher, Sicherung" data-ico="gear"></button>
   </header>
@@ -34,6 +35,7 @@
     <button class="icon-btn" id="backBtn" title="Zurück zur Projektliste">‹</button>
     <div class="title" id="projName"></div>
     <span class="saved" id="saved"></span>
+    <button class="icon-btn q-btn hidden" id="queueBtn" title="Export-Warteschlange">⤓</button>
     <button class="icon-btn" id="houseBtn" title="Hausstil und Bausteine: Vorlagen, Intro und Abspann, Endkarte">🎨</button>
     <button class="icon-btn" id="keysBtn" title="Tastenkürzel">⌨</button>
     <button class="icon-btn" id="undoBtn" title="Rückgängig (Strg+Z)">↶</button>
@@ -400,13 +402,19 @@
         <div class="ex-notes hidden" id="exNotes"><span></span><button class="btn small" id="exNotesBtn">Ansehen</button></div>
         <div class="ex-notes warn hidden" id="exRefs"><span></span><button class="btn small" id="exRefsBtn">Ansehen</button></div>
         <div class="ex-notes hidden" id="exA11y"><span></span><button class="btn small" id="exA11yBtn">Ansehen</button></div>
-        <div class="row"><button class="btn primary" id="exBtn">Exportieren</button><button class="btn hidden" id="exCancel">Abbrechen</button></div>
+        <label class="row nogpu" data-fmt="video" id="exGpuRow" title="Die Videoeinheit der Grafikkarte kodiert um ein Mehrfaches schneller. Kommt sie bei einem Export nicht durch, rechnet HoneyCut ihn von selbst auf dem bisherigen Weg"><input type="checkbox" id="exGpu" checked> <span>Über die Grafikkarte rechnen (<span id="exGpuName"></span>)</span></label>
+        <div class="row wrap"><button class="btn primary" id="exBtn">Exportieren</button><button class="btn hidden" id="exCancel">Abbrechen</button><button class="btn" id="exQueueBtn" title="Diesen Export einreihen und im Hintergrund rechnen lassen – du kannst gleich weiterschneiden oder ein anderes Projekt öffnen">In die Warteschlange</button><button class="btn" id="exPackBtn" title="Mehrere Fassungen mit einem Klick: Hochformat, Querformat, Titelbild">Export-Paket …</button></div>
         <div class="progress hidden" id="exProg"><i></i></div>
         <div class="small muted" id="exMsg"></div>
         <div class="ex-notes warn hidden" id="exWarn"><span></span></div>
         <pre class="small files" id="exFiles"></pre>
         <div class="row hidden" id="exDone"><button class="btn" id="exShare">Teilen</button><button class="btn" id="exOpen">Ansehen</button></div>
         <p class="muted small" id="exNote"></p>
+      </div>
+      <div class="card stack hidden" id="queueCard">
+        <h3>Warteschlange</h3>
+        <span class="muted small" id="queueSum"></span>
+        <div class="q-list" id="queueList"></div>
       </div>
       <div class="card stack" id="chapCard">
         <h3>Kapitel</h3>

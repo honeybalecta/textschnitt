@@ -1,6 +1,7 @@
 """Test-Backend für die Prüfläufe: das echte textschnitt.py mit drei Unterschieden –
    – die Transkription liefert eine vorbereitete Wortliste (<video>.words.json), damit kein Whisper-Modell nötig ist;
      Ton-Vorbereitung und Lautstärkeverlauf laufen echt über ffmpeg,
+   – die Grafikkarte für den Export lässt sich über gpu.json nachstellen ({"mode": "ok" | "fail"}),
    – Dateidialoge lesen ihre Antwort aus pick.json im Arbeitsordner ({"videos": […], "clip": […], "save_any": […], …}),
    – nichts verlässt den Rechner: „im Browser öffnen“ und die Abfrage bei GitHub landen in Dateien im Arbeitsordner
      (geoeffnet.txt, github.json, github-abfragen.txt).
@@ -80,6 +81,26 @@ def fake_transcribe(job, path, model_name, language, fillers, ranges=None, hint=
         time.sleep(0.15)
     return {"words": words, "lang": language or "de", "env": env, "padded": True}
 
+
+# Nachgestellte Grafikkarte: gpu.json im Arbeitsordner = {"mode": "ok" | "fail"}. „ok“ kodiert in Wahrheit mit libx264 (schnell),
+# „fail“ nennt einen Encoder, den es nicht gibt – damit lässt sich der Rückfall auf den bisherigen Weg prüfen. Ohne die Datei gilt
+# die echte Erkennung (auf dem Prüfrechner: keine Grafikkarte).
+_gpu_detect, _gpu_info, _gpu_vcodec = (getattr(T, n, None) for n in ("gpu_detect", "gpu_info", "gpu_vcodec"))
+
+
+def gpu_mode():
+    try:
+        return json.loads((WORK / "gpu.json").read_text(encoding="utf-8")).get("mode")
+    except Exception:
+        return None
+
+
+FAKE_GPU = {"name": "nvenc", "label": "Nvidia (Test)", "codec": "h264_nvenc"}
+if _gpu_detect:   # frühere Fassungen (Vergleichslauf) kennen den Export über die Grafikkarte noch nicht
+    T.gpu_detect = lambda: FAKE_GPU if gpu_mode() else _gpu_detect()
+    T.gpu_info = lambda start=True: {"state": "ready", "name": "nvenc", "label": FAKE_GPU["label"]} if gpu_mode() else _gpu_info(start)
+    T.gpu_vcodec = lambda name, quality: ((["-c:v", "libx264", "-preset", "ultrafast", "-crf", "30", "-pix_fmt", "yuv420p"] if gpu_mode() == "ok" else ["-c:v", "h264_gibtsnicht"])
+                                          if gpu_mode() else _gpu_vcodec(name, quality))
 
 T.APP_HOOKS["pick"] = pick
 T.APP_HOOKS["save_any"] = lambda name: (pick("save_any") or [None])[0]

@@ -8,6 +8,7 @@ Aufruf: python3 tests/backend_test.py"""
 import gzip
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -703,6 +704,96 @@ def neue_versionen():
     T.VERSION = real
 
 
+def export_231():
+    """2.31: Export über die Grafikkarte (Erkennung, Einstellungen, Rückfall), Beigaben eines Export-Pakets, Versionsstellen."""
+    import base64
+    # Kodier-Einstellungen
+    for name, codec in (("nvenc", "h264_nvenc"), ("qsv", "h264_qsv"), ("amf", "h264_amf")):
+        a = [T.gpu_vcodec(name, q) for q in ("hoch", "standard", "klein", None)]
+        chk(f"Grafikkarte {name}: eigener Encoder, drei Qualitätsstufen, 4:2:0-Ausgabe", all(x[:2] == ["-c:v", codec] and "-pix_fmt" in x for x in a) and len({tuple(x) for x in a[:3]}) == 3 and a[1] == a[3], a[1])
+    # Erkennung: ohne passende Hardware bleibt der bisherige Weg, einmal gesucht je Programmlauf
+    run0, state0 = subprocess.run, dict(T.GPU)
+    calls = []
+
+    def fake_run(cmd, **kw):
+        calls.append(cmd)
+        from types import SimpleNamespace as NS
+        if "-encoders" in cmd:
+            return NS(returncode=0, stdout=" V....D h264_nvenc   NVIDIA\n V..... h264_qsv   Intel\n", stderr="")
+        return NS(returncode=0 if "h264_qsv" in cmd else 1, stdout="", stderr="" if "h264_qsv" in cmd else "No capable devices found\n")
+    try:
+        T.GPU.update(state="new", enc=None, tried=[])
+        subprocess.run = fake_run
+        e1 = T.gpu_detect()
+        n1 = len(calls)
+        e2 = T.gpu_detect()
+        chk("Erkennung: Der erste Encoder, der den Probelauf schafft, wird genommen (hier Intel nach gescheitertem Nvidia)",
+            e1 == {"name": "qsv", "label": "Intel", "codec": "h264_qsv"} and n1 == 3 and T.GPU["tried"] == ["nvenc: No capable devices found"], [e1, T.GPU["tried"]])
+        chk("gesucht wird einmal je Programmlauf", e2 == e1 and len(calls) == n1)
+        chk("die Oberfläche bekommt Namen und Bezeichnung", T.gpu_info() == {"state": "ready", "name": "qsv", "label": "Intel"})
+        T.GPU.update(state="new", enc=None, tried=[])
+        subprocess.run = lambda cmd, **kw: (_ for _ in ()).throw(OSError("ffmpeg fehlt"))
+        chk("scheitert schon die Abfrage, gibt es keine Grafikkarte und keinen Absturz", T.gpu_detect() is None and T.gpu_info()["name"] is None and T.gpu_info()["state"] == "ready")
+    finally:
+        subprocess.run = run0
+        T.GPU.clear()
+        T.GPU.update(state0)
+    # echte Exporte: nachgestellte Grafikkarte, die klappt bzw. scheitert
+    video = TMP / "videos" / "gpu.mp4"
+    video.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run([T.FFMPEG, "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=25", "-f", "lavfi", "-i", "sine=frequency=440", "-t", "2",
+                    "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", "-c:a", "aac", str(video)], check=True, capture_output=True)
+
+    def plan(name, **kw):
+        return {"format": "video", "name": name, "width": 640, "height": 360, "fps": 25, "total": 2, "quality": "klein", "burn": False, "overlays": [],
+                "segments": [{"kind": "main", "src": 0, "uri": str(video), "in": 0, "out": 2, "zooms": [], "hasAudio": True, "hasVideo": True, "speed": 1, "vol": 1,
+                              "bright": 0, "contrast": 0, "sat": 0, "gray": False, "tx": 0, "ty": 0, "sc": 1}],
+                "sources": [{"uri": str(video), "name": "gpu.mp4", "duration": 2, "width": 640, "height": 360, "fps": 25, "hasAudio": True, "hasVideo": True}], **kw}
+    det0, vc0 = T.gpu_detect, T.gpu_vcodec
+    seen = []
+    try:
+        T.gpu_detect = lambda: {"name": "nvenc", "label": "Nvidia", "codec": "h264_nvenc"}
+        T.gpu_vcodec = lambda name, q: (seen.append((name, q)), ["-c:v", "libx264", "-preset", "ultrafast", "-crf", "30", "-pix_fmt", "yuv420p"])[1]
+        r0 = T.export_job(job(), plan("ohne_gpu"))
+        seen0 = list(seen)
+        r1 = T.export_job(job(), plan("mit_gpu", gpu=True))
+        chk("ohne den Schalter im Plan rechnet der bisherige Weg", "gpu" not in r0 and not seen0 and "Grafikkarte" not in r0["note"] and Path(r0["playable"]).stat().st_size > 2000, r0["note"])
+        chk("mit dem Schalter rechnet die Grafikkarte, mit der Qualität aus dem Plan; das Ergebnis sagt es dazu", r1.get("gpu") == "Nvidia" and seen == [("nvenc", "klein")] and "über die Grafikkarte (Nvidia)" in r1["note"] and Path(r1["playable"]).stat().st_size > 2000, [r1.get("gpu"), seen, r1["note"]])
+        T.gpu_vcodec = lambda name, q: ["-c:v", "h264_gibtsnicht"]
+        j = job()
+        r2 = T.export_job(j, plan("gpu_scheitert", gpu=True))
+        d = float(subprocess.run([T.FFPROBE, "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", r2["playable"]], capture_output=True, text=True).stdout or 0)
+        chk("scheitert die Grafikkarte, rechnet der Export von selbst auf dem bisherigen Weg neu – das Video ist vollständig, das Ergebnis nennt den Rückfall",
+            r2.get("gpuFallback") == "Nvidia" and "gpu" not in r2 and "bisherigen Weg" in r2["note"] and abs(d - 2) < 0.2, [r2.get("gpuFallback"), r2["note"], d])
+        T.gpu_detect = lambda: None
+        r3 = T.export_job(job(), plan("keine_gpu", gpu=True))
+        chk("ohne nutzbare Grafikkarte bleibt der Schalter wirkungslos", "gpu" not in r3 and "gpuFallback" not in r3 and Path(r3["playable"]).exists())
+        ra = T.export_job(job(), plan("nur_ton", gpu=True, format="audio", audioFormat="mp3"))
+        chk("eine Tonspur geht nie über die Grafikkarte", "gpu" not in ra and ra["playable"].endswith(".mp3"))
+        # Beigaben eines Export-Pakets
+        img = base64.b64encode(b"\xff\xd8\xff" + b"x" * 500).decode()
+        r4 = T.export_job(job(), plan("paket", extras=[{"name": "Mieten: Film – Titelbild.jpg", "data": img}, {"name": "../../böse.exe", "data": img}, {"name": "leer.png", "data": ""}, "kaputt"]))
+        extra = [Path(f) for f in r4["files"] if f.endswith(".jpg")]
+        folder = Path(r4["folder"])
+        chk("Beigaben (Titelbild) liegen im Ordner des Exports und stehen in der Liste der Dateien",
+            len(extra) == 1 and extra[0].name == "Mieten_ Film – Titelbild.jpg" and extra[0].parent == folder and extra[0].read_bytes()[:3] == b"\xff\xd8\xff", [Path(f).name for f in r4["files"]])
+        chk("andere Dateiarten, leere und kaputte Beigaben bleiben draußen; nichts landet außerhalb des Ordners",
+            not any(f.endswith((".exe", ".png")) for f in r4["files"]) and not list(folder.parent.glob("*.exe")) and not list(folder.parent.parent.glob("*.exe")), r4["files"])
+    finally:
+        T.gpu_detect, T.gpu_vcodec = det0, vc0
+    # Versionsstellen: fünf Dateien, eine Version
+    root = Path(T.__file__).resolve().parent
+    vs = {"textschnitt.py": T.VERSION}
+    for f in ("packaging/app-version.txt", "android/version.txt", "web/version.txt"):
+        vs[f] = (root / f).read_text(encoding="utf-8").strip() if (root / f).exists() else "(fehlt)"
+    pv = (root / "packaging" / "version.txt").read_text(encoding="utf-8") if (root / "packaging" / "version.txt").exists() else ""
+    tup = "(" + ", ".join(T.VERSION.split(".")) + ", 0)"
+    vs["packaging/version.txt"] = T.VERSION if pv.count(tup) == 2 and pv.count(f"'{T.VERSION}'") == 2 else "(weicht ab)"
+    chk("alle fünf Versionsstellen nennen dieselbe Version im Muster x.y.z", re.fullmatch(r"\d+\.\d+\.\d+", T.VERSION) is not None and set(vs.values()) == {T.VERSION}, vs)
+    news = (root / "NEUIGKEITEN.md").read_text(encoding="utf-8") if (root / "NEUIGKEITEN.md").exists() else ""
+    chk("die Neuigkeiten haben einen Abschnitt für diese Version", f"## {T.VERSION} " in news, T.VERSION)
+
+
 def bericht_und_protokoll():
     logged = []
     T.log = lambda msg: logged.append(msg)
@@ -723,7 +814,7 @@ def bericht_und_protokoll():
 if MODE == "umzug":
     umzug()
     sys.exit(1 if BAD else 0)
-for part in (speichern_und_fassungen, speicher, sicherung, projektpakete, kleine_helfer, quellen_und_belege, schrift_im_export, transkript, neue_versionen, bericht_und_protokoll):
+for part in (speichern_und_fassungen, speicher, sicherung, projektpakete, kleine_helfer, quellen_und_belege, schrift_im_export, transkript, export_231, neue_versionen, bericht_und_protokoll):
     print(f"── {part.__name__.replace('_', ' ')} ──", flush=True)
     part()
 print(f"ERGEBNIS Backend ohne Browser: {N} geprüft, {BAD} Fehler")

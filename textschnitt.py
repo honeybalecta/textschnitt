@@ -37,7 +37,7 @@ os.environ.setdefault("HF_HUB_DISABLE_IMPLICIT_TOKEN", "1")
 import warnings  # noqa: E402
 warnings.filterwarnings("ignore", module="huggingface_hub")
 
-VERSION = "2.30.0"
+VERSION = "2.31.0"
 APP_DIR = Path(__file__).resolve().parent
 FROZEN = bool(getattr(sys, "frozen", False))          # als installierte .exe gebaut
 RES_DIR = Path(getattr(sys, "_MEIPASS", APP_DIR))      # mitgelieferte Dateien (Oberfläche, ffmpeg, Modelle)
@@ -1934,6 +1934,80 @@ def shift_cues(cues: list[dict], o0: float, dur: float) -> list[dict]:
     return out
 
 
+# ───────────────────────────── Export über die Grafikkarte (H1) ─────────────────────────────
+# Die Videoeinheit von Nvidia (NVENC), Intel (Quick Sync) oder AMD (AMF) kodiert H.264 um ein Mehrfaches schneller als der
+# Prozessor. Angeboten wird nur, was ein kurzer Probelauf mit genau den Einstellungen des Exports wirklich schafft; scheitert
+# ein Export über die Grafikkarte, rechnet HoneyCut ihn auf dem bisherigen Weg (libx264) neu.
+GPU_ENCODERS = [("nvenc", "Nvidia", "h264_nvenc"), ("qsv", "Intel", "h264_qsv"), ("amf", "AMD", "h264_amf")]
+GPU_Q = {"hoch": 0, "standard": 1, "klein": 2}
+GPU: dict = {"state": "new", "enc": None, "tried": []}   # state: new → pending → ready
+_gpu_lock = threading.Lock()
+
+
+def gpu_vcodec(name: str, quality: str | None) -> list[str]:
+    """Kodier-Einstellungen je Grafikkarte; die Stufen entsprechen ungefähr CRF 16 / 20 / 25 von libx264."""
+    q = GPU_Q.get(quality or "standard", 1)
+    if name == "nvenc":
+        return ["-c:v", "h264_nvenc", "-preset", "p5", "-tune", "hq", "-rc", "vbr", "-cq", ("19", "23", "28")[q], "-b:v", "0", "-pix_fmt", "yuv420p"]
+    if name == "qsv":
+        return ["-c:v", "h264_qsv", "-preset", "medium", "-global_quality", ("19", "23", "28")[q], "-pix_fmt", "nv12"]
+    if name == "amf":
+        v = ("18", "22", "27")[q]
+        return ["-c:v", "h264_amf", "-quality", "quality", "-rc", "cqp", "-qp_i", v, "-qp_p", v, "-qp_b", str(int(v) + 2), "-pix_fmt", "nv12"]
+    raise ValueError(name)
+
+
+def gpu_probe(name: str) -> bool:
+    """Probelauf: eine halbe Sekunde Testbild mit den Einstellungen des Exports kodieren."""
+    try:
+        r = subprocess.run([FFMPEG, "-hide_banner", "-v", "error", "-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=30:duration=0.5"]
+                           + gpu_vcodec(name, "standard") + ["-f", "null", "-"], capture_output=True, text=True, timeout=25,
+                           stdin=subprocess.DEVNULL, **NOWIN)
+        if r.returncode:
+            GPU["tried"].append(f"{name}: {(r.stderr or '').strip().splitlines()[-1][:160] if (r.stderr or '').strip() else 'Fehler'}")
+        return r.returncode == 0
+    except Exception as e:  # noqa: BLE001
+        GPU["tried"].append(f"{name}: {e!r}"[:200])
+        return False
+
+
+def gpu_detect() -> dict | None:
+    """Sucht einmal je Programmlauf die nutzbare Grafikkarte: zuerst, was ffmpeg kennt, dann der Probelauf."""
+    with _gpu_lock:
+        if GPU["state"] == "ready":
+            return GPU["enc"]
+        GPU["state"] = "pending"
+        enc = None
+        if os.environ.get("TEXTSCHNITT_NO_GPU"):
+            GPU["tried"].append("abgeschaltet über TEXTSCHNITT_NO_GPU")
+        else:
+            try:
+                known = subprocess.run([FFMPEG, "-hide_banner", "-encoders"], capture_output=True, text=True, timeout=20,
+                                       stdin=subprocess.DEVNULL, **NOWIN).stdout
+            except Exception as e:  # noqa: BLE001
+                known = ""
+                GPU["tried"].append(f"ffmpeg -encoders: {e!r}"[:200])
+            for name, label, codec in GPU_ENCODERS:
+                if f" {codec} " not in known:
+                    GPU["tried"].append(f"{name}: in diesem ffmpeg nicht enthalten")
+                    continue
+                if gpu_probe(name):
+                    enc = {"name": name, "label": label, "codec": codec}
+                    break
+        GPU["enc"], GPU["state"] = enc, "ready"
+        log("Grafikkarte für den Export: " + (f"{enc['label']} ({enc['codec']})" if enc else "keine nutzbare gefunden") + (" · " + "; ".join(GPU["tried"]) if GPU["tried"] else ""))
+        return enc
+
+
+def gpu_info(start: bool = True) -> dict:
+    """Für die Oberfläche: {state: pending|ready, name, label}. Die Suche läuft im Hintergrund an."""
+    if GPU["state"] == "new" and start:
+        GPU["state"] = "pending"
+        threading.Thread(target=gpu_detect, daemon=True).start()
+    e = GPU["enc"] if GPU["state"] == "ready" else None
+    return {"state": "ready" if GPU["state"] == "ready" else "pending", "name": e["name"] if e else None, "label": e["label"] if e else None}
+
+
 def ffmpeg_graph(job, inputs, graph, tail, total, tmp, base=0.0, span=1.0):
     script = tmp / "filter.txt"
     script.write_text(graph, encoding="utf-8")
@@ -1949,8 +2023,30 @@ def ffmpeg_graph(job, inputs, graph, tail, total, tmp, base=0.0, span=1.0):
 
 
 def render_plan(job: dict, plan: dict, out: Path, with_video: bool, cues: list[dict]) -> list[str]:
+    """Rechnet Video oder Ton – das Video auf Wunsch über die Grafikkarte, mit Rückfall auf den bisherigen Weg."""
+    enc = gpu_detect() if with_video and plan.get("gpu") else None
+    if enc:
+        try:
+            lost = render_plan_with(job, plan, out, with_video, cues, gpu_vcodec(enc["name"], plan.get("quality")))
+            job["gpu"] = enc["label"]
+            return lost
+        except RuntimeError as e:
+            if job.get("cancel"):
+                raise
+            log(f"Export über die Grafikkarte ({enc['label']}) gescheitert, rechne auf dem bisherigen Weg: {str(e)[:600]}")
+            job["gpu_fallback"] = enc["label"]
+            job["progress"], job["message"] = 0.0, "Die Grafikkarte kam nicht durch – der Export rechnet auf dem bisherigen Weg …"
+            try:
+                out.unlink(missing_ok=True)
+            except OSError:
+                pass
+    return render_plan_with(job, plan, out, with_video, cues, None)
+
+
+def render_plan_with(job: dict, plan: dict, out: Path, with_video: bool, cues: list[dict], vcodec: list[str] | None) -> list[str]:
     """Rechnet Video oder Ton. Liefert die Namen der Schriften, die im Video nicht angekommen sind (fehlende Datei oder von
-    libass nicht genommen) – dort steht dann die Standardschrift, und der Export sagt das dazu."""
+    libass nicht genommen) – dort steht dann die Standardschrift, und der Export sagt das dazu.
+    vcodec: Kodier-Einstellungen der Grafikkarte; ohne sie rechnet libx264."""
     tmp = Path(tempfile.mkdtemp(prefix="textschnitt_"))
     lost: list[str] = []
 
@@ -1968,8 +2064,8 @@ def render_plan(job: dict, plan: dict, out: Path, with_video: bool, cues: list[d
         subs = plan.get("subs") or {}
         fonts = collect_fonts(subs.get("fonts") or {}, tmp / "fonts") if burn else {}
         lost += [n for n in getattr(fonts, "missing", []) if n not in lost]
-        vtail = ["-c:v", "libx264", "-crf", QUALITY_CRF.get(plan.get("quality"), "20"), "-preset", "medium",
-                 "-pix_fmt", "yuv420p", "-r", f"{float(plan.get('fps') or 30):.3f}"]
+        vtail = (vcodec or ["-c:v", "libx264", "-crf", QUALITY_CRF.get(plan.get("quality"), "20"), "-preset", "medium",
+                            "-pix_fmt", "yuv420p"]) + ["-r", f"{float(plan.get('fps') or 30):.3f}"]
         segs = plan["segments"]
         if not with_video:
             inputs, graph = build_graph(plan, False, None)
@@ -2529,6 +2625,12 @@ def export_job(job: dict, plan: dict):
         files.append(out)
         result["playable"] = str(out)
         result["note"] = f"Fertig – gespeichert in {outdir}"
+        if job.get("gpu"):
+            result["gpu"] = job["gpu"]
+            result["note"] += f" · gerechnet über die Grafikkarte ({job['gpu']})"
+        elif job.get("gpu_fallback"):
+            result["gpuFallback"] = job["gpu_fallback"]
+            result["note"] += " · Die Grafikkarte kam nicht durch; gerechnet wurde auf dem bisherigen Weg"
     elif fmt == "capcut":
         root = capcut_drafts_dir() if plan.get("capcutInstall") else None
         if root is None:
@@ -2567,6 +2669,17 @@ def export_job(job: dict, plan: dict):
         txt = outdir / f"{stem} – Textfassung.txt"
         txt.write_text(str(tf["text"]).replace("\r\n", "\n"), encoding="utf-8")
         files.append(txt)
+    # Beigaben eines Export-Pakets (z. B. das Titelbild): liegen im selben Ordner
+    for x in (plan.get("extras") or [])[:8] if fmt in ("video", "audio") else []:
+        try:
+            raw = re.sub(r'[\\/:*?"<>|\x00-\x1f]', "_", str(x.get("name") or "Beigabe")).strip(". ") or "Beigabe"
+            name = Path(raw).stem[:100] + Path(raw).suffix.lower()[:6]
+            data = base64.b64decode(str(x.get("data") or "").split(",")[-1])
+            if data and len(data) < 60_000_000 and Path(name).suffix in (".jpg", ".png", ".txt", ".srt"):
+                (outdir / name).write_bytes(data)
+                files.append(outdir / name)
+        except Exception as e:  # noqa: BLE001
+            log(f"Export: Beigabe ließ sich nicht speichern: {e!r}")
     for f in files + [outdir]:
         CREATED.add(norm_path(str(f)))
     allow(files[0]) if files and files[0].is_file() else None
@@ -4300,6 +4413,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._file(t, "image/jpeg", cache=True)
             if rest == "api/info":
                 return self._json(app_info())
+            if rest == "api/gpu":
+                return self._json(gpu_info())
             if rest == "api/projects":
                 return self._json(list_projects())
             if rest == "api/project":

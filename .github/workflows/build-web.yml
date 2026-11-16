@@ -22,6 +22,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Version prüfen
+        run: |
+          v="$(cat web/version.txt)"
+          echo "$v" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || { echo "::error::web/version.txt nennt keine gültige Version: '$v'"; exit 1; }
+
       - uses: actions/setup-node@v4
         with:
           node-version: "22"

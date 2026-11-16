@@ -495,6 +495,7 @@ function openProjectNow(id, keep){
   if (P.frameNew){ delete P.frameNew; if (P.format && !P.frame) P.frame = clampFrame({sc: coverSc(), tx: 0, ty: 0}); }   // neues Projekt mit Hausstil: Format füllt die Leinwand
   $('#home').classList.add('hidden'); $('#proj').classList.remove('hidden');
   projNameEl.textContent = P.name; $('#exName').value = P.name + '_geschnitten';
+  if (!exDirect){ exResult = null; $('#exDone').classList.add('hidden'); $('#exProg').classList.add('hidden'); $('#exWarn').classList.add('hidden'); $('#exMsg').textContent = ''; $('#exFiles').textContent = ''; }   // Ergebnis eines früheren Exports gehört zum Projekt davor
   const [ow, oh] = baseDims(); $('#exRes').options[0].textContent = `Original (${ow}×${oh})`;
   fitStage(); setTimeout(fitStage, 60);
   fillModels(); syncLang(); syncSafe(); syncStyleInputs(); renderExportForm();
@@ -1184,6 +1185,7 @@ function changedLive(){
 }
 function changed(rerender = true){
   if (!tlHold) clearTimeout(tlLateT);
+  if (P.format && P.frame) (P.frameBy ||= {})[P.format] = {sc: P.frame.sc, tx: P.frame.tx, ty: P.frame.ty};   // Bildausschnitt je Format merken (Export-Pakete)
   const anchor = liveAnchor();
   recompute(rerender && tlOn() && !!window.renderStudio);   // die Zeitleiste zeichnet renderStudio gleich danach – nicht doppelt
   resyncPlay(anchor);
@@ -5508,12 +5510,14 @@ function paintExportForm(){
   if (CAP.platform === 'android') $('#exNote').textContent = exFmt === 'audio' ? 'Die Tonspur (M4A) landet im Ordner „Musik/HoneyCut“. Bitte die App während des Exports geöffnet lassen.'
     : 'Das Video landet direkt in deiner Galerie (Ordner „HoneyCut“). Bitte die App während des Exports geöffnet lassen.';
   $('#exBtn').textContent = {video:'Video exportieren', audio:'Audio exportieren', capcut:'CapCut-Projekt erstellen', concat:'Concat-Projekt erstellen'}[exFmt];
+  paintExBtns(); gpuCheck();
   if (P) renderExport();
 }
 $('#exFmt').addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; exFmt = b.dataset.v; paintExportForm(); });
 $('#exSubs').onchange = e => { P.settings.burn = e.target.checked; changed(false); };
+let outLim = null;   // Auflösungsgrenze für abgeleitete Pläne der Export-Pakete (sonst gilt die Auswahl im Export-Reiter)
 function outSize(){
-  let [w, h] = baseDims(); const lim = +$('#exRes').value;
+  let [w, h] = baseDims(); const lim = outLim != null ? outLim : +$('#exRes').value;
   if (lim && Math.min(w, h) > lim){ const f = lim / Math.min(w, h); w *= f; h *= f; }
   return [Math.round(w / 2) * 2, Math.round(h / 2) * 2];
 }
@@ -5568,7 +5572,7 @@ function buildPlan(dry){   // dry: nur nachsehen (z. B. für das Titelbild) – 
   const media = P.sources.map(s => ({uri:s.uri, name:s.name, duration:s.duration, width:dispSize(s)[0], height:dispSize(s)[1], fps:s.fps, hasAudio:s.hasAudio !== false, hasVideo:hasVid(s), kind:s.kind || 'video'}));
   return {format:exFmt, name: ($('#exName').value || P.name).replace(/[\\/:*?"<>|]/g, '_'), width:W, height:H, fps:primary().fps || 30, total:r3(total),
     segments:segs, overlays:ovs, subs, burn: P.settings.burn !== false, quality: $('#exQuality').value, audioFormat: $('#exAudioFmt').value,
-    capcutInstall: $('#exCapcutInstall').checked, sources:media, project:P.id};
+    capcutInstall: $('#exCapcutInstall').checked, sources:media, project:P.id, ...(exFmt === 'video' && gpuUse() ? {gpu: true} : {})};
 }
 // ───────── Transkript als Text oder Word-Datei ─────────
 function transcriptParas(o = {}){
@@ -5698,22 +5702,20 @@ async function levelPlan(plan){
 }
 $('#exLevel').onchange = () => { if (P){ P.settings.level = $('#exLevel').checked; changed(false); } };
 $('#exBtn').onclick = async () => {
-  if (!timeline.length || $('#exBtn').disabled) return; saveNow(); pausePlay();
-  const P0 = P; if (!(await askOpenRefs())){ if (P === P0){ setTab('text'); openRefs(); } return; }
-  if (P !== P0) return;
-  await lowerReady(); await decoReady();
-  const plan = buildPlan(); exResult = null;
+  if (!timeline.length || $('#exBtn').disabled) return;
+  if (exqRunning()) return void exEnqueue();   // die Warteschlange rechnet gerade: dieser Export reiht sich ein
+  saveNow(); pausePlay();
+  const plan = await exPrepare(() => buildPlan()); if (!plan) return; exResult = null;
   // Textfassung: Unter Windows legt das Backend sie neben das Video, sonst speichert die App sie nach dem Export
-  const tv = (exFmt === 'video' || exFmt === 'audio') && textvOn() ? textVersion() : '', tvName = textVersionName();
-  if (tv && CAP.platform === 'desktop') plan.textfile = {name: tvName, text: tv}; $('#exDone').classList.add('hidden'); $('#exFiles').textContent = ''; $('#exWarn').classList.add('hidden');
+  const {tv, tvName} = exTextFile(plan, exFmt); $('#exDone').classList.add('hidden'); $('#exFiles').textContent = ''; $('#exWarn').classList.add('hidden');
   if ($('#exLevel').checked && exFmt !== 'concat'){
     $('#exBtn').disabled = true; $('#exMsg').textContent = 'Lautstärke wird gemessen …';
     try { await levelPlan(plan); } catch(e){ console.warn(e); }
     $('#exBtn').disabled = false;
   }
   try { exJob = TS.exportVideo(JSON.stringify(plan)); } catch(e){ $('#exMsg').textContent = 'Fehler: ' + e.message; return; }
-  $('#exBtn').disabled = true; $('#exCancel').classList.remove('hidden'); $('#exProg').classList.remove('hidden'); TS.keepAwake(true);
-  const end = () => { $('#exBtn').disabled = false; $('#exCancel').classList.add('hidden'); TS.keepAwake(false); };
+  $('#exBtn').disabled = true; $('#exCancel').classList.remove('hidden'); $('#exProg').classList.remove('hidden'); TS.keepAwake(true); exDirect = true;
+  const end = () => { $('#exBtn').disabled = false; $('#exCancel').classList.add('hidden'); exDirect = false; if (!exqActive()) TS.keepAwake(false); exqPump(); };
   watchJob(exJob, j => { $('#exProg i').style.width = (j.progress * 100).toFixed(1) + '%'; $('#exMsg').textContent = j.message || ''; },
     j => { end(); exResult = j.result || {}; $('#exDone').classList.remove('hidden');
       if (CAP.platform === 'android'){ $('#exMsg').textContent = 'Fertig – das Video ist in deiner Galerie (Ordner „HoneyCut“).'; }
@@ -5781,6 +5783,195 @@ function renderModels(){
     box.append(el);
   }
 }
+
+// ───────── Export-Warteschlange (A2), Export-Pakete (A1), Grafikkarte (H1) – 2.31 ─────────
+// Warteschlange: fertige Exportpläne warten im Arbeitsspeicher und laufen nacheinander – auch, wenn inzwischen ein anderes Projekt
+// offen ist. Ein Plan trägt alles, was der Export braucht; das Projekt muss dafür nicht offen bleiben.
+// EXQ-Eintrag: {id, name, proj, info, plan, tv, tvName, status: wait|run|done|error|cancelled, job, progress, message, result, error}.
+const EXQ = [];
+let exDirect = false;   // ein Export läuft über „Exportieren“ direkt im Reiter
+const exqActive = () => EXQ.filter(q => q.status === 'wait' || q.status === 'run').length;
+const exqRunning = () => EXQ.find(q => q.status === 'run') || null;
+function exqAdd(o){
+  const q = {id: newId(), status: 'wait', progress: 0, message: '', result: null, error: '', job: null, ...o};
+  EXQ.push(q); paintQueue(); exqPump(); return q;
+}
+function exqPump(){
+  if (exDirect || exqRunning()) return;
+  const q = EXQ.find(x => x.status === 'wait'); if (!q){ if (!exqActive()) TS.keepAwake(false); return; }
+  try { q.job = TS.exportVideo(JSON.stringify(q.plan)); } catch(e){ q.status = 'error'; q.error = (e && e.message) || String(e); paintQueue(); return setTimeout(exqPump, 0); }
+  q.status = 'run'; q.message = 'Startet …'; TS.keepAwake(true); paintQueue();
+  watchJob(q.job, j => { q.progress = j.progress || 0; q.message = j.message || ''; paintQueueLive(q); },
+    j => { q.status = 'done'; q.progress = 1; q.result = j.result || {}; q.message = CAP.platform === 'android' ? 'Fertig – in deiner Galerie (Ordner „HoneyCut“)' : (q.result.note || 'Fertig.');
+      q.plan = null;   // der Plan wird nicht mehr gebraucht
+      if (q.tv && CAP.platform !== 'desktop') saveBlob(q.tvName, new Blob([q.tv], {type: 'text/plain'})).catch(() => {});
+      toast(`Export fertig: ${q.name}` + (q.result.warn ? ' – mit Hinweis' : '')); paintQueue(); exqPump(); },
+    j => { q.status = j.status === 'cancelled' ? 'cancelled' : 'error'; q.error = j.status === 'cancelled' ? '' : (j.error || 'unbekannter Fehler'); if (q.status === 'error') toast(`Export fehlgeschlagen: ${q.name}`); paintQueue(); exqPump(); });
+}
+function exqCancel(q){ if (q.status === 'run' && q.job) TS.cancel(q.job); else if (q.status === 'wait'){ EXQ.splice(EXQ.indexOf(q), 1); paintQueue(); } }
+function exqRetry(q){ if (!q.plan || (q.status !== 'error' && q.status !== 'cancelled')) return; q.status = 'wait'; q.progress = 0; q.error = ''; q.message = ''; paintQueue(); exqPump(); }
+const EXQ_STATE = {wait: 'wartet', run: 'läuft', done: 'fertig', error: 'fehlgeschlagen', cancelled: 'abgebrochen'};
+function exqRow(q){
+  const pct = Math.round((q.progress || 0) * 100), r = q.result || {};
+  const sub = q.status === 'run' ? (q.message || `${pct} %`) : q.status === 'done' ? q.message : q.status === 'error' ? 'Fehler: ' + q.error : q.status === 'wait' ? `wartet · Platz ${EXQ.filter(x => x.status === 'wait').indexOf(q) + 1}` : 'abgebrochen';
+  const open = q.status === 'done' && (CAP.platform === 'android' || r.playable || r.uri), show = q.status === 'done' && (r.uri || r.folder || (r.files || []).length);
+  return `<div class="q-row ${q.status}" data-q="${esc(q.id)}"><div class="q-n"><b dir="auto">${esc(q.name)}</b><span class="muted small">${esc(q.info || '')}</span><span class="small q-msg">${esc(sub)}</span>${q.status === 'done' && r.warn ? `<span class="small q-warn">${esc(r.warn)}</span>` : ''}
+      ${q.status === 'run' ? `<div class="progress"><i style="width:${pct}%"></i></div>` : ''}</div>
+    ${open ? `<button type="button" class="btn small" data-a="open">${CAP.platform === 'android' ? 'Ansehen' : 'Abspielen'}</button>` : ''}${show ? `<button type="button" class="btn small" data-a="show">${CAP.platform === 'web' ? 'Nochmal speichern' : CAP.platform === 'android' ? 'Teilen' : 'Im Ordner zeigen'}</button>` : ''}
+    ${(q.status === 'error' || q.status === 'cancelled') && q.plan ? '<button type="button" class="btn small" data-a="retry">Erneut</button>' : ''}
+    <button type="button" class="mini" data-a="${q.status === 'run' ? 'cancel' : 'drop'}" title="${q.status === 'run' ? 'Abbrechen' : q.status === 'wait' ? 'Aus der Warteschlange nehmen' : 'Aus der Liste nehmen'}">×</button></div>`;
+}
+function exqHtml(){
+  if (!EXQ.length) return '<p class="muted small">Die Warteschlange ist leer. „In die Warteschlange“ im Export-Reiter reiht ein Video ein; du kannst danach gleich am nächsten weiterschneiden.</p>';
+  const done = EXQ.filter(q => q.status === 'done' || q.status === 'cancelled' || q.status === 'error').length;
+  return EXQ.map(exqRow).join('') + (done ? '<div class="row"><button type="button" class="btn small" data-a="clear">Erledigte aus der Liste nehmen</button></div>' : '');
+}
+function exqSummary(){
+  const run = exqRunning(), wait = EXQ.filter(q => q.status === 'wait').length, done = EXQ.filter(q => q.status === 'done').length, bad = EXQ.filter(q => q.status === 'error').length;
+  return [run ? `1 läuft (${Math.round((run.progress || 0) * 100)} %)` : '', wait ? `${wait} ${wait === 1 ? 'wartet' : 'warten'}` : '', done ? `${done} fertig` : '', bad ? `${bad} fehlgeschlagen` : ''].filter(Boolean).join(' · ');
+}
+function paintQueue(){
+  const n = exqActive(), bad = EXQ.some(q => q.status === 'error');
+  for (const id of ['queueBtn', 'queueHome']){ const b = $('#' + id); b.classList.toggle('hidden', !EXQ.length); if (n) b.dataset.n = String(n); else delete b.dataset.n; b.classList.toggle('busy', !!exqRunning()); b.classList.toggle('bad', bad && !n);
+    b.title = 'Export-Warteschlange' + (EXQ.length ? ': ' + exqSummary() : ''); }
+  const card = $('#queueCard'); card.classList.toggle('hidden', !EXQ.length); if (EXQ.length){ $('#queueList').innerHTML = exqHtml(); $('#queueSum').textContent = exqSummary(); }
+  if ($('#queueSheetList')){ $('#queueSheetList').innerHTML = exqHtml(); $('#queueSheetSum').textContent = exqSummary() || 'leer'; }
+  paintExBtns();
+}
+// Fortschritt des laufenden Eintrags, ohne die Liste neu aufzubauen (Knöpfe bleiben bedienbar)
+function paintQueueLive(q){
+  const pct = Math.round((q.progress || 0) * 100);
+  for (const row of $$(`.q-row[data-q="${q.id}"]`)){ const i = row.querySelector('.progress i'), m = row.querySelector('.q-msg'); if (!i) return paintQueue(); i.style.width = pct + '%'; m.textContent = q.message || `${pct} %`; }
+  const s = exqSummary(); if (!$('#queueCard').classList.contains('hidden')) $('#queueSum').textContent = s; if ($('#queueSheetSum')) $('#queueSheetSum').textContent = s;
+  for (const id of ['queueBtn', 'queueHome']) $('#' + id).title = 'Export-Warteschlange: ' + s;
+}
+function exqClick(e){
+  const b = e.target.closest('button'); if (!b) return;
+  if (b.dataset.a === 'clear'){ for (let k = EXQ.length - 1; k >= 0; k--) if (EXQ[k].status !== 'wait' && EXQ[k].status !== 'run') EXQ.splice(k, 1); return paintQueue(); }
+  const row = b.closest('[data-q]'), q = row && EXQ.find(x => x.id === row.dataset.q); if (!q) return; const r = q.result || {};
+  if (b.dataset.a === 'cancel') exqCancel(q);
+  else if (b.dataset.a === 'drop'){ if (q.status === 'wait') exqCancel(q); else { EXQ.splice(EXQ.indexOf(q), 1); paintQueue(); } }
+  else if (b.dataset.a === 'retry') exqRetry(q);
+  else if (b.dataset.a === 'open') TS.view(r.uri || r.playable);
+  else if (b.dataset.a === 'show') TS.share(r.uri || r.folder || (r.files || [])[0]);
+}
+function openQueue(){
+  const body = $('#sheetBody'); sheetItem = null;
+  body.innerHTML = `<h3>Export-Warteschlange</h3><p class="muted small" id="queueSheetSum"></p><div class="q-list" id="queueSheetList"></div>
+    <p class="muted small">Die Exporte laufen nacheinander im Hintergrund, solange HoneyCut geöffnet ist${CAP.platform === 'web' ? ' und dieser Tab offen bleibt' : ''}. Wartende Einträge gehen beim Schließen verloren.</p>
+    <div class="row" style="margin-top:12px"><button class="btn primary" id="queueOk" style="margin-left:auto">Fertig</button></div>`;
+  body.onclick = e => { if (e.target.closest('#queueOk')) return closeSheet(); exqClick(e); };
+  paintQueue(); openSheet(false);
+}
+$('#queueBtn').onclick = openQueue; $('#queueHome').onclick = openQueue;
+$('#queueList').addEventListener('click', exqClick);
+window.addEventListener('beforeunload', e => { if (exqActive()){ e.preventDefault(); e.returnValue = ''; } });
+
+// ── Plan für den Export vorbereiten: Rückfrage zu offenen Belegen, Schriften, Textfassung, Lautstärke ──
+async function exPrepare(make){
+  const P0 = P; if (!(await askOpenRefs())){ if (P === P0){ setTab('text'); openRefs(); } return null; }
+  if (P !== P0) return null;
+  await lowerReady(); await decoReady(); if (P !== P0) return null;
+  return make();
+}
+function exTextFile(plan, fmt){
+  const tv = (fmt === 'video' || fmt === 'audio') && textvOn() ? textVersion() : '', tvName = textVersionName();
+  if (tv && CAP.platform === 'desktop') plan.textfile = {name: tvName, text: tv};
+  return {tv, tvName};
+}
+const planInfo = plan => `${P.name} · ${FMT_LBL[plan.format] || plan.format}${plan.format === 'video' ? ` · ${plan.width}×${plan.height}` : ''} · ${fmtT(plan.total)}`;
+// Aktuellen Export einreihen
+async function exEnqueue(){
+  if (!P || !timeline.length) return; saveNow(); pausePlay();
+  const fmt = exFmt, plan = await exPrepare(() => buildPlan()); if (!plan) return;
+  const t = exTextFile(plan, fmt);
+  if ($('#exLevel').checked && fmt !== 'concat'){ try { await levelPlan(plan); } catch(e){ console.warn(e); } }
+  exqAdd({name: plan.name, proj: P.id, info: planInfo(plan), plan, ...t});
+  toast(exqRunning() && exqActive() > 1 || exDirect ? `„${plan.name}“ ist eingereiht` : `„${plan.name}“ wird exportiert – du kannst weiterschneiden`);
+}
+$('#exQueueBtn').onclick = () => { exEnqueue(); };
+function paintExBtns(){
+  const busy = !!exqRunning();
+  $('#exPackBtn').classList.toggle('hidden', exFmt !== 'video');
+  $('#exBtn').title = busy ? 'Ein Export aus der Warteschlange läuft – dieser wird eingereiht' : '';
+}
+
+// ── Grafikkarte (nur Windows): Das Backend nennt die nutzbare Videoeinheit; der Schalter gilt für dieses Gerät ──
+let gpuState = null, gpuTries = 0;
+const gpuOn = () => { try { return localStorage.getItem('hc-gpu') !== '0'; } catch(_){ return true; } };
+const gpuUse = () => !!(gpuState && gpuState.name && gpuOn());
+function gpuCheck(){
+  if (!TS.gpu) return;
+  if (!gpuState || gpuState.state !== 'ready'){ try { gpuState = J(TS.gpu()); } catch(_){ gpuState = null; }
+    if ((!gpuState || gpuState.state !== 'ready') && gpuTries++ < 30) setTimeout(gpuCheck, 1500); }
+  const row = $('#exGpuRow'), ok = !!(gpuState && gpuState.state === 'ready' && gpuState.name);
+  row.classList.toggle('nogpu', !ok);
+  if (ok){ $('#exGpuName').textContent = gpuState.label; $('#exGpu').checked = gpuOn(); }
+}
+$('#exGpu').onchange = () => { try { localStorage.setItem('hc-gpu', $('#exGpu').checked ? '1' : '0'); } catch(_){} };
+
+// ── Export-Pakete: mehrere Fassungen mit einem Klick ──
+// Die Fassung im Format des Projekts wird so exportiert, wie sie ist. Abgeleitete Fassungen wechseln für den Plan das Format der
+// Leinwand; das Hauptvideo füllt sie (oder nimmt den Bildausschnitt, den dieses Format im Projekt zuletzt hatte: P.frameBy).
+const PACK = [
+  {id: 'hoch', k: '9:16', label: 'Hochformat 9:16', use: 'TikTok, Reels, Shorts', lim: 1080},
+  {id: 'quer', k: '16:9', label: 'Querformat 16:9', use: 'YouTube', lim: 2160},
+  {id: 'feed', k: '4:5', label: 'Feed 4:5', use: 'Instagram-Feed', lim: 1080}];
+const packNative = e => P.format ? P.format === e.k : (([w, h]) => Math.abs(w / h - FORMATS[e.k][0] / FORMATS[e.k][1]) < 0.012)(baseDims());
+function packWith(e, fn){
+  const had = 'frame' in P, keep = {format: P.format, frame: P.frame, lim: outLim, fmt: exFmt};
+  try {
+    if (!packNative(e)){ P.format = e.k; const f = P.frameBy && P.frameBy[e.k]; P.frame = clampFrame(f ? {...f} : {sc: coverSc(), tx: 0, ty: 0}); }
+    outLim = e.lim; exFmt = 'video'; return fn();
+  } finally { if (keep.format) P.format = keep.format; else delete P.format; if (had) P.frame = keep.frame; else delete P.frame; outLim = keep.lim; exFmt = keep.fmt; }
+}
+const packSize = e => packWith(e, () => outSize());
+const packName = e => `${(P.name || 'Video').replace(/[\\/:*?"<>|]/g, '_').slice(0, 70)}_${e.id}_${e.k.replace(':', 'x')}`;
+function packPrefs(){ let o = null; try { o = JSON.parse(localStorage.getItem('hc-pack')); } catch(_){} return {hoch: true, quer: true, feed: false, cover: true, ...(o && typeof o === 'object' ? o : {})}; }
+async function packCover(){   // Titelbild an der Abspiellinie, mit den Angaben aus „Titelbild“
+  const [bw, bh] = baseDims(), cv = document.createElement('canvas'); cv.width = Math.round(bw / 2) * 2; cv.height = Math.round(bh / 2) * 2;
+  const cs = P.settings.cover || {}; await coverRender(cv, {text: cs.text || '', pos: cs.pos || (cv.height > cv.width ? 'mitte' : 'unten'), titles: cs.titles !== false, subs: !!cs.subs});
+  const blob = await new Promise(res => cv.toBlob(res, 'image/jpeg', 0.92)); if (!blob) throw new Error('kein Bild erzeugt');
+  return {blob, name: (P.name || 'Video').replace(/[\\/:*?"<>|]/g, '_').slice(0, 80) + ' – Titelbild.jpg', w: cv.width, h: cv.height};
+}
+const blobB64 = blob => new Promise(r => { const fr = new FileReader(); fr.onload = () => r(String(fr.result).split(',')[1]); fr.readAsDataURL(blob); });
+async function packRun(sel, cover){
+  if (!P || !timeline.length) return 0; saveNow(); pausePlay();
+  const P0 = P, list = PACK.filter(e => sel[e.id]); if (!list.length && !cover) return 0;
+  const plans = await exPrepare(() => list.map(e => { const plan = packWith(e, () => buildPlan()); plan.name = packName(e); plan.pack = e.id; return plan; })); if (!plans || P !== P0) return 0;
+  let cv = null; if (cover){ try { cv = await packCover(); } catch(e){ hcLog('Titelbild im Paket: ' + ((e && e.message) || e)); toast('Das Titelbild ließ sich nicht erzeugen'); } }
+  let saved = '';
+  if (cv && (CAP.platform !== 'desktop' || !plans.length)){ try { saved = (await saveBlob(cv.name, cv.blob)) || ''; } catch(_){} cv = null; }
+  for (let k = 0; k < plans.length; k++){
+    const plan = plans[k], t = k === 0 ? exTextFile(plan, 'video') : {tv: '', tvName: ''};
+    if (k === 0 && cv) plan.extras = [{name: cv.name, data: await blobB64(cv.blob)}];
+    try { await levelPlan(plan); } catch(e){ console.warn(e); }
+    exqAdd({name: plan.name, proj: P0.id, info: `${P0.name} · ${list[k].label} · ${plan.width}×${plan.height} · ${fmtT(plan.total)}`, plan, ...t});
+  }
+  if (!plans.length && saved) toast('Titelbild: ' + saved.split(':')[0]);
+  return plans.length;
+}
+function openPack(){
+  if (!P || !timeline.length) return; const body = $('#sheetBody'), pr = packPrefs(); sheetItem = null;
+  const derived = PACK.some(e => !packNative(e)), special = P.items.some(x => x.slide || x.endcard || splitOf(x));
+  body.innerHTML = `<h3>Export-Paket</h3>
+    <p class="muted small">Ein Klick reiht alle gewählten Fassungen in die Warteschlange ein. Jede bekommt ihre Auflösung, die einheitliche Lautstärke (−14 LUFS) und einen eigenen Dateinamen; die Untertitel kommen als SRT-Datei mit.</p>
+    <div class="pk-list">${PACK.map(e => { const [w, h] = packSize(e), nat = packNative(e);
+      return `<label class="pk-row"><input type="checkbox" data-pk="${e.id}"${pr[e.id] ? ' checked' : ''}><span class="pk-n"><b>${e.label}</b><span class="muted small">${e.use} · ${w} × ${h} · ${nat ? 'Format des Projekts' : (P.frameBy && P.frameBy[e.k] ? 'dein Bildausschnitt für dieses Format' : 'das Video füllt das Bild')}</span><span class="muted small pk-file">${esc(packName(e))}.mp4</span></span></label>`; }).join('')}
+      <label class="pk-row"><input type="checkbox" id="pkCover"${pr.cover ? ' checked' : ''}><span class="pk-n"><b>Titelbild</b><span class="muted small">das Bild an der Abspiellinie als JPG, mit den Angaben aus „Titelbild“</span></span></label></div>
+    ${derived && special ? '<p class="small pk-warn">Folien, Endkarte und Splitscreen sind für das Format des Projekts angelegt. In den anderen Fassungen erscheinen sie eingepasst oder beschnitten.</p>' : ''}
+    ${derived ? '<p class="muted small">Untertitel, Titel und Einblendungen behalten in jeder Fassung ihre Lage im Bild. Für eine andere Fassung mit eigenem Bildausschnitt das Format im Clip-Reiter einmal wählen und den Ausschnitt setzen; das Paket merkt ihn sich.</p>' : ''}
+    <div class="row" style="margin-top:12px"><span class="muted small" id="pkMsg" style="flex:1;min-width:0"></span><button class="btn" id="pkNo">Schließen</button><button class="btn primary" id="pkGo"></button></div>`;
+  const sel = () => Object.fromEntries(PACK.map(e => [e.id, body.querySelector(`[data-pk="${e.id}"]`).checked]));
+  const paint = () => { const n = Object.values(sel()).filter(Boolean).length, c = $('#pkCover').checked; $('#pkGo').textContent = n ? `${n} ${n === 1 ? 'Fassung' : 'Fassungen'} einreihen` : c ? 'Titelbild speichern' : 'Nichts gewählt'; $('#pkGo').disabled = !n && !c; };
+  body.onchange = () => { try { localStorage.setItem('hc-pack', JSON.stringify({...sel(), cover: $('#pkCover').checked})); } catch(_){} paint(); };
+  body.onclick = null; $('#pkNo').onclick = closeSheet;
+  $('#pkGo').onclick = async () => { $('#pkGo').disabled = true; $('#pkMsg').textContent = 'Fassungen werden vorbereitet …';
+    let n = 0; try { n = await packRun(sel(), $('#pkCover').checked); } catch(e){ $('#pkMsg').textContent = 'Fehler: ' + ((e && e.message) || e); $('#pkGo').disabled = false; return; }
+    if ($('#pkGo')){ closeSheet(); } if (n) toast(`${n} ${n === 1 ? 'Fassung ist' : 'Fassungen sind'} eingereiht – du kannst weiterschneiden`); };
+  paint(); openSheet(false);
+}
+$('#exPackBtn').onclick = openPack;
 
 // ───────── Hausstil und Bausteine (2.30) ─────────
 // Hausstil (A3): Vorlagen im Gerät – [{id, name, st}] unter hc-house; st hält Untertitel-Stil, Wasserzeichen, Format der Leinwand,

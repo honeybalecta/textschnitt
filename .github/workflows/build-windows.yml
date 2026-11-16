@@ -33,7 +33,8 @@ jobs:
       - name: Version
         shell: pwsh
         run: |
-          $v = if ($env:TS_VERSION_INPUT) { $env:TS_VERSION_INPUT } else { (Get-Content packaging/app-version.txt -Raw).Trim() }
+          $v = if ($env:TS_VERSION_INPUT) { $env:TS_VERSION_INPUT } else { "$(Get-Content packaging/app-version.txt -Raw)".Trim() }
+          if ($v -notmatch '^v?\d+\.\d+\.\d+$') { Write-Error "packaging/app-version.txt nennt keine gültige Version: '$v'"; exit 1 }
           "TS_VERSION=$($v.TrimStart('v'))" >> $env:GITHUB_ENV
 
       - uses: actions/setup-python@v5

@@ -1142,3 +1142,29 @@ label.col input{width:100%}
 .deco-ov canvas{position:absolute;display:block;max-width:none}
 .deco-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .deco-row input[type=text]{flex:1 1 150px;min-width:0;min-height:var(--ctl-sm)}
+
+/* 2.31: Export-Warteschlange, Export-Pakete, Grafikkarte */
+.q-btn{position:relative}
+.q-btn[data-n]::after{content:attr(data-n);position:absolute;right:2px;top:2px;min-width:16px;height:16px;padding:0 4px;border-radius:8px;background:var(--rot);color:#fff;font:700 10px/16px var(--ui);text-align:center}
+.q-btn.busy .ico{animation:qpulse 1.6s ease-in-out infinite}
+.q-btn.bad{color:var(--rot)}
+@keyframes qpulse{50%{opacity:.35}}
+@media (prefers-reduced-motion: reduce){.q-btn.busy .ico{animation:none}}
+.q-list{display:flex;flex-direction:column}
+.q-row{display:flex;align-items:center;gap:6px;border-top:1px solid var(--line);padding:8px 0;flex-wrap:wrap}
+.q-row:first-child{border-top:0}
+.q-n{flex:1 1 160px;min-width:0;display:flex;flex-direction:column;gap:2px}
+.q-n b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.q-n .progress{margin-top:4px}
+.q-row .btn,.q-row .mini{flex:none}
+.q-row.error .q-msg,.q-warn{color:var(--rot)}
+.q-row.done .q-msg{color:var(--gruen,#3E8A55)}
+.q-msg{overflow-wrap:anywhere}
+#exGpuRow.nogpu{display:none}
+.pk-list{display:flex;flex-direction:column;margin:8px 0}
+.pk-row{display:flex;align-items:flex-start;gap:10px;border-top:1px solid var(--line);padding:9px 0;cursor:pointer}
+.pk-row:first-child{border-top:0}
+.pk-row input{margin-top:3px;flex:none}
+.pk-n{display:flex;flex-direction:column;gap:2px;min-width:0}
+.pk-file{overflow-wrap:anywhere;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px}
+.pk-warn{color:var(--rot)}

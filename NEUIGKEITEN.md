@@ -2,6 +2,12 @@
 
 Was sich mit jeder Version von HoneyCut ändert. Die Windows-App zeigt diese Stichpunkte an, sobald eine neuere Version bereitsteht.
 
+## 2.31.0 · Export
+- Export-Paket: Ein Klick erzeugt Hochformat (TikTok, Reels, Shorts), Querformat (YouTube) und auf Wunsch den Feed in 4:5 – je mit passender Auflösung, einheitlicher Lautstärke und eigenem Dateinamen, dazu Titelbild und SRT
+- Export-Warteschlange: Exporte einreihen und im Hintergrund rechnen lassen, während du am nächsten Video schneidest; der Zähler in der Kopfzeile zeigt den Stand, auch auf der Startseite
+- Windows: Export über die Grafikkarte (Nvidia, Intel, AMD), je nach Rechner mehrfach schneller. Kommt die Grafikkarte bei einem Export nicht durch, rechnet HoneyCut ihn von selbst auf dem bisherigen Weg
+- Öffnest du ein anderes Projekt, steht im Export-Reiter kein Ergebnis des vorigen Projekts mehr
+
 ## 2.30.0 · Hausstil und Bausteine
 - Hausstil als Vorlage: Untertitel-Stil, Wasserzeichen, Format, Schutzzonen, Lautstärke, Textzeile, Bauchbinden, Designprofil und Aufräum-Optionen unter einem Namen speichern. Mit dem Stern starten neue Projekte in diesem Stil; mehrere Vorlagen sind möglich
 - Bausteine: Intro, „Folgen“-Aufruf oder Spendenhinweis einmal ablegen und mit einem Klick vorn oder hinten anfügen
