@@ -139,6 +139,9 @@ def selftest(out_path: str) -> int:
         rep["bild"] = T.bild_selftest()
         if not rep["bild"].get("ok"):
             raise RuntimeError(f"Weißabgleich, Hintergrund oder Beruhigen im Export stimmen nicht: {rep['bild']}")
+        rep["uebergabe"] = T.uebergabe_selftest()
+        if not rep["uebergabe"].get("ok"):
+            raise RuntimeError(f"Die Übergabe im Heimnetz antwortet nicht wie erwartet: {rep['uebergabe']}")
         # Export über die Grafikkarte: Das mitgelieferte ffmpeg muss die Encoder von Nvidia, Intel und AMD kennen; die Suche nach
         # einer nutzbaren Grafikkarte darf auf einem Rechner ohne sie nichts finden und nicht scheitern.
         enc = subprocess.run([T.FFMPEG, "-hide_banner", "-encoders"], capture_output=True, text=True, **T.NOWIN).stdout

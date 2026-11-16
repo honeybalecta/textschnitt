@@ -50,6 +50,11 @@
     makeProxy: uri => jobOf(call('POST', 'proxy', {uri})),
     autoMatte: uri => jobOf(call('POST', 'matte', {uri})),
     stabilize: (uri, level) => jobOf(call('POST', 'stabilize', {uri, level})),
+    // Übergabe im Heimnetz (am Handy weiterschneiden): Empfang öffnen (spec = Paket des angebotenen Projekts als JSON oder ''), Stand, schließen, Empfangenes übernehmen
+    handoverStart: spec => call('POST', 'handover/start', spec ? '{"spec":' + spec + '}' : '{}'),
+    handoverState: () => call('GET', 'handover/state'),
+    handoverStop: () => call('POST', 'handover/stop', {}),
+    handoverTake: id => call('POST', 'handover/take', {id}),
     translate: (texts, src, tgt) => jobOf(call('POST', 'translate', {texts: JSON.parse(texts), src, tgt})),
     job: id => call('GET', 'job?id=' + q(id)),
     cancel: id => { call('POST', 'cancel', {id}); },

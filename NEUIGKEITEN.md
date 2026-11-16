@@ -2,6 +2,13 @@
 
 Was sich mit jeder Version von HoneyCut ändert. Die Windows-App zeigt diese Stichpunkte an, sobald eine neuere Version bereitsteht.
 
+## 2.37.0 · Am Handy weiterschneiden
+- Ans Handy übergeben (Windows → Android-App): Im Export-Reiter, im Menü der Projektliste oder über „Handy“ auf der Startseite zeigt HoneyCut einen QR-Code. Mit der Kamera des Handys scannen, auf der Seite „In HoneyCut öffnen“ antippen – das Projekt landet samt Videos, Bildern und Schriften in der App. Computer und Handy müssen im selben WLAN sein
+- Und zurück: Am Handy „An den Computer zurückgeben“ wählen, am Computer „Übernehmen“. In der Regel geht nur der Schnitt zurück; die Videos hat der Computer schon
+- Ohne Kamera: Am Handy unter „Computer“ lässt sich die Adresse eintippen, die am Computer unter dem QR-Code steht
+- Die Verbindung besteht nur, solange das Fenster am Computer offen ist, und nur für dieses eine Projekt. Sie läuft unverschlüsselt im eigenen WLAN – für fremde Netze (Hotel, Veranstaltung) bleibt „Projekt exportieren“ der richtige Weg
+- Fragt Windows beim ersten Mal nach dem Netzwerkzugriff, bitte für private Netzwerke erlauben
+
 ## 2.36.0 · Bildgestaltung
 - Farbe für das ganze Video (Studio → „Farbe“): Helligkeit, Kontrast, Sättigung, Farbtemperatur und Tönung gelten für alle Abschnitte; was unter „Anpassen“ an einem einzelnen Abschnitt steht, kommt hinzu. Gehört zum Hausstil
 - Weißabgleich: „Weiß im Bild wählen“ macht eine angetippte weiße oder graue Stelle farbneutral; „An den Clip davor angleichen“ bringt Farbe und Helligkeit zweier Aufnahmen zusammen

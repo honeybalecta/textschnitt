@@ -37,7 +37,7 @@ os.environ.setdefault("HF_HUB_DISABLE_IMPLICIT_TOKEN", "1")
 import warnings  # noqa: E402
 warnings.filterwarnings("ignore", module="huggingface_hub")
 
-VERSION = "2.36.0"
+VERSION = "2.37.0"
 APP_DIR = Path(__file__).resolve().parent
 FROZEN = bool(getattr(sys, "frozen", False))          # als installierte .exe gebaut
 RES_DIR = Path(getattr(sys, "_MEIPASS", APP_DIR))      # mitgelieferte Dateien (Oberfläche, ffmpeg, Modelle)
@@ -3580,6 +3580,37 @@ def bild_selftest() -> dict:
     return out
 
 
+def uebergabe_selftest() -> dict:
+    """Probe für den Selbsttest der gebauten App (2.37): Der Empfang für die Übergabe im Heimnetz öffnet, antwortet unter seiner
+    Kennung mit Seite und Auskunft, weist eine falsche Kennung ab und schließt wieder. Gefragt wird über 127.0.0.1."""
+    import urllib.error
+    import urllib.request
+    out: dict = {"ok": False}
+    try:
+        st = handover_start(None, bind="127.0.0.1")
+        base = f"http://127.0.0.1:{HAND['port']}/h/{HAND['token']}"
+        with urllib.request.urlopen(base + "/info", timeout=10) as r:
+            info = json.loads(r.read())
+        with urllib.request.urlopen(base + "/", timeout=10) as r:
+            page = r.read().decode("utf-8")
+        try:
+            urllib.request.urlopen(f"http://127.0.0.1:{HAND['port']}/h/falsch/info", timeout=10)
+            bad = 200
+        except urllib.error.HTTPError as e:
+            bad = e.code
+        out.update(aktiv=bool(st.get("active")), app=info.get("app"), seite="In HoneyCut öffnen" in page, falsch=bad, adressen=len(lan_ips()))
+        handover_stop()
+        out["zu"] = handover_state() == {"active": False}
+        out["ok"] = bool(out["aktiv"] and out["app"] == "honeycut" and out["seite"] and bad == 404 and out["zu"])
+    except Exception as e:
+        out["fehler"] = f"{type(e).__name__}: {e}"[:300]
+        try:
+            handover_stop()
+        except Exception:
+            pass
+    return out
+
+
 # ───────────────────────────── Projekte ─────────────────────────────
 
 BACKUP_DIR = DATA_DIR / "sicherungen"   # frühere Fassungen der Projekte (je Projekt ein Ordner, gepackt)
@@ -4967,7 +4998,9 @@ def pkg_copy(src, dst, n: int, job: dict, done: list, total: int, label: str):
             job["message"] = f"{label} · {done[0] // 1_000_000} von {total // 1_000_000} MB"
 
 
-def package_export_job(job: dict, spec: dict, dest: str):
+def package_plan(spec: dict) -> tuple[bytes, list, int]:
+    """Kopf und Dateiliste eines Pakets: (Kopf als JSON-Bytes, [(Pfad, Größe), …] in der Reihenfolge des Kopfes, Summe der Dateien).
+    Trägt in den Kopf ein, welche Dateien mitkommen und wie groß sie sind."""
     header = spec["header"]
     srcs = {f["n"]: f for f in spec.get("files", [])}
     plan = []
@@ -4986,71 +5019,361 @@ def package_export_job(job: dict, spec: dict, dest: str):
                 log(f"Projektpaket: {h.get('name') or h.get('n')} übersprungen ({e!r})")
         h["size"], h["included"] = size, size > 0
     head = json.dumps(header, ensure_ascii=False).encode("utf-8")
-    total = sum(n for _, n in plan)
+    return head, plan, sum(n for _, n in plan)
+
+
+def package_write(job: dict, out, head: bytes, plan: list, total: int, label: str = "Projekt wird gepackt") -> int:
+    """Schreibt ein Paket in einen Strom; Rückgabe: Zahl der Bytes."""
     done = [0]
+    out.write(PKG_MAGIC)
+    out.write(len(head).to_bytes(8, "little"))
+    out.write(head)
+    for p, n in plan:
+        with open(p, "rb") as f:
+            pkg_copy(f, out, n, job, done, total, label)
+    return total + len(head) + len(PKG_MAGIC) + 8
+
+
+def package_export_job(job: dict, spec: dict, dest: str):
+    head, plan, total = package_plan(spec)
     tmp = Path(dest + ".part")
     with open(tmp, "wb") as out:
-        out.write(PKG_MAGIC)
-        out.write(len(head).to_bytes(8, "little"))
-        out.write(head)
-        for p, n in plan:
-            with open(p, "rb") as f:
-                pkg_copy(f, out, n, job, done, total, "Projekt wird gepackt")
+        n = package_write(job, out, head, plan, total)
     os.replace(tmp, dest)
     CREATED.add(norm_path(dest))
-    return {"path": norm_path(dest), "bytes": total + len(head) + 18}
+    return {"path": norm_path(dest), "bytes": n}
 
 
-def package_import_job(job: dict, path: str):
-    path = norm_path(path)
-    with open(path, "rb") as f:
-        if f.read(len(PKG_MAGIC)) != PKG_MAGIC:
-            raise ValueError("Das ist kein HoneyCut-Projekt (.honeycut).")
-        n = int.from_bytes(f.read(8), "little")
-        if n <= 0 or n > 200_000_000:
-            raise ValueError("Projektdatei ist beschädigt.")
-        header = json.loads(f.read(n).decode("utf-8"))
-        proj = header.get("project") or {}
-        folder = re.sub(r'[\\/:*?"<>|]', "_", (proj.get("name") or "Projekt").strip())[:80] or "Projekt"
-        pid = re.sub(r"[^A-Za-z0-9_-]", "", proj.get("id", ""))[:12]
-        dest_dir = import_root() / (folder + (f" ({pid})" if pid else ""))
-        files = [h for h in header.get("files", []) if h.get("included")]
-        total = sum(int(h["size"]) for h in files)
-        done = [0]
-        mp = {}
-        for h in header.get("files", []):
-            if not h.get("included"):
-                continue
-            size = int(h["size"])
-            name = re.sub(r'[\\/:*?"<>|]', "_", h.get("name") or h["n"])[:120] or h["n"]
-            if h.get("kind") == "font":
-                FONT_DIR.mkdir(parents=True, exist_ok=True)
-                data = f.read(size)
-                done[0] += size
-                tgt, k = FONT_DIR / name, 2
-                while tgt.exists() and tgt.read_bytes() != data:
-                    tgt = FONT_DIR / f"{Path(name).stem}_{k}{Path(name).suffix}"
-                    k += 1
-                if not tgt.exists():
-                    tgt.write_bytes(data)
-                mp[h["n"]] = allow(tgt)
-                continue
-            dest_dir.mkdir(parents=True, exist_ok=True)
-            tgt, k = dest_dir / name, 2
-            while tgt.exists() and tgt.stat().st_size != size:
-                tgt = dest_dir / f"{Path(name).stem}_{k}{Path(name).suffix}"
+def _read_exact(f, n: int) -> bytes:
+    buf = bytearray()
+    while len(buf) < n:
+        b = f.read(n - len(buf))
+        if not b:
+            raise ValueError("Projektdatei ist unvollständig.")
+        buf += b
+    return bytes(buf)
+
+
+def package_read(job: dict, f) -> dict:
+    """Liest ein Paket aus einem Strom (Datei oder Verbindung – ohne Zurückspulen) und legt seine Dateien im Import-Ordner ab."""
+    if _read_exact(f, len(PKG_MAGIC)) != PKG_MAGIC:
+        raise ValueError("Das ist kein HoneyCut-Projekt (.honeycut).")
+    n = int.from_bytes(_read_exact(f, 8), "little")
+    if n <= 0 or n > 200_000_000:
+        raise ValueError("Projektdatei ist beschädigt.")
+    header = json.loads(_read_exact(f, n).decode("utf-8"))
+    proj = header.get("project") or {}
+    folder = re.sub(r'[\\/:*?"<>|]', "_", (proj.get("name") or "Projekt").strip())[:80] or "Projekt"
+    pid = re.sub(r"[^A-Za-z0-9_-]", "", proj.get("id", ""))[:12]
+    dest_dir = import_root() / (folder + (f" ({pid})" if pid else ""))
+    files = [h for h in header.get("files", []) if h.get("included")]
+    total = sum(int(h["size"]) for h in files)
+    done = [0]
+    mp = {}
+    for h in header.get("files", []):
+        if not h.get("included"):
+            continue
+        size = int(h["size"])
+        name = re.sub(r'[\\/:*?"<>|]', "_", h.get("name") or h["n"])[:120] or h["n"]
+        if h.get("kind") == "font":
+            if size > 60_000_000:
+                raise ValueError("Projektdatei ist beschädigt.")
+            FONT_DIR.mkdir(parents=True, exist_ok=True)
+            data = _read_exact(f, size)
+            done[0] += size
+            tgt, k = FONT_DIR / name, 2
+            while tgt.exists() and tgt.read_bytes() != data:
+                tgt = FONT_DIR / f"{Path(name).stem}_{k}{Path(name).suffix}"
                 k += 1
-            if tgt.exists():   # schon da (erneuter Import desselben Projekts): überspringen
-                f.seek(size, 1)
-                done[0] += size
-            else:
-                part = Path(str(tgt) + ".part")
+            if not tgt.exists():
+                tgt.write_bytes(data)
+            mp[h["n"]] = allow(tgt)
+            continue
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        tgt, k = dest_dir / name, 2
+        while tgt.exists() and tgt.stat().st_size != size:
+            tgt = dest_dir / f"{Path(name).stem}_{k}{Path(name).suffix}"
+            k += 1
+        if tgt.exists():   # schon da (erneuter Import desselben Projekts): überlesen
+            pkg_copy(f, _Sink(), size, job, done, total, "Projekt wird entpackt")
+        else:
+            part = Path(str(tgt) + ".part")
+            try:
                 with open(part, "wb") as out:
                     pkg_copy(f, out, size, job, done, total, "Projekt wird entpackt")
                 os.replace(part, tgt)
-            mp[h["n"]] = allow(tgt)
+            finally:
+                part.unlink(missing_ok=True)   # nach Abbruch oder abgerissener Verbindung kein halbes Stück liegen lassen
+        mp[h["n"]] = allow(tgt)
     log(f"Projekt importiert: {len(mp)} Dateien nach {dest_dir}")
     return {"header": header, "map": mp, "folder": norm_path(str(dest_dir))}
+
+
+class _Sink:
+    def write(self, b):
+        return len(b)
+
+
+def package_import_job(job: dict, path: str):
+    with open(norm_path(path), "rb") as f:
+        return package_read(job, f)
+
+
+# ───────────────────────────── Übergabe im Heimnetz (G7) ─────────────────────────────
+# „Ans Handy übergeben“: Solange das Blatt in der Oberfläche offen ist, lauscht ein zweiter, eigener Server im Heimnetz. Er kennt
+# genau vier Adressen unter einer Einmal-Kennung, die nur im QR-Code steht: eine Seite fürs Handy, eine Auskunft, das Paket des
+# angebotenen Projekts (direkt aus den Dateien gelesen, ohne Zwischenkopie) und den Empfang eines Pakets vom Handy. Alles andere
+# – Projekte, Dateien, Einstellungen – bleibt dem Server auf 127.0.0.1 vorbehalten und ist aus dem Netz unerreichbar.
+HAND: dict = {"srv": None, "token": "", "port": 0, "offer": None, "inbox": {}, "bad": 0, "seen": 0.0}
+_hand_lock = threading.Lock()
+HAND_IDLE = 30 * 60      # so lange ohne Nachfrage der Oberfläche bleibt der Empfang höchstens offen
+HAND_BAD_MAX = 40        # so viele Anfragen mit falscher Kennung, dann schließt er
+HAND_SPARE = 300_000_000 # so viel Platz soll nach einer Rückgabe vom Handy mindestens frei bleiben
+
+
+def lan_ips() -> list[str]:
+    """Adressen dieses Rechners im Heimnetz, die wahrscheinlichste zuerst."""
+    import ipaddress
+    import socket
+    out: list[str] = []
+    for probe_ip in ("192.168.0.1", "10.0.0.1", "172.16.0.1"):   # es wird nichts gesendet – nur gefragt, über welche Adresse es ginge
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            s.connect((probe_ip, 9))
+            out.append(s.getsockname()[0])
+        except OSError:
+            pass
+        finally:
+            s.close()
+    try:
+        out += socket.gethostbyname_ex(socket.gethostname())[2]
+    except OSError:
+        pass
+    good = []
+    for ip in out:
+        try:
+            a = ipaddress.ip_address(ip)
+        except ValueError:
+            continue
+        if a.version == 4 and a.is_private and not a.is_loopback and not a.is_link_local and ip not in good:
+            good.append(ip)
+    return good
+
+
+def _hand_page(base: str, offer: dict | None) -> str:
+    """Die Seite, die das Handy nach dem Scannen des QR-Codes im Browser zeigt."""
+    from html import escape
+    from urllib.parse import quote
+    link = f"intent://uebergabe?u={quote(base, safe='')}#Intent;scheme=honeycut;package=de.honeybalecta.textschnitt;end"
+    mb = (lambda b: f"{b / 1e9:.1f} GB".replace(".", ",") if b >= 1e9 else f"{max(1, round(b / 1e6))} MB")
+    angebot = (f"<p class=k>Bereit zum Holen</p><h2>{escape(offer['name'])}</h2><p class=m>{mb(offer['bytes'])}</p>" if offer
+               else "<p class=k>Verbunden</p><h2>Projekt zurückgeben</h2><p class=m>Der Computer wartet auf ein Projekt vom Handy.</p>")
+    datei = f'<a class="b z" href="{escape(base)}/paket">Als Datei herunterladen (.honeycut)</a>' if offer else ""
+    return f"""<!doctype html><html lang="de"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>HoneyCut – Übergabe</title>
+<style>body{{margin:0;background:#131312;color:#EDE7DA;font:17px/1.45 Inter,system-ui,sans-serif}}main{{max-width:520px;margin:0 auto;padding:28px 22px}}
+h1{{font-size:20px;margin:0 0 26px}}h2{{font-size:26px;margin:2px 0 4px}}.k{{color:#A9A397;font-size:13px;text-transform:uppercase;letter-spacing:.08em;margin:0}}.m{{color:#A9A397;margin:0 0 24px}}
+.b{{display:block;text-align:center;padding:15px 18px;border-radius:12px;background:#E5402A;color:#fff;text-decoration:none;font-weight:700;margin:0 0 12px}}.b.z{{background:#262624;color:#EDE7DA;font-weight:500}}
+small{{display:block;color:#A9A397;margin-top:22px}}</style>
+<main><h1>HoneyCut</h1>{angebot}<a class="b" href="{escape(link)}">In HoneyCut öffnen</a>{datei}
+<small>Öffnet sich die App nicht? <a style="color:#EDE7DA" href="honeycut://uebergabe?u={quote(base, safe='')}">Hier noch einmal versuchen</a> – oder in HoneyCut unter „Computer“ die Adresse eintippen, die am Computer unter dem QR-Code steht.</small>
+<small>Diese Seite kommt von deinem Computer im selben WLAN. Sie gilt, solange dort „Ans Handy übergeben“ geöffnet ist.</small></main></html>"""
+
+
+class _Limited:
+    """Liest höchstens n Bytes aus einer Verbindung (der Rumpf einer Anfrage)."""
+    def __init__(self, f, n: int):
+        self.f, self.left = f, n
+
+    def read(self, k: int = -1) -> bytes:
+        if self.left <= 0:
+            return b""
+        b = self.f.read(self.left if k is None or k < 0 else min(k, self.left))
+        self.left -= len(b)
+        return b
+
+
+class HandoverHandler(BaseHTTPRequestHandler):
+    server_version = "HoneyCut-Uebergabe"
+    timeout = 90   # eine Verbindung, auf der so lange nichts kommt, wird geschlossen
+
+    def log_message(self, fmt, *args):
+        pass
+
+    def _out(self, code: int, body: bytes, ctype: str):
+        self.send_response(code)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(body)
+
+    def _json(self, obj, code=200):
+        self._out(code, json.dumps(obj, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8")
+
+    def _sub(self) -> str | None:
+        """Teil der Adresse hinter /h/<Kennung>; None bei falscher Kennung (mit Verzögerung, gezählt)."""
+        parts = urlparse(self.path).path.strip("/").split("/")
+        tok = HAND["token"]
+        if len(parts) >= 2 and parts[0] == "h" and tok and secrets.compare_digest(parts[1], tok) and len(parts) <= 3:
+            return parts[2] if len(parts) == 3 else ""
+        HAND["bad"] += 1
+        time.sleep(0.4)
+        if HAND["bad"] >= HAND_BAD_MAX:
+            log("Übergabe: zu viele Anfragen mit falscher Kennung – der Empfang wird geschlossen")
+            threading.Thread(target=handover_stop, daemon=True).start()
+        self._json({"error": "Nicht gefunden"}, 404)
+        return None
+
+    def do_HEAD(self):
+        self.do_GET()
+
+    def do_GET(self):
+        try:
+            sub = self._sub()
+            if sub is None:
+                return
+            offer = HAND["offer"]
+            base = f"http://{self.headers.get('Host') or ''}/h/{HAND['token']}"
+            if sub == "":
+                return self._out(200, _hand_page(base, offer).encode("utf-8"), "text/html; charset=utf-8")
+            if sub == "info":
+                try:
+                    root = import_root()
+                    free = max(0, shutil.disk_usage(root if root.exists() else root.parent).free - HAND_SPARE)
+                except OSError:
+                    free = -1   # unbekannt
+                return self._json({"app": "honeycut", "version": VERSION, "free": free, "offer": {"name": offer["name"], "bytes": offer["bytes"], "project": offer["project"]} if offer else None})
+            if sub == "paket" and offer:
+                name = re.sub(r'[^A-Za-z0-9 _.()\-]', "_", offer["name"])[:80] or "Projekt"
+                self.send_response(200)
+                self.send_header("Content-Type", "application/octet-stream")
+                self.send_header("Content-Length", str(offer["bytes"]))
+                self.send_header("Content-Disposition", f'attachment; filename="{name}.honeycut"')
+                self.send_header("Connection", "close")
+                self.end_headers()
+                if self.command == "HEAD":
+                    return
+                job = {"cancel": False, "progress": 0, "message": ""}
+                offer["job"] = job
+                offer["status"] = "sending"
+                try:
+                    package_write(job, self.wfile, offer["head"], offer["plan"], offer["total"], "Wird übertragen")
+                    offer["status"], offer["done"] = "done", offer.get("done", 0) + 1
+                    log(f"Übergabe: „{offer['name']}“ ans Handy übertragen")
+                except Exception as e:  # noqa: BLE001 – Verbindung abgerissen oder Blatt geschlossen
+                    offer["status"] = "ready"
+                    log(f"Übergabe: Übertragung abgebrochen ({e!r})")
+                return
+            return self._json({"error": "Nicht gefunden"}, 404)
+        except (BrokenPipeError, ConnectionError, OSError):
+            pass
+
+    def do_POST(self):
+        try:
+            sub = self._sub()
+            if sub is None:
+                return
+            if sub != "zurueck":
+                return self._json({"error": "Nicht gefunden"}, 404)
+            try:
+                n = int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                n = 0
+            if n < len(PKG_MAGIC) + 8:
+                return self._json({"error": "Das ist kein HoneyCut-Projekt."}, 400)
+            root = import_root()
+            root.mkdir(parents=True, exist_ok=True)
+            if shutil.disk_usage(root).free < n + HAND_SPARE:
+                # Kleine Sendungen erst zu Ende lesen, damit die Antwort sicher ankommt; große bricht der Computer gleich ab
+                # (das Handy fragt den freien Platz vorher über „info“ ab und schickt dann gar nicht erst).
+                if n <= 16_000_000:
+                    lim = _Limited(self.rfile, n)
+                    while lim.read(1 << 20):
+                        pass
+                return self._json({"error": "Auf dem Computer ist zu wenig Platz frei."}, 507)
+            eid = uuid.uuid4().hex[:8]
+            job = {"cancel": False, "progress": 0, "message": ""}
+            ent = {"id": eid, "name": "Projekt", "bytes": n, "status": "receiving", "error": "", "at": int(time.time() * 1000), "job": job, "result": None}
+            HAND["inbox"][eid] = ent
+            try:
+                res = package_read(job, _Limited(self.rfile, n))
+                ent["result"], ent["status"] = res, "ready"
+                ent["name"] = ((res["header"].get("project") or {}).get("name") or "Projekt")[:120]
+                log(f"Übergabe: „{ent['name']}“ vom Handy empfangen")
+                return self._json({"ok": True, "name": ent["name"]})
+            except Exception as e:  # noqa: BLE001
+                ent["status"], ent["error"] = "error", str(e) or e.__class__.__name__
+                log(f"Übergabe: Empfang fehlgeschlagen ({e!r})")
+                return self._json({"error": ent["error"]}, 400)
+        except (BrokenPipeError, ConnectionError, OSError):
+            pass
+
+
+def handover_state() -> dict:
+    HAND["seen"] = time.time()
+    srv, offer = HAND["srv"], HAND["offer"]
+    if not srv:
+        return {"active": False}
+    ips = lan_ips()
+    return {"active": True, "port": HAND["port"], "ips": ips, "urls": [f"http://{ip}:{HAND['port']}/h/{HAND['token']}" for ip in ips],
+            "offer": {"name": offer["name"], "bytes": offer["bytes"], "status": offer["status"], "done": offer.get("done", 0),
+                      "progress": round(float((offer.get("job") or {}).get("progress") or 0), 4)} if offer else None,
+            "inbox": [{"id": e["id"], "name": e["name"], "bytes": e["bytes"], "status": e["status"], "error": e["error"], "at": e["at"],
+                       "progress": round(float(e["job"].get("progress") or 0), 4)} for e in sorted(HAND["inbox"].values(), key=lambda e: e["at"])]}
+
+
+def handover_start(spec: dict | None = None, bind: str = "0.0.0.0") -> dict:
+    """Empfang im Heimnetz öffnen (falls noch nicht offen) und – mit spec – ein Projekt zum Holen anbieten."""
+    with _hand_lock:
+        if not HAND["srv"]:
+            ThreadingHTTPServer.daemon_threads = True
+            srv = ThreadingHTTPServer((bind, 0), HandoverHandler)
+            HAND.update(srv=srv, port=srv.server_address[1], token=secrets.token_urlsafe(9), bad=0, inbox={}, offer=None)
+            threading.Thread(target=srv.serve_forever, daemon=True).start()
+            threading.Thread(target=_hand_watch, args=(srv,), daemon=True).start()
+            log(f"Übergabe: Empfang im Heimnetz geöffnet (Port {HAND['port']})")
+        if spec is not None:
+            head, plan, total = package_plan(spec)
+            proj = (spec.get("header") or {}).get("project") or {}
+            HAND["offer"] = {"name": (spec.get("name") or proj.get("name") or "Projekt")[:120], "project": str(proj.get("id") or ""), "head": head, "plan": plan, "total": total,
+                             "bytes": total + len(head) + len(PKG_MAGIC) + 8, "status": "ready", "done": 0}
+    return handover_state()
+
+
+def _hand_watch(srv):
+    while HAND["srv"] is srv:
+        time.sleep(5)
+        if HAND["srv"] is srv and time.time() - HAND["seen"] > HAND_IDLE:
+            log("Übergabe: lange keine Nachfrage der Oberfläche – der Empfang wird geschlossen")
+            handover_stop()
+
+
+def handover_stop() -> dict:
+    with _hand_lock:
+        srv = HAND["srv"]
+        if srv:
+            for j in [(HAND["offer"] or {}).get("job")] + [e["job"] for e in HAND["inbox"].values()]:
+                if j:
+                    j["cancel"] = True   # laufende Übertragungen enden
+            HAND.update(srv=None, token="", port=0, offer=None, inbox={})
+            try:
+                srv.shutdown()
+                srv.server_close()
+            except Exception:
+                pass
+            log("Übergabe: Empfang geschlossen")
+    return {"active": False}
+
+
+def handover_take(eid: str) -> dict:
+    """Ein vom Handy empfangenes Projekt an die Oberfläche geben (Kopf und Zuordnung der Dateien wie beim Paket-Import)."""
+    ent = HAND["inbox"].get(eid)
+    if not ent or ent["status"] != "ready":
+        raise ValueError("Dieses Projekt ist nicht mehr da.")
+    HAND["inbox"].pop(eid, None)
+    return ent["result"]
 
 
 def open_data_dir():
@@ -5089,7 +5412,7 @@ def open_file(path: str):
 
 def app_info() -> dict:
     cc = capcut_drafts_dir()
-    return {"platform": "desktop", "version": VERSION, "exportFormats": ["video", "audio", "capcut", "concat"], "bus": True, "matte": matte_available(), "stabilize": True, "translate": translate_available(), "translatePairs": translate_pairs(),
+    return {"platform": "desktop", "version": VERSION, "exportFormats": ["video", "audio", "capcut", "concat"], "bus": True, "matte": matte_available(), "stabilize": True, "handover": True, "translate": translate_available(), "translatePairs": translate_pairs(),
             "capcutDir": str(cc) if cc else None, "concatDir": str(concat_root()),
             "whisper": whisper_available(), "os": platform.system()}
 
@@ -5230,6 +5553,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._file(f, "font/ttf" if f.suffix.lower() == ".ttf" else "font/otf" if f.suffix.lower() == ".otf" else "text/plain; charset=utf-8", cache=True)
             if rest == "api/fonts":
                 return self._json(fonts_list())
+            if rest == "api/handover/state":
+                return self._json(handover_state())
             if rest.startswith("deck/"):
                 d = deck_dir()
                 sub = rest[5:] or "index.html"
@@ -5393,6 +5718,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(picked_media(data.get("kind", "videos")))
             if rest == "api/image":   # erzeugtes Bild (z. B. Folie) speichern und als Medium zurückgeben
                 return self._json(save_image(data))
+            if rest == "api/handover/start":
+                return self._json(handover_start(data.get("spec")))
+            if rest == "api/handover/stop":
+                return self._json(handover_stop())
+            if rest == "api/handover/take":
+                return self._json(handover_take(str(data.get("id") or "")))
             if rest == "api/package/export":
                 dest = save_dialog(re.sub(r'[\\/:*?"<>|]', "_", data.get("name") or "Projekt")[:80] + ".honeycut")
                 if not dest:

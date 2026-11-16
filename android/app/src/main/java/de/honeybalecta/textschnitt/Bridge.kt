@@ -124,6 +124,27 @@ class Bridge(private val act: MainActivity) {
         main.post { act.launchPicker(arrayOf("application/octet-stream", "*/*"), false) }
     }
 
+    // ── Übergabe im Heimnetz: Projekt vom Computer holen und zurückgeben (url = Adresse aus dem QR-Code am Computer) ──
+    @JavascriptInterface
+    fun handoverInfo(id: String, url: String) {
+        Thread {
+            val r = runCatching { Handover.info(url) }.getOrElse { JSONObject().put("error", it.message ?: "nicht erreichbar") }
+            js("TSApp.onPicked(${q(id)}, ${q(r.toString())})")
+        }.start()
+    }
+
+    @JavascriptInterface
+    fun handoverFetch(id: String, url: String) {
+        val job = Jobs.start { Handover.fetch(ctx, url, it, fontDir) }.also { WorkService.track(ctx, it, "Projekt vom Computer") }
+        js("TSApp.onPicked(${q(id)}, ${q(JSONObject().put("job", job.id).toString())})")
+    }
+
+    @JavascriptInterface
+    fun handoverSend(id: String, url: String, spec: String) {
+        val job = Jobs.start { Handover.send(ctx, url, JSONObject(spec), it) }.also { WorkService.track(ctx, it, "Projekt an den Computer") }
+        js("TSApp.onPicked(${q(id)}, ${q(JSONObject().put("job", job.id).toString())})")
+    }
+
     /** Erzeugtes Bild (z. B. Folie aus dem B-Roll-Generator) als PNG ablegen; Rückgabe wie bei der Dateiauswahl. */
     @JavascriptInterface
     fun saveImage(name: String, b64: String, width: Int, height: Int, project: String): String {

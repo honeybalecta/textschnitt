@@ -47,8 +47,20 @@ object Package {
         job.message = "$label · ${done[0] / 1_000_000} von ${total / 1_000_000} MB"
     }
 
+    /** Ein vorbereitetes Paket: Kopf, Dateien in der Reihenfolge des Kopfes und die Größe – bekannt, bevor ein Byte geschrieben ist. */
+    class Prepared(val head: ByteArray, val plan: List<Pair<String, Long>>, val total: Long, val name: String) {
+        val bytes: Long get() = total + head.size + 18
+    }
+
     /** spec: {header:{…, files:[{n, name, kind, …}]}, files:[{n, uri, include}]} → schreibt das Paket nach dest. */
     fun write(ctx: Context, dest: Uri, spec: JSONObject, job: Job): JSONObject {
+        val p = prepare(ctx, spec)
+        ctx.contentResolver.openOutputStream(dest, "w")!!.use { raw -> writeTo(ctx, raw, p, job, "Projekt wird gepackt") }
+        return JSONObject().put("bytes", p.bytes).put("name", p.name)
+    }
+
+    /** Kopf und Dateiliste aus der Beschreibung; trägt in den Kopf ein, welche Dateien mitkommen und wie groß sie sind. */
+    fun prepare(ctx: Context, spec: JSONObject): Prepared {
         val header = spec.getJSONObject("header")
         val hf = header.getJSONArray("files")
         val src = spec.getJSONArray("files")
@@ -60,26 +72,30 @@ object Package {
             h.put("size", maxOf(0L, size)); h.put("included", size > 0)
             if (size > 0) plan.add(s!!.getString("uri") to size)
         }
-        val total = plan.sumOf { it.second }
-        val head = header.toString().toByteArray(Charsets.UTF_8)
+        return Prepared(header.toString().toByteArray(Charsets.UTF_8), plan, plan.sumOf { it.second }, spec.optString("name"))
+    }
+
+    /** Schreibt ein vorbereitetes Paket in einen Strom (Datei oder Verbindung). Der Strom bleibt offen. */
+    fun writeTo(ctx: Context, raw: OutputStream, p: Prepared, job: Job, label: String) {
+        val out = BufferedOutputStream(raw, 1 shl 16)
         val done = longArrayOf(0)
-        ctx.contentResolver.openOutputStream(dest, "w")!!.use { raw ->
-            BufferedOutputStream(raw, 1 shl 16).use { out ->
-                out.write(MAGIC)
-                val len = head.size.toLong()
-                for (k in 0 until 8) out.write(((len shr (8 * k)) and 0xFF).toInt())
-                out.write(head)
-                for ((uri, size) in plan) {
-                    open(ctx, uri).use { inp -> copy(BufferedInputStream(inp, 1 shl 16), out, size, job, done, total, "Projekt wird gepackt") }
-                }
-            }
+        out.write(MAGIC)
+        val len = p.head.size.toLong()
+        for (k in 0 until 8) out.write(((len shr (8 * k)) and 0xFF).toInt())
+        out.write(p.head)
+        for ((uri, size) in p.plan) {
+            open(ctx, uri).use { inp -> copy(BufferedInputStream(inp, 1 shl 16), out, size, job, done, p.total, label) }
         }
-        return JSONObject().put("bytes", total + head.size + 18).put("name", spec.optString("name"))
+        out.flush()
     }
 
     /** Liest ein Paket: Dateien landen im App-Ordner „Importiert“, Schriften bei den eigenen Schriften. */
-    fun read(ctx: Context, src: Uri, job: Job, fontDir: File): JSONObject {
-        ctx.contentResolver.openInputStream(src)!!.use { raw ->
+    fun read(ctx: Context, src: Uri, job: Job, fontDir: File): JSONObject =
+        ctx.contentResolver.openInputStream(src)!!.use { raw -> readFrom(ctx, raw, job, fontDir, "Projekt wird entpackt") }
+
+    /** … aus einem Strom (Datei oder Verbindung). */
+    fun readFrom(ctx: Context, raw: InputStream, job: Job, fontDir: File, label: String): JSONObject {
+        return run {
             val inp = BufferedInputStream(raw, 1 shl 16)
             val magic = ByteArray(MAGIC.size); readFully(inp, magic)
             if (!magic.contentEquals(MAGIC)) throw IllegalArgumentException("Das ist kein HoneyCut-Projekt (.honeycut).")
@@ -110,12 +126,12 @@ object Package {
                 if (out.exists() && out.length() == size) skip(inp, size, job, done, total)   // schon da (erneuter Import)
                 else {
                     val tmp = File(out.path + ".part")
-                    tmp.outputStream().use { o -> BufferedOutputStream(o, 1 shl 16).use { copy(inp, it, size, job, done, total, "Projekt wird entpackt") } }
+                    tmp.outputStream().use { o -> BufferedOutputStream(o, 1 shl 16).use { copy(inp, it, size, job, done, total, label) } }
                     if (!tmp.renameTo(out)) { tmp.copyTo(out, true); tmp.delete() }
                 }
                 map.put(f.getString("n"), Uri.fromFile(out).toString())
             }
-            return JSONObject().put("header", header).put("map", map)
+            JSONObject().put("header", header).put("map", map)
         }
     }
 

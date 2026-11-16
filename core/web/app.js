@@ -404,7 +404,7 @@ function duplicateProject(id){
   showHome(); toast(`„${name}“ angelegt – als Ausgangspunkt für eine Variante`);
 }
 function showHome(){
-  $('#home').classList.remove('hidden'); $('#proj').classList.add('hidden');
+  $('#home').classList.remove('hidden'); $('#proj').classList.add('hidden'); handoverButtons();
   homeList = J(TS.listProjects()) || [];
   // Vorschaubilder aufräumen: gelöschte Projekte, und bei sehr vielen Projekten bleiben nur die der 120 zuletzt bearbeiteten im Gerät
   // (der Platz dort ist begrenzt und wird auch für Looks, Füllwörter und Designprofile gebraucht)
@@ -441,7 +441,7 @@ function renderHome(){
       const b = e.target.closest('.del'); if (!b) return openProject(p.id);
       if (b.classList.contains('more')){ const r = b.getBoundingClientRect();   // schmale Bildschirme: alle Handgriffe in einem Menü
         return showMenu(Math.min(r.left, innerWidth - 240), r.bottom + 4, [{icon: icon('✎'), label: 'Umbenennen', fn: acts.ren}, {icon: icon('⧉'), label: 'Duplizieren', fn: acts.dup},
-          ...(TS.versions ? [{icon: icon('🕘'), label: 'Frühere Fassungen', fn: acts.ver}] : []), ...(TS.exportPackage ? [{icon: icon('⤴'), label: 'Weitergeben', fn: acts.share}] : []), {icon: icon('🗑'), label: 'Löschen', fn: acts.kill, cls: 'danger'}]); }
+          ...(TS.versions ? [{icon: icon('🕘'), label: 'Frühere Fassungen', fn: acts.ver}] : []), ...(TS.exportPackage ? [{icon: icon('⤴'), label: 'Weitergeben', fn: acts.share}] : []), ...(TS.handoverStart ? [{icon: icon('📱'), label: 'Ans Handy übergeben', fn: () => handoverDialog(p.id)}] : []), {icon: icon('🗑'), label: 'Löschen', fn: acts.kill, cls: 'danger'}]); }
       for (const k in acts) if (b.classList.contains(k)) return acts[k]();
     };
     box.append(el);
@@ -1008,6 +1008,8 @@ function relinkDialog(proj, list){
   });
 }
 $('#impProj').onclick = () => importProject();
+$('#handBtn').onclick = () => handoverEntry(null);
+$('#handProjBtn').onclick = () => { if (P) handoverEntry(TS.handoverStart ? P.id : null); };
 $('#pkgBtn').onclick = () => { if (P) packageDialog(P.id); };
 
 const fmtD2 = x => x.toFixed(2).replace('.', ',');
@@ -7523,6 +7525,177 @@ function openMarker(id){
   window.addEventListener('resize', fit);
   img.onload = fit; img.onerror = () => { toast('Das Bild lässt sich nicht laden'); close(); }; img.src = MEDIA(orig.uri);
 }
+
+// ───────── Übergabe im Heimnetz (2.37): am Handy weiterschneiden (G7) ─────────
+// Windows öffnet für die Dauer des Blatts einen Empfang im Heimnetz und zeigt dessen Adresse als QR-Code. Das Handy scannt ihn mit
+// der Kamera, die Seite dort öffnet die HoneyCut-App, und die App holt das Projekt (als Paket, direkt aus den Dateien) oder gibt
+// ein bearbeitetes Projekt zurück. Brücke: TS.handoverStart/State/Stop/Take (Windows), TS.handoverInfo/Fetch/Send (Android).
+
+// QR-Code (Byte-Modus, Fehlerkorrektur M, Version 1 bis 9 – genug für eine Adresse im Heimnetz). Rückgabe: Feld aus Zeilen mit 0/1.
+function qrMatrix(text){
+  const bytes = [...new TextEncoder().encode(String(text))];
+  const ECC = [0, 10, 16, 26, 18, 24, 16, 18, 22, 22], BLOCKS = [0, 1, 1, 1, 2, 2, 4, 4, 4, 5], RAW = [0, 26, 44, 70, 100, 134, 172, 196, 242, 292];
+  let ver = 1; while (ver <= 9 && bytes.length > RAW[ver] - ECC[ver] * BLOCKS[ver] - 2) ver++;
+  if (ver > 9) throw new Error('Der Text ist zu lang für den QR-Code');
+  const cap = RAW[ver] - ECC[ver] * BLOCKS[ver], bits = [];
+  const put = (v, n) => { for (let i = n - 1; i >= 0; i--) bits.push((v >>> i) & 1); };
+  put(4, 4); put(bytes.length, 8); bytes.forEach(b => put(b, 8));
+  put(0, Math.min(4, cap * 8 - bits.length)); while (bits.length % 8) bits.push(0);
+  const data = []; for (let i = 0; i < bits.length; i += 8) data.push(bits.slice(i, i + 8).reduce((s, b) => s << 1 | b, 0));
+  for (let pad = 0xEC; data.length < cap; pad ^= 0xEC ^ 0x11) data.push(pad);
+  // Reed-Solomon über GF(256)
+  const mul = (x, y) => { let z = 0; for (let i = 7; i >= 0; i--){ z = (z << 1) ^ ((z >>> 7) * 0x11D); z ^= ((y >>> i) & 1) * x; } return z; };
+  const deg = ECC[ver], div = new Array(deg).fill(0); div[deg - 1] = 1;
+  for (let i = 0, root = 1; i < deg; i++){ for (let j = 0; j < deg; j++){ div[j] = mul(div[j], root); if (j + 1 < deg) div[j] ^= div[j + 1]; } root = mul(root, 2); }
+  const rs = d => { const r = new Array(deg).fill(0); for (const b of d){ const f = b ^ r.shift(); r.push(0); div.forEach((c, i) => { r[i] ^= mul(c, f); }); } return r; };
+  const nb = BLOCKS[ver], shortN = nb - RAW[ver] % nb, shortLen = Math.floor(RAW[ver] / nb), blocks = [];
+  for (let i = 0, k = 0; i < nb; i++){ const d = data.slice(k, k + shortLen - deg + (i < shortN ? 0 : 1)); k += d.length; const e = rs(d); if (i < shortN) d.push(0); blocks.push(d.concat(e)); }
+  const all = []; for (let i = 0; i < blocks[0].length; i++) blocks.forEach((b, j) => { if (i !== shortLen - deg || j >= shortN) all.push(b[i]); });
+  // Feld mit festen Mustern
+  const n = ver * 4 + 17, M = Array.from({length: n}, () => new Array(n).fill(0)), F = Array.from({length: n}, () => new Array(n).fill(false));
+  const set = (x, y, v) => { M[y][x] = v ? 1 : 0; F[y][x] = true; };
+  for (let i = 0; i < n; i++){ set(6, i, i % 2 === 0); set(i, 6, i % 2 === 0); }
+  for (const [cx, cy] of [[3, 3], [n - 4, 3], [3, n - 4]]) for (let dy = -4; dy <= 4; dy++) for (let dx = -4; dx <= 4; dx++){
+    const x = cx + dx, y = cy + dy, d = Math.max(Math.abs(dx), Math.abs(dy)); if (x >= 0 && x < n && y >= 0 && y < n) set(x, y, d !== 2 && d !== 4); }
+  if (ver > 1){ const na = Math.floor(ver / 7) + 2, step = Math.ceil((ver * 4 + 4) / (na * 2 - 2)) * 2, pos = [6]; for (let p = n - 7; pos.length < na; p -= step) pos.splice(1, 0, p);
+    pos.forEach((py, i) => pos.forEach((px, j) => { if ((i === 0 && j === 0) || (i === 0 && j === na - 1) || (i === na - 1 && j === 0)) return;
+      for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) set(px + dx, py + dy, Math.max(Math.abs(dx), Math.abs(dy)) !== 1); })); }
+  const format = mask => { let rem = mask; for (let i = 0; i < 10; i++) rem = (rem << 1) ^ ((rem >>> 9) * 0x537); const b = ((mask << 10) | rem) ^ 0x5412, bit = i => (b >>> i) & 1;   // Stufe M hat die Kennung 00
+    for (let i = 0; i <= 5; i++) set(8, i, bit(i)); set(8, 7, bit(6)); set(8, 8, bit(7)); set(7, 8, bit(8)); for (let i = 9; i < 15; i++) set(14 - i, 8, bit(i));
+    for (let i = 0; i < 8; i++) set(n - 1 - i, 8, bit(i)); for (let i = 8; i < 15; i++) set(8, n - 15 + i, bit(i)); set(8, n - 8, 1); };
+  format(0);
+  if (ver >= 7){ let rem = ver; for (let i = 0; i < 12; i++) rem = (rem << 1) ^ ((rem >>> 11) * 0x1F25); const b = (ver << 12) | rem;
+    for (let i = 0; i < 18; i++){ const a = n - 11 + i % 3, c = Math.floor(i / 3), v = (b >>> i) & 1; set(a, c, v); set(c, a, v); } }
+  // Daten im Zickzack von unten rechts
+  let k = 0;
+  for (let right = n - 1; right >= 1; right -= 2){ if (right === 6) right = 5;
+    for (let vert = 0; vert < n; vert++) for (let j = 0; j < 2; j++){ const x = right - j, up = ((right + 1) & 2) === 0, y = up ? n - 1 - vert : vert;
+      if (!F[y][x] && k < all.length * 8){ M[y][x] = (all[k >>> 3] >>> (7 - (k & 7))) & 1; k++; } } }
+  // Maske mit den wenigsten Strafpunkten
+  const MASK = [(x, y) => (x + y) % 2 === 0, (x, y) => y % 2 === 0, (x, y) => x % 3 === 0, (x, y) => (x + y) % 3 === 0, (x, y) => (Math.floor(x / 3) + Math.floor(y / 2)) % 2 === 0,
+    (x, y) => x * y % 2 + x * y % 3 === 0, (x, y) => (x * y % 2 + x * y % 3) % 2 === 0, (x, y) => ((x + y) % 2 + x * y % 3) % 2 === 0];
+  const flip = m => { for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) if (!F[y][x] && MASK[m](x, y)) M[y][x] ^= 1; };
+  const penalty = () => { let p = 0, dark = 0;
+    const line = get => { for (let a = 0; a < n; a++){ let run = 1; for (let b = 1; b <= n; b++){ if (b < n && get(a, b) === get(a, b - 1)) run++; else { if (run >= 5) p += run - 2; run = 1; } }
+      for (let b = 0; b + 10 < n; b++){ const s = Array.from({length: 11}, (_, i) => get(a, b + i)).join(''); if (s === '10111010000' || s === '00001011101') p += 40; } } };
+    line((y, x) => M[y][x]); line((x, y) => M[y][x]);
+    for (let y = 0; y < n - 1; y++) for (let x = 0; x < n - 1; x++){ const c = M[y][x]; if (c === M[y][x + 1] && c === M[y + 1][x] && c === M[y + 1][x + 1]) p += 3; }
+    for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) dark += M[y][x];
+    return p + Math.floor(Math.abs(dark * 20 - n * n * 10) / (n * n)) * 10; };
+  let best = 0, bp = Infinity;
+  for (let m = 0; m < 8; m++){ flip(m); format(m); const p = penalty(); if (p < bp){ bp = p; best = m; } flip(m); }
+  flip(best); format(best);
+  return M;
+}
+// QR-Code auf eine Leinwand zeichnen (dunkel auf hell, mit ruhigem Rand von vier Feldern)
+function qrCanvas(cv, text, px){
+  const M = qrMatrix(text), n = M.length, q = 4, cell = Math.max(2, Math.floor((px || 264) / (n + 2 * q)));
+  cv.width = cv.height = cell * (n + 2 * q); const x = cv.getContext('2d'); x.fillStyle = '#FFFFFF'; x.fillRect(0, 0, cv.width, cv.height); x.fillStyle = '#131312';
+  for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) if (M[r][c]) x.fillRect((c + q) * cell, (r + q) * cell, cell, cell);
+  return n;
+}
+
+// Windows: Blatt „Ans Handy übergeben“ (pid = Projekt, das angeboten wird; ohne pid wartet der Empfang nur auf ein Projekt vom Handy)
+let hoTimer = null;
+function handoverClose(){ clearInterval(hoTimer); hoTimer = null; try { if (TS.handoverStop) TS.handoverStop(); } catch(_){} if ($('#hoBox')) closeHcModal(); }
+function handoverDialog(pid){
+  if (!TS.handoverStart) return toast('Die Übergabe ans Handy gibt es in der Windows-App');
+  if (pid && P && P.id === pid) saveNow();
+  const proj = pid ? J(TS.loadProject(pid)) : null; if (pid && !proj) return toast('Projekt nicht gefunden');
+  const m = hcModal(`<div id="hoBox"><h3>${proj ? 'Ans Handy übergeben' : 'Mit dem Handy verbinden'}</h3>
+    <div id="hoSetup">${proj ? `<p class="muted small">„${esc(proj.name || 'Projekt')}“ geht im WLAN direkt an die HoneyCut-App auf deinem Android-Handy – ohne Datei, die du verschicken musst.</p>
+      <label class="row"><input type="checkbox" id="hoMedia" checked> Videos, Bilder und Schriften mitschicken</label>
+      <p class="muted small">Ohne: nur der Schnitt. Das passt, wenn die Videos von einer früheren Übergabe schon auf dem Handy liegen.</p>
+      ${subLooks.length ? `<label class="row"><input type="checkbox" id="hoLooks" checked> Meine Untertitel-Looks mitgeben (${subLooks.length})</label>` : ''}` : '<p class="muted small">Der Computer nimmt ein Projekt entgegen, das du am Handy bearbeitet hast.</p>'}
+      <div class="row" style="margin-top:12px"><button class="btn" id="hoNo">Abbrechen</button><button class="btn primary" id="hoGo" style="margin-left:auto">${proj ? 'Bereitstellen' : 'Verbindung öffnen'}</button></div></div>
+    <div id="hoLive" class="hidden"><div class="ho-grid"><canvas id="hoQr" width="264" height="264" aria-label="QR-Code für das Handy"></canvas>
+      <ol class="ho-steps"><li>Handy und Computer sind im selben WLAN.</li><li>Den QR-Code mit der Kamera des Handys scannen.</li><li>Auf der Seite, die sich öffnet, „In HoneyCut öffnen“ antippen.</li></ol></div>
+      <p class="small muted">Oder am Handy in HoneyCut unter „Mit Computer verbinden“ eintippen: <b id="hoAddr" class="ho-addr"></b></p>
+      <p class="small" id="hoStatus"></p><div class="progress hidden" id="hoProg"><i></i></div>
+      <div id="hoInbox"></div>
+      <p class="muted small">Fragt Windows beim ersten Mal nach dem Netzwerkzugriff, bitte für private Netzwerke erlauben. Die Verbindung gilt, solange dieses Fenster offen ist; sie läuft unverschlüsselt im eigenen WLAN.</p>
+      <div class="row" style="margin-top:12px"><button class="btn" id="hoDone" style="margin-left:auto">Schließen</button></div></div></div>`);
+  m.querySelector('.hc-card').classList.add('wide');
+  const q = s => m.querySelector(s);
+  q('#hoNo').onclick = () => closeHcModal();
+  q('#hoDone').onclick = () => handoverClose();
+  let shown = '';
+  const paint = st => {
+    if (!st || !st.active){ q('#hoStatus').textContent = 'Die Verbindung ist geschlossen.'; return; }
+    const url = (st.urls || [])[0] || '';
+    if (url && url !== shown){ shown = url; try { qrCanvas(q('#hoQr'), url, 264); } catch(e){ hcLog('QR-Code: ' + e.message); } q('#hoAddr').textContent = url.replace(/^http:\/\//, ''); }
+    if (!url) q('#hoStatus').textContent = 'Dieser Computer hat gerade keine Adresse im Heimnetz. Bitte mit dem WLAN oder dem Netzwerk verbinden.';
+    else if (st.offer){ const o = st.offer; q('#hoProg').classList.toggle('hidden', o.status !== 'sending'); q('#hoProg i').style.width = Math.round((o.progress || 0) * 100) + '%';
+      q('#hoStatus').textContent = o.status === 'sending' ? `Das Handy holt „${o.name}“ … ${Math.round((o.progress || 0) * 100)} %` : o.done ? `„${o.name}“ ist auf dem Handy angekommen (${fmtMB(o.bytes)}).` : `„${o.name}“ steht bereit (${fmtMB(o.bytes)}). Warte auf das Handy …`; }
+    else q('#hoStatus').textContent = 'Warte auf das Handy …';
+    const inbox = st.inbox || [];
+    q('#hoInbox').innerHTML = inbox.length ? '<h4 class="ho-h">Vom Handy</h4>' + inbox.map(e => `<div class="ho-row"><span><b>${esc(e.name)}</b> <span class="muted small">${e.status === 'receiving' ? `kommt an … ${Math.round((e.progress || 0) * 100)} %` : e.status === 'error' ? 'Fehler: ' + esc(e.error) : fmtMB(e.bytes)}</span></span>${e.status === 'ready' ? `<button class="btn small primary" data-take="${esc(e.id)}">Übernehmen</button>` : ''}</div>`).join('') : '';
+  };
+  const poll = () => { if (!$('#hoBox')){ handoverClose(); return; } try { paint(J(TS.handoverState())); } catch(_){} };
+  q('#hoGo').onclick = () => {
+    let st; try { const spec = proj ? packageSpec(proj, q('#hoMedia').checked, !!(q('#hoLooks') && q('#hoLooks').checked)) : null; st = J(TS.handoverStart(spec ? JSON.stringify(spec) : '')); }
+    catch(e){ return toast('Die Verbindung ließ sich nicht öffnen: ' + e.message); }
+    q('#hoSetup').classList.add('hidden'); q('#hoLive').classList.remove('hidden'); paint(st); clearInterval(hoTimer); hoTimer = setInterval(poll, 1000);
+  };
+  q('#hoInbox').onclick = e => { const b = e.target.closest('[data-take]'); if (!b) return; b.disabled = true;
+    let res; try { res = J(TS.handoverTake(b.dataset.take)); } catch(err){ b.disabled = false; return toast('Das Projekt ließ sich nicht übernehmen: ' + err.message); }
+    clearInterval(hoTimer); hoTimer = null; try { TS.handoverStop(); } catch(_){}
+    finishImport(res).catch(err => { console.error(err); toast('Fehler beim Übernehmen: ' + err.message); }); };
+}
+
+// Android: mit dem Computer verbunden (url = Adresse aus dem QR-Code, http://…/h/<Kennung>)
+function handoverUrl(raw){ let u = String(raw || '').trim().replace(/\s+/g, ''); if (!u) return ''; if (!/^https?:\/\//i.test(u)) u = 'http://' + u; u = u.replace(/\/+$/, '');
+  return /^http:\/\/[0-9a-z.\-]+:\d{2,5}\/h\/[A-Za-z0-9_\-]{6,}$/i.test(u) ? u : ''; }
+async function handoverPhone(raw){
+  if (!TS.handoverInfo) return toast('Die Übergabe gibt es in der Android-App von HoneyCut');
+  const url = handoverUrl(raw); if (!url) return toast('Diese Adresse passt nicht – bitte den QR-Code am Computer scannen');
+  const m = hcModal(`<div id="hoPhone"><h3>Mit dem Computer verbunden</h3><p class="small muted" id="hpMsg">Verbindung wird geprüft …</p>
+    <div id="hpBody"></div><div class="progress hidden" id="hpProg"><i></i></div>
+    <div class="row" style="margin-top:12px"><button class="btn" id="hpClose" style="margin-left:auto">Schließen</button></div></div>`);
+  const q = s => m.querySelector(s); let job = null;
+  q('#hpClose').onclick = () => { if (job) TS.cancel(job); closeHcModal(); };
+  const info = await platformCall(id => TS.handoverInfo(id, url));
+  if (!$('#hoPhone')) return;
+  if (!info || info.error || info.app !== 'honeycut'){ q('#hpMsg').textContent = 'Der Computer ist nicht erreichbar. Sind Handy und Computer im selben WLAN, und ist am Computer „Ans Handy übergeben“ noch geöffnet?' + (info && info.error ? ` (${info.error})` : ''); return; }
+  const list = (J(TS.listProjects()) || []).slice().sort((a, b) => (b.updated || 0) - (a.updated || 0)), offer = info.offer;
+  const pre = (offer && list.find(p => p.id === offer.project)) || (P && list.find(p => p.id === P.id)) || list[0];
+  q('#hpMsg').textContent = offer ? 'Der Computer bietet ein Projekt an.' : 'Der Computer wartet auf ein Projekt von diesem Handy.';
+  q('#hpBody').innerHTML = (offer ? `<div class="ho-card"><b>${esc(offer.name)}</b><span class="muted small">${fmtMB(offer.bytes)}</span><button class="btn primary" id="hpGet">Auf dieses Handy holen</button></div>` : '')
+    + (list.length ? `<div class="ho-card"><b>Projekt zurückgeben</b><select id="hpProj">${list.map(p => `<option value="${esc(p.id)}"${pre && p.id === pre.id ? ' selected' : ''}>${esc(p.name || 'Projekt')}</option>`).join('')}</select>
+      <label class="row"><input type="checkbox" id="hpMedia"> Videos, Bilder und Schriften mitschicken</label><span class="muted small">Ohne geht nur der Schnitt zurück – der Computer hat die Videos schon.</span>
+      <button class="btn" id="hpSend">An den Computer zurückgeben</button></div>` : '');
+  const busy = on => { m.querySelectorAll('#hpGet, #hpSend, #hpProj, #hpMedia').forEach(el => { el.disabled = on; }); q('#hpProg').classList.toggle('hidden', !on); };
+  const run = (start, label, done) => { busy(true); q('#hpMsg').textContent = label;
+    platformCall(start).then(r => { if (!r || !r.job){ busy(false); q('#hpMsg').textContent = 'Das ließ sich nicht starten' + (r && r.error ? ': ' + r.error : '.'); return; }
+      job = r.job;
+      watchJob(job, j => { q('#hpProg i').style.width = ((j.progress || 0) * 100).toFixed(1) + '%'; if (j.message) q('#hpMsg').textContent = j.message; },
+        j => { job = null; busy(false); done(j.result || {}); },
+        j => { job = null; busy(false); q('#hpMsg').textContent = j.status === 'cancelled' ? 'Abgebrochen' : 'Fehler: ' + (j.error || ''); }); }); };
+  if (offer) q('#hpGet').onclick = () => run(id => TS.handoverFetch(id, url), `„${offer.name}“ wird geholt …`, res => finishImport(res).catch(e => { console.error(e); toast('Fehler beim Import: ' + e.message); }));
+  if (list.length) q('#hpSend').onclick = () => { const pid = q('#hpProj').value; if (P && P.id === pid) saveNow();
+    const proj = J(TS.loadProject(pid)); if (!proj) return toast('Projekt nicht gefunden');
+    const spec = packageSpec(proj, q('#hpMedia').checked, false);
+    run(id => TS.handoverSend(id, url, JSON.stringify(spec)), `„${proj.name || 'Projekt'}“ wird übertragen …`, () => { q('#hpMsg').textContent = `„${proj.name || 'Projekt'}“ ist am Computer angekommen. Dort im Fenster „Übernehmen“ wählen.`; }); };
+}
+// Android: Adresse von Hand eingeben (für den Fall, dass sich die Seite nach dem Scannen nicht in die App öffnet)
+function handoverConnect(){
+  const m = hcModal(`<h3>Mit Computer verbinden</h3>
+    <p class="muted small">Am Computer in HoneyCut „Ans Handy übergeben“ öffnen und den QR-Code mit der Kamera dieses Handys scannen. Auf der Seite, die sich öffnet, „In HoneyCut öffnen“ antippen.</p>
+    <p class="muted small">Oder die Adresse eintippen, die am Computer unter dem QR-Code steht:</p>
+    <input type="text" id="hcAddr" inputmode="url" autocapitalize="off" autocomplete="off" spellcheck="false" placeholder="192.168.…:…/h/…" style="width:100%;font-size:16px">
+    <div class="row" style="margin-top:12px"><button class="btn" id="hcNo">Abbrechen</button><button class="btn primary" id="hcGo" style="margin-left:auto">Verbinden</button></div>`);
+  m.querySelector('#hcNo').onclick = () => closeHcModal();
+  const go = () => { const u = handoverUrl(m.querySelector('#hcAddr').value); if (!u) return toast('Diese Adresse passt nicht – sie sieht aus wie 192.168.1.20:51234/h/AbCdEf123456'); handoverPhone(u); };
+  m.querySelector('#hcGo').onclick = go; m.querySelector('#hcAddr').onkeydown = e => { if (e.key === 'Enter') go(); };
+}
+window.TSApp.onHandover = url => { try { handoverPhone(url); } catch(e){ console.error(e); } };
+// Knöpfe auf der Startseite und im Export-Reiter: am Computer „Handy“, am Handy „Computer“; im Browser gibt es die Übergabe nicht
+function handoverButtons(){
+  const hb = $('#handBtn'), pb = $('#handProjBtn'), can = !!(TS.handoverStart || TS.handoverInfo), lbl = (b, t) => { const s = b.querySelector('span'); if (s) s.textContent = t; else b.textContent = b.textContent.replace(/^(\S+\s).*$/, '$1' + t); };
+  hb.classList.toggle('hidden', !can); pb.classList.toggle('hidden', !can);
+  if (TS.handoverInfo && !TS.handoverStart){ lbl(hb, 'Computer'); lbl(pb, 'Mit Computer verbinden …'); }
+}
+function handoverEntry(pid){ if (TS.handoverStart) handoverDialog(pid || null); else if (TS.handoverInfo) handoverConnect(); else toast('Die Übergabe im Heimnetz gibt es in der Windows-App und in der Android-App'); }
 
 // ───────── Bildgestaltung (2.36): Zoom-Schnitte (E4), Standbild und Tempo-Verlauf (E7), Farb-Vorlagen und Weißabgleich (E9),
 //           Bild beruhigen (E11), Hintergründe fürs Freistellen (E12) ─────────

@@ -1329,7 +1329,129 @@ def bild_236():
     chk("Die App meldet das Beruhigen an die Oberfläche und nennt das Verfahren im Fehlerbericht", T.app_info().get("stabilize") is True and "Bild beruhigen" in T.report_text({}))
 
 
-PARTS = (speichern_und_fassungen, speicher, sicherung, projektpakete, kleine_helfer, quellen_und_belege, schrift_im_export, transkript, export_231, untertitel_effekte, ton_234, belege_235, bild_236, neue_versionen, bericht_und_protokoll)
+def uebergabe_237():
+    """2.37: Übergabe im Heimnetz – der zeitweilige Empfang neben dem eigentlichen Server: Seite fürs Handy, Auskunft, Paket als Strom
+    direkt aus den Dateien, Rückgabe vom Handy, falsche Kennung, Sperre, Platzmangel, Schließen. Das „Handy“ ist hier ein HTTP-Aufruf."""
+    import io
+    import urllib.error
+    import urllib.request
+    ud = TMP / "uebergabe"
+    ud.mkdir(parents=True, exist_ok=True)
+    imp = ud / "importe"
+    root0, T.import_root = T.import_root, lambda: imp
+    video, bild = ud / "aufnahme.mp4", ud / "logo.png"
+    video.write_bytes(os.urandom(700_000))
+    bild.write_bytes(os.urandom(20_000))
+    T.allow(video)
+    T.allow(bild)
+    proj = {"id": "ueb1", "name": "Rede: Haushalt", "sources": [{"uri": "@hc:m0", "name": "aufnahme.mp4", "duration": 60}], "items": [{"clip": {"uri": "@hc:m1", "name": "logo.png"}}]}
+
+    def spec(media=True):
+        return {"name": proj["name"], "header": {"format": "honeycut-projekt", "v": 1, "name": proj["name"], "project": json.loads(json.dumps(proj)),
+                                                 "files": [{"n": "m0", "kind": "media", "name": "aufnahme.mp4", "duration": 60}, {"n": "m1", "kind": "media", "name": "logo.png"}]},
+                "files": [{"n": "m0", "uri": str(video), "include": media}, {"n": "m1", "uri": str(bild), "include": media}]}
+
+    def get(url, data=None):
+        try:
+            with urllib.request.urlopen(urllib.request.Request(url, data=data, method="POST" if data is not None else "GET"), timeout=20) as r:
+                return r.status, r.read(), dict(r.headers)
+        except urllib.error.HTTPError as e:
+            return e.code, e.read(), dict(e.headers)
+    ips = T.lan_ips()
+    chk("Adressen im Heimnetz: nur private IPv4-Adressen, keine doppelt", all(re.match(r"^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|192\.0\.2\.)", ip) for ip in ips) and len(set(ips)) == len(ips), ips)
+    chk("ohne offenen Empfang meldet der Stand „geschlossen“", T.handover_state() == {"active": False})
+    st = T.handover_start(spec(), bind="127.0.0.1")
+    tok, port = T.HAND["token"], T.HAND["port"]
+    base = f"http://127.0.0.1:{port}/h/{tok}"
+    chk("Empfang öffnen: eigener Port, Einmal-Kennung, das Projekt steht mit seiner Größe bereit", st["active"] and port > 1024 and len(tok) >= 12 and st["offer"]["name"] == "Rede: Haushalt"
+        and st["offer"]["status"] == "ready" and st["offer"]["bytes"] > 720_000 and st["inbox"] == [] and all(u.endswith(f":{port}/h/{tok}") for u in st["urls"]), {k: st[k] for k in ("port", "offer")})
+    code, page, _ = get(base + "/")
+    page = page.decode("utf-8")
+    chk("Seite fürs Handy: Name des Projekts, Knopf in die App mit der Adresse des Empfangs, Datei zum Herunterladen",
+        code == 200 and "Rede: Haushalt" in page and "intent://uebergabe?u=http%3A%2F%2F127.0.0.1%3A" in page and "scheme=honeycut;package=de.honeybalecta.textschnitt" in page and f"/h/{tok}/paket" in page and "In HoneyCut öffnen" in page)
+    code, body, _ = get(base + "/info")
+    info = json.loads(body)
+    chk("Auskunft: App, Version und das Angebot", code == 200 and info["app"] == "honeycut" and info["version"] == T.VERSION and info["offer"] == {"name": "Rede: Haushalt", "bytes": st["offer"]["bytes"], "project": "ueb1"} and info["free"] > 0, info)
+    code, pk, hd = get(base + "/paket")
+    ref = ud / "vergleich.honeycut"
+    T.package_export_job(job(), spec(), str(ref))
+    chk("Paket als Strom: dieselben Bytes wie „Projekt weitergeben“, Länge vorab genannt", code == 200 and pk == ref.read_bytes() and int(hd.get("Content-Length")) == len(pk) == st["offer"]["bytes"] and "attachment" in hd.get("Content-Disposition", ""), [code, len(pk)])
+    s2 = T.handover_state()
+    chk("nach dem Holen meldet der Stand „angekommen“", s2["offer"]["status"] == "done" and s2["offer"]["done"] == 1, s2["offer"])
+    # nichts anderes ist aus dem Netz erreichbar
+    codes = [get(f"http://127.0.0.1:{port}{p}")[0] for p in ("/", "/api/projects", f"/{T.TOKEN}/api/info", "/h/", "/h/falsch/info", f"/h/{tok}/info/mehr", f"/h/{tok}/../api/info")]
+    chk("ohne die Kennung gibt es nichts: Startseite, Schnittstelle des eigentlichen Servers und falsche Kennungen enden mit 404", all(c == 404 for c in codes) and T.HAND["bad"] == len(codes), [codes, T.HAND["bad"]])
+    chk("unbekannte Adresse unter der Kennung: 404, zählt nicht als Fehlversuch", get(base + "/projekte")[0] == 404 and T.HAND["bad"] == len(codes))
+    # Rückgabe vom Handy: nur der Schnitt (ohne Dateien) und mit Dateien
+    proj["name"] = "Rede: Haushalt (am Handy)"
+    head, plan, total = T.package_plan(spec(False))
+    buf = io.BytesIO()
+    T.package_write(job(), buf, head, plan, total)
+    code, body, _ = get(base + "/zurueck", buf.getvalue())
+    s3 = T.handover_state()
+    chk("Rückgabe ohne Dateien: angenommen, steht im Eingang bereit", code == 200 and json.loads(body)["ok"] and len(s3["inbox"]) == 1 and s3["inbox"][0]["status"] == "ready" and s3["inbox"][0]["name"] == "Rede: Haushalt (am Handy)", s3["inbox"])
+    res = T.handover_take(s3["inbox"][0]["id"])
+    chk("Übernehmen: Kopf mit dem Projekt wie beim Paket-Import, keine Dateien; der Eingang ist danach leer",
+        res["header"]["project"]["name"] == "Rede: Haushalt (am Handy)" and res["map"] == {} and T.handover_state()["inbox"] == [] and not any(imp.iterdir()), res["map"])
+    code, body, _ = get(base + "/zurueck", pk)
+    s4 = T.handover_state()
+    res = T.handover_take(s4["inbox"][0]["id"])
+    got = Path(res["map"]["m0"])
+    chk("Rückgabe mit Dateien: beim Empfang entpackt, die Dateien liegen im Import-Ordner", code == 200 and got.parent.parent == imp and got.read_bytes() == video.read_bytes() and Path(res["map"]["m1"]).read_bytes() == bild.read_bytes(), res["map"])
+    code, body, _ = get(base + "/zurueck", pk)
+    res = T.handover_take(T.handover_state()["inbox"][0]["id"])
+    chk("dieselben Dateien noch einmal: überlesen, es entsteht keine zweite Kopie", code == 200 and Path(res["map"]["m0"]) == got and len(list(got.parent.iterdir())) == 2, sorted(x.name for x in got.parent.iterdir()))
+    code, body, _ = get(base + "/zurueck", b"kein Paket, nur Text" * 20)
+    s5 = T.handover_state()
+    chk("etwas anderes als ein Paket: abgewiesen, der Grund steht im Eingang", code == 400 and "kein HoneyCut-Projekt" in json.loads(body)["error"] and s5["inbox"][-1]["status"] == "error", [code, s5["inbox"][-1]])
+    code, body, _ = get(base + "/zurueck", pk[:len(pk) // 2])
+    part = [x.name for x in got.parent.iterdir() if x.name.endswith(".part")]
+    chk("abgeschnittenes Paket: abgewiesen, kein halbes Stück bleibt liegen", code == 400 and not part, [code, part])
+    try:
+        T.handover_take("gibtsnicht")
+        chk("Übernehmen ohne Eintrag wird abgewiesen", False)
+    except ValueError:
+        chk("Übernehmen ohne Eintrag wird abgewiesen", True)
+    du0, T.shutil.disk_usage = T.shutil.disk_usage, lambda p: type("U", (), {"free": 1000})()
+    try:
+        code, body, _ = get(base + "/zurueck", pk)
+        free = json.loads(get(base + "/info")[1])["free"]
+    finally:
+        T.shutil.disk_usage = du0
+    chk("zu wenig Platz auf dem Computer: abgewiesen, bevor etwas geschrieben ist; die Auskunft nennt 0 freie Bytes", code == 507 and "zu wenig Platz" in json.loads(body)["error"] and free == 0, [code, body[:80], free])
+    # ein zweites Öffnen behält Kennung und Port; ohne Projekt wartet der Empfang nur
+    st2 = T.handover_start(None, bind="127.0.0.1")
+    chk("erneutes Öffnen: derselbe Empfang, dasselbe Angebot", T.HAND["token"] == tok and T.HAND["port"] == port and st2["offer"]["name"] == "Rede: Haushalt")
+    # Sperre nach zu vielen falschen Kennungen
+    max0, T.HAND_BAD_MAX = T.HAND_BAD_MAX, T.HAND["bad"] + 2
+    get(f"http://127.0.0.1:{port}/h/geraten1/info")
+    get(f"http://127.0.0.1:{port}/h/geraten2/info")
+    for _ in range(40):
+        if not T.HAND["srv"]:
+            break
+        time.sleep(0.1)
+    T.HAND_BAD_MAX = max0
+    try:
+        urllib.request.urlopen(base + "/info", timeout=3)
+        zu = False
+    except Exception:
+        zu = True
+    chk("zu viele falsche Kennungen: Der Empfang schließt von selbst", T.HAND["srv"] is None and zu and T.handover_state() == {"active": False})
+    # nur warten (ohne Angebot), schließen
+    st3 = T.handover_start(None, bind="127.0.0.1")
+    base3 = f"http://127.0.0.1:{T.HAND['port']}/h/{T.HAND['token']}"
+    code, page3, _ = get(base3 + "/")
+    chk("Empfang ohne Angebot: neue Kennung, die Seite spricht von der Rückgabe, kein Paket zum Holen", st3["offer"] is None and T.HAND["token"] != tok and code == 200 and "Projekt zurückgeben" in page3.decode("utf-8")
+        and get(base3 + "/paket")[0] == 404 and json.loads(get(base3 + "/info")[1])["offer"] is None)
+    T.handover_stop()
+    chk("Schließen: nichts antwortet mehr, der Stand ist leer", T.handover_state() == {"active": False} and T.HAND["token"] == "" and T.HAND["inbox"] == {})
+    chk("die App meldet die Übergabe an die Oberfläche", T.app_info().get("handover") is True)
+    sf = T.uebergabe_selftest()
+    chk("Selbsttest der App: Empfang öffnet, antwortet, weist ab und schließt", sf["ok"] and sf["falsch"] == 404 and sf["zu"], sf)
+    T.import_root = root0
+
+
+PARTS = (speichern_und_fassungen, speicher, sicherung, projektpakete, kleine_helfer, quellen_und_belege, schrift_im_export, transkript, export_231, untertitel_effekte, ton_234, belege_235, bild_236, uebergabe_237, neue_versionen, bericht_und_protokoll)
 for part in [p for p in PARTS if p.__name__ == MODE] or PARTS:
     print(f"── {part.__name__.replace('_', ' ')} ──", flush=True)
     part()

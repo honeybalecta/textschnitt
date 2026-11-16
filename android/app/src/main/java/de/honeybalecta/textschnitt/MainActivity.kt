@@ -2,6 +2,7 @@ package de.honeybalecta.textschnitt
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.net.Uri
@@ -106,11 +107,32 @@ class MainActivity : ComponentActivity() {
         web.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean =
                 request.url.host != "127.0.0.1"
+            override fun onPageFinished(view: WebView, url: String) {
+                pageReady = true
+                pendingHandover?.let { pendingHandover = null; deliverHandover(it) }
+            }
         }
+        pendingHandover = handoverOf(intent)
         onBackPressedDispatcher.addCallback(this) {
             web.evaluateJavascript("window.TSApp && TSApp.onBack()") { r -> if (r != "true") finish() }
         }
         web.loadUrl(server.base + "index.html")
+    }
+
+    // ── Übergabe im Heimnetz: Die Seite des Computers öffnet die App über honeycut://uebergabe?u=<Adresse> ──
+    private var pageReady = false
+    private var pendingHandover: String? = null
+    private fun handoverOf(i: Intent?): String? =
+        i?.data?.takeIf { it.scheme == "honeycut" && it.host == "uebergabe" }?.getQueryParameter("u")?.takeIf { it.isNotBlank() }
+    private fun deliverHandover(url: String) {
+        web.evaluateJavascript("window.TSApp && TSApp.onHandover && TSApp.onHandover(" + org.json.JSONObject.quote(url) + ")", null)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        val url = handoverOf(intent) ?: return
+        if (pageReady) deliverHandover(url) else pendingHandover = url
     }
 
     override fun onPause() {

@@ -18,7 +18,7 @@
   </header>
   <div class="home-body">
     <div class="upd hidden" id="updBanner"></div>
-    <div class="home-actions"><h2 class="home-h">Projekte</h2><button class="btn small" id="impProj" title="Projekt von einem anderen Gerät oder einer anderen Person öffnen (.honeycut)">⤓ Projekt importieren</button></div>
+    <div class="home-actions"><h2 class="home-h">Projekte</h2><button class="btn small hidden" id="handBtn" title="Ein Projekt im WLAN zwischen Computer und Handy übergeben">⇄ Handy</button><button class="btn small" id="impProj" title="Projekt von einem anderen Gerät oder einer anderen Person öffnen (.honeycut)">⤓ Projekt importieren</button></div>
     <div class="home-find hidden" id="homeFind"><input type="search" id="projFind" placeholder="Projekte und Text durchsuchen" autocomplete="off" enterkeyhint="search"><select id="projSort" title="Reihenfolge der Liste"><option value="new">Zuletzt bearbeitet</option><option value="old">Älteste zuerst</option><option value="name">Name A–Z</option><option value="len">Längste zuerst</option></select></div>
     <div id="projList"></div>
     <div id="findHits" class="find-hits hidden"></div>
@@ -486,7 +486,7 @@
       <div class="card stack pkg-card">
         <h3>Projekt weitergeben</h3>
         <span class="muted small">Das ganze Projekt als eine Datei (.honeycut) – samt Videos, Bildern und Schriften. Auf dem Handy, Tablet, im Browser oder bei einer anderen Person mit „Projekt importieren“ öffnen und nahtlos weiterarbeiten.</span>
-        <div class="row"><button class="btn" id="pkgBtn">⤴ Projekt exportieren …</button></div>
+        <div class="row wrap"><button class="btn" id="pkgBtn">⤴ Projekt exportieren …</button><button class="btn hidden" id="handProjBtn" title="Im WLAN direkt an die HoneyCut-App auf dem Handy – ohne Datei">📱 Ans Handy übergeben …</button></div>
       </div>
     </div>
   </main>
