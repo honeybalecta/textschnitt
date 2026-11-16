@@ -37,7 +37,7 @@ os.environ.setdefault("HF_HUB_DISABLE_IMPLICIT_TOKEN", "1")
 import warnings  # noqa: E402
 warnings.filterwarnings("ignore", module="huggingface_hub")
 
-VERSION = "2.31.0"
+VERSION = "2.32.0"
 APP_DIR = Path(__file__).resolve().parent
 FROZEN = bool(getattr(sys, "frozen", False))          # als installierte .exe gebaut
 RES_DIR = Path(getattr(sys, "_MEIPASS", APP_DIR))      # mitgelieferte Dateien (Oberfläche, ffmpeg, Modelle)
@@ -942,6 +942,81 @@ def hex_rgb(h: str) -> tuple[int, int, int]:
     return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
 
 
+SUB_ANIMS = ("fade", "pop")
+SUB_ANIM_S = 0.16   # Dauer von Einblenden und Aufpoppen
+
+
+def clean_fx(c: dict, n_words: int) -> dict:
+    """Untertitel-Effekte (2.32), bezogen auf die Wörter des Textes in ihrer Reihenfolge:
+    words = [[Beginn, Ende], …] in Ausgabezeit für die ersten Wörter; hl = Farbe des gerade gesprochenen Worts;
+    build = Wörter erscheinen erst, wenn sie gesprochen werden; spans = [[Wortnummer, Farbe], …] für betonte Wörter;
+    anim = fade | pop beim Erscheinen. Unbrauchbare Angaben fallen weg."""
+    o: dict = {}
+    col = lambda v: str(v) if isinstance(v, str) and re.fullmatch(r"#[0-9a-fA-F]{6}", v) else None   # noqa: E731
+    try:
+        ws = [[float(a), float(b)] for a, b in (c.get("words") or [])][:n_words]
+    except (TypeError, ValueError):
+        ws = []
+    if ws and all(b >= a for a, b in ws):
+        if col(c.get("hl")):
+            o["hl"] = col(c.get("hl"))
+        if c.get("build"):
+            o["build"] = True
+        if "hl" in o or "build" in o:
+            o["words"] = ws
+    spans = []
+    for s in c.get("spans") or []:
+        try:
+            k, v = int(s[0]), col(s[1])
+        except (TypeError, ValueError, IndexError):
+            continue
+        if 0 <= k < n_words and v:
+            spans.append([k, v])
+    if spans:
+        o["spans"] = spans
+    if c.get("anim") in SUB_ANIMS:
+        o["anim"] = c["anim"]
+    return o
+
+
+def cue_has_fx(c: dict) -> bool:
+    return any(k in c for k in ("words", "spans", "anim"))
+
+
+def fx_state(c: dict, t: float, n_words: int) -> list:
+    """Farbe je Wort zum Zeitpunkt t: None = Grundfarbe, "" = noch verborgen, sonst #rrggbb."""
+    ws, hl, build = c.get("words") or [], c.get("hl"), bool(c.get("build"))
+    spans = {k: v for k, v in c.get("spans") or []}
+    out = []
+    for k in range(n_words):
+        v = spans.get(k)
+        if k < len(ws):
+            if build and t < ws[k][0] - 1e-6:
+                v = ""
+            elif hl and ws[k][0] - 1e-6 <= t < ws[k][1] - 1e-6:
+                v = hl
+        out.append(v)
+    return out
+
+
+def fx_slices(c: dict) -> list[tuple[float, float]]:
+    """Zeitabschnitte eines Untertitels, in denen sich an den Wörtern nichts ändert. Wechsel, die in die Dauer der
+    Animation am Anfang fielen, rücken an deren Ende – so läuft die Animation in einem Stück."""
+    s, e = c["start"], c["end"]
+    cuts = {s, e}
+    if c.get("hl") or c.get("build"):
+        for a, b in c.get("words") or []:
+            for t in ((a, b) if c.get("hl") else (a,)):
+                if s < t < e:
+                    cuts.add(t)
+    lead = s + SUB_ANIM_S if c.get("anim") else s
+    pts = sorted({(min(lead, e) if s < t < lead else t) for t in cuts})
+    pts = [t for k, t in enumerate(pts) if k == 0 or t - pts[k - 1] > 0.011 or t == e]
+    if len(pts) > 1 and pts[-1] - pts[-2] <= 0.011 and len(pts) > 2:
+        pts.pop(-2)
+    return [(a, b) for a, b in zip(pts, pts[1:]) if b - a > 0.005]
+
+
 def clean_cues(raw) -> list[dict]:
     cues = []
     for c in raw or []:
@@ -963,6 +1038,9 @@ def clean_cues(raw) -> list[dict]:
             if c.get("outlineColor"):
                 o["outlineColor"] = str(c["outlineColor"])
             # Dauerhafte Textzeile: sitzt an einer Ecke (anchor = o/u + l/m/r) mit Randabstand mx/my als Anteil von Breite/Höhe
+            fx = clean_fx(c, len(o["text"].split()))
+            if fx:
+                o.update(fx)
             if c.get("src"):   # Quellenzeile: wie die Textzeile an einer Ecke, auf einer eigenen Textspur
                 o["src"] = True
             if c.get("line"):
@@ -1340,7 +1418,7 @@ def ass_spread(group: list[dict], h: int) -> None:
             g["cy"] += top
 
 
-def ass_events(g: dict, style: dict, t0: str, t1: str) -> list[str]:
+def ass_events(g: dict, style: dict, t0: str, t1: str, ts=None) -> list[str]:
     """Die Einträge zu einer Lage aus ass_layout: der Kasten als eigene Fläche, darüber jede Zeile mit fester Lage –
     der Zeilenabstand von libass hängt sonst an der Zelle der Schrift."""
     c, face, title, px = g["c"], g["face"], g["title"], g["px"]
@@ -1352,17 +1430,61 @@ def ass_events(g: dict, style: dict, t0: str, t1: str) -> list[str]:
     qr, qg, qb = hex_rgb(ocol)
     look = (f"\\fn{fam}\\b{1 if bold else 0}\\fs{px * sum(face.cell):.2f}\\1c&H{cb:02X}{cg:02X}{cr:02X}&\\3c&H{qb:02X}{qg:02X}{qr:02X}&"
             + (f"\\bord{max(1.0, px / 14):.1f}\\shad0" if out_on else "\\bord0\\shad0" if title else f"\\bord0\\shad{max(1.0, px / 20):.1f}"))
-    ev = []
-    if g["bg"]:
-        ev.append(f"Dialogue: 0,{t0},{t1},Default,,0,0,0,,{{\\an7\\pos({g['bx']:.1f},{g['cy'] - g['box_h'] / 2:.1f})\\bord0\\shad0\\1c&H000000&"
-                  f"\\1a&H{0x73 if title else 0x66:02X}&\\p4}}{ass_rrect(g['box_w'], g['box_h'], px * (0.15 if title else 0.18))}{{\\p0}}")
+    base = f"\\1c&H{cb:02X}{cg:02X}{cr:02X}&"
+
+    def box(a0: str, a1: str, extra: str = "") -> list[str]:
+        if not g["bg"]:
+            return []
+        return [f"Dialogue: 0,{a0},{a1},Default,,0,0,0,,{{{extra}\\an7\\pos({g['bx']:.1f},{g['cy'] - g['box_h'] / 2:.1f})\\bord0\\shad0\\1c&H000000&"
+                f"\\1a&H{0x73 if title else 0x66:02X}&\\p4}}{ass_rrect(g['box_w'], g['box_h'], px * (0.15 if title else 0.18))}{{\\p0}}"]
     # Grundlinie: Der Browser setzt Ober- und Unterlänge mittig in die Zeile, libass richtet die Zelle der Schrift aus
     shift = ((face.css[0] - face.css[1]) - (face.cell[0] - face.cell[1])) / 2 * px
     an = 4 if g["al"] == "l" else 6 if g["al"] == "r" else 5
+    ys = [g["cy"] - g["ch"] / 2 + (k + 0.5) * SUB_LINE * px + shift for k in range(len(g["rows"]))]
+    if cue_has_fx(c) and ts is not None:
+        return ass_fx_events(g, c, look, base, an, ys, ts, box)
+    ev = box(t0, t1)
     for k, row in enumerate(g["rows"]):
         if row:
-            y = g["cy"] - g["ch"] / 2 + (k + 0.5) * SUB_LINE * px + shift
-            ev.append(f"Dialogue: 1,{t0},{t1},Default,,0,0,0,,{{\\an{an}\\pos({g['x']:.1f},{y:.1f}){look}}}{row}")
+            ev.append(f"Dialogue: 1,{t0},{t1},Default,,0,0,0,,{{\\an{an}\\pos({g['x']:.1f},{ys[k]:.1f}){look}}}{row}")
+    return ev
+
+
+def ass_fx_events(g: dict, c: dict, look: str, base: str, an: int, ys: list[float], ts, box) -> list[str]:
+    """Untertitel mit Effekten: je Zeitabschnitt ein Satz Einträge; Farbe und Sichtbarkeit je Wort stehen als Angaben im Text.
+    Die Lage der Zeilen bleibt über alle Abschnitte gleich – es ändert sich nur, was die Wörter zeigen."""
+    rows = [r.split() for r in g["rows"]]
+    n = sum(len(r) for r in rows)
+    anim, ev, ms = c.get("anim"), [], int(SUB_ANIM_S * 1000)
+    for k, (a, b) in enumerate(fx_slices(c)):
+        t0, t1 = ts(a), ts(b)
+        if t0 == t1:
+            continue
+        first = k == 0 and bool(anim)
+        fade = f"\\fad({ms},0)" if first and anim == "fade" else ""
+        pop = f"\\fscx84\\fscy84\\t(0,{ms},\\fscx100\\fscy100)" if first and anim == "pop" else ""
+        ev += box(t0, t1, fade)
+        state, i = fx_state(c, a if k == 0 else (a + b) / 2, n), 0
+        for r, words in enumerate(rows):
+            parts, cur = [], None
+            for w in words:
+                v = state[i]
+                i += 1
+                if v != cur:
+                    if v == "":
+                        parts.append("{\\alpha&HFF&}")
+                    else:
+                        tag = "\\alpha&H00&" if cur == "" else ""
+                        if v is None:
+                            tag += base
+                        else:
+                            rr, gg, bb = hex_rgb(v)
+                            tag += f"\\1c&H{bb:02X}{gg:02X}{rr:02X}&"
+                        parts.append("{" + tag + "}")
+                    cur = v
+                parts.append(w + " ")
+            if words:
+                ev.append(f"Dialogue: 1,{t0},{t1},Default,,0,0,0,,{{\\an{an}\\pos({g['x']:.1f},{ys[r]:.1f}){look}{fade}{pop}}}{''.join(parts).rstrip()}")
     return ev
 
 
@@ -1420,7 +1542,7 @@ def write_ass(cues: list[dict], style: dict, out: Path, w: int, h: int, fonts: d
     for c in cues:
         placed = lay.get(id(c))
         if placed is not None:
-            lines += ass_events(placed, style, ts(c["start"]), ts(c["end"]))
+            lines += ass_events(placed, style, ts(c["start"]), ts(c["end"]), ts)
             continue
         rows = c["text"].split("\n")
         csize = c["size"] * min(w, h) * (1.25 if h > w else 1.0) if c.get("size") else size

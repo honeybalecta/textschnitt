@@ -713,7 +713,7 @@ setTimeout(() => { if (!$('#home').classList.contains('hidden')) renderUpdateBan
 // ── Alle Projekte sichern, Sicherung einspielen (Desktop) ──
 // Gesichert werden die Projekte samt Folienbildern und Schriften, dazu die eigenen Designprofile, Farbfavoriten, Füllwörter und
 // Untertitel-Looks, dazu das eigene Wörterbuch – ohne die Videos.
-const PREF_KEYS = ['hc-slide-profiles', 'hc-colfav', 'hc-fillers', 'hc-sub-looks', 'hc-dict', 'hc-house', 'hc-blocks'];
+const PREF_KEYS = ['hc-slide-profiles', 'hc-colfav', 'hc-fillers', 'hc-sub-looks', 'hc-dict', 'hc-house', 'hc-blocks', 'hc-emoji'];
 function uiPrefs(){ const o = {}; for (const k of PREF_KEYS){ try { const v = JSON.parse(localStorage.getItem(k)); if (Array.isArray(v) && v.length) o[k] = v; } catch(_){} } return o; }
 function mergePrefs(pr){
   let n = 0; if (!pr || typeof pr !== 'object') return 0;
@@ -726,6 +726,7 @@ function mergePrefs(pr){
   try { n += mergeDict(pr['hc-dict']); } catch(_){}
   try { n += mergeHouse(pr['hc-house']); } catch(_){}
   try { n += mergeBlocks(pr['hc-blocks']); } catch(_){}
+  try { n += mergeEmoji(pr['hc-emoji']); } catch(_){}
   return n;
 }
 const plural = (k, one, many) => `${k} ${k === 1 ? one : many}`;
@@ -1099,7 +1100,7 @@ function tokMarks(){ const o = {}; for (const t of tokens) if (t.spk || t.ks || 
 // Zum Stand gehören auch Format, Bildausschnitt und die Lautstärke der Hauptvideos (fm, fr, sv). Sie fehlten: „Rückgängig“
 // nach einem Formatwechsel, nach dem Verschieben des Ausschnitts oder nach „Alle angleichen“ tat nichts bzw. nur die Hälfte.
 function snapshot(){ return JSON.stringify({d:[...deleted], t:P.trims, c:P.cues, i:P.items, a:P.adj, x:P.dels, y:P.splits, s:P.sub_style, e:P.edits, m:P.moves, k:P.speakers, w:tokMarks(), f:P.slides, wm:P.watermark || null, tr:P.trans || null,
-  fm:P.format || null, fr:P.frame || null, sv:P.sources.map(x => x.vol == null ? null : x.vol), mk:P.marks || [], tl:P.textline || null, rf:P.refs || [], ss:P.srcStyle || null, lw:P.lower || null, ck:P.checks || []}); }
+  fm:P.format || null, fr:P.frame || null, sv:P.sources.map(x => x.vol == null ? null : x.vol), mk:P.marks || [], tl:P.textline || null, rf:P.refs || [], ss:P.srcStyle || null, lw:P.lower || null, ck:P.checks || [], kw:P.kw || []}); }
 function restore(s){ const o = JSON.parse(s); deleted = new Set(o.d); P.trims = o.t; P.cues = o.c; P.items = o.i; P.adj = o.a; P.dels = o.x || []; P.splits = o.y || [];
   if (o.s) P.sub_style = o.s; P.edits = o.e || {}; P.moves = o.m || [];
   const fmCh = 'fm' in o && (P.format || null) !== (o.fm || null), frCh = 'fr' in o && JSON.stringify(P.frame || null) !== JSON.stringify(o.fr || null);
@@ -1113,6 +1114,7 @@ function restore(s){ const o = JSON.parse(s); deleted = new Set(o.d); P.trims = 
   if ('ss' in o){ if (o.ss) P.srcStyle = o.ss; else delete P.srcStyle; }
   if ('lw' in o){ if (o.lw) P.lower = o.lw; else delete P.lower; }
   if ('ck' in o) P.checks = o.ck || [];
+  if ('kw' in o) P.kw = o.kw || [];
   if (o.f) P.slides = o.f; if (o.k) P.speakers = o.k;
   if ('wm' in o){ if (o.wm) P.watermark = o.wm; else delete P.watermark; } if ('tr' in o){ if (o.tr) P.trans = o.tr; else delete P.trans; trMemo.list = null; } if (o.w){ for (const t of tokens){ const m = o.w[t.i]; if (m){ if (m[0]) t.spk = m[0]; else delete t.spk; if (m[1]) t.ks = true; else delete t.ks; if (m[2]) t.ok = 1; else delete t.ok; } else { delete t.spk; delete t.ks; delete t.ok; } } }
   const reorder = JSON.stringify(P.moves) !== lastOrderKey; syncStyleInputs(); changed(true);
@@ -2752,6 +2754,7 @@ function paint(i){
   if (t.type === 'word'){ const tx = tokText(t); if (sp.textContent !== tx) sp.textContent = tx; sp.classList.toggle('empty', !tx); sp.classList.toggle('edited', P.edits[t.i] != null); sp.classList.toggle('low', isLowTok(t)); }
   sp.classList.toggle('del', deleted.has(i) || (t.type === 'word' && isSrcDeleted((t.ws + t.we) / 2)));
   sp.classList.toggle('ks', !!t.ks && sp.classList.contains('del'));
+  const kwOn = !!(P.kw && P.kw.length && P.kw.includes(i)); if (kwOn !== sp.classList.contains('kw')){ sp.classList.toggle('kw', kwOn); } sp.style.setProperty('--kw', kwOn ? (S().kwColor || KW_DEF) : '');
   const added = t.type !== 'word' && P.edits[i];
   sp.classList.toggle('added', !!added);
   if (added){ sp.textContent = P.edits[i]; return; }
@@ -4666,14 +4669,14 @@ const TR_STYLE = {font: null, color: '#CFC6B0', size: 'klein', outline: true, bg
 function trStyle(){ const st = S(), t = (P.trans && P.trans.style) || {}; const r = {...TR_STYLE, font: st.font || '', outline: st.outline !== false, ...t}; r.outlineColor ||= st.outlineColor || '#000000'; return r; }
 const escH = t => String(t).replace(/[&<>]/g, c => ({'&':'&amp;', '<':'&lt;', '>':'&gt;'}[c]));
 // Vorschau: Original und Übersetzung als zwei Blöcke im selben Untertitel – die Übersetzung mit eigenem Stil
-function subHtml(text, tr, base){
+function subHtml(text, tr, base, fx){
   if (tr == null) return null;
   const ts = trStyle(), rel = (SIZE_F[ts.size] || 0.045) / (SIZE_F[base.size] || 0.058), stage = $('#stage'), px = subPx(stage.clientWidth || 1, stage.clientHeight || 1, base) * rel, o = Math.max(1, px / 14);
   const sh = ts.outline ? [[-1,-1],[1,-1],[-1,1],[1,1],[0,-1.4],[0,1.4],[-1.4,0],[1.4,0]].map(([x, y]) => `${(x*o).toFixed(1)}px ${(y*o).toFixed(1)}px 0 ${ts.outlineColor}`).join(',') : `0 ${(px/20).toFixed(1)}px ${(px/10).toFixed(1)}px rgba(0,0,0,.8)`;
   const trCss = `display:block;color:${ts.color};font-size:${rel.toFixed(3)}em;font-family:${fontCss(ts.font).replace(/"/g, "'")};font-weight:${fontWeight(ts.font)};text-shadow:${sh}` + (ts.bg ? `;background:rgba(0,0,0,.6);border-radius:${(px*0.18).toFixed(1)}px;padding:${(px*0.1).toFixed(1)}px ${(px*0.3).toFixed(1)}px;width:fit-content;margin:auto` : '');
   const tb = `<span style="${trCss}">${escH(trWrap(tr))}</span>`;
   if (P.trans.mode === 'only') return tb;
-  const ob = `<span style="display:block">${escH(wrapText(text))}</span>`;
+  const ob = `<span style="display:block">${fx ? subWordsHtml(wrapText(text)) : escH(wrapText(text))}</span>`;
   return ts.pos === 'über' ? tb + ob : ob + tb;
 }
 function trWrap(tr){
@@ -4689,6 +4692,7 @@ function trCues(o, tr, W, H, base){
   if (tr == null) return [o];
   const ts = trStyle(), port = H > W ? 1.25 : 1, fT = SIZE_F[ts.size] || 0.045, tx = trWrap(tr);
   const t = {...o, text: tx, color: ts.color, size: fT, outline: !!ts.outline, font: ts.font || '', outlineColor: ts.outlineColor}; if (ts.bg) t.bg = true; else delete t.bg;
+  for (const k of ['words', 'hl', 'build', 'spans']) delete t[k];   // Wort-Effekte gehören zum Original, die Übersetzung hat andere Wörter
   if (P.trans.mode === 'only') return [t];
   const fO = o.size || SIZE_F[base.size] || 0.058, hO = o.text.split('\n').length * fO * Math.min(W, H) * port * 1.15 / H, hT = tx.split('\n').length * fT * Math.min(W, H) * port * 1.15 / H;
   const gap = fO * Math.min(W, H) * port * 0.2 / H, tot = hO + gap + hT, m = 0.02, top = clamp(o.y - tot / 2, m, Math.max(m, 1 - m - tot));
@@ -4900,11 +4904,14 @@ function updateSubs(o){
   const now = performance.now(); if (cueCache.at < 0 || now - cueCache.at > (playing ? 3000 : 400)) cueCache = {at:now, list:computedCues()};
   const list = cueCache.list, cur = list.find(x => o >= x.s && o < x.e) || null;
   if (!SubDrag.on && !(subShown && subShown.cur === cur && subShown.list === list)){
-    const tr = cur ? trTexts(list)[list.indexOf(cur)] : null, html = cur ? subHtml(cur.text, tr, cueStyle(cur.c)) : null;
-    if (html != null) ov.innerHTML = html; else ov.textContent = cur ? subDisplay(cur.text, tr) : '';
+    const tr = cur ? trTexts(list)[list.indexOf(cur)] : null, fx = cur ? cueFx(cur, wrapText(cur.text)) : null, em = cur && cur.c.emoji ? `<span class="se">${escH(cur.c.emoji)}</span>` : '';
+    const html = cur ? subHtml(cur.text, tr, cueStyle(cur.c), !!fx) : null;
+    if (html != null) ov.innerHTML = html + em; else if (cur && (fx || em)) ov.innerHTML = (tr == null ? subWordsHtml(wrapText(cur.text)) : escH(subDisplay(cur.text, tr))) + em; else ov.textContent = cur ? subDisplay(cur.text, tr) : '';
+    fxShown = fx && (tr == null || P.trans.mode !== 'only') ? {fx, start: cur.s, key: null} : null; fxAnimate(fx);
     const prevSp = cueSpk(shownCue); shownCue = cur ? cur.c : null; shownRange = cur ? [cur.s, cur.e] : null;
     if (cueSpk(shownCue) !== prevSp) styleOverlay(); else placeOverlay();
     subShown = {cur, list}; }
+  if (fxShown) fxPaint(o);
   const id = cur ? cur.c.id : null;
   if (id !== lastCue && tab === 'subs'){
     if (lastCue && cueEls.get(lastCue)) cueEls.get(lastCue).classList.remove('now');
@@ -4974,7 +4981,7 @@ function syncStyleInputs(){
   $('#sideSubs').classList.toggle('on', st.enabled !== false); fillFontSelects();
   $('#subsMaster').checked = st.enabled !== false; $('#subsMasterLbl').textContent = st.enabled !== false ? 'Untertitel an' : 'Untertitel aus';
   $('#paneSubs').classList.toggle('subs-off', st.enabled === false); $('#paneSubs').classList.toggle('word-mode', st.mode === 'word');
-  styleOverlay(); renderLooks();
+  styleOverlay(); renderLooks(); syncFxInputs();
 }
 [['#stChars','chars',Number],['#stLines','lines',Number],['#stDur','dur',Number],['#stSize','size',String],['#stColor','color',v => v.toUpperCase()]]
   .forEach(([sel, key, conv]) => $(sel).addEventListener('change', e => { S()[key] = conv(e.target.value); styleOverlay(); changed(false); }));
@@ -5028,7 +5035,7 @@ function renderSubs(){
     const el = document.createElement('div'); el.className = 'cue'; el.dataset.id = c.id;
     el.innerHTML = `<div class="tm"><span class="t"></span><span class="w"></span></div><textarea rows="2" dir="auto"></textarea>
       <div class="acts"><button data-a="split">✂ teilen</button><button data-a="merge">⤓ zusammen</button><button data-a="off"></button>
-      <button data-a="keep" class="hidden"></button><select class="cue-spk hidden" title="Person dieses Untertitels"></select>
+      <button data-a="emoji" title="Emoji oder Symbol über diesem Untertitel"><span></span></button><button data-a="keep" class="hidden"></button><select class="cue-spk hidden" title="Person dieses Untertitels"></select>
       <button data-a="auto" class="hidden">↺ auto</button><button data-a="pos" class="hidden">↺ Position</button><button data-a="time" class="hidden">↺ Zeit</button><button data-a="s-">Start −</button><button data-a="s+">Start +</button><button data-a="e-">Ende −</button><button data-a="e+">Ende +</button></div>`;
     if (idx === P.cues.length - 1) el.querySelector('[data-a=merge]').disabled = true;
     if (trHas() && P.trans.mode !== 'off' && S().mode !== 'word'){ el.querySelector('textarea').insertAdjacentHTML('afterend', `<textarea rows="1" class="cue-tr" dir="auto" placeholder="${(P.trans.lang || 'en').toUpperCase()} – Übersetzung"></textarea>`);
@@ -5053,6 +5060,7 @@ function paintCue(c, keepText){
   el.querySelector('.t').textContent = t ? `${fmtS(t.s)} – ${fmtS(t.e)}` : 'Wörter gelöscht';
   el.querySelector('.w').textContent = [c.own ? 'eigener Untertitel' : isFree(c) ? 'Zeit frei gesetzt' : '', (c.ds || c.de) ? `Start ${c.ds >= 0 ? '+' : ''}${(c.ds||0).toFixed(1)} · Ende ${c.de >= 0 ? '+' : ''}${(c.de||0).toFixed(1)}` : '', c.x != null ? 'eigene Position' : ''].filter(Boolean).join(' · ');
   el.querySelector('[data-a=off]').textContent = c.off ? 'einblenden' : 'ausblenden';
+  el.querySelector('[data-a=emoji] span').textContent = c.emoji ? c.emoji + ' Symbol' : '+ Symbol';
   el.querySelector('[data-a=auto]').classList.toggle('hidden', c.text == null || !!c.own);
   el.querySelector('[data-a=pos]').classList.toggle('hidden', c.x == null);
   el.querySelector('[data-a=time]').classList.toggle('hidden', !!c.own || (!isFree(c) && !c.ds && !c.de));
@@ -5079,6 +5087,7 @@ $('#cueList').addEventListener('click', e => {
   const btn = e.target.closest('[data-a]');
   if (!btn){ if (e.target.closest('.tm')){ const t = cueTimes(c); if (t) seekOut(t.s + 0.01, false); } return; }
   const a = btn.dataset.a, ta = el.querySelector('textarea');
+  if (a === 'emoji') return openEmoji(c);
   if (a === 'keep'){ const cut = range(c.a, Math.min(c.b, tokens.length - 1)).filter(i => isTextTok(i) && tokText(tokens[i]) && isCut(i)); const on = !cut.every(i => tokens[i].ks);
     commit(() => keepSubs(cut, on), false); renderSubs(); if (spans.length) tokens.forEach(t => paint(t.i)); toast(on ? 'Untertitel bleibt – erscheint kurz am Schnitt' : 'Untertitel wieder weg'); return; }
   if (c.own && a === 'split'){
@@ -5110,7 +5119,7 @@ $('#cueList').addEventListener('click', e => {
 // ───────── Eigene Looks (D5): ein fertiger Untertitel-Stil unter einem Namen ─────────
 // Gilt auf diesem Gerät für alle Projekte (localStorage), reist mit der Sicherung und – auf Wunsch – im Projektpaket mit.
 const LOOK_KEY = 'hc-sub-looks';
-const LOOK_FIELDS = ['mode', 'chars', 'lines', 'dur', 'size', 'pos', 'x', 'y', 'color', 'outline', 'outlineColor', 'font', 'bg'];
+const LOOK_FIELDS = ['mode', 'chars', 'lines', 'dur', 'size', 'pos', 'x', 'y', 'color', 'outline', 'outlineColor', 'font', 'bg', 'hl', 'anim', 'kwColor', 'kwDict'];
 const LOOK_SPLIT = ['mode', 'chars', 'lines', 'dur'];   // diese Angaben bestimmen die Aufteilung: Ändern sie sich, werden die Untertitel neu aufgeteilt
 let subLooks = (() => { try { const v = JSON.parse(localStorage.getItem(LOOK_KEY)); return Array.isArray(v) ? v.filter(l => l && l.id && l.name && l.st) : []; } catch(_){ return []; } })();
 const lookOf = st => { const o = {}; for (const k of LOOK_FIELDS) if (st[k] != null && st[k] !== '' && st[k] !== false) o[k] = st[k]; if (st.outline === false) o.outline = false; return o; };
@@ -5557,13 +5566,16 @@ function buildPlan(dry){   // dry: nur nachsehen (z. B. für das Titelbild) – 
     width:o.x.clip.width, height:o.x.clip.height, rotation:o.x.clip.rotation || 0}))
     .concat(dry ? [] : decoPlan(W, H)).concat(dry ? [] : lowerPlan(W, H)).concat(wmPlan(W, H))
     .concat(audios.map(a => ({mode:'audio', image:false, uri:a.x.clip.uri, in:r3(a.x.in), out:r3(a.x.in + (a.end - a.at)), at:r3(a.at), track:a.x.track || 1, vol:+(a.x.vol ?? 1), hasAudio:true})));
-  const cl = S().enabled !== false && P.cues.length ? computedCues() : [], ctr = trTexts(cl);
+  const cl = S().enabled !== false && P.cues.length ? computedCues() : [], ctr = trTexts(cl), emo = [];
   const cues = cl.length ? cl.map((x, k) => { const [cx, cy0] = cueXY(x.c), sy = x.c.x == null && window.subSlideY ? subSlideY(x.s, x.e) : null, cy = sy ?? cy0, o = {start:r3(x.s), end:r3(x.e), text:wrapText(x.text), x:cx, y:cy};
     if (S().bg) o.bg = true;   // Untertitel mit Kasten (Clip-Look)
     const sp = cueSpk(x.c), st = sp && sp.st;   // Abweichungen der Person
     if (st){ if (st.color) o.color = st.color; if (st.size) o.size = SIZE_F[st.size] || 0.058; if (st.font != null) o.font = st.font; if (st.outline != null) o.outline = !!st.outline; if (sp.name) o.speaker = sp.name; }
+    const fx = exFmt === 'video' ? cueFx(x, o.text) : null; if (fx) Object.assign(o, fx);
+    if (x.c.emoji && exFmt === 'video' && !dry) emo.push({x, text: o.text, cx, cy});
     if (ctr[k] != null) return trCues(o, ctr[k], W, H, cueStyle(x.c));
     return [o]; }).flat() : [];
+  if (emo.length) ovs.splice(ovs.findIndex(q => q.mode === 'audio') < 0 ? ovs.length : ovs.findIndex(q => q.mode === 'audio'), 0, ...emojiPlan(emo, W, H));
   for (const t of P.items.filter(x => x.type === 'title' && !x.lt && (x.text || '').trim())){ const a = srcToOut(snapSrc(t.at)); if (a >= total) continue;
     cues.push({start:r3(a), end:r3(Math.min(total, a + t.dur)), text:wrapTitle(t.text.trim(), (SIZE_F[t.size] || 0.058) * (t.scale || 1), t.font, W, H), x:t.x, y:t.y, size:+((SIZE_F[t.size] || 0.058) * (t.scale || 1)).toFixed(4), color:t.color || '#FFFFFF', outline:t.outline !== false, bg:!!t.bg, title:true, font:t.font || ''}); }
   const tl = tlineCue(W, H); if (tl) cues.push(tl);
@@ -5783,6 +5795,144 @@ function renderModels(){
     box.append(el);
   }
 }
+
+// ───────── Untertitel-Effekte (2.32): Wort-Hervorhebung (D1), Schlagwörter (D2), Animationen (D3), Emojis (D4) ─────────
+// Stil: S().hl = Farbe des gerade gesprochenen Worts ('' = aus), S().anim = '' | fade | pop | build, S().kwColor = Farbe betonter
+// Wörter, S().kwDict = Begriffe aus dem Wörterbuch betonen. P.kw = Nummern einzeln betonter Wörter. c.emoji = Symbol am Untertitel.
+// Im Exportplan stehen die Effekte je Untertitel, bezogen auf die Wörter seines Textes in ihrer Reihenfolge:
+// words = [[Beginn, Ende], …], hl, build, spans = [[Wortnummer, Farbe], …], anim = fade | pop. Alle drei Export-Wege lesen dasselbe.
+const SUB_ANIMS = {fade: 'Einblenden', pop: 'Aufpoppen', build: 'Wort für Wort'};
+const HL_DEF = '#F5D90A', KW_DEF = '#E5402A', FX_ANIM_S = 0.16;
+const kwNorm = s => String(s).toLowerCase().replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '');
+let kwDictMemo = {key: '', set: new Set()};
+function kwDictSet(){ const key = JSON.stringify(dict.map(e => e.t)); if (kwDictMemo.key !== key) kwDictMemo = {key, set: new Set(dict.flatMap(e => String(e.t).split(/\s+/).map(kwNorm)).filter(w => w.length > 2))}; return kwDictMemo.set; }
+const fxOn = () => { const st = S(); return !!(st.hl || st.anim || st.kwDict || (P.kw && P.kw.length)); };
+// Wörter eines berechneten Untertitels mit ihren Zeiten im fertigen Video. Automatischer Text nimmt die Zeiten der Wörter aus dem
+// Transkript; von Hand geänderter Text und frei gesetzte Untertitel verteilen die Dauer nach der Länge der Wörter.
+function cueWordList(x, text){
+  const words = String(text ?? wrapText(x.text)).split(/\s+/).filter(Boolean), n = words.length, c = x.c; if (!n) return [];
+  let ids = !c.own && c.text == null && !isFree(c) ? cueWords(c) : null;
+  if (ids && (ids.length !== n || ids.some(i => /\s/.test(tokText(tokens[i]).trim())))) ids = null;
+  let st;
+  if (ids) st = ids.map(i => srcToOut(wS(tokens[i])));
+  else { const len = words.map(w => w.length + 1), sum = len.reduce((a, b) => a + b, 0); let acc = 0; st = len.map(l => { const t = x.s + (x.e - x.s) * acc / sum; acc += l; return t; }); }
+  for (let k = 0; k < n; k++){ st[k] = clamp(st[k], x.s, Math.max(x.s, x.e - 0.03)); if (k && st[k] < st[k - 1]) st[k] = st[k - 1]; }
+  st[0] = x.s;
+  return words.map((w, k) => ({w, s: st[k], e: k + 1 < n ? st[k + 1] : x.e, i: ids ? ids[k] : null}));
+}
+function cueFx(x, text){   // → null oder {words, hl, build, spans, anim}
+  if (!fxOn()) return null;
+  const st = S(), list = cueWordList(x, text), o = {};
+  if (st.mode !== 'word' && (st.hl || st.anim === 'build') && list.length){ o.words = list.map(q => [r3(q.s), r3(q.e)]); if (st.hl) o.hl = st.hl; if (st.anim === 'build') o.build = true; }
+  const kw = P.kw && P.kw.length ? new Set(P.kw) : null, ds = st.kwDict ? kwDictSet() : null, col = st.kwColor || KW_DEF, spans = [];
+  list.forEach((q, k) => { if ((kw && q.i != null && kw.has(q.i)) || (ds && ds.has(kwNorm(q.w)))) spans.push([k, col]); });
+  if (spans.length) o.spans = spans;
+  if (st.anim === 'fade' || st.anim === 'pop') o.anim = st.anim;
+  return Object.keys(o).length ? o : null;
+}
+// Was jedes Wort zum Zeitpunkt t zeigt: null = Grundfarbe, '' = noch verborgen, sonst die Farbe
+function fxState(fx, t, n, start){
+  const ws = fx.words || [], sp = new Map(fx.spans || []), tt = fx.anim && t < start + FX_ANIM_S ? start : t, out = [];
+  for (let k = 0; k < n; k++){ let v = sp.get(k) ?? null;
+    if (k < ws.length){ if (fx.build && tt < ws[k][0] - 1e-6) v = ''; else if (fx.hl && tt >= ws[k][0] - 1e-6 && tt < ws[k][1] - 1e-6) v = fx.hl; }
+    out.push(v); }
+  return out;
+}
+// ── Vorschau: Wörter als einzelne Elemente; Farbe und Sichtbarkeit folgen der Abspiellinie ──
+const subWordsHtml = text => escH(text).replace(/[^\s]+/g, w => `<span class="sw">${w}</span>`);
+let fxShown = null;   // {fx, start, key}: Stand der Wörter des gerade gezeigten Untertitels
+function fxPaint(o){
+  if (!fxShown) return; const els = $$('#subOv .sw'), st = fxState(fxShown.fx, o, els.length, fxShown.start), key = st.join('|'); if (key === fxShown.key) return; fxShown.key = key;
+  els.forEach((el, k) => { const v = st[k]; el.style.color = v || ''; el.style.visibility = v === '' ? 'hidden' : ''; });
+}
+function fxAnimate(fx){
+  const ov = $('#subOv'); ov.classList.remove('a-fade', 'a-pop'); if (!fx || !fx.anim || !playing) return;
+  void ov.offsetWidth; ov.classList.add(fx.anim === 'fade' ? 'a-fade' : 'a-pop');
+}
+// ── Betonen: einzelne Wörter im Text ──
+function kwToggle(ids){
+  ids = ids.filter(i => tokens[i] && isTextTok(i) && tokText(tokens[i])); if (!ids.length) return;
+  const have = new Set(P.kw || []), all = ids.every(i => have.has(i));
+  commit(() => { for (const i of ids){ if (all) have.delete(i); else have.add(i); } P.kw = [...have].sort((a, b) => a - b); }, false);
+  ids.forEach(paint); cueCache.at = -1; subShown = null; updateSubs(outPos); syncFxInputs();
+  toast(all ? 'Betonung entfernt' : `${ids.length} ${ids.length === 1 ? 'Wort' : 'Wörter'} betont – farbig in den Untertiteln`);
+}
+$('#selKw').onclick = () => { const ids = selIds(); if (ids.length){ kwToggle(ids); clearSel(); } };
+// ── Emojis und Symbole am Untertitel ──
+const EMOJI_KEY = 'hc-emoji', EMOJI_BASE = ['🔥', '💸', '📈', '📉', '⚠️', '❗', '❓', '✊', '🗳️', '🏠', '⚖️', '💡', '👉', '✅', '❌', '🤝', '📢', '🕊️', '🌍', '⏰'];
+let emojiMap = (() => { try { const v = JSON.parse(localStorage.getItem(EMOJI_KEY)); return Array.isArray(v) ? v.filter(e => e && typeof e.w === 'string' && typeof e.e === 'string' && kwNorm(e.w) && e.e.trim()) : []; } catch(_){ return []; } })();
+function saveEmojiMap(){ try { localStorage.setItem(EMOJI_KEY, JSON.stringify(emojiMap)); } catch(_){ toast('Speichern im Gerät fehlgeschlagen'); } }
+function mergeEmoji(list){ let n = 0; if (!Array.isArray(list)) return 0;
+  for (const e of list){ if (!e || typeof e.w !== 'string' || typeof e.e !== 'string' || !kwNorm(e.w) || !e.e.trim() || emojiMap.some(x => kwNorm(x.w) === kwNorm(e.w))) continue; emojiMap.push({w: e.w.trim().slice(0, 40), e: e.e.trim().slice(0, 8)}); n++; }
+  if (n) saveEmojiMap(); return n; }
+function emojiSuggest(c){ const ws = new Set(cueText(c).split(/\s+/).map(kwNorm)), out = []; for (const e of emojiMap) if (ws.has(kwNorm(e.w)) && !out.includes(e.e)) out.push(e.e); return out; }
+function emojiSet(c, e){ commit(() => { if (e) c.emoji = e; else delete c.emoji; }, false); paintCue(c); cueCache.at = -1; subShown = null; updateSubs(outPos); }
+function openEmoji(c){
+  const body = $('#sheetBody'); sheetItem = null;
+  const paint = () => {
+    const sug = emojiSuggest(c), words = [...new Set(cueText(c).split(/\s+/).map(w => w.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '')).filter(w => w.length > 2))].slice(0, 12);
+    body.innerHTML = `<h3>Symbol am Untertitel</h3><p class="muted small" dir="auto">„${esc(cueText(c).replace(/\s+/g, ' ').slice(0, 90))}“</p>
+      ${sug.length ? `<div class="field"><span>Vorschläge aus deiner Zuordnung</span><div class="em-grid">${sug.map(e => `<button type="button" class="em${c.emoji === e ? ' on' : ''}" data-e="${esc(e)}"><span>${esc(e)}</span></button>`).join('')}</div></div>` : ''}
+      <div class="field"><span>Auswahl</span><div class="em-grid">${EMOJI_BASE.map(e => `<button type="button" class="em${c.emoji === e ? ' on' : ''}" data-e="${esc(e)}"><span>${esc(e)}</span></button>`).join('')}</div></div>
+      <label class="field"><span>Eigenes Symbol${CAP.platform === 'desktop' ? ' (Emoji-Tastatur: Windows-Taste + Punkt)' : ''}</span><input type="text" id="emOwn" maxlength="8" autocomplete="off" value="${esc(c.emoji && !EMOJI_BASE.includes(c.emoji) && !sug.includes(c.emoji) ? c.emoji : '')}"></label>
+      <div class="field"><span>Zuordnung von Wort zu Symbol – gilt auf diesem Gerät als Vorschlag für alle Projekte</span>
+        <div class="em-map">${emojiMap.length ? emojiMap.map((e, k) => `<span class="look-chip"><b>${esc(e.w)} ${esc(e.e)}</b><button type="button" data-mdel="${k}" title="Zuordnung entfernen">×</button></span>`).join('') : '<span class="muted small">Noch keine Zuordnung.</span>'}</div>
+        <div class="em-add"><select id="emWord">${words.map(w => `<option>${esc(w)}</option>`).join('')}</select><span class="muted small">bekommt das gewählte Symbol</span><button type="button" class="btn small" id="emLearn"${c.emoji ? '' : ' disabled'}>Merken</button></div></div>
+      <div class="row" style="margin-top:12px"><button class="btn" id="emOff"${c.emoji ? '' : ' disabled'}>Ohne Symbol</button><button class="btn" id="emAll" title="Jedem Untertitel ohne Symbol das erste passende aus deiner Zuordnung geben"${emojiMap.length ? '' : ' disabled'}>Vorschläge überall übernehmen</button><button class="btn primary" id="emOk" style="margin-left:auto">Fertig</button></div>`;
+  };
+  body.onclick = e => {
+    const b = e.target.closest('button'); if (!b) return;
+    if (b.dataset.e){ emojiSet(c, c.emoji === b.dataset.e ? '' : b.dataset.e); return paint(); }
+    if (b.dataset.mdel != null){ emojiMap.splice(+b.dataset.mdel, 1); saveEmojiMap(); return paint(); }
+    if (b.id === 'emOff'){ emojiSet(c, ''); return paint(); }
+    if (b.id === 'emLearn'){ const w = $('#emWord').value; if (!w || !c.emoji) return; emojiMap = emojiMap.filter(x => kwNorm(x.w) !== kwNorm(w)); emojiMap.push({w, e: c.emoji}); saveEmojiMap(); toast(`„${w}“ schlägt künftig ${c.emoji} vor`); return paint(); }
+    if (b.id === 'emAll'){ let n = 0; commit(() => { for (const q of P.cues){ if (q.emoji || q.off) continue; const s = emojiSuggest(q)[0]; if (s){ q.emoji = s; n++; } } }, false); if (tab === 'subs') P.cues.forEach(q => paintCue(q)); cueCache.at = -1; subShown = null; updateSubs(outPos); toast(n ? `${n} Untertitel haben ein Symbol bekommen` : 'Kein weiterer Untertitel passt zu deiner Zuordnung'); return paint(); }
+    if (b.id === 'emOk') closeSheet();
+  };
+  body.onchange = e => { if (e.target.id === 'emOwn'){ const v = e.target.value.trim(); if (v){ emojiSet(c, v); paint(); } } };
+  paint(); openSheet(false);
+}
+// Lage des Symbols über dem Untertitel (Anteile des Bildes): Der Textblock wird wie im Export gesetzt (Umbruch bei 88 % der Breite)
+function emojiRect(text, x, y, W, H, st){
+  const px = subPx(W, H, st), E = px * 1.5; wrapCtx ||= document.createElement('canvas').getContext('2d');
+  wrapCtx.font = `${fontWeight(st.font)} ${px.toFixed(1)}px ${fontCss(st.font).replace('var(--ui)', getComputedStyle(document.body).fontFamily || 'sans-serif')}`;
+  let rows = 0; for (const line of String(text).split('\n')){ let cur = ''; rows++; for (const w of line.split(/\s+/).filter(Boolean)){ const t = cur ? cur + ' ' + w : w; if (cur && wrapCtx.measureText(t).width > W * 0.88){ rows++; cur = w; } else cur = t; } }
+  const bh = rows * px * 1.12 + (st.bg ? px * 0.2 : 0), m = 0.02, cy = clamp(y * H, bh / 2 + m * H, H - bh / 2 - m * H);
+  let ey = cy - bh / 2 - px * 0.12 - E / 2; if (ey - E / 2 < 0.01 * H) ey = cy + bh / 2 + px * 0.12 + E / 2;   // oben kein Platz: unter den Untertitel
+  return {x: clamp(x * W, E / 2, W - E / 2) / W, y: ey / H, size: E};
+}
+const emojiImgs = new Map();
+function emojiImage(e, size){
+  const key = e + '|' + Math.round(size); let im = emojiImgs.get(key); if (im) return im; if (emojiImgs.size > 80) emojiImgs.clear();
+  const s = Math.max(8, Math.round(size * 1.3 / 2) * 2), cv = document.createElement('canvas'), ctx = cv.getContext('2d'); cv.width = cv.height = s;
+  ctx.font = `${Math.round(size)}px "Segoe UI Emoji","Apple Color Emoji","Noto Color Emoji","Segoe UI Symbol",sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(e, s / 2, s / 2 + size * 0.04);
+  im = {key, url: cv.toDataURL('image/png'), s}; emojiImgs.set(key, im); return im;
+}
+// Für den Export: jedes Symbol als Bild über dem Untertitel (Spur 96). list = berechnete Untertitel mit ihrer Lage im Plan
+function emojiPlan(list, W, H){
+  const out = []; if (!TS.saveImage) return out;
+  for (const q of list){ const e = q.x.c.emoji; if (!e) continue;
+    const r = emojiRect(q.text, q.cx, q.cy, W, H, cueStyle(q.x.c)), im = emojiImage(e, r.size), m = J(TS.saveImage(`symbol-${hashStr(im.key)}.png`, im.url, im.s, im.s, P.id)); if (!m || !m.uri) continue;
+    out.push({mode: 'pip', image: true, uri: m.uri, in: 0, out: r3(q.x.e - q.x.s), at: r3(q.x.s), x: +r.x.toFixed(4), y: +r.y.toFixed(4), w: +(im.s / W).toFixed(4), aspect: 1, track: 96, vol: 0, hasAudio: false, width: im.s, height: im.s, rotation: 0, emoji: true}); }
+  return out;
+}
+// ── Einstellungen im Untertitel-Reiter ──
+function syncFxInputs(){
+  const st = S(); $('#stHl').checked = !!st.hl; $('#stHlColor').value = (st.hl || st.hlLast || HL_DEF).toLowerCase(); $('#stHlColor').disabled = !st.hl;
+  $('#stAnim').value = SUB_ANIMS[st.anim] ? st.anim : ''; $('#stKwColor').value = (st.kwColor || KW_DEF).toLowerCase(); $('#stKwDict').checked = !!st.kwDict;
+  const n = (P.kw || []).length; $('#stKwInfo').textContent = n ? `${n} ${n === 1 ? 'Wort' : 'Wörter'} im Text betont` : 'Im Text Wörter markieren und „Betonen“ wählen';
+  $('#stKwClear').classList.toggle('hidden', !n);
+  $('#fxNote').textContent = st.mode === 'word' && (st.hl || st.anim === 'build') ? 'Bei „1 Wort pro Untertitel“ steht immer nur das gesprochene Wort im Bild; Hervorhebung und „Wort für Wort“ wirken bei der Aufteilung in Zeilen.' : '';
+}
+const fxChanged = () => { cueCache.at = -1; subShown = null; updateSubs(outPos); syncFxInputs(); renderLooks(); };
+$('#stHl').onchange = e => { commit(() => { const st = S(); if (e.target.checked) st.hl = st.hlLast || HL_DEF; else { st.hlLast = st.hl || st.hlLast; delete st.hl; } }, false); fxChanged(); };
+$('#stHlColor').addEventListener('input', e => { S().hl = e.target.value.toUpperCase(); S().hlLast = S().hl; cueCache.at = -1; subShown = null; updateSubs(outPos); });
+$('#stHlColor').addEventListener('change', () => changed(false));
+$('#stAnim').onchange = e => { commit(() => { if (e.target.value) S().anim = e.target.value; else delete S().anim; }, false); fxChanged(); };
+$('#stKwColor').addEventListener('input', e => { S().kwColor = e.target.value.toUpperCase(); cueCache.at = -1; subShown = null; updateSubs(outPos); if (spans.length) (P.kw || []).forEach(paint); });
+$('#stKwColor').addEventListener('change', () => changed(false));
+$('#stKwDict').onchange = e => { commit(() => { if (e.target.checked) S().kwDict = true; else delete S().kwDict; }, false); fxChanged(); };
+$('#stKwClear').onclick = () => { const ids = P.kw || []; if (!ids.length || !confirm(`Betonung von ${ids.length} ${ids.length === 1 ? 'Wort' : 'Wörtern'} entfernen?`)) return; commit(() => { P.kw = []; }, false); if (spans.length) ids.forEach(paint); fxChanged(); };
 
 // ───────── Export-Warteschlange (A2), Export-Pakete (A1), Grafikkarte (H1) – 2.31 ─────────
 // Warteschlange: fertige Exportpläne warten im Arbeitsspeicher und laufen nacheinander – auch, wenn inzwischen ein anderes Projekt

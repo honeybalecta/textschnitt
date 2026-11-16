@@ -195,6 +195,13 @@
           <label class="row"><input type="checkbox" id="stOutline" checked> Umrandung</label>
           <label>Farbe der Umrandung <input type="color" id="stOutlineColor" value="#000000"></label>
         </div>
+        <div class="fx-box">
+          <div class="row wrap"><label class="row" title="Das gerade gesprochene Wort bekommt eine eigene Farbe"><input type="checkbox" id="stHl"> Gesprochenes Wort hervorheben</label><input type="color" id="stHlColor" value="#f5d90a" title="Farbe des gesprochenen Worts"></div>
+          <label class="row">Animation <select id="stAnim"><option value="">keine</option><option value="fade">Einblenden</option><option value="pop">Aufpoppen</option><option value="build">Wort für Wort aufbauen</option></select></label>
+          <div class="row wrap"><span>Betonte Wörter</span><input type="color" id="stKwColor" value="#e5402a" title="Farbe betonter Wörter"><span class="muted small" id="stKwInfo"></span><button class="btn small hidden" id="stKwClear">Alle entfernen</button></div>
+          <label class="row" title="Namen und Fachbegriffe aus deinem Wörterbuch erscheinen in der Farbe der betonten Wörter"><input type="checkbox" id="stKwDict"> Begriffe aus dem Wörterbuch betonen</label>
+          <span class="muted small" id="fxNote"></span>
+        </div>
         <div class="colfav" title="Farbfavoriten: antippen setzt die Farbe im zuletzt gewählten Farbfeld"></div>
         <div class="row wrap looks" id="lookRow"><span class="muted small">Looks</span><span class="look-list" id="lookList"></span><button class="btn small" id="lookSave" title="Den Stil oben unter einem Namen speichern – für andere Projekte und zum Weitergeben">＋ Als Look speichern</button></div>
         <label class="row safe-row">Schutzzonen <select class="safe-sel" id="safeSel" title="Zeigt im Bild, wo die Apps ihre Bedienelemente über ein Hochformat-Video legen"></select></label>
@@ -468,6 +475,7 @@
       <button class="sb" id="selSent" title="Markierung auf den ganzen Satz ausweiten, nochmal: auf den Absatz (A)"><i>⤢</i><span>Satz</span></button>
       <button class="sb" id="selEdit" title="Text der markierten Wörter korrigieren oder fehlende Wörter ergänzen"><i>✎</i><span>Text</span></button>
       <button class="sb" id="selSpk" title="Markierte Wörter einer Person zuordnen"><i>👤</i><span>Person</span></button>
+      <button class="sb" id="selKw" title="Markierte Wörter in den Untertiteln farbig betonen (nochmal: Betonung entfernen)"><i>★</i><span>Betonen</span></button>
       <button class="sb" id="selClip" title="Markierten Abschnitt als eigenen Clip (z. B. 9:16) öffnen"><i>📱</i><span>Clip</span></button>
       <button class="sb" id="selSlide" title="Aus den markierten Wörtern eine Folie machen"><i>🖼</i><span>Folie</span></button>
       <button class="sb hidden" id="selKeep" title="Nur den Untertitel der weggeschnittenen Wörter zeigen – der Schnitt bleibt"><i>💬</i><span>Untertitel</span></button>

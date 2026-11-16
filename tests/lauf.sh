@@ -81,6 +81,7 @@ lauf hart node "$HERE/p_schrift.mjs"
 lauf hart node "$HERE/p_transkript.mjs"
 lauf hart node "$HERE/p_hausstil.mjs"
 lauf hart node "$HERE/p_export.mjs"
+lauf hart node "$HERE/p_untertitel.mjs"
 for p in stress edit multi editWord; do lauf hart node "$HERE/p_stand.mjs" $p; done
 for p in stress edit; do lauf hart node "$HERE/p_wiedergabe.mjs" $p; done
 

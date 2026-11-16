@@ -13,8 +13,11 @@ import android.os.Handler
 import android.os.Looper
 import android.provider.MediaStore
 import android.text.Layout
+import android.text.SpannableString
+import android.text.Spanned
 import android.text.StaticLayout
 import android.text.TextPaint
+import android.text.style.ForegroundColorSpan
 import androidx.annotation.OptIn
 import androidx.media3.common.C
 import androidx.media3.common.Effect
@@ -449,7 +452,28 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
 
     // ── Untertitel als Bild-Overlay in Ausgabegröße, an freier Position (x/y = Mittelpunkt, 0…1) ──
     class SubtitleOverlay(ctx: Context, private val w: Int, private val h: Int, cues: JSONArray, style: JSONObject, fonts: JSONObject?) : BitmapOverlay() {
-        private data class Cue(val s: Double, val e: Double, val text: String, val x: Float, val y: Float, val size: Float, val color: Int, val outline: Boolean, val bg: Boolean, val face: Typeface, val stroke: Int)
+        // Effekte (2.32), bezogen auf die Wörter des Textes in ihrer Reihenfolge: words = Beginn und Ende je Wort (Ausgabezeit),
+        // hl = Farbe des gesprochenen Worts, build = Wörter erscheinen erst beim Sprechen, spans = Farbe einzelner Wörter,
+        // anim = fade | pop beim Erscheinen. ranges = Zeichenbereiche der Wörter im Text.
+        private data class Cue(val s: Double, val e: Double, val text: String, val x: Float, val y: Float, val size: Float, val color: Int, val outline: Boolean, val bg: Boolean, val face: Typeface, val stroke: Int,
+                               val words: List<DoubleArray>, val hl: Int?, val build: Boolean, val spans: Map<Int, Int>, val anim: String, val ranges: List<IntRange>) {
+            val fx: Boolean get() = words.isNotEmpty() || spans.isNotEmpty() || anim.isNotEmpty()
+        }
+        private val animS = 0.16
+        private fun animP(c: Cue, t: Double): Float = if (c.anim.isEmpty()) 1f else ((t - c.s) / animS).coerceIn(0.0, 1.0).toFloat()
+        // Farbe je Wort zum Zeitpunkt t: null = Grundfarbe, Color.TRANSPARENT = noch verborgen
+        private fun wordColors(c: Cue, t: Double): Array<Int?> {
+            val tt = if (c.anim.isNotEmpty() && t < c.s + animS) c.s else t   // während der Animation gilt der Stand vom Anfang
+            return Array(c.ranges.size) { i ->
+                var v: Int? = c.spans[i]
+                if (i < c.words.size) {
+                    val span = c.words[i]
+                    if (c.build && tt < span[0] - 1e-6) v = Color.TRANSPARENT
+                    else if (c.hl != null && tt >= span[0] - 1e-6 && tt < span[1] - 1e-6) v = c.hl
+                }
+                v
+            }
+        }
         private val faces = HashMap<String, Typeface>()
         private val bold = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
         // Mitgelieferte Schriften liegen in den Assets (web/fonts), eigene im App-Verzeichnis
@@ -462,6 +486,20 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
                     else Typeface.createFromFile(f.getString("uri"))
                 }.getOrDefault(bold)
             }
+        }
+        private fun fxColor(s: String): Int? = if (s.isEmpty()) null else runCatching { Color.parseColor(s) }.getOrNull()
+        private fun fxWords(o: JSONObject): List<DoubleArray> {
+            val a = o.optJSONArray("words") ?: return emptyList()
+            if (fxColor(o.optString("hl", "")) == null && !o.optBoolean("build")) return emptyList()
+            val out = ArrayList<DoubleArray>()
+            for (k in 0 until a.length()) { val p = a.optJSONArray(k) ?: break; out.add(doubleArrayOf(p.optDouble(0, 0.0), p.optDouble(1, 0.0))) }
+            return out
+        }
+        private fun fxSpans(o: JSONObject): Map<Int, Int> {
+            val a = o.optJSONArray("spans") ?: return emptyMap()
+            val m = HashMap<Int, Int>()
+            for (k in 0 until a.length()) { val p = a.optJSONArray(k) ?: continue; val col = fxColor(p.optString(1, "")) ?: continue; m[p.optInt(0, -1)] = col }
+            return m
         }
         private val baseFace = faceOf(style.optString("font", ""))
         private val defX = style.optDouble("x", 0.5).toFloat()
@@ -480,7 +518,9 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
                 if (it.has("outline") && !it.isNull("outline")) it.optBoolean("outline", true) else baseOutline,
                 it.optBoolean("bg"),
                 if (isTitle || it.has("font")) faceOf(it.optString("font", "")) else baseFace,
-                if (it.has("outlineColor") && !it.isNull("outlineColor")) runCatching { Color.parseColor(it.getString("outlineColor")) }.getOrDefault(baseStroke) else if (isTitle) Color.BLACK else baseStroke)
+                if (it.has("outlineColor") && !it.isNull("outlineColor")) runCatching { Color.parseColor(it.getString("outlineColor")) }.getOrDefault(baseStroke) else if (isTitle) Color.BLACK else baseStroke,
+                fxWords(it), fxColor(it.optString("hl", "")), it.optBoolean("build"), fxSpans(it), it.optString("anim", "").let { a -> if (a == "fade" || a == "pop") a else "" },
+                Regex("\\S+").findAll(it.getString("text")).map { m -> m.range }.toList())
         }
         // Ein einziges Bild, das bei jedem Wechsel neu bemalt wird (spart bei 4K viel Speicher)
         private val bmp: Bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
@@ -490,30 +530,51 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
             val t = presentationTimeUs / 1e6
             // Untertitel und Titel können gleichzeitig sichtbar sein
             val act = list.indices.filter { t >= list[it].s && t < list[it].e }
-            val key = act.joinToString(",")
+            // Mit Effekten gehört zum Schlüssel, was die Wörter gerade zeigen und wie weit die Animation ist (acht Stufen)
+            val key = act.joinToString(",") { i ->
+                val cue = list[i]
+                if (!cue.fx) "$i" else "$i:" + wordColors(cue, t).joinToString("") { v -> v?.toString(16) ?: "-" } + ":" + (animP(cue, t) * 8).toInt()
+            }
             if (key != curKey) {
                 curKey = key
                 bmp.eraseColor(Color.TRANSPARENT)
-                for (i in act) render(list[i])
+                for (i in act) render(list[i], t)
             }
             return bmp
         }
 
-        private fun render(cue: Cue) {
+        private fun render(cue: Cue, t: Double) {
             val c = Canvas(bmp)
             val text = cue.text
             val size = cue.size
             val paint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { textSize = size; typeface = cue.face }
             val width = (w * 0.88).toInt()
-            fun layout(p: TextPaint) = StaticLayout.Builder.obtain(text, 0, text.length, p, width)
+            val colors = if (cue.fx) wordColors(cue, t) else null
+            // Füllung: jedes Wort in seiner Farbe; Umrandung: nur die verborgenen Wörter fallen weg
+            fun marked(strokePass: Boolean): CharSequence {
+                if (colors == null) return text
+                val sp = SpannableString(text)
+                for ((i, r) in cue.ranges.withIndex()) {
+                    val v = colors[i] ?: continue
+                    if (strokePass && v != Color.TRANSPARENT) continue
+                    sp.setSpan(ForegroundColorSpan(v), r.first, r.last + 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                }
+                return sp
+            }
+            fun layout(p: TextPaint, cs: CharSequence = text) = StaticLayout.Builder.obtain(cs, 0, cs.length, p, width)
                 .setAlignment(Layout.Alignment.ALIGN_CENTER).setLineSpacing(0f, 1.08f).build()
-            val fill = layout(paint.apply { color = cue.color; style = Paint.Style.FILL })
+            val fill = layout(paint.apply { color = cue.color; style = Paint.Style.FILL }, marked(false))
             // tatsächliche Breite des Textblocks, damit er ganz im Bild bleibt
             var lw = 0f
             for (i in 0 until fill.lineCount) lw = maxOf(lw, fill.getLineWidth(i))
             val m = 0.02f
             val cx = if (lw >= w * (1 - 2 * m)) w / 2f else (cue.x * w).coerceIn(lw / 2 + m * w, w - lw / 2 - m * w)
             val top = (cue.y * h - fill.height / 2f).coerceIn(m * h, maxOf(m * h, h - m * h - fill.height))
+            // Einblenden und Aufpoppen: der ganze Untertitel samt Kasten, um seine Mitte
+            val prog = animP(cue, t)
+            val layers = c.saveCount
+            if (cue.anim == "pop") { c.save(); val sc = 0.84f + 0.16f * prog; c.scale(sc, sc, cx, top + fill.height / 2f) }
+            if (cue.anim == "fade" && prog < 1f) c.saveLayerAlpha(0f, 0f, w.toFloat(), h.toFloat(), (255 * prog).toInt())
             if (cue.bg) {
                 val pad = size * 0.25f
                 val box = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(140, 0, 0, 0) }
@@ -522,12 +583,13 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
             c.save(); c.translate(cx - width / 2f, top)
             if (cue.outline && !cue.bg) {
                 val sp = TextPaint(paint).apply { style = Paint.Style.STROKE; strokeWidth = size / 7f; strokeJoin = Paint.Join.ROUND; color = cue.stroke }
-                layout(sp).draw(c)
+                layout(sp, marked(true)).draw(c)
             } else {
                 paint.setShadowLayer(size / 10f, 0f, size / 20f, Color.argb(200, 0, 0, 0))
             }
             fill.draw(c)
             c.restore()
+            c.restoreToCount(layers)
         }
 
         override fun getOverlaySettings(presentationTimeUs: Long): OverlaySettings = StaticOverlaySettings.Builder().build()

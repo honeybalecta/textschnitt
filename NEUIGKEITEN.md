@@ -2,6 +2,13 @@
 
 Was sich mit jeder Version von HoneyCut ändert. Die Windows-App zeigt diese Stichpunkte an, sobald eine neuere Version bereitsteht.
 
+## 2.32.0 · Untertitel
+- Laufende Wort-Hervorhebung: Das gerade gesprochene Wort bekommt in den Zeilen-Untertiteln eine eigene Farbe
+- Animationen: Einblenden, Aufpoppen oder Wort für Wort aufbauen
+- Schlagwörter betonen: Wörter im Text markieren und „Betonen“ wählen, oder alle Begriffe aus dem Wörterbuch farbig setzen
+- Emojis und Symbole: per Klick über einen Untertitel setzen; eine eigene Zuordnung von Wort zu Symbol schlägt passende vor
+- Alles gilt in der Vorschau und im Video-Export unter Windows, Android und im Browser; SRT, CapCut und Concat bleiben schlichter Text
+
 ## 2.31.0 · Export
 - Export-Paket: Ein Klick erzeugt Hochformat (TikTok, Reels, Shorts), Querformat (YouTube) und auf Wunsch den Feed in 4:5 – je mit passender Auflösung, einheitlicher Lautstärke und eigenem Dateinamen, dazu Titelbild und SRT
 - Export-Warteschlange: Exporte einreihen und im Hintergrund rechnen lassen, während du am nächsten Video schneidest; der Zähler in der Kopfzeile zeigt den Stand, auch auf der Startseite

@@ -794,6 +794,50 @@ def export_231():
     chk("die Neuigkeiten haben einen Abschnitt für diese Version", f"## {T.VERSION} " in news, T.VERSION)
 
 
+def untertitel_effekte():
+    """2.32: Wort-Hervorhebung, Wort für Wort, betonte Wörter, Einblenden/Aufpoppen im Windows-Export (ASS)."""
+    raw = [{"start": 1, "end": 3, "text": "Die Mieten steigen\nimmer weiter", "words": [[1, 1.4], [1.4, 1.9], [1.9, 2.3], [2.3, 2.6], [2.6, 3], [3, 4]],
+            "hl": "#F5D90A", "build": True, "spans": [[1, "#E5402A"], [9, "#000000"], [2, "rot"], "kaputt"], "anim": "pop"},
+           {"start": 4, "end": 5, "text": "ohne Effekte"},
+           {"start": 6, "end": 7, "text": "nur Farbe hier", "spans": [[2, "#3E8A55"]], "words": [[6, 6.5]], "hl": "keine Farbe", "anim": "wackeln"},
+           {"start": 8, "end": 9, "text": "blendet ein", "anim": "fade", "words": "kaputt", "hl": "#FFFFFF"}]
+    cues = T.clean_cues(raw)
+    a, b, c, d = cues
+    chk("Plan: Wortzeiten, Farbe des gesprochenen Worts, Aufbau, betonte Wörter und Animation kommen an – auf die Wörter des Textes begrenzt",
+        a["words"] == [[1.0, 1.4], [1.4, 1.9], [1.9, 2.3], [2.3, 2.6], [2.6, 3.0]] and a["hl"] == "#F5D90A" and a["build"] is True and a["spans"] == [[1, "#E5402A"]] and a["anim"] == "pop", a)
+    chk("Plan: Untertitel ohne Effekte bleiben, wie sie waren; unbrauchbare Angaben fallen weg", not T.cue_has_fx(b) and "words" not in c and "hl" not in c and "anim" not in c and c["spans"] == [[2, "#3E8A55"]]
+        and d.get("anim") == "fade" and "words" not in d and "hl" not in d, [b, c, d])
+    chk("Stand je Wort: vor dem Sprechen verborgen, beim Sprechen hervorgehoben, betonte Wörter in ihrer Farbe",
+        T.fx_state(a, 1.0, 5) == ["#F5D90A", "", "", "", ""] and T.fx_state(a, 1.5, 5) == [None, "#F5D90A", "", "", ""] and T.fx_state(a, 2.0, 5) == [None, "#E5402A", "#F5D90A", "", ""]
+        and T.fx_state(a, 2.99, 5) == [None, "#E5402A", None, None, "#F5D90A"] and T.fx_state(c, 6.2, 3) == [None, None, "#3E8A55"], [T.fx_state(a, t, 5) for t in (1.0, 1.5, 2.0, 2.99)])
+    sl = T.fx_slices(a)
+    chk("Zeitabschnitte: einer je Wort, lückenlos über die ganze Dauer", sl == [(1.0, 1.4), (1.4, 1.9), (1.9, 2.3), (2.3, 2.6), (2.6, 3.0)], sl)
+    quick = T.clean_cues([{"start": 1, "end": 2, "text": "a b c", "words": [[1, 1.05], [1.05, 1.1], [1.1, 2]], "hl": "#FFFFFF", "anim": "fade"}])[0]
+    sq = T.fx_slices(quick)
+    chk("Wechsel während der Animation rücken an ihr Ende: Einblenden und Aufpoppen laufen in einem Stück", sq[0] == (1.0, 1.0 + T.SUB_ANIM_S) and sq[-1][1] == 2.0 and all(y > x for x, y in sq) and all(p[1] == q[0] for p, q in zip(sq, sq[1:])), sq)
+    chk("ohne Wortwechsel bleibt es bei einem Abschnitt", T.fx_slices(c) == [(6.0, 7.0)] and T.fx_slices(d) == [(8.0, 8.0 + T.SUB_ANIM_S), (8.0 + T.SUB_ANIM_S, 9.0)] or T.fx_slices(d) == [(8.0, 9.0)], [T.fx_slices(c), T.fx_slices(d)])
+    ass = TMP / "effekte.ass"
+    T.write_ass(cues, {"size": "mittel", "color": "#FFFFFF"}, ass, 1080, 1920, {})
+    ev = [ln for ln in ass.read_text(encoding="utf-8-sig").splitlines() if ln.startswith("Dialogue:")]
+    at = lambda t0: [ln for ln in ev if ln.startswith(f"Dialogue: 1,{t0},")]   # noqa: E731
+    first, third = at("0:00:01.00"), at("0:00:01.90")
+    chk("ASS: je Abschnitt zwei Zeilen an fester Lage; die Lage ändert sich über die Abschnitte nicht",
+        len(first) == 2 and len(third) == 2 and re.search(r"\\pos\(([\d.]+),([\d.]+)\)", first[0]).groups() == re.search(r"\\pos\(([\d.]+),([\d.]+)\)", third[0]).groups(), [len(first), len(third)])
+    chk("ASS: das gesprochene Wort trägt die Hervorhebung, spätere Wörter sind verborgen, das betonte Wort hat seine Farbe",
+        first[0].endswith("{\\1c&H0AD9F5&}Die {\\alpha&HFF&}Mieten steigen") and first[1].endswith("{\\alpha&HFF&}immer weiter")
+        and third[0].endswith("Die {\\1c&H2A40E5&}Mieten {\\1c&H0AD9F5&}steigen") and third[1].endswith("{\\alpha&HFF&}immer weiter"), [first[0][-60:], third[0][-70:]])
+    last = at("0:00:02.60")
+    chk("ASS: nach dem Sprechen steht ein Wort wieder in der Grundfarbe", last[1].endswith("immer {\\1c&H0AD9F5&}weiter") and last[0].endswith("Die {\\1c&H2A40E5&}Mieten {\\1c&HFFFFFF&}steigen"), [last[0][-60:], last[1][-40:]])
+    chk("ASS: Aufpoppen nur im ersten Abschnitt, Einblenden als \\fad", "\\fscx84\\fscy84\\t(0,160,\\fscx100\\fscy100)" in first[0] and "\\fscx84" not in third[0] and any("\\fad(160,0)" in ln for ln in at("0:00:08.00")), first[0][:200])
+    plain = at("0:00:04.00")
+    chk("ASS: Untertitel ohne Effekte sind unverändert ein Eintrag je Zeile", len(plain) == 1 and plain[0].endswith("}ohne Effekte") and "\\alpha" not in plain[0] and plain[0].count("{") == 1, plain)
+    chk("SRT: Effekte ändern nichts an den Untertiteln als Text", [x["text"] for x in T.spoken_cues(cues)] == ["Die Mieten steigen\nimmer weiter", "ohne Effekte", "nur Farbe hier", "blendet ein"])
+    box = T.clean_cues([{"start": 1, "end": 2, "text": "mit Kasten", "bg": True, "words": [[1, 1.5], [1.5, 2]], "hl": "#F5D90A", "anim": "fade"}])
+    T.write_ass(box, {"size": "mittel"}, ass, 1080, 1920, {})
+    ev = [ln for ln in ass.read_text(encoding="utf-8-sig").splitlines() if ln.startswith("Dialogue:")]
+    chk("ASS: der Kasten steht in jedem Abschnitt und blendet mit ein", len([ln for ln in ev if "\\p4" in ln]) == len(T.fx_slices(box[0])) and "\\fad(160,0)" in next(ln for ln in ev if "\\p4" in ln), len(ev))
+
+
 def bericht_und_protokoll():
     logged = []
     T.log = lambda msg: logged.append(msg)
@@ -814,7 +858,7 @@ def bericht_und_protokoll():
 if MODE == "umzug":
     umzug()
     sys.exit(1 if BAD else 0)
-for part in (speichern_und_fassungen, speicher, sicherung, projektpakete, kleine_helfer, quellen_und_belege, schrift_im_export, transkript, export_231, neue_versionen, bericht_und_protokoll):
+for part in (speichern_und_fassungen, speicher, sicherung, projektpakete, kleine_helfer, quellen_und_belege, schrift_im_export, transkript, export_231, untertitel_effekte, neue_versionen, bericht_und_protokoll):
     print(f"── {part.__name__.replace('_', ' ')} ──", flush=True)
     part()
 print(f"ERGEBNIS Backend ohne Browser: {N} geprüft, {BAD} Fehler")

@@ -572,6 +572,8 @@ class Renderer {
         const px = size * 0.3, py = size * 0.1, r = size * 0.15;
         ctx.fillStyle = 'rgba(0,0,0,.55)'; roundRect(ctx, cx - bw / 2 - px, cy - bh / 2 - py, bw + 2 * px, bh + 2 * py, r); ctx.fill();
       }
+      const ocol = c.outlineColor || (c.title ? '#000' : st.outlineColor) || '#000';
+      if (c.words || c.spans || c.anim){ this.textFx(c, t, rows, {size, lh, bw, bh, cx, cy, outline, color, ocol}); continue; }
       rows.forEach((row, k) => {
         const y = cy - bh / 2 + lh * (k + 0.5);
         if (outline){ ctx.lineJoin = 'round'; ctx.miterLimit = 2; ctx.lineWidth = 2 * Math.max(1, size / 14); ctx.strokeStyle = c.outlineColor || (c.title ? '#000' : st.outlineColor) || '#000'; ctx.strokeText(row, cx, y); }
@@ -580,6 +582,34 @@ class Renderer {
         ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
       });
     }
+  }
+  // Untertitel mit Effekten (2.32): Farbe und Sichtbarkeit je Wort, Einblenden oder Aufpoppen am Anfang.
+  // words = [[Beginn, Ende], …] für die ersten Wörter des Textes, hl = Farbe des gesprochenen Worts, build = Wörter erscheinen
+  // erst beim Sprechen, spans = [[Wortnummer, Farbe], …], anim = fade | pop. Die Lage der Zeilen bleibt dabei fest.
+  textFx(c, t, rows, o){
+    const {ctx} = this, ws = c.words || [], spans = new Map((c.spans || []).map(s => [s[0], s[1]]));
+    const A = 0.16, p = c.anim ? clamp((t - c.start) / A, 0, 1) : 1, tt = c.anim && t < c.start + A ? c.start : t;   // während der Animation gilt der Stand vom Anfang
+    ctx.save();
+    if (c.anim === 'fade') ctx.globalAlpha *= p;
+    if (c.anim === 'pop'){ const s = 0.84 + 0.16 * p; ctx.translate(o.cx, o.cy); ctx.scale(s, s); ctx.translate(-o.cx, -o.cy); }
+    ctx.textAlign = 'left';
+    let i = 0;
+    rows.forEach((row, k) => {
+      const y = o.cy - o.bh / 2 + o.lh * (k + 0.5), x0 = o.cx - ctx.measureText(row).width / 2, parts = [];
+      let pos = 0;
+      for (const w of row.split(/\s+/).filter(Boolean)){
+        const at = row.indexOf(w, pos); pos = at + w.length;
+        let col = spans.get(i) || o.color, show = true;
+        if (i < ws.length){ if (c.build && tt < ws[i][0] - 1e-6) show = false; else if (c.hl && tt >= ws[i][0] - 1e-6 && tt < ws[i][1] - 1e-6) col = c.hl; }
+        if (show) parts.push({w, x: x0 + ctx.measureText(row.slice(0, at)).width, col});
+        i++;
+      }
+      if (o.outline){ ctx.lineJoin = 'round'; ctx.miterLimit = 2; ctx.lineWidth = 2 * Math.max(1, o.size / 14); ctx.strokeStyle = o.ocol; for (const q of parts) ctx.strokeText(q.w, q.x, y); }
+      else if (!c.title){ ctx.shadowColor = 'rgba(0,0,0,.8)'; ctx.shadowBlur = o.size / 10; ctx.shadowOffsetY = o.size / 20; }
+      for (const q of parts){ ctx.fillStyle = q.col; ctx.fillText(q.w, q.x, y); }
+      ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
+    });
+    ctx.restore();
   }
   close(){ for (const st of this.ovState.values()) if (st.it && !st.done && st.it.return) st.it.return(); if (this.keyGL){ for (const g of this.keyGL.values()) g.destroy(); this.keyGL.clear(); } }
 }
