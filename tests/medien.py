@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Erzeugt die Testmedien für die Prüfläufe (nur Python-Standardbibliothek und ffmpeg):
    kurz.mp4 (3 min) und lang.mp4 (6 min) mit sprachähnlichem Ton und passender Wortliste (*.words.json),
+   anlauf.mp4 (knapp 1 min) mit festem Text: Anläufe, Füllwörter, unsichere Wörter und falsch geschriebene Namen,
    drei kurze Einspieler (broll1–3.mp4), acht Folienbilder und ein Logo.
 Aufruf: python3 tests/medien.py <Zielordner>   – vorhandene Dateien bleiben stehen."""
 import array
@@ -62,6 +63,51 @@ def sprache(wav: Path, words_json: Path, minutes: float, seed: int) -> None:
     words_json.write_text(json.dumps(words, ensure_ascii=False), encoding="utf-8")
 
 
+# Fester Text für die Prüfungen rund ums Transkript: (Wort, Sicherheit laut Whisper, Pause danach in Sekunden)
+ANLAUF = [
+    ("Heute", .93, .05), ("spreche", .9, .05), ("ich", .95, .05), ("über", .9, .05), ("Mareike", .62, .05), ("Hermeyer", .31, .06), ("und", .95, .05), ("die", .93, .05), ("AFD.", .44, .9),
+    ("Ich", .9, .05), ("wollte", .9, .55), ("ich", .92, .05), ("wollte", .93, .05), ("heute", .9, .05), ("über", .9, .05), ("die", .9, .05), ("Mieten", .88, .05), ("sprechen.", .9, 1.0),
+    ("Ähm", .8, .06), ("das", .9, .05), ("ist", .9, .06), ("äh", .7, .06), ("ein", .9, .05), ("Problem.", .9, 1.5),
+    ("Die", .9, .05), ("Regierung", .9, .05), ("sagt", .9, .05), ("etwas", .9, .05), ("anderes.", .9, .8),
+    ("Die", .9, .05), ("Regierung", .9, .05), ("sagt", .9, .05), ("aber", .9, .05), ("etwas", .9, .05), ("anderes.", .9, 1.3),
+    ("Viele", .9, .05), ("Menschen", .9, .05), ("wissen", .9, .05), ("nicht", .9, .05), ("mehr", .9, .05), ("weiter", .38, .05), ("zu", .41, .05), ("kommen.", .9, .7),
+    ("Frau", .9, .05), ("Hermeyers", .35, .05), ("Antrag", .9, .05), ("liegt", .9, .05), ("im", .9, .05), ("Bundestag.", .9, 1.0),
+    ("Her", .3, .05), ("Meier", .33, .05), ("sagt", .9, .05), ("dazu", .9, .05), ("nichts.", .9, .6),
+    ("Das", .9, .05), ("zeigen", .9, .05), ("die", .9, .05), ("Zahlen", .9, .05), ("der", .9, .05), ("Gewerkschaft", .9, .05), ("deutlich.", .9, 1.2),
+]
+
+
+def skript(wav: Path, words_json: Path, items: list) -> float:
+    """Wie sprache(), aber mit festem Text und festen Pausen. Rückgabe: Länge in Sekunden."""
+    rnd = random.Random(5)
+    dur = [0.14 + 0.045 * len(w.strip(".")) for w, _, _ in items]
+    length = 0.6 + sum(dur) + sum(g for _, _, g in items) + 1.0
+    total = int(length * SR)
+    noise = [rnd.gauss(0, 0.0015) for _ in range(4096)]
+    audio = [noise[i & 4095] for i in range(total)]
+    words, t, two_pi = [], 0.6, 2 * math.pi
+    for (w, prob, gap), d in zip(items, dur):
+        a, n = int(t * SR), int(d * SR)
+        f0 = rnd.uniform(110, 220)
+        k1, k2, k3 = two_pi * f0 / SR, two_pi * f0 * 2.01 / SR, two_pi * f0 * 3.2 / SR
+        up, down = 0.02 * SR, 0.03 * SR
+        for i in range(n):
+            env = min(1.0, i / up, (n - i) / down)
+            audio[a + i] += (0.25 * math.sin(k1 * i) + 0.12 * math.sin(k2 * i) + 0.06 * math.sin(k3 * i)) * env
+        words.append({"text": " " + w, "start": round(t, 3), "end": round(t + d, 3), "prob": prob})
+        t += d + gap
+    pcm = array.array("h", (max(-32767, min(32767, int(x * 32767))) for x in audio))
+    if sys.byteorder == "big":
+        pcm.byteswap()
+    with wave.open(str(wav), "wb") as f:
+        f.setnchannels(1)
+        f.setsampwidth(2)
+        f.setframerate(SR)
+        f.writeframes(pcm.tobytes())
+    words_json.write_text(json.dumps(words, ensure_ascii=False), encoding="utf-8")
+    return length
+
+
 def ff(*args: str) -> None:
     subprocess.run(["ffmpeg", "-v", "error", "-y", *args], check=True)
 
@@ -78,6 +124,12 @@ def main(out: Path) -> None:
         ff("-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30", "-i", str(wav), "-t", str(minutes * 60), *enc, str(mp4))
         wav.unlink()
         print(mp4.name, f"{mp4.stat().st_size / 1e6:.1f} MB")
+    if not ((out / "anlauf.mp4").exists() and (out / "anlauf.words.json").exists()):
+        wav = out / "anlauf.wav"
+        length = skript(wav, out / "anlauf.words.json", ANLAUF)
+        ff("-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30", "-i", str(wav), "-t", f"{length:.2f}", *enc, str(out / "anlauf.mp4"))
+        wav.unlink()
+        print("anlauf.mp4", f"{length:.1f} s")
     for k, (src, freq) in enumerate((("testsrc=size=640x360:rate=30", 440), ("smptebars=size=640x360:rate=30", 554), ("rgbtestsrc=size=640x360:rate=30", 659)), 1):
         mp4 = out / f"broll{k}.mp4"
         if not mp4.exists():

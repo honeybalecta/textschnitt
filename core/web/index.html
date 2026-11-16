@@ -116,6 +116,7 @@
         <label class="row">Modell <select id="model"></select></label>
         <label class="row">Sprache <select id="lang"><option value="de" selected>Deutsch</option><option value="en">Englisch</option><option value="">automatisch</option></select></label>
         <label class="row"><input type="checkbox" id="fillers" checked> Füllwörter (äh, ähm) mit erkennen</label>
+        <div class="row dict-row"><span>Wörterbuch für Namen und Fachbegriffe: <b id="dictInfo">noch leer</b></span><button class="btn small" id="dictBtn">Bearbeiten</button></div>
         <div class="subs-only hidden" id="subsOnlyBox">
           <label class="row"><input type="checkbox" id="subsOnly"> <b>Nur für Untertitel</b> – den Schnitt aus dem Studio unverändert lassen</label>
           <span class="muted small">Es wird nichts automatisch entfernt; danach geht es direkt zu den Untertiteln.</span>
@@ -138,12 +139,14 @@
       <div class="toolbar" id="textTools">
         <button class="chip ico" id="findBtn" title="Suchen und ersetzen (Strg+F)">🔍</button>
         <span class="chip combo"><button id="fillerBtn">Füllwörter weg</button><button id="fillerCfg" class="cfg" title="Eigene Füllwörter festlegen">✎</button></span>
-        <button class="chip" id="repeatBtn" title="Wiederholte Anläufe finden und löschen – der letzte Versuch bleibt stehen">Wiederholungen weg</button>
+        <span class="chip combo"><button id="repeatBtn" title="Wiederholte Anläufe finden und löschen – der letzte Versuch bleibt stehen">Wiederholungen weg</button><button id="repeatCmp" class="cfg" title="Fassungen vergleichen: wiederholte Anläufe nacheinander anhören und die beste wählen">⇄</button></span>
         <span class="chip combo"><button id="pauseBtn">Pausen kürzen</button><select id="pauseLen"><option value="0" selected>ganz weg</option><option value="0.1">0,1 s</option><option value="0.2">0,2 s</option><option value="0.3">0,3 s</option><option value="0.5">0,5 s</option></select></span>
         <button class="chip" id="cutPlayBtn" title="2 Sekunden vor bis 2 Sekunden nach dem letzten Schnitt abspielen">▶ Letzten Schnitt</button>
         <label class="chip" title="Gelöschte Wörter ausblenden"><input type="checkbox" id="hideDel"> Gelöschtes aus</label>
         <button class="chip" id="marksBtn" title="Kapitel und Notizen dieses Projekts">Marken</button>
         <button class="chip" id="refsBtn" title="Quellen und offene Belege dieses Projekts">Quellen</button>
+        <button class="chip hidden" id="lowBtn" title="Unsichere Wörter der Reihe nach anhören, bestätigen oder korrigieren (P)">Unsichere prüfen</button>
+        <button class="chip hidden" id="checkBtn" title="Jeden automatischen Schnitt anhören und einzeln zurücknehmen">Prüfliste</button>
         <button class="chip ico" id="textMore" title="Weitere Werkzeuge">⋯</button>
       </div>
       <div class="hidden" id="textMoreBtns">
@@ -151,12 +154,23 @@
         <button id="txChip">Text kopieren / Word</button>
         <button id="addSrcChip" onclick="addSources()">Video anhängen</button>
         <button id="realignChip" onclick="$('#realignBtn').click()">Am Ton ausrichten</button>
+        <button id="dictChip">Wörterbuch</button>
       </div>
       <div class="findrow hidden" id="findRow">
         <input type="search" id="findIn" placeholder="Im Text suchen – Enter: nächster Treffer" autocomplete="off"><span class="muted small" id="findInfo"></span>
         <button class="chip" id="replToggle" title="Suchen und ersetzen (Strg+H)">⇄ Ersetzen</button>
       </div>
       <div class="findrow hidden" id="replRow"><input type="text" id="replIn" placeholder="Ersetzen durch …" autocomplete="off"><button class="chip" id="replOne">Ersetzen</button><button class="chip" id="replAll">Alle</button><button class="chip danger" id="findDelAll">Treffer löschen</button></div>
+      <div class="lowbar hidden" id="lowBar">
+        <div class="row"><b id="lowPos"></b><span class="muted small" id="lowHint"></span><button class="mini" id="lowEnd" title="Prüfen beenden (Esc)">✕</button></div>
+        <div class="row wrap"><input type="text" id="lowIn" dir="auto" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Text der unsicheren Stelle">
+          <button class="btn small primary" id="lowOk" title="Der Text im Feld gilt: bestätigen oder Korrektur übernehmen, dann weiter (Enter)">✓ Stimmt</button>
+          <button class="btn small" id="lowPlay" title="Noch einmal anhören (Pfeil nach unten)">▶ Nochmal</button>
+          <button class="btn small" id="lowPrev" title="Zur vorigen Stelle (Umschalt+Tab)">Zurück</button>
+          <button class="btn small" id="lowNext" title="Überspringen (Tab)">Weiter</button>
+          <button class="btn small danger" id="lowDel" title="Die Wörter löschen (Strg+Entf)">Löschen</button></div>
+        <label class="row small"><input type="checkbox" id="lowDict"> Korrektur ins Wörterbuch übernehmen</label>
+      </div>
       <div class="transcript" id="transcript"></div>
     </div>
 

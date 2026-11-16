@@ -24,6 +24,10 @@ const r3 = x => +(+x).toFixed(3);
 const SENT_END = /[.?!…؟۔]$/;   // „؟“ und „۔“: Fragezeichen und Punkt in arabischer Schrift
 const sentEnd = w => SENT_END.test(w || '') && !/^\d+\.$/.test(w || '');   // „am 31.“ ist kein Satzende
 const tokText = t => (P && P.edits && P.edits[t.i] != null) ? P.edits[t.i] : t.text;
+// Unsichere Wörter (C2): Whisper nennt zu jedem Wort, wie sicher es sich war. Unter 50 % gilt ein Wort als unsicher, bis es
+// bestätigt (t.ok) oder korrigiert ist.
+const LOW_PR = 0.5;
+const isLowTok = t => t.type === 'word' && t.pr < LOW_PR && !t.ok && !(P && P.edits && P.edits[t.i] != null);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;'}[c]));
 function toast(msg){ const t = $('#toast'); t.textContent = msg; t.classList.add('on'); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('on'), 2600); }
 // Text nur dann ins Dokument schreiben, wenn er sich geändert hat – und dann in den vorhandenen Textknoten.
@@ -479,10 +483,11 @@ function openProjectNow(id, keep){
   if (!np || typeof np !== 'object') return toast('Projekt konnte nicht geladen werden');   // das offene Projekt bleibt dabei unberührt
   P = np; clearTimeout(saveRetryT); saveFails = 0; $('#saved').classList.remove('err'); $('#saved').textContent = '';
   if (!P.sources){ P.sources = [P.main]; P.sources[0].tr = !!(P.tokens || []).length; delete P.main; }   // altes Format (ein Video)
-  P.adj ||= {}; P.speakers ||= []; P.slides ||= []; P.items ||= []; P.marks ||= []; if (!Array.isArray(P.refs)) P.refs = []; P.dels ||= []; P.splits ||= []; P.edits ||= {}; P.moves ||= []; P.trims ||= {}; P.settings ||= {pad:0.06}; P.cues ||= [];
+  P.adj ||= {}; P.speakers ||= []; P.slides ||= []; P.items ||= []; P.marks ||= []; if (!Array.isArray(P.refs)) P.refs = []; if (!Array.isArray(P.checks)) P.checks = []; P.dels ||= []; P.splits ||= []; P.edits ||= {}; P.moves ||= []; P.trims ||= {}; P.settings ||= {pad:0.06}; P.cues ||= [];
   if (P.settings.burn == null) P.settings.burn = true;
   P.sub_style = {...DEF_STYLE, ...(P.sub_style || {})}; if (P.sub_style.y == null) P.sub_style.y = POS_Y[P.sub_style.pos] ?? 0.88;
   tokens = P.tokens || []; tokens.forEach(t => { if (t.src == null) t.src = 0; });
+  P.checks = P.checks.filter(c => c && Array.isArray(c.ids) && (c.ids.length || (c.tr || []).length || (c.v || []).length) && chkSpan(c)[1] < tokens.length);
   deleted = new Set(P.deleted || []); undo = []; redo = [];
   layoutSources(); vSi = -1; vPending = null; cueCache.at = -1; subShown = null;
   $('#home').classList.add('hidden'); $('#proj').classList.remove('hidden');
@@ -703,8 +708,8 @@ setTimeout(() => { if (!$('#home').classList.contains('hidden')) renderUpdateBan
 
 // ── Alle Projekte sichern, Sicherung einspielen (Desktop) ──
 // Gesichert werden die Projekte samt Folienbildern und Schriften, dazu die eigenen Designprofile, Farbfavoriten, Füllwörter und
-// Untertitel-Looks – ohne die Videos.
-const PREF_KEYS = ['hc-slide-profiles', 'hc-colfav', 'hc-fillers', 'hc-sub-looks'];
+// Untertitel-Looks, dazu das eigene Wörterbuch – ohne die Videos.
+const PREF_KEYS = ['hc-slide-profiles', 'hc-colfav', 'hc-fillers', 'hc-sub-looks', 'hc-dict'];
 function uiPrefs(){ const o = {}; for (const k of PREF_KEYS){ try { const v = JSON.parse(localStorage.getItem(k)); if (Array.isArray(v) && v.length) o[k] = v; } catch(_){} } return o; }
 function mergePrefs(pr){
   let n = 0; if (!pr || typeof pr !== 'object') return 0;
@@ -714,6 +719,7 @@ function mergePrefs(pr){
   try { const add = (pr['hc-fillers'] || []).filter(x => typeof x === 'string' && fillKey(x) && !ownFill.some(y => fillKey(y) === fillKey(x)));
     if (add.length){ ownFill = ownFill.concat(add).slice(0, 200); saveOwnFill(); n += add.length; } } catch(_){}
   try { n += mergeLooks(pr['hc-sub-looks']); } catch(_){}
+  try { n += mergeDict(pr['hc-dict']); } catch(_){}
   return n;
 }
 const plural = (k, one, many) => `${k} ${k === 1 ? one : many}`;
@@ -802,7 +808,7 @@ const projNameEl = $('#projName');   // fest gemerkt: Während des Umbenennens s
 projNameEl.title = 'Anklicken zum Umbenennen';
 projNameEl.onclick = () => { if (P) editNameInline(projNameEl, P.name, v => { if (renameProject(P.id, v)) toast('Umbenannt'); }); };
 function closeProject(){
-  pausePlay(); saveThumb();
+  pausePlay(); lowEnd(); audStop(); saveThumb();
   if (!saveNow() && !confirm('Der letzte Stand ließ sich nicht speichern (' + ($('#saved').title || 'Grund unbekannt') + ').\n\nOK: trotzdem schließen – die letzten Änderungen gehen verloren.\nAbbrechen: im Projekt bleiben.')) return;
   clearTimeout(saveRetryT); saveFails = 0; busBye();
   try { localStorage.removeItem(OPEN_KEY); } catch(_){} setFull(false); allLayers(releaseMedia); for (const el of audLayers.values()) releaseMedia(el); audLayers.clear(); busPid = null; P = null; V.removeAttribute('src'); V.load(); vSi = -1; hideOverlay(); showHome(); }
@@ -1003,10 +1009,10 @@ function untouched(){
 function realign(){
   const old = tokens, oldDel = deleted, oldEdits = P.edits || {};
   rebuildTokens();
-  deleted = new Set(); P.edits = {}; P.trims = {};
+  deleted = new Set(); P.edits = {}; P.trims = {}; P.checks = [];   // die Prüfliste hängt an den Wortnummern
   P.sources.forEach((src, k) => {
     const a = old.filter(t => t.src === k && t.type === 'word'), b = tokens.filter(t => t.src === k && t.type === 'word');
-    a.forEach((t, j) => { if (!b[j]) return; if (oldDel.has(t.i)) deleted.add(b[j].i); if (oldEdits[t.i] != null) P.edits[b[j].i] = oldEdits[t.i]; if (t.spk) b[j].spk = t.spk; if (t.ks) b[j].ks = true; });
+    a.forEach((t, j) => { if (!b[j]) return; if (oldDel.has(t.i)) deleted.add(b[j].i); if (oldEdits[t.i] != null) P.edits[b[j].i] = oldEdits[t.i]; if (t.spk) b[j].spk = t.spk; if (t.ks) b[j].ks = true; if (t.ok) b[j].ok = 1; });
   });
   if (deleted.size) tidyPauses([...deleted]).forEach(i => deleted.add(i));
   genCues(); renderTranscript(); changed(); saveNow();
@@ -1083,11 +1089,11 @@ function busApply(m){
 })();
 
 // ───────── Speichern & Rückgängig ─────────
-function tokMarks(){ const o = {}; for (const t of tokens) if (t.spk || t.ks) o[t.i] = [t.spk || 0, t.ks ? 1 : 0]; return o; }
+function tokMarks(){ const o = {}; for (const t of tokens) if (t.spk || t.ks || t.ok) o[t.i] = t.ok ? [t.spk || 0, t.ks ? 1 : 0, 1] : [t.spk || 0, t.ks ? 1 : 0]; return o; }
 // Zum Stand gehören auch Format, Bildausschnitt und die Lautstärke der Hauptvideos (fm, fr, sv). Sie fehlten: „Rückgängig“
 // nach einem Formatwechsel, nach dem Verschieben des Ausschnitts oder nach „Alle angleichen“ tat nichts bzw. nur die Hälfte.
 function snapshot(){ return JSON.stringify({d:[...deleted], t:P.trims, c:P.cues, i:P.items, a:P.adj, x:P.dels, y:P.splits, s:P.sub_style, e:P.edits, m:P.moves, k:P.speakers, w:tokMarks(), f:P.slides, wm:P.watermark || null, tr:P.trans || null,
-  fm:P.format || null, fr:P.frame || null, sv:P.sources.map(x => x.vol == null ? null : x.vol), mk:P.marks || [], tl:P.textline || null, rf:P.refs || [], ss:P.srcStyle || null, lw:P.lower || null}); }
+  fm:P.format || null, fr:P.frame || null, sv:P.sources.map(x => x.vol == null ? null : x.vol), mk:P.marks || [], tl:P.textline || null, rf:P.refs || [], ss:P.srcStyle || null, lw:P.lower || null, ck:P.checks || []}); }
 function restore(s){ const o = JSON.parse(s); deleted = new Set(o.d); P.trims = o.t; P.cues = o.c; P.items = o.i; P.adj = o.a; P.dels = o.x || []; P.splits = o.y || [];
   if (o.s) P.sub_style = o.s; P.edits = o.e || {}; P.moves = o.m || [];
   const fmCh = 'fm' in o && (P.format || null) !== (o.fm || null), frCh = 'fr' in o && JSON.stringify(P.frame || null) !== JSON.stringify(o.fr || null);
@@ -1100,13 +1106,15 @@ function restore(s){ const o = JSON.parse(s); deleted = new Set(o.d); P.trims = 
   if ('rf' in o) P.refs = o.rf || [];
   if ('ss' in o){ if (o.ss) P.srcStyle = o.ss; else delete P.srcStyle; }
   if ('lw' in o){ if (o.lw) P.lower = o.lw; else delete P.lower; }
+  if ('ck' in o) P.checks = o.ck || [];
   if (o.f) P.slides = o.f; if (o.k) P.speakers = o.k;
-  if ('wm' in o){ if (o.wm) P.watermark = o.wm; else delete P.watermark; } if ('tr' in o){ if (o.tr) P.trans = o.tr; else delete P.trans; trMemo.list = null; } if (o.w){ for (const t of tokens){ const m = o.w[t.i]; if (m){ if (m[0]) t.spk = m[0]; else delete t.spk; if (m[1]) t.ks = true; else delete t.ks; } else { delete t.spk; delete t.ks; } } }
+  if ('wm' in o){ if (o.wm) P.watermark = o.wm; else delete P.watermark; } if ('tr' in o){ if (o.tr) P.trans = o.tr; else delete P.trans; trMemo.list = null; } if (o.w){ for (const t of tokens){ const m = o.w[t.i]; if (m){ if (m[0]) t.spk = m[0]; else delete t.spk; if (m[1]) t.ks = true; else delete t.ks; if (m[2]) t.ok = 1; else delete t.ok; } else { delete t.spk; delete t.ks; delete t.ok; } } }
   const reorder = JSON.stringify(P.moves) !== lastOrderKey; syncStyleInputs(); changed(true);
   if ((reorder || mkCh || rfCh) && tokens.length) renderTranscript(); else tokens.forEach(t => paint(t.i));
   if (rfCh) paintRefsBtn(); if (refsSheetOpen()) renderRefsSheet();
   if (lowerSheetOpen()) paintLowerSheet(); if (tab === 'subs') renderSpeakers();
   if (mkCh){ paintMarksBtn(); if (marksSheetOpen()) renderMarksSheet(); }
+  chkChanged();
   if (fmCh || frCh) frameRestored(fmCh); }
 // Format oder Bildausschnitt kamen mit einem früheren Stand zurück: Bühne, Export-Angaben, Clip-Reiter und Folien nachziehen
 function frameRestored(fmCh){
@@ -1612,7 +1620,7 @@ function advanceSeg(){
 function setPlayIcons(on){ if (typeof fullPoke === 'function') fullPoke(); for (const b of [$('#playBtn'), $('#sidePlay')]) if (b) b.innerHTML = icon(on ? '❚❚' : '▶'); }
 function togglePlay(){ if (V.dataset.err){ toast('Vorschau nicht abspielbar – siehe Hinweis im Bild'); return; } playing ? pausePlay() : startPlay(); }
 function startPlay(){
-  if (!timeline.length) return; if (outPos >= total - 0.05) seekOut(0, false);
+  if (!timeline.length) return; if (AUD.k >= 0) audStop(); if (outPos >= total - 0.05) seekOut(0, false);
   WD.v = -1; WD.t = performance.now(); WD.n = 0;
   playing = true; if (actx && actx.state === "suspended") actx.resume().catch(() => {}); setPlayIcons(true); seekOut(outPos, true); TS.keepAwake(true);
 }
@@ -2577,7 +2585,7 @@ function fillModels(){
   const ready = ms.find(m => m.name === keep) || ms.find(m => m.installed && m.recommended) || ms.find(m => m.installed) || ms[0]; if (ready) sel.value = ready.name;
 }
 function renderSources(){
-  const box = $('#srcList'); if (!box || !P) return; box.innerHTML = '';
+  const box = $('#srcList'); if (!box || !P) return; box.innerHTML = ''; paintDictInfo();
   P.sources.forEach((s, k) => {
     const el = document.createElement('div'); el.className = 'src-item';
     const st = s.tr ? (s.noAudio ? 'ohne Ton' : 'transkribiert') : (s.hasAudio === false ? 'ohne Ton' : 'noch nicht transkribiert');
@@ -2628,26 +2636,30 @@ const tjSet = (id, v) => { try { v ? localStorage.setItem(TJ_KEY(id), JSON.strin
 $('#transBtn').onclick = () => runTranscribe(null);
 function runTranscribe(resume){
   const todo = P.sources.map((s, k) => k).filter(k => !P.sources[k].tr);
-  const o = resume ? resume.opts : {model: $('#model').value, lang: $('#lang').value, fillers: $('#fillers').checked, startTok: tokens.length, firstTime: !tokens.length};
+  const o = resume ? resume.opts : {model: $('#model').value, lang: $('#lang').value, fillers: $('#fillers').checked, startTok: tokens.length, firstTime: !tokens.length, hint: dictHint()};
   if (!resume) o.subsOnly = o.firstTime && studioCut() && $('#subsOnly').checked;
   if (!todo.length && !resume) return;
   const pid = P.id, P0 = P;
   $('#transBtn').disabled = true; $('#transCancel').classList.remove('hidden'); $('#transProg').classList.remove('hidden'); TS.keepAwake(true);
   transCancelled = false;
   const {model, lang, fillers, startTok, firstTime, subsOnly} = o;
+  // Begriffe aus dem Wörterbuch als Hinweis für Whisper. Beim Nachhören einzelner unklarer Stellen bleibt der Hinweis weg:
+  // In wenigen Sekunden undeutlicher Sprache würde Whisper die Begriffe sonst leicht hineinhören.
+  const setHint = on => { if (TS.setAsrHint) try { TS.setAsrHint(on ? o.hint || '' : ''); } catch(_){} };
   if (subsOnly && !resume) freezeStudioCut();
   let n = 0, words = resume ? (resume.words || 0) : 0;
   const alive = () => P === P0;   // Projekt inzwischen geschlossen/neu geöffnet: diese Runde endet, die neue übernimmt
   const end = () => { if (!alive()) return; tjSet(pid, null); $('#transBtn').disabled = false; $('#transCancel').classList.add('hidden'); $('#transProg').classList.add('hidden'); TS.keepAwake(false); transJob = null; renderSources(); };
   const finish = () => {
     end(); if (!alive()) return; P.language ||= lang;
-    if (firstTime && !subsOnly){ deleted = new Set(); P.trims = {}; P.adj = {}; }
+    if (firstTime && !subsOnly){ deleted = new Set(); P.trims = {}; P.adj = {}; P.checks = []; }
+    const fixed = dictApply(startTok);   // hinterlegte Fehlschreibungen ersetzen, ehe aufgeräumt wird und die Untertitel entstehen
     const cleaned = subsOnly ? [] : autoClean(startTok);
     if (firstTime) genCues(); else genCues(startTok);
     renderTranscript(); changed(); saveNow(); busSend({t:'reload'}); setTab(subsOnly ? 'subs' : 'text');
     if (subsOnly){ toast(`${computedCues().length} Untertitel aus dem Schnitt erzeugt – Text, Zeiten und Position lassen sich jetzt anpassen`); return; }
     const unk = tokens.filter(t => t.i >= startTok && t.type === 'unk' && !deleted.has(t.i)).length;
-    toast(`${words} Wörter erkannt` + (cleaned.length ? ` · entfernt: ${cleaned.join(', ')}` : '') + (unk ? ` · ${unk}× 🗣 nicht erkannte Sprache` : ''));
+    toast(`${words} Wörter erkannt` + (fixed ? ` · ${fixed === 1 ? '1 Stelle' : fixed + ' Stellen'} nach dem Wörterbuch korrigiert` : '') + (cleaned.length ? ` · entfernt: ${cleaned.join(', ')}` : '') + (unk ? ` · ${unk}× 🗣 nicht erkannte Sprache` : ''));
   };
   const next = () => {
     if (!alive()) return;
@@ -2657,7 +2669,7 @@ function runTranscribe(resume){
     const label = todo.length > 1 ? `Video ${n + 1} von ${todo.length}: ` : '';
     let jid = null;
     if (resume && resume.k === k && resume.id){ jid = resume.id; resume.id = null; }
-    else try { jid = TS.transcribe(s.uri, model, lang, fillers); } catch(e){ end(); $('#transMsg').textContent = 'Fehler: ' + e.message; return; }
+    else try { setHint(true); jid = TS.transcribe(s.uri, model, lang, fillers); } catch(e){ end(); $('#transMsg').textContent = 'Fehler: ' + e.message; return; }
     transJob = jid; tjSet(pid, {id: jid, k, opts: o, words, at: Date.now()});
     watchJob(jid, j => { if (!alive()) return; $('#transProg i').style.width = ((n + j.progress) / todo.length * 100).toFixed(1) + '%'; $('#transMsg').textContent = label + (j.message || ''); },
       j => { if (!alive()) return; const r = j.result || {}; if (r.env){ s.env = r.env; if (s._env) s._env = null; delete s._bursts; } if (r.padded) s.pad0 = true; if (r.lang && !P.language) P.language = r.lang;
@@ -2667,7 +2679,7 @@ function runTranscribe(resume){
              // Stellen ohne erkannte Wörter (🗣) einzeln nachhören: meist Anläufe, die Whisper im Zusammenhang auslässt
              const gaps = TS.transcribeRanges ? tokens.filter(t => t.i >= base && t.src === k && t.type === 'unk' && t.we - t.ws >= 0.25) : [];
              if (!gaps.length || transCancelled){ n++; saveNow(); return next(); }
-             let gj; try { gj = TS.transcribeRanges(s.uri, model, lang, JSON.stringify(gaps.map(t => [r3(t.ws - s.off), r3(t.we - s.off)]))); } catch(e){ n++; saveNow(); return next(); }
+             let gj; try { setHint(false); gj = TS.transcribeRanges(s.uri, model, lang, JSON.stringify(gaps.map(t => [r3(t.ws - s.off), r3(t.we - s.off)]))); } catch(e){ n++; saveNow(); return next(); }
              transJob = gj;
              watchJob(gj, j2 => { if (!alive()) return; $('#transProg i').style.width = ((n + 0.9 + 0.1 * j2.progress) / todo.length * 100).toFixed(1) + '%'; $('#transMsg').textContent = label + `Nicht erkannte Stellen nachhören (${gaps.length}) …`; },
                j2 => { if (!alive()) return; const got = fillGaps(k, gaps, (j2.result || {}).ranges || []); words += got; n++; saveNow(); next(); },
@@ -2710,7 +2722,7 @@ function renderTranscript(){
     if (t.type !== 'pause' && (t.spk || '') !== lastSpk){ lastSpk = t.spk || '';
       const who = spkOf(lastSpk); if (who || P.speakers.length){ const l = document.createElement('span'); l.className = 'spk-lbl' + (who ? '' : ' none'); l.textContent = who ? who.name : 'ohne Person'; if (who) l.style.setProperty('--sc', spkCol(who)); pEl.append(l, ' '); } }
     const sp = document.createElement('span'); sp.dataset.i = t.i;
-    if (t.type === 'word'){ sp.className = 'tk word' + (t.pr < 0.5 ? ' low' : '') + (t.ug ? ' rep' : ''); if (t.ug) sp.title = 'Nachgehört: Whisper hatte diese Stelle zunächst ausgelassen – meist ein Anlauf'; if (fset.has(t.i)) sp.classList.add('filler'); }
+    if (t.type === 'word'){ sp.className = 'tk word' + (isLowTok(t) ? ' low' : '') + (t.ug ? ' rep' : ''); if (t.ug) sp.title = 'Nachgehört: Whisper hatte diese Stelle zunächst ausgelassen – meist ein Anlauf'; if (fset.has(t.i)) sp.classList.add('filler'); }
     else if (t.type === 'unk'){ sp.className = 'tk unk'; sp.title = 'Hier wurde gesprochen, aber Whisper hat kein Wort erkannt – meist ein ausgelassener Anlauf. „Wiederholungen weg“ löscht solche Stellen; antippen spielt sie ab.'; if (t.att) sp.classList.add('att'); }
     else sp.className = 'tk pause';
     if (t.type === 'word' && !pEl._dir){ pEl._dir = 1; if (RTL_CH.test(tokText(t))) pEl.dir = 'rtl'; }
@@ -2722,7 +2734,7 @@ function renderTranscript(){
     prev = i;
   }
   root.append(frag); tokens.forEach(t => paint(t.i));
-  paintFillerCount(fset); paintMarkTimes(); paintMarksBtn(); paintRefsBtn();
+  paintFillerCount(fset); paintMarkTimes(); paintMarksBtn(); paintRefsBtn(); paintLowBtn(); paintChkBtn(); lowMark();
   const todo = P.sources.filter(s => !s.tr).length;
   $('#textTodo').classList.toggle('hidden', !todo); $('#textTodo b').textContent = todo === 1 ? '1 Video ist' : `${todo} Videos sind`;
   if ($('#findIn').value) runFind();
@@ -2730,7 +2742,7 @@ function renderTranscript(){
 $('#textTodoBtn').onclick = () => setTab('trans');
 function paint(i){
   const t = tokens[i], sp = spans[i]; if (!sp) return;
-  if (t.type === 'word'){ const tx = tokText(t); if (sp.textContent !== tx) sp.textContent = tx; sp.classList.toggle('empty', !tx); sp.classList.toggle('edited', P.edits[t.i] != null); }
+  if (t.type === 'word'){ const tx = tokText(t); if (sp.textContent !== tx) sp.textContent = tx; sp.classList.toggle('empty', !tx); sp.classList.toggle('edited', P.edits[t.i] != null); sp.classList.toggle('low', isLowTok(t)); }
   sp.classList.toggle('del', deleted.has(i) || (t.type === 'word' && isSrcDeleted((t.ws + t.we) / 2)));
   sp.classList.toggle('ks', !!t.ks && sp.classList.contains('del'));
   const added = t.type !== 'word' && P.edits[i];
@@ -2860,7 +2872,7 @@ function showSel(){
 function clearSel(){ selA = selB = null; showSel(); }
 // Anzeigen im Text-Reiter, die dem Schnitt folgen (Zähler der Füllwörter, Zeiten an den Kapiteln): kurz nach einer Änderung auffrischen
 let textLateT = 0;
-function textLater(){ if (tab !== 'text' || !tokens.length) return; clearTimeout(textLateT); textLateT = setTimeout(() => { if (P && tab === 'text' && spans.length){ paintFillerCount(); paintMarkTimes(); } }, 250); }
+function textLater(){ if (tab !== 'text' || !tokens.length) return; clearTimeout(textLateT); textLateT = setTimeout(() => { if (P && tab === 'text' && spans.length){ paintFillerCount(); paintMarkTimes(); paintLowBtn(); } }, 250); }
 // ── Satz und Absatz auswählen, „Nur das behalten“ (C4) ──
 // Gerechnet wird in der Reihenfolge, in der der Text dasteht (order/pos). Ein Satz reicht vom Wort nach dem vorigen Satzende bis zum
 // nächsten Wort mit Satzende; Pausen und nicht erkannte Stellen dazwischen gehören dazu, ein Wechsel des Videos beendet ihn.
@@ -3039,11 +3051,12 @@ function openRangeEdit(ids){
   body.innerHTML = `<h3>Text korrigieren</h3><textarea id="rangeEdit" rows="3" dir="auto" style="width:100%;font:18px/1.4 var(--read)"></textarea>
     <p class="muted small">Am Schnitt ändert sich nichts. Gleiche Wortzahl: Wort für Wort ersetzt. Sonst wird der Text auf die Zeit der markierten Stellen verteilt –
     so lassen sich Wörter zusammenschreiben oder fehlende Wörter ergänzen (am besten die 🗣-Stelle mit markieren). Erscheint so auch in den Untertiteln.</p>
+    <label class="row small${ids.filter(isWord).length >= 1 && ids.filter(isWord).length <= 4 ? '' : ' hidden'}"><input type="checkbox" id="rangeDict"> Künftig immer so schreiben (ins Wörterbuch)</label>
     <div class="row"><button class="btn" id="rangeReset">↺ Original</button><button class="btn primary" id="rangeOk" style="margin-left:auto">Fertig</button></div>`;
   $('#rangeEdit').value = cur; openSheet(false); setTimeout(() => { $('#rangeEdit').focus(); $('#rangeEdit').select(); }, 30);
-  const done = reset => { const v = $('#rangeEdit').value; closeSheet();
-    commit(() => { if (reset) ids.forEach(i => delete P.edits[i]); else applyRangeText(ids, v); regenCuesFor(ids); }, false);
-    afterTextEdit(reset ? 'Originaltext' : 'Text übernommen'); clearSel(); };
+  const done = reset => { const v = $('#rangeEdit').value, learn = !reset && $('#rangeDict').checked, orig = ids.filter(isWord).map(i => tokens[i].text).join(' '); let more = -1; closeSheet();
+    commit(() => { if (reset) ids.forEach(i => delete P.edits[i]); else applyRangeText(ids, v); regenCuesFor(ids); if (learn) more = dictLearn(orig, v); }, false);
+    afterTextEdit(reset ? 'Originaltext' : (learn && dictLearnMsg(more)) || 'Text übernommen'); clearSel(); };
   $('#rangeOk').onclick = () => done(false); $('#rangeReset').onclick = () => done(true);
   $('#rangeEdit').onkeydown = ev => { if (ev.key === 'Enter' && !ev.shiftKey){ ev.preventDefault(); done(false); } };
   body.onclick = null;
@@ -3158,7 +3171,8 @@ function bulkDelete(ids){ ids.forEach(i => deleted.add(i)); tidyPauses(ids).forE
 $('#fillerBtn').onclick = () => {
   const ids = fillerIds(0);
   if (!ids.length) return toast('Keine Füllwörter übrig');
-  commit(() => bulkDelete(ids), false); tokens.forEach(t => paint(t.i)); paintFillerCount(); toast(`${ids.length} Füllwörter entfernt`);
+  commit(() => cleanRun('f', () => bulkDelete(ids)), false); tokens.forEach(t => paint(t.i)); paintFillerCount(); chkChanged();
+  toast(`${ids.length} Füllwörter entfernt · die Prüfliste zeigt jeden Schnitt`);
 };
 // Pausen kürzen (0 = ganz löschen)
 function trimPauses(len, minTok = 0){
@@ -3168,18 +3182,25 @@ function trimPauses(len, minTok = 0){
 }
 $('#pauseBtn').onclick = () => {
   const len = +$('#pauseLen').value; let n = 0;
-  commit(() => n = trimPauses(len), false); tokens.forEach(t => paint(t.i));
-  toast(n ? (len ? `${n} Pausen auf ${String(len).replace('.', ',')} s gekürzt` : `${n} Pausen gelöscht`) : 'Keine Pausen zu kürzen');
+  commit(() => n = cleanRun('p', () => trimPauses(len)), false); tokens.forEach(t => paint(t.i)); chkChanged();
+  toast(n ? (len ? `${n} Pausen auf ${String(len).replace('.', ',')} s gekürzt` : `${n} Pausen gelöscht`) + ' · die Prüfliste zeigt jeden Schnitt' : 'Keine Pausen zu kürzen');
 };
 // Wiederholte Anläufe finden: „Ich wollte – ich wollte heute …“ → der frühere Anlauf wird gelöscht, der letzte bleibt.
 const KEEP_REPEAT = new Set(['sehr','ganz','so','ja','nein','nee','immer','mehr','viel','gut','nie','wieder','nochmal','hallo','hey','bitte','danke','okay','ok',
   'der','die','das','den','dem','des','was','wer','sie','es','wir','ihr','er','man','dass','da','hier','jetzt','gerade','auch','noch','schon','mal']);
-function findRepeats(minTok = 0){
+// Rückgabe: {ids: alles, was als Anlauf wegfällt, groups: [{v: [[a, b], …], s}]}. v nennt die Fassungen einer Wiederholung als
+// Bereiche von Wortnummern, die letzte ist die, die stehen bleibt; s kennzeichnet ganze Sätze (C5: Fassungen vergleichen).
+function repeatFinds(minTok = 0){
   const ws = tokens.filter(t => t.i >= minTok && t.type === 'word' && !deleted.has(t.i) && tokText(t) && !isSrcDeleted((t.ws + t.we) / 2));
-  const out = new Set();
+  const out = new Set(), groups = [];
   for (const g of repeatGroups(ws, t => tokText(t), (i, j) => ws[i].src === ws[j].src && ws[j].ws - ws[i].ws <= 30)){
     const from = ws[g.att[0][0]].i, to = ws[g.fin[0]].i;
     for (let i = from; i < to; i++) if (tokens[i].type !== 'pause' && !deleted.has(i)) out.add(i);
+    // Die letzte Fassung: bei einem abgebrochenen Anlauf die wiederholten Wörter; war der Anlauf ein ganzer Satz, dann der ganze Satz
+    let fe = Math.min(g.fin[1], ws.length - 1), la = g.att[g.att.length - 1][1]; while (la > g.att[g.att.length - 1][0] && FILLER.test(norm(tokText(ws[la])))) la--;
+    const full = sentEnd(tokText(ws[la]));
+    if (full) for (let q = g.fin[0]; q < ws.length && ws[q].src === ws[g.fin[0]].src && ws[q].ws - ws[g.fin[0]].ws <= 25; q++){ fe = q; if (sentEnd(tokText(ws[q]))) break; }
+    groups.push({v: g.att.map(([x], k) => [ws[x].i, (k + 1 < g.att.length ? ws[g.att[k + 1][0]].i : to) - 1]).concat([[to, ws[fe].i]]), ...(full ? {s: 1} : {})});
   }
   // Ganze Sätze, die gleich noch einmal (leicht anders) gesagt wurden: der frühere ist ein Anlauf
   const sents = []; let cur = [];
@@ -3197,6 +3218,9 @@ function findRepeats(minTok = 0){
       const l = lcs(a, b.slice(0, a.length + 2));
       if (l / a.length >= 0.55){
         for (let i = A[0].i; i < B[0].i; i++) if (tokens[i].type !== 'pause' && !deleted.has(i)) out.add(i);
+        const last = groups[groups.length - 1], vb = [B[0].i, B[B.length - 1].i];
+        if (last && last.s && last.v[last.v.length - 1][0] === A[0].i){ last.v[last.v.length - 1][1] = B[0].i - 1; last.v.push(vb); }   // dritter Anlauf desselben Satzes
+        else groups.push({s: 1, v: [[A[0].i, B[0].i - 1], vb]});
         k = j - 1; break;
       }
     }
@@ -3215,23 +3239,426 @@ function findRepeats(minTok = 0){
     let j = t.i + 1; while (j < tokens.length && tokens[j].type === 'pause') j++;
     if (j < tokens.length && tokens[j].src === t.src && tokens[j].type !== 'pause' && (t.att || t.we - t.ws >= 1.0)) out.add(t.i);
   }
-  return [...out];
+  return {ids: [...out], groups};
 }
+const findRepeats = (minTok = 0) => repeatFinds(minTok).ids;
 $('#repeatBtn').onclick = () => {
-  const ids = findRepeats(0); if (!ids.length) return toast('Keine Wiederholungen gefunden');
-  commit(() => bulkDelete(ids), false); tokens.forEach(t => paint(t.i));
+  const f = repeatFinds(0), ids = f.ids; if (!ids.length) return toast('Keine Wiederholungen gefunden');
+  commit(() => cleanRun('r', () => { bulkDelete(ids); return f; }), false); tokens.forEach(t => paint(t.i)); chkChanged();
   const nu = ids.filter(i => tokens[i].type === 'unk').length;
-  toast(`${ids.filter(isWord).length} Wörter${nu ? ` und ${nu} nicht erkannte Stellen (🗣)` : ''} aus wiederholten Anläufen gelöscht – Strg+Z macht es rückgängig`);
+  toast(`${ids.filter(isWord).length} Wörter${nu ? ` und ${nu} nicht erkannte Stellen (🗣)` : ''} aus wiederholten Anläufen gelöscht · in der Prüfliste lässt sich je Stelle die beste Fassung wählen`);
 };
+// ───────── Hörprobe ─────────
+// Eine Stelle der Aufnahme anhören, wie sie aufgenommen wurde – auch wenn sie weggeschnitten ist. Das läuft über ein eigenes
+// Tonelement neben der Vorschau: Schnitt und Abspiellinie bleiben, wo sie sind.
+const AUD = {el: null, list: [], k: -1, run: 0, t: 0, on: null, url: ''};
+const srcPlayUrl = s => s.proxy ? (TS.mediaUrl ? MEDIA(s.proxy) : 'media?f=' + encodeURIComponent(s.proxy)) : MEDIA(s.uri);
+const sec1 = x => (Math.round(x * 10) / 10).toFixed(1).replace('.', ',');
+function audStop(){
+  clearTimeout(AUD.t); AUD.run++; if (AUD.el) AUD.el.pause();
+  const on = AUD.on, was = AUD.k; AUD.list = []; AUD.k = -1; AUD.on = null; if (on && was >= 0) on(-1);
+}
+function audPlay(list, on){   // list: [[a, b], …] in Quellzeit, nacheinander mit kurzer Pause; on(k) nennt die laufende Stelle, on(-1) das Ende
+  audStop(); if (playing) pausePlay(); if (!P || !list.length) return;
+  if (!AUD.el){ AUD.el = document.createElement('audio'); AUD.el.preload = 'auto'; }
+  AUD.list = list; AUD.on = on || null; audStep(0, AUD.run);
+}
+function audStep(k, run){
+  if (run !== AUD.run) return; if (k >= AUD.list.length) return audStop();
+  const el = AUD.el, [a, b] = AUD.list[k], s = P.sources[srcAt(a + 1e-3)], url = srcPlayUrl(s);
+  const la = clamp(a - s.off, 0, s.duration), lb = clamp(b - s.off, la + 0.05, s.duration);
+  AUD.k = k; if (AUD.on) AUD.on(k);
+  const watch = () => { if (run !== AUD.run) return;
+    if (el.currentTime >= lb - 0.01 || el.ended || el.error){ el.pause(); AUD.t = setTimeout(() => audStep(k + 1, run), 350); return; }
+    AUD.t = setTimeout(watch, 30); };
+  const go = () => { if (run !== AUD.run) return; try { el.currentTime = la; } catch(_){} el.volume = clamp(s.vol ?? 1, 0, 1);
+    el.play().then(watch, () => { if (run === AUD.run){ audStop(); toast('Diese Stelle ließ sich aus der Aufnahme nicht abspielen'); } }); };
+  if (AUD.url !== url){ AUD.url = url; el.src = url; el.addEventListener('loadedmetadata', go, {once: true}); el.load(); } else go();
+}
+
+// ───────── Prüfliste nach dem Aufräumen (A5) und Fassungen vergleichen (C5) ─────────
+// Jeder Schnitt, den „Füllwörter weg“, „Wiederholungen weg“ und „Pausen kürzen“ setzen, steht in P.checks:
+//   {id, k: 'f' | 'r' | 'p', ids: [Nummern der Wörter und Pausen, die der Schnitt entfernt hat], tr: [[Pause, Länge vorher, Länge danach]],
+//    v: [[a, b], …] die Fassungen einer Wiederholung als Bereiche von Wortnummern, s: ganze Sätze}
+// Ob ein Eintrag gerade geschnitten ist, ergibt sich aus dem Schnitt selbst (deleted, P.trims). So stimmt die Liste auch nach
+// „Rückgängig“ und nach Änderungen von Hand.
+const chkAll = () => (P && P.checks) || [];
+const CHK_NAME = {f: 'Füllwörter', r: 'Wiederholungen', p: 'Pausen'};
+const chkSpan = c => { let a = Infinity, b = -1; const see = i => { if (i < a) a = i; if (i > b) b = i; };
+  c.ids.forEach(see); (c.tr || []).forEach(x => see(x[0])); (c.v || []).forEach(r => { see(r[0]); see(r[1]); }); return [a, b]; };
+// Neu Gelöschtes als zusammenhängende Schnitte: Zwischen zwei Nummern eines Schnitts liegt nur, was schon vorher gelöscht war
+function cutRuns(before){
+  const add = [...deleted].filter(i => !before.has(i)).sort((a, b) => a - b), runs = [];
+  for (const i of add){ const r = runs[runs.length - 1]; let join = !!r;
+    if (r) for (let j = r[r.length - 1] + 1; j < i; j++) if (!before.has(j)){ join = false; break; }
+    if (join) r.push(i); else runs.push([i]); }
+  return runs;
+}
+function chkNote(k, before, tr0, groups){
+  const add = [], runs = cutRuns(before), mk = o => ({id: newId(), k, ...o});
+  if (k === 'r' && groups && groups.length){
+    const sp = groups.map(g => [g.v[0][0], g.v[g.v.length - 1][1]]), got = groups.map(() => []), single = [];
+    for (const run of runs){ const loose = [];
+      for (const i of run){ const q = sp.findIndex(([a, b]) => i >= a && i <= b); if (q < 0) loose.push(i); else got[q].push(i); }
+      if (!loose.length) continue;
+      // Pausen am Rand einer Wiederholung gehören zu ihr; alles andere ist ein eigener Schnitt (nicht erkannte Stellen)
+      const q = sp.findIndex(([a, b]) => run.some(i => i >= a && i <= b));
+      if (q >= 0 && loose.every(i => tokens[i].type === 'pause')) got[q].push(...loose); else single.push(loose);
+    }
+    groups.forEach((g, q) => { if (got[q].length) add.push(mk({ids: got[q].sort((x, y) => x - y), v: g.v, ...(g.s ? {s: 1} : {})})); });
+    single.forEach(ids => add.push(mk({ids})));
+  } else runs.forEach(ids => add.push(mk({ids})));
+  for (const i of Object.keys(P.trims)) if (P.trims[i] !== tr0[i] && !deleted.has(+i)) add.push(mk({ids: [], tr: [[+i, tr0[i] ?? null, P.trims[i]]]}));
+  if (add.length) chkMerge(add);
+  return add.length;
+}
+// Neue Einträge aufnehmen; ältere Einträge derselben Art an derselben Stelle fallen weg
+function chkMerge(add){
+  const hit = new Set(add.flatMap(c => c.ids.concat((c.tr || []).map(x => x[0])))), sp = add.map(c => [c.k, ...chkSpan(c)]);
+  P.checks = chkAll().filter(c => { if (c.ids.some(i => hit.has(i)) || (c.tr || []).some(x => hit.has(x[0]))) return false;
+    const [a, b] = chkSpan(c); return !sp.some(([k, x, y]) => k === c.k && a <= y && b >= x); }).concat(add);
+  if (P.checks.length > 3000) P.checks = P.checks.slice(-3000);
+}
+// Aufräumen ausführen und jeden Schnitt in die Prüfliste schreiben. fn liefert bei Wiederholungen die gefundenen Fassungen mit.
+function cleanRun(k, fn){ const before = new Set(deleted), tr0 = {...P.trims}, res = fn(); chkNote(k, before, tr0, res && res.groups); return res; }
+
+const varToks = r => { const o = []; for (let i = r[0]; i <= r[1] && i < tokens.length; i++) if (tokens[i].type !== 'pause') o.push(i); return o; };
+const chkKept = c => (c.v || []).map((r, j) => varToks(r).some(i => !isCut(i)) ? j : -1).filter(j => j >= 0);
+function chkState(c){   // 'cut' geschnitten · 'back' steht wieder ganz im Schnitt · 'part' teils · 'gone' keine Fassung steht mehr
+  if (c.v){ const n = chkKept(c).length; return n === c.v.length ? 'back' : n === 1 ? 'cut' : n ? 'part' : 'gone'; }
+  let n = 0, m = 0; for (const i of c.ids){ m++; if (deleted.has(i)) n++; }
+  for (const [i, , len] of c.tr || []){ m++; if (!deleted.has(i) && P.trims[i] === len) n++; }
+  return n === m ? 'cut' : n ? 'part' : 'back';
+}
+const chkAt = c => { const [a] = chkSpan(c); return tokens[a] ? wS(tokens[a]) : 0; };
+const chkEnd = c => { const [, b] = chkSpan(c); return tokens[b] ? wE(tokens[b]) : 0; };
+const chkDur = c => c.tr && c.tr.length ? c.tr.reduce((n, [i, old, len]) => n + ((old ?? (tokens[i].e - tokens[i].s)) - len), 0)
+  : c.ids.reduce((n, i) => n + (tokens[i].type === 'pause' ? tokens[i].e - tokens[i].s : wE(tokens[i]) - wS(tokens[i])), 0);
+const idsText = ids => ids.filter(i => isTextTok(i)).map(i => tokText(tokens[i])).filter(Boolean).join(' ');
+// Bis zu n Wörter vor (dir −1) oder nach (dir 1) der Nummer i, so wie sie im Schnitt stehen
+function ctxText(i, dir, n){
+  const out = [], si = tokens[i] ? tokens[i].src : -1;
+  for (let j = i + dir; j >= 0 && j < tokens.length && tokens[j].src === si && out.length < n; j += dir){ if (!isTextTok(j) || isCut(j)) continue; const tx = tokText(tokens[j]); if (tx) out.push(tx); }
+  return (dir < 0 ? out.reverse() : out).join(' ');
+}
+function chkLabel(c){
+  if (c.tr && c.tr.length){ const [i, old, len] = c.tr[0], t = tokens[i]; return `Pause ${sec1(old ?? (t.e - t.s))} s → ${sec1(len)} s`; }
+  const tx = idsText(c.ids); if (tx) return tx;
+  const unk = c.ids.filter(i => tokens[i].type === 'unk');
+  return unk.length ? `nicht erkannte Stelle (${sec1(unk.reduce((n, i) => n + wE(tokens[i]) - wS(tokens[i]), 0))} s)` : `Pause ${sec1(chkDur(c))} s`;
+}
+// Bei einem angefangenen Satz geht die letzte Fassung nach den wiederholten Wörtern weiter: der Rest des Satzes zum Mitlesen und Mithören
+function varTail(c){
+  if (c.s) return []; const b = c.v[c.v.length - 1][1], out = [], si = tokens[b].src; if (sentEnd(tokText(tokens[b]))) return out;
+  for (let i = b + 1; i < tokens.length && tokens[i].src === si && wE(tokens[i]) - wE(tokens[b]) < 8; i++){
+    if (!isTextTok(i) || isCut(i)) continue; out.push(i); if (sentEnd(tokText(tokens[i]))) break; }
+  return out;
+}
+function varRange(c, j){   // Quellzeit einer Fassung zum Anhören
+  const ids = varToks(c.v[j]).filter(i => tokText(tokens[i]) || tokens[i].type === 'unk'); if (!ids.length) return null;
+  const end = j === c.v.length - 1 ? varTail(c) : [], last = end.length ? end[end.length - 1] : ids[ids.length - 1], s = P.sources[tokens[ids[0]].src];
+  return [Math.max(s.off, wS(tokens[ids[0]]) - 0.12), Math.min(s.off + s.duration, wE(tokens[last]) + 0.2)];
+}
+function chkUndo(c){   // Schnitt zurücknehmen: Was dieser Eintrag entfernt hat, steht wieder im Schnitt
+  commit(() => { for (const i of c.ids) if (deleted.has(i)){ deleted.delete(i); removeDel(tokens[i].s, tokens[i].e); }
+    for (const [i, old] of c.tr || []){ if (old == null) delete P.trims[i]; else P.trims[i] = old; } }, false);
+  chkAfter();
+}
+function chkRedo(c){
+  if (c.v) return chkPick(c, c.v.length - 1);
+  commit(() => { c.ids.forEach(i => deleted.add(i)); for (const [i, , len] of c.tr || []) P.trims[i] = len; }, false);
+  chkAfter();
+}
+function chkPick(c, k){   // Fassung k bleibt stehen, die anderen fallen weg
+  commit(() => {
+    const own = new Set(c.ids), add = [];
+    c.v.forEach((r, j) => { for (const i of varToks(r)){
+      if (j === k){ if (own.has(i) && deleted.has(i)){ deleted.delete(i); removeDel(tokens[i].s, tokens[i].e); } }
+      else if (!deleted.has(i)){ deleted.add(i); add.push(i); } } });
+    for (let i = c.v[k][0]; i <= c.v[k][1]; i++) if (tokens[i].type === 'pause' && own.has(i)) deleted.delete(i);   // Pausen in der Fassung, die bleibt
+    const gone = [...new Set(c.ids.concat(add))].filter(i => deleted.has(i)), extra = tidyPauses(gone);
+    extra.forEach(i => deleted.add(i));
+    c.ids = [...new Set(c.ids.concat(add, extra))].sort((x, y) => x - y);
+  }, false);
+  chkAfter();
+}
+function chkAfter(){ audStop(); if (spans.length){ tokens.forEach(t => paint(t.i)); paintFillerCount(); } chkChanged(); }
+function paintChkBtn(){ const n = chkAll().length, b = $('#checkBtn'); if (!b) return; b.classList.toggle('hidden', !n); b.textContent = `Prüfliste (${n})`; }
+function chkChanged(){ paintChkBtn(); if (chkSheetOpen()) renderChecks(); }
+
+// ── Die Liste: bleibt offen, während man anhört und entscheidet ──
+const chkSheetOpen = () => !$('#sheet').classList.contains('hidden') && !!$('#ckSheet');
+let chkTab = 'f', chkMax = 60; const chkHeard = new Set();
+function chkJump(c){
+  const [a] = chkSpan(c); audStop(); if (playing) pausePlay();
+  seekOut(Math.min(srcToOut(snapSrc(chkAt(c))), Math.max(0, total - 0.01)), false); tlReveal();
+  if (tab === 'text' && spans[a]) spans[a].scrollIntoView({block: 'center', behavior: 'smooth'});
+}
+function chkPlayCut(c){   // so klingt die Stelle im Schnitt
+  audStop(); if (playing) pausePlay();
+  const a = srcToOut(snapSrc(chkAt(c))), b = srcToOut(snapSrc(chkEnd(c)));
+  seekOut(Math.max(0, a - 1.5), false); startPlay(); stopAt = Math.min(total, Math.max(a, b) + 1.5); tlReveal();
+}
+function chkPlayOrig(c, rowEl){   // so wurde die Stelle aufgenommen
+  const [a] = chkSpan(c), s = P.sources[tokens[a].src];
+  audPlay([[Math.max(s.off, chkAt(c) - 1.2), Math.min(s.off + s.duration, chkEnd(c) + 1.2)]], k => rowEl.classList.toggle('playing', k >= 0));
+}
+function chkPlayVars(c, js, rowEl){
+  const list = js.map(j => ({j, r: varRange(c, j)})).filter(x => x.r);
+  audPlay(list.map(x => x.r), k => { for (const el of rowEl.querySelectorAll('.ck-var')) el.classList.toggle('playing', k >= 0 && +el.dataset.j === list[k].j); });
+}
+function chkRow({c, at, st}){
+  const t = `<span class="mono">${fmtT(srcToOut(snapSrc(at)))}</span>`, heard = chkHeard.has(c.id) ? ' heard' : '';
+  if (c.v){
+    const kp = chkKept(c), one = kp.length === 1 ? kp[0] : -1, tail = idsText(varTail(c));
+    const vars = c.v.map((r, j) => `<div class="ck-var${j === one ? ' kept' : ''}" data-j="${j}"><label><input type="radio" name="ck-${c.id}" value="${j}"${j === one ? ' checked' : ''}><span class="ck-n">${j + 1}</span><span class="ck-vt" dir="auto">${esc(idsText(varToks(r))) || 'ohne erkannten Text'}${j === c.v.length - 1 && tail ? ` <em>${esc(tail)}</em>` : ''}</span></label><button type="button" class="mini" data-a="var" title="Diese Fassung anhören">▶</button></div>`).join('');
+    const note = st === 'back' ? 'Alle Fassungen stehen im Schnitt. Wähle die beste aus.' : st === 'gone' ? 'Keine Fassung steht mehr im Schnitt.' : st === 'part' ? 'Mehrere Fassungen stehen im Schnitt.' : '';
+    return `<div class="ck-row var${heard}" data-id="${c.id}"><button type="button" class="ck-go" title="Zur Stelle springen">${t}<span class="ck-t">${c.s ? 'Satz' : 'Anlauf'} in ${c.v.length} Fassungen</span></button>
+      <div class="ck-vars">${vars}</div>${note ? `<p class="muted small ck-note">${note}</p>` : ''}
+      <div class="ck-acts"><button type="button" class="btn small" data-a="seq">▶ Nacheinander anhören</button>${st !== 'back' ? '<button type="button" class="btn small ghost" data-a="tog">Alle behalten</button>' : ''}</div></div>`;
+  }
+  const [a, b] = chkSpan(c), back = st === 'back', tag = back ? 'b' : 's';
+  return `<div class="ck-row${back ? ' back' : ''}${heard}" data-id="${c.id}"><button type="button" class="ck-go" title="Zur Stelle springen">${t}<span class="ck-t" dir="auto">${esc(ctxText(a, -1, 3))} <${tag}>${esc(chkLabel(c))}</${tag}> ${esc(ctxText(b, 1, 3))}</span></button>
+    <div class="ck-acts"><button type="button" class="btn small" data-a="cut" title="So klingt die Stelle jetzt">▶ ${back ? 'Stelle' : 'Schnitt'}</button>${back ? '' : '<button type="button" class="btn small" data-a="orig" title="So wurde die Stelle aufgenommen">▶ Original</button>'}<button type="button" class="btn small ghost" data-a="tog">${back ? 'Wieder schneiden' : 'Zurücknehmen'}</button></div></div>`;
+}
+function renderChecks(){
+  const box = $('#ckSheet'); if (!box) return;
+  const by = {f: [], r: [], p: []}; for (const c of chkAll()) (by[c.k] || by.f).push(c);
+  if (!by[chkTab].length) chkTab = ['f', 'r', 'p'].find(k => by[k].length) || chkTab;
+  const list = by[chkTab].map(c => ({c, at: chkAt(c), st: chkState(c)}));
+  if (chkTab === 'p') list.sort((x, y) => chkDur(y.c) - chkDur(x.c) || x.at - y.at); else list.sort((x, y) => x.at - y.at);
+  const shown = list.slice(0, chkMax), top = $('#sheet').scrollTop;
+  box.innerHTML = `<h3>Prüfliste nach dem Aufräumen</h3>
+    <p class="muted small">Jeder automatische Schnitt zum Anhören. „Schnitt“ spielt die Stelle, wie sie jetzt klingt, „Original“ spielt die Aufnahme. Bei Wiederholungen wählst du, welche Fassung bleibt.</p>
+    <div class="seg-ctl small ck-tabs">${['f', 'r', 'p'].map(k => `<button type="button" data-tab="${k}"${k === chkTab ? ' class="on"' : ''}>${CHK_NAME[k]} (${by[k].length})</button>`).join('')}</div>
+    ${chkTab === 'p' && list.length > 1 ? '<p class="muted small">Die längsten Pausen stehen oben.</p>' : ''}
+    <div class="ck-list">${shown.map(chkRow).join('') || `<p class="muted small">Keine Einträge. Sie entstehen, sobald „${chkTab === 'f' ? 'Füllwörter weg' : chkTab === 'r' ? 'Wiederholungen weg' : 'Pausen kürzen'}“ etwas schneidet.</p>`}</div>
+    ${list.length > shown.length ? `<div class="row"><button type="button" class="btn small" data-a="more">Weitere ${Math.min(60, list.length - shown.length)} anzeigen</button></div>` : ''}
+    <div class="row wrap" style="margin-top:12px">${list.some(x => x.st !== 'back') ? '<button type="button" class="btn small" data-a="undoall" title="Alle Schnitte dieser Art zurücknehmen">Alle zurücknehmen</button>' : ''}${list.length ? '<button type="button" class="btn small ghost" data-a="clear" title="Die Einträge dieser Art aus der Liste nehmen; die Schnitte bleiben, wie sie sind">Liste leeren</button>' : ''}<button type="button" class="btn primary" data-a="ok" style="margin-left:auto">Fertig</button></div>`;
+  $('#sheet').scrollTop = top;
+}
+function openChecks(k){
+  if (!P) return; sheetItem = null; if (k) chkTab = k; chkMax = 60;
+  const body = $('#sheetBody'); body.innerHTML = '<div id="ckSheet"></div>';
+  body.onclick = e => {
+    const tb = e.target.closest('[data-tab]'); if (tb){ chkTab = tb.dataset.tab; chkMax = 60; audStop(); return renderChecks(); }
+    const a = e.target.closest('[data-a]'), act = a ? a.dataset.a : '', rowEl = e.target.closest('.ck-row'), c = rowEl && chkAll().find(x => x.id === rowEl.dataset.id);
+    if (act === 'ok') return closeSheet();
+    if (act === 'more'){ chkMax += 60; return renderChecks(); }
+    if (act === 'clear'){ audStop(); P.checks = chkAll().filter(x => x.k !== chkTab); changed(false); return chkChanged(); }
+    if (act === 'undoall'){ const list = chkAll().filter(x => x.k === chkTab);
+      commit(() => { for (const x of list){ for (const i of x.ids) if (deleted.has(i)){ deleted.delete(i); removeDel(tokens[i].s, tokens[i].e); }
+        for (const [i, old] of x.tr || []){ if (old == null) delete P.trims[i]; else P.trims[i] = old; } } }, false);
+      toast(`${CHK_NAME[chkTab]}: alle Schnitte zurückgenommen`); return chkAfter(); }
+    if (!c) return;
+    const heard = () => { chkHeard.add(c.id); rowEl.classList.add('heard'); };
+    if (e.target.closest('.ck-go')) return chkJump(c);
+    if (act === 'cut'){ heard(); return chkPlayCut(c); }
+    if (act === 'orig'){ heard(); return chkPlayOrig(c, rowEl); }
+    if (act === 'var'){ heard(); return chkPlayVars(c, [+e.target.closest('.ck-var').dataset.j], rowEl); }
+    if (act === 'seq'){ heard(); return chkPlayVars(c, c.v.map((_, j) => j), rowEl); }
+    if (act === 'tog') return c.v || chkState(c) !== 'back' ? chkUndo(c) : chkRedo(c);
+  };
+  body.onchange = e => { const r = e.target.closest('.ck-var input[type=radio]'), rowEl = r && r.closest('.ck-row'), c = rowEl && chkAll().find(x => x.id === rowEl.dataset.id); if (c) chkPick(c, +r.value); };
+  sheetOnClose = () => { audStop(); body.onchange = null; };
+  renderChecks(); openSheet(true);
+}
+$('#checkBtn').onclick = () => openChecks();
+// Fassungen vergleichen, ehe etwas geschnitten ist: Die gefundenen Wiederholungen kommen ungeschnitten in die Liste
+$('#repeatCmp').onclick = () => {
+  if (!P || !tokens.length) return toast('Noch kein Transkript');
+  const have = chkAll().filter(c => c.k === 'r' && c.v);
+  const add = repeatFinds(0).groups.filter(g => !have.some(c => c.v[0][0] === g.v[0][0])).map(g => ({id: newId(), k: 'r', ids: [], v: g.v, ...(g.s ? {s: 1} : {})}));
+  if (!add.length && !have.length) return toast('Keine wiederholten Anläufe gefunden');
+  if (add.length){ P.checks = chkAll().concat(add); changed(false); }
+  paintChkBtn(); openChecks('r');
+};
+
+// ───────── Eigenes Wörterbuch (C1) ─────────
+// Namen und Fachbegriffe, die Whisper oft falsch schreibt: [{t: 'Hermeier', w: ['Hermeyer', 'Her Meier']}]. Die Liste gilt auf diesem
+// Gerät für alle Projekte (wie die eigenen Füllwörter) und lässt sich je Projekt abschalten (P.settings.dict === false).
+// Sie wirkt zweifach: Die Begriffe gehen als Hinweis an Whisper (wo die Plattform das anbietet, TS.setAsrHint), und nach jeder
+// Transkription ersetzt HoneyCut die hinterlegten Fehlschreibungen. Jede Ersetzung ist eine Korrektur (P.edits): im Text sichtbar
+// und über „Original“ zurückzuholen.
+const DICT_KEY = 'hc-dict', DICT_HINT_MAX = 400, DICT_EDGE = /^[„“"'‚‘(«»]+|[.,!?;:…"“”’')»«]+$/g;
+const dictClean = s => String(s).replace(/[,;]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60);
+const dictKey = s => String(s).trim().split(/\s+/).map(norm).filter(Boolean).join(' ');
+let dict = (() => { try { const v = JSON.parse(localStorage.getItem(DICT_KEY));
+  return Array.isArray(v) ? v.filter(x => x && typeof x.t === 'string' && dictKey(x.t)).map(x => ({t: dictClean(x.t), w: (Array.isArray(x.w) ? x.w : []).filter(y => typeof y === 'string' && dictKey(y)).map(dictClean)})) : []; } catch(_){ return []; } })();
+function saveDict(){ try { localStorage.setItem(DICT_KEY, JSON.stringify(dict)); } catch(_){} }
+const dictOn = () => !!(P && P.settings.dict !== false && dict.length);
+const dictHas = t => dict.find(x => dictKey(x.t) === dictKey(t));
+function dictAdd(term, wrong){   // Eintrag anlegen oder um Fehlschreibungen ergänzen; Rückgabe: ob sich etwas geändert hat
+  term = dictClean(term); if (!dictKey(term)) return false;
+  let e = dictHas(term), ch = false;
+  if (!e){ if (dict.length >= 300) return false; e = {t: term, w: []}; dict.push(e); ch = true; }
+  for (let w of wrong || []){ w = dictClean(w); if (!dictKey(w) || w === e.t || e.w.length >= 12 || e.w.some(y => dictKey(y) === dictKey(w))) continue; e.w.push(w); ch = true; }
+  if (ch) saveDict(); return ch;
+}
+function mergeDict(list){ let n = 0; for (const x of Array.isArray(list) ? list : []) if (x && typeof x.t === 'string' && dictAdd(x.t, Array.isArray(x.w) ? x.w.filter(y => typeof y === 'string') : [])) n++; return n; }
+// Begriffe als Hinweis für Whisper. Der Platz ist knapp (Whisper liest höchstens rund 220 Wortteile mit), deshalb höchstens
+// DICT_HINT_MAX Zeichen: die Begriffe in der Reihenfolge der Liste.
+function dictHintList(){ const out = []; let n = 0; if (!dictOn()) return out; for (const e of dict){ if (n + e.t.length + 2 > DICT_HINT_MAX) break; out.push(e.t); n += e.t.length + 2; } return out; }
+const dictHint = () => dictHintList().join(', ');
+// Schreibweisen, die ersetzt werden: jede hinterlegte Fehlschreibung, dazu der Begriff selbst, wenn er Großbuchstaben im Wort
+// trägt („AFD“ → „AfD“). Bei gewöhnlich geschriebenen Begriffen bleibt die Groß- und Kleinschreibung im Text, wie sie ist:
+// „die linke Hand“ soll kein Parteiname werden.
+function dictPats(list){
+  const pats = [];
+  for (const e of list){ const tk = dictKey(e.t); if (!tk) continue;
+    if (/\p{Ll}\p{Lu}|\p{Lu}{2}/u.test(e.t)) pats.push([tk.split(' '), e.t]);
+    for (const w of e.w){ const k = dictKey(w); if (k) pats.push([k.split(' '), e.t]); } }
+  return pats.sort((a, b) => b[0].length - a[0].length);
+}
+// Fehlschreibungen im Text ersetzen. only: nur diese Einträge · dry: nur zählen. Rückgabe: Zahl der Stellen
+function dictApply(minTok = 0, only, dry){
+  if (!P || !tokens.length || (!only && !dictOn())) return 0;
+  const ws = tokens.filter(t => t.i >= minTok && t.type === 'word'), nw = ws.map(t => norm(tokText(t))), used = new Set(); let n = 0;
+  for (const [parts, term] of dictPats(only || dict)) for (let k = 0; k + parts.length <= ws.length; k++){
+    let ok = true, gen = false;
+    for (let j = 0; j < parts.length && ok; j++){ const x = nw[k + j];
+      if (used.has(k + j) || ws[k + j].src !== ws[k].src) ok = false;
+      else if (x === parts[j]) continue;
+      else if (j === parts.length - 1 && x === parts[j] + 's') gen = true;   // Genitiv: „Hermeyers“ wird „Hermeiers“
+      else ok = false; }
+    if (!ok) continue;
+    const idx = ws.slice(k, k + parts.length).map(t => t.i), cur = idx.map(i => tokText(tokens[i])).join(' ');
+    const lead = (cur.match(/^[„“"'‚‘(«»]+/) || [''])[0], tail = (cur.match(/[.,!?;:…"“”’')»«]+$/) || [''])[0], want = lead + term + (gen ? 's' : '') + tail;
+    for (let j = 0; j < parts.length; j++) used.add(k + j);
+    if (cur === want) continue;
+    n++; if (dry) continue;
+    const words = want.split(' ');   // gleiche Wortzahl: Wort für Wort; sonst steht der Begriff am ersten Wort
+    idx.forEach((i, q) => { const v = words.length === idx.length ? words[q] : (q === 0 ? want : ''); if (v === tokens[i].text) delete P.edits[i]; else P.edits[i] = v; });
+  }
+  return n;
+}
+// Eine Korrektur merken: Aus „Hermeyer“ → „Hermeier“ wird ein Eintrag, der gleich im ganzen Text gilt. Rückgabe: weitere Stellen
+function dictLearn(oldText, newText){
+  const strip = s => String(s).replace(/\s+/g, ' ').trim().replace(DICT_EDGE, ''), t = strip(newText), w = strip(oldText);
+  if (!dictKey(t) || !dictKey(w) || t === w) return -1;
+  dictAdd(t, [w]); const e = dictHas(t); paintDictInfo(); return e ? dictApply(0, [e]) : 0;
+}
+const dictLearnMsg = n => n < 0 ? '' : n ? `Im Wörterbuch gemerkt · ${n === 1 ? 'eine weitere Stelle' : n + ' weitere Stellen'} korrigiert` : 'Im Wörterbuch gemerkt';
+function paintDictInfo(){ const el = $('#dictInfo'); if (el) el.textContent = dict.length ? (dict.length === 1 ? '1 Begriff' : `${dict.length} Begriffe`) + (P && P.settings.dict === false ? ' · in diesem Projekt aus' : '') : 'noch leer'; }
+function openDict(){
+  if (!P) return; const body = $('#sheetBody'), hint = !!TS.setAsrHint;
+  body.innerHTML = `<h3>Eigenes Wörterbuch</h3>
+    <p class="muted small">Namen und Fachbegriffe, die Whisper oft falsch schreibt. ${hint ? 'Die Begriffe gehen bei der Transkription als Hinweis an Whisper, und hinterlegte Fehlschreibungen ersetzt HoneyCut danach von selbst.' : 'Hinterlegte Fehlschreibungen ersetzt HoneyCut nach jeder Transkription von selbst.'} Die Liste gilt auf diesem Gerät für alle Projekte.</p>
+    <div class="dc-list" id="dcList"></div>
+    <div class="dc-add"><input type="text" id="dcTerm" maxlength="60" placeholder="Richtig, z. B. Hermeier" autocomplete="off" autocapitalize="off" spellcheck="false" dir="auto"><input type="text" id="dcWrong" maxlength="240" placeholder="Falsch gehört als, z. B. Hermeyer, Her Meier" autocomplete="off" autocapitalize="off" spellcheck="false" dir="auto"><button class="btn" id="dcAdd">Hinzufügen</button></div>
+    <label class="row"><input type="checkbox" id="dcOn"> In diesem Projekt anwenden</label>
+    <p class="muted small" id="dcInfo"></p>
+    <div class="row" style="margin-top:12px"><button class="btn" id="dcRun">Jetzt im Text ersetzen</button><button class="btn primary" id="dcOk" style="margin-left:auto">Fertig</button></div>`;
+  const paintList = () => {
+    $('#dcList').innerHTML = dict.length ? dict.map((e, k) => `<div class="dc-row"><button type="button" class="dc-t" data-ed="${k}" title="Bearbeiten"><b dir="auto">${esc(e.t)}</b><span class="muted small" dir="auto">${e.w.length ? 'ersetzt ' + esc(e.w.join(', ')) : hint ? 'nur als Hinweis' : 'noch ohne Fehlschreibung'}</span></button><button type="button" class="mini" data-del="${k}" title="Entfernen">×</button></div>`).join('') : '<p class="muted small">Noch keine Begriffe.</p>';
+    $('#dcOn').checked = P.settings.dict !== false; $('#dcOn').disabled = !dict.length;
+    const n = dictApply(0, null, true), sent = dictHintList().length, info = [];
+    if (tokens.length) info.push(n ? `Im Text ${n === 1 ? 'steht 1 Stelle' : `stehen ${n} Stellen`} mit hinterlegter Fehlschreibung.` : dictOn() ? 'Im Text steht gerade keine hinterlegte Fehlschreibung.' : '');
+    if (hint && dictOn() && sent < dict.length) info.push(`Als Hinweis an Whisper gehen die ersten ${sent} von ${dict.length} Begriffen; ersetzt wird mit allen.`);
+    $('#dcInfo').textContent = info.filter(Boolean).join(' '); $('#dcRun').disabled = !n; $('#dcAdd').textContent = dictHas($('#dcTerm').value) ? 'Speichern' : 'Hinzufügen';
+    paintDictInfo();
+  };
+  const add = () => { const t = dictClean($('#dcTerm').value), w = $('#dcWrong').value.split(/[,;\n]/).map(dictClean).filter(x => dictKey(x));
+    if (!dictKey(t)) return toast('Erst den richtigen Begriff eintragen');
+    const e = dictHas(t); if (e){ e.t = t; e.w = []; }   // vorhandener Eintrag: Schreibweise und Liste neu setzen
+    else if (dict.length >= 300) return toast('Das Wörterbuch ist voll (300 Begriffe)');
+    dictAdd(t, w); saveDict(); $('#dcTerm').value = ''; $('#dcWrong').value = ''; paintList(); $('#dcTerm').focus(); };
+  $('#dcAdd').onclick = add;
+  for (const id of ['dcTerm', 'dcWrong']) $('#' + id).onkeydown = e => { e.stopPropagation(); if (e.key === 'Enter'){ e.preventDefault(); add(); } };
+  $('#dcTerm').oninput = () => { $('#dcAdd').textContent = dictHas($('#dcTerm').value) ? 'Speichern' : 'Hinzufügen'; };
+  $('#dcOn').onchange = e => { P.settings.dict = e.target.checked; changed(false); paintList(); };
+  $('#dcRun').onclick = () => { let n = 0; commit(() => { n = dictApply(0); }, false); afterTextEdit(n ? `${n === 1 ? 'Eine Stelle' : n + ' Stellen'} ersetzt` : 'Nichts zu ersetzen'); paintList(); };
+  $('#dcOk').onclick = closeSheet;
+  body.onclick = e => { const d = e.target.closest('[data-del]'), ed = e.target.closest('[data-ed]');
+    if (d){ dict.splice(+d.dataset.del, 1); saveDict(); paintList(); }
+    else if (ed){ const x = dict[+ed.dataset.ed]; if (x){ $('#dcTerm').value = x.t; $('#dcWrong').value = x.w.join(', '); $('#dcAdd').textContent = 'Speichern'; $('#dcWrong').focus(); } } };
+  sheetItem = null; paintList(); openSheet(false);
+}
+$('#dictBtn').onclick = openDict; $('#dictChip').onclick = openDict;
+
+// ───────── Unsichere Wörter der Reihe nach prüfen (C2) ─────────
+// Der Prüfmodus springt von unsicherer Stelle zu unsicherer Stelle (direkt aufeinanderfolgende unsichere Wörter gelten als eine),
+// spielt sie ab und nimmt die Entscheidung per Tastatur: Enter bestätigt oder übernimmt die Korrektur, Tab überspringt,
+// Umschalt+Tab geht zurück, Pfeil nach unten spielt noch einmal, Strg+Entf löscht die Wörter, Esc beendet.
+const LQ = {on: false, stops: [], k: -1, cur: null};
+function lowStops(){
+  const out = []; if (!P || !tokens.length) return out; if (order.length !== tokens.length) computeOrder();
+  let cur = null;
+  for (const i of order){ const t = tokens[i];
+    if (isLowTok(t) && tokText(t) && !isCut(i)){ if (cur && cur.length < 4) cur.push(i); else { cur = [i]; out.push(cur); } }
+    else cur = null; }
+  return out;
+}
+function paintLowBtn(){
+  const b = $('#lowBtn'); if (!b) return; const n = lowStops().reduce((a, s) => a + s.length, 0);
+  b.classList.toggle('hidden', !n && !LQ.on); b.classList.toggle('on', LQ.on); b.textContent = n ? `Unsichere prüfen (${n})` : 'Unsichere prüfen';
+}
+function lowMark(){ for (const sp of $$('#transcript .tk.chk')) sp.classList.remove('chk'); if (LQ.on && LQ.cur) LQ.cur.forEach(i => spans[i] && spans[i].classList.add('chk')); }
+function lowPlay(){
+  const ids = LQ.cur; if (!ids) return;
+  const a = srcToOut(snapSrc(wS(tokens[ids[0]]))), b = srcToOut(snapSrc(wE(tokens[ids[ids.length - 1]])));
+  audStop(); if (playing) pausePlay(); seekOut(Math.max(0, a - 1), false); startPlay(); stopAt = Math.min(total, Math.max(a, b) + 0.6); tlReveal();
+}
+function lowShow(k){
+  const stops = LQ.stops = lowStops();
+  if (!stops.length){ lowEnd(); return toast('Alle unsicheren Wörter sind geprüft'); }
+  LQ.k = k = clamp(k, 0, stops.length - 1); const ids = LQ.cur = stops[k];
+  lowMark(); if (spans[ids[0]]) spans[ids[0]].scrollIntoView({block: 'center', behavior: 'smooth'});
+  $('#lowIn').value = ids.map(i => tokText(tokens[i])).join(' ');
+  $('#lowPos').textContent = `Unsichere Stelle ${k + 1} von ${stops.length}`;
+  $('#lowHint').textContent = `Whisper war sich zu ${Math.round(Math.min(...ids.map(i => tokens[i].pr)) * 100)} % sicher`;
+  $('#lowDict').checked = false; paintLowBtn(); lowPlay();
+  if (FINE){ $('#lowIn').focus(); $('#lowIn').select(); }
+}
+function lowStart(){
+  if (!P || !tokens.length) return; if (tab !== 'text') setTab('text');
+  if (!lowStops().length) return toast('Kein unsicheres Wort übrig');
+  LQ.on = true; clearSel(); $('#lowBar').classList.remove('hidden'); lowShow(0);
+}
+function lowEnd(){
+  if (!LQ.on) return; LQ.on = false; LQ.cur = null; LQ.k = -1; $('#lowBar').classList.add('hidden'); lowMark(); paintLowBtn();
+  if (document.activeElement === $('#lowIn')) $('#lowIn').blur();
+}
+function lowConfirm(){   // Enter: Der Text im Feld gilt. Unverändert heißt bestätigt, verändert heißt korrigiert.
+  const ids = LQ.cur; if (!ids) return;
+  const v = $('#lowIn').value.replace(/\s+/g, ' ').trim(), old = ids.map(i => tokText(tokens[i])).join(' ');
+  if (!v) return lowDelete();
+  const fix = v !== old, learn = fix && $('#lowDict').checked; let more = -1;
+  commit(() => { if (fix){ applyRangeText(ids, v); regenCuesFor(ids); } ids.forEach(i => tokens[i].ok = 1); if (learn) more = dictLearn(old, v); }, false);
+  afterTextEdit(learn ? dictLearnMsg(more) : ''); lowShow(LQ.k);
+}
+function lowDelete(){ const ids = LQ.cur; if (!ids) return; commit(() => bulkDelete(ids), false); afterTextEdit('Gelöscht'); lowShow(LQ.k); }
+function lowStep(d){
+  const n = LQ.stops.length, k = LQ.k + d;
+  if (k < 0 || k >= n) return toast(k < 0 ? 'Das ist die erste Stelle' : 'Das war die letzte Stelle – Esc beendet das Prüfen');
+  lowShow(k);
+}
+// Tasten im Prüfmodus. Rückgabe true: Die Taste ist verbraucht.
+function lowKey(e){
+  const sheet = $('#sheet'), open = !sheet.classList.contains('hidden');
+  if (!LQ.on || (open && !sheet.classList.contains('passive'))) return false;   // ein Dialog im Vordergrund hat Vorrang
+  const k = e.key, mod = e.ctrlKey || e.metaKey, done = () => { e.preventDefault(); e.stopPropagation(); return true; };
+  if (k === 'Escape'){ if (open) return false; lowEnd(); return done(); }   // eine offene Liste (Marken, Quellen, Prüfliste) schließt zuerst
+  if (k === 'Enter' && !mod){ lowConfirm(); return done(); }
+  if (k === 'Tab' && !mod){ lowStep(e.shiftKey ? -1 : 1); return done(); }
+  if (k === 'ArrowDown' && !mod){ lowPlay(); return done(); }
+  if (k === 'Delete' && mod){ lowDelete(); return done(); }
+  return false;
+}
+$('#lowBar').addEventListener('keydown', e => { if (!lowKey(e) && e.key !== 'Escape') e.stopPropagation(); });
+$('#lowBtn').onclick = () => LQ.on ? lowEnd() : lowStart();
+$('#lowOk').onclick = lowConfirm; $('#lowPlay').onclick = lowPlay; $('#lowDel').onclick = lowDelete; $('#lowEnd').onclick = lowEnd;
+$('#lowPrev').onclick = () => lowStep(-1); $('#lowNext').onclick = () => lowStep(1);
+
 // Einstellungen „direkt nach der Transkription“ merken (nur für diesen Browser)
 const AUTO_KEYS = ['autoFillers', 'autoRepeats', 'autoPauses', 'autoPauseLen'];
 try { const a = J(localStorage.getItem('ts-auto2')); if (a) AUTO_KEYS.forEach(k => { const el = $('#' + k); if (el && a[k] != null){ if (el.type === 'checkbox') el.checked = a[k]; else el.value = a[k]; } }); } catch(_){}
 AUTO_KEYS.forEach(k => $('#' + k).addEventListener('change', () => { try { localStorage.setItem('ts-auto2', JSON.stringify(Object.fromEntries(AUTO_KEYS.map(x => [x, $('#' + x).type === 'checkbox' ? $('#' + x).checked : $('#' + x).value])))); } catch(_){} }));
 function autoClean(minTok){
   const msg = [];
-  if ($('#autoFillers').checked){ const ids = fillerIds(minTok); bulkDelete(ids); if (ids.length) msg.push(`${ids.length} Füllwörter`); }
-  if ($('#autoRepeats').checked){ const ids = findRepeats(minTok); bulkDelete(ids); if (ids.length) msg.push(`${ids.filter(isWord).length} Wörter aus Wiederholungen`); }
-  if ($('#autoPauses').checked){ const n = trimPauses(+$('#autoPauseLen').value, minTok); if (n) msg.push(`${n} Pausen`); }
+  if ($('#autoFillers').checked){ const ids = fillerIds(minTok); cleanRun('f', () => bulkDelete(ids)); if (ids.length) msg.push(`${ids.length} Füllwörter`); }
+  if ($('#autoRepeats').checked){ const f = repeatFinds(minTok), ids = f.ids; cleanRun('r', () => { bulkDelete(ids); return f; }); if (ids.length) msg.push(`${ids.filter(isWord).length} Wörter aus Wiederholungen`); }
+  if ($('#autoPauses').checked){ const n = cleanRun('p', () => trimPauses(+$('#autoPauseLen').value, minTok)); if (n) msg.push(`${n} Pausen`); }
   return msg;
 }
 $('#hideDel').onchange = e => $('#transcript').classList.toggle('hide-del', e.target.checked);
@@ -3953,6 +4380,7 @@ $('#textMore').onclick = e => {
     {icon: icon('📋'), label: 'Text kopieren / Word', fn: () => $('#txChip').click()},
     {icon: icon('＋'), label: 'Video anhängen', fn: () => addSources()},
     {icon: icon('↻'), label: 'Am Ton ausrichten', fn: () => $('#realignBtn').click()},
+    {icon: icon('✎'), label: 'Eigenes Wörterbuch', fn: () => openDict()},
   ]);
 };
 $('#findIn').addEventListener('input', runFind);
@@ -3999,10 +4427,14 @@ $('#transcript').addEventListener('dblclick', e => {
   const sp = e.target.closest('.tk.word'); if (!sp) return; const i = +sp.dataset.i;
   const body = $('#sheetBody');
   body.innerHTML = `<h3>Wort korrigieren</h3><input type="text" id="wordEdit" dir="auto" style="width:100%;font:18px var(--read)"><p class="muted small">Die Zeit im Video bleibt gleich – nur der Text (auch in den Untertiteln) ändert sich. Leer lassen löscht das Wort.</p>
+    <label class="row small"><input type="checkbox" id="wordDict"> Künftig immer so schreiben (ins Wörterbuch)</label>
     <div class="row"><button class="btn" id="wordReset">↺ Original: </button><button class="btn primary" id="wordOk" style="margin-left:auto">Fertig</button></div>`;
   $('#wordEdit').value = tokText(tokens[i]); $('#wordReset').textContent += tokens[i].text;
   openSheet(false); setTimeout(() => { $('#wordEdit').focus(); $('#wordEdit').select(); }, 30);
-  const done = v => { closeSheet(); commit(() => { if (v === null) delete P.edits[i]; else if (!v.trim()) bulkDelete([i]); else if (v.trim() === tokens[i].text) delete P.edits[i]; else P.edits[i] = v.trim(); }, false); afterTextEdit(); clearSel(); };
+  const done = v => { const learn = v !== null && !!v.trim() && $('#wordDict').checked; let more = -1; closeSheet();
+    commit(() => { if (v === null) delete P.edits[i]; else if (!v.trim()) bulkDelete([i]); else if (v.trim() === tokens[i].text) delete P.edits[i]; else P.edits[i] = v.trim();
+      if (learn) more = dictLearn(tokens[i].text, v.trim()); }, false);
+    afterTextEdit(learn ? dictLearnMsg(more) : ''); clearSel(); };
   $('#wordOk').onclick = () => done($('#wordEdit').value);
   $('#wordReset').onclick = () => done(null);
   $('#wordEdit').onkeydown = ev => { if (ev.key === 'Enter') done($('#wordEdit').value); };
@@ -5285,6 +5717,7 @@ else if (CAP.platform !== 'android'){ $('#exShare').textContent = 'Im Ordner zei
 
 // ───────── Reiter ─────────
 function setTab(t){
+  if (t !== 'text') lowEnd(); audStop();
   tab = t; clearSel(); if (P) rememberOpen();
   $('#proj').dataset.tab = t;
   $('#paneTrans').classList.toggle('hidden', t !== 'trans');
@@ -5295,6 +5728,7 @@ function setTab(t){
   $('#paneSlides').classList.toggle('hidden', t !== 'slides'); if (t === 'slides' && window.renderSlides) renderSlides();
   $$('#tabs button[data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === t || (t === 'trans' && b.dataset.tab === 'text')));
   if (t === 'trans') renderSources();
+  if (t === 'text' && P && spans.length){ paintLowBtn(); paintChkBtn(); }   // Zähler können sich in einem anderen Reiter geändert haben
   if (t === 'subs'){ renderSubs(); renderA11y(); } if (tlOn() && window.renderStudio) renderStudio(); if (t === 'export') renderExport();
   // Die Zeitleiste ist je nach Reiter verschieden breit: nach dem Wechsel steht die Abspiellinie wieder im sichtbaren Teil
   setTimeout(() => { fitStage(); if (P && tlOn()) tlReveal(); }, 0);

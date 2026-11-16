@@ -104,6 +104,9 @@ def selftest(out_path: str) -> int:
         model = faster_whisper.WhisperModel(T.model_ref(m), device="cpu", compute_type="int8")
         segs, info = model.transcribe(audio, language="de", word_timestamps=True)
         rep["segments"] = len(list(segs))
+        # Eigenes Wörterbuch: Die Begriffe gehen als Hinweis (hotwords) an Whisper – das muss die mitgelieferte Fassung annehmen
+        segs, info = model.transcribe(audio, language="de", word_timestamps=True, hotwords=T.asr_hint("Hermeier,  Bundestag"))
+        rep["hotwords"] = len(list(segs)) >= 0
         # Automatisches Freistellen: onnxruntime und das RVM-Modell müssen im Paket stecken
         import onnxruntime
         rep["onnxruntime"] = onnxruntime.__version__

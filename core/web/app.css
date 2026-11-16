@@ -429,6 +429,7 @@ pre.files:empty{display:none}
   .sb.close{width:34px;min-width:34px;padding:0}
   .sheet{left:50%;right:auto;bottom:auto;top:8vh;transform:translateX(-50%);width:min(560px,92vw);max-height:84vh;border-radius:16px;padding-bottom:16px}
   .sheet.passive{left:auto;right:16px;transform:none;top:64px;width:min(420px,36vw)}
+  .sheet.passive:has(#ckSheet){max-height:calc(100vh - 88px)}   /* Prüfliste: die ganze Höhe neben dem Text */
   .sheet-grip{display:none}
   .toast{bottom:auto;top:64px}
   .home-body{max-width:860px;width:100%;margin:0 auto}
@@ -1081,3 +1082,44 @@ label.col input{width:100%}
   #proj[data-tab=text] .panes:has(#paneStudio:not(.hidden)) #paneText{flex:1;min-height:0;overflow:auto}
 }
 @media (max-width: 759px), (max-height: 599px){ #proj[data-tab=text] .tl-info{display:none} }
+
+/* ── 2.29: Prüfleiste für unsichere Wörter, Prüfliste nach dem Aufräumen, Wörterbuch ── */
+.lowbar{position:sticky;top:0;z-index:5;margin:10px 12px 0;padding:10px 12px;border:1px solid var(--line);border-radius:var(--r);background:var(--surface-2);display:flex;flex-direction:column;gap:8px;box-shadow:0 6px 18px rgba(0,0,0,.35)}
+.lowbar.hidden{display:none}
+.lowbar .row{gap:8px;align-items:center}
+.lowbar #lowHint{flex:1;min-width:0}
+.lowbar #lowIn{flex:1 1 220px;min-width:0;min-height:var(--ctl-sm);font:17px var(--read)}
+.tk.chk{background:rgba(229,64,42,.24);box-shadow:0 0 0 2px var(--rot)}
+.ck-tabs{margin:10px 0}
+.ck-tabs button{padding:0 4px;white-space:nowrap}
+.ck-row{border-top:1px solid var(--line);padding:4px 0 8px}
+.ck-go{display:flex;align-items:baseline;gap:10px;width:100%;border:0;background:transparent;text-align:left;padding:7px 6px;border-radius:8px;min-height:var(--ctl-sm)}
+.ck-go:hover{background:var(--surface-2)}
+.ck-go .mono{flex:none;min-width:42px;font-size:12px;color:var(--muted)}
+.ck-t{flex:1;min-width:0;font-size:14px;color:var(--sand)}
+.ck-t s{color:var(--del)}
+.ck-t b{color:var(--creme)}
+.ck-acts{display:flex;flex-wrap:wrap;gap:6px;padding-left:6px}
+.ck-row.heard .ck-go .mono{color:var(--sand)}
+.ck-row.heard .ck-go .mono::after{content:' ·'}
+.ck-row.playing .ck-go,.ck-var.playing{background:var(--now)}
+.ck-vars{display:flex;flex-direction:column;gap:2px;margin:0 0 6px}
+.ck-var{display:flex;align-items:center;gap:6px;border-radius:8px;padding:0 4px 0 6px}
+.ck-var label{flex:1;min-width:0;display:flex;align-items:baseline;gap:8px;min-height:var(--ctl-sm);padding:5px 0}
+.ck-var input{flex:none;accent-color:var(--rot);margin:0;align-self:center;width:18px;height:18px}
+.ck-n{flex:none;font:12px var(--mono);color:var(--muted)}
+.ck-vt{flex:1;min-width:0;font-size:14px;color:var(--sand)}
+.ck-vt em{font-style:normal;color:var(--muted)}
+.ck-var.kept .ck-vt{color:var(--creme);font-weight:600}
+.ck-var.kept .ck-vt em{font-weight:400}
+.ck-note{margin:0 0 6px 6px}
+.dc-list{margin:10px 0;max-height:34vh;overflow:auto}
+.dc-row{display:flex;align-items:center;gap:6px;border-top:1px solid var(--line)}
+.dc-t{flex:1;min-width:0;display:flex;flex-direction:column;align-items:flex-start;gap:1px;border:0;background:transparent;text-align:left;padding:7px 6px;border-radius:8px}
+.dc-t:hover{background:var(--surface-2)}
+.dc-row .mini{flex:none}
+.dc-add{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;margin:10px 0}
+.dc-add input{min-width:0;min-height:var(--ctl-sm)}
+.dc-add #dcTerm{grid-column:1 / -1}
+.dict-row{justify-content:space-between;gap:10px}
+.dict-row span{flex:1;min-width:0}

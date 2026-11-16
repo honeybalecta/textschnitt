@@ -117,7 +117,7 @@ chk('ein Eintrag lässt sich entfernen, die Liste liegt im Gerät', (await ev(()
 await page.click('#fwOk'); await sleep(150);
 const totalBefore = await ev(() => total);
 await page.click('#fillerBtn'); await sleep(400);
-chk('„Füllwörter weg“ entfernt Laute und eigene Einträge', (await count([pick.word, pick.phrase])) === 0 && (await num()) === 0 && (await toast()) === `${n2} Füllwörter entfernt` && (await ev(() => total)) < totalBefore, await toast());
+chk('„Füllwörter weg“ entfernt Laute und eigene Einträge', (await count([pick.word, pick.phrase])) === 0 && (await num()) === 0 && (await toast()) === `${n2} Füllwörter entfernt · die Prüfliste zeigt jeden Schnitt` && (await ev(() => total)) < totalBefore, await toast());
 await page.keyboard.press('Control+z'); await sleep(400);
 chk('Rückgängig holt sie zurück, der Zähler folgt', (await num()) === n2 && near(await ev(() => total), totalBefore, 0.001), await num());
 await ev(() => { ownFill.length = 0; saveOwnFill(); paintFillers(); });

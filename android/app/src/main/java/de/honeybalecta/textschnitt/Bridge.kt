@@ -176,14 +176,24 @@ class Bridge(private val act: MainActivity) {
     @JavascriptInterface
     fun downloadModel(name: String): String = Jobs.start { Models.download(ctx, name, it) }.id
 
-    @JavascriptInterface
-    fun transcribe(uri: String, model: String, lang: String, fillers: Boolean): String =
-        Jobs.start { Transcriber.run(ctx, Uri.parse(uri), model, lang, fillers, it) }.also {
-            act.askNotifications(); WorkService.track(ctx, it, "Transkription") }.id
+    /** Begriffe aus dem eigenen Wörterbuch: Hinweis für die nächsten Transkriptionen (leer = ohne Hinweis). */
+    @Volatile private var asrHint: String = ""
 
     @JavascriptInterface
-    fun transcribeRanges(uri: String, model: String, lang: String, ranges: String): String =
-        Jobs.start { Transcriber.runRanges(ctx, Uri.parse(uri), model, lang, JSONArray(ranges), it) }.also { WorkService.track(ctx, it, "Transkription") }.id
+    fun setAsrHint(text: String) { asrHint = text.trim().take(600) }
+
+    @JavascriptInterface
+    fun transcribe(uri: String, model: String, lang: String, fillers: Boolean): String {
+        val hint = asrHint
+        return Jobs.start { Transcriber.run(ctx, Uri.parse(uri), model, lang, fillers, hint, it) }.also {
+            act.askNotifications(); WorkService.track(ctx, it, "Transkription") }.id
+    }
+
+    @JavascriptInterface
+    fun transcribeRanges(uri: String, model: String, lang: String, ranges: String): String {
+        val hint = asrHint
+        return Jobs.start { Transcriber.runRanges(ctx, Uri.parse(uri), model, lang, JSONArray(ranges), hint, it) }.also { WorkService.track(ctx, it, "Transkription") }.id
+    }
 
     @JavascriptInterface
     fun envelope(uri: String): String = Jobs.start {

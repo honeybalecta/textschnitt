@@ -21,7 +21,14 @@ object Transcriber {
         "en" to "Um, uh, so, like, you know, hmm. So I – I wanted, this is, this is like. Uh, um.",
     )
 
-    fun run(ctx: Context, uri: Uri, model: String, lang: String, fillers: Boolean, job: Job): JSONObject {
+    /** Startkontext für Whisper: Füllwörter (damit „äh“ mitgeschrieben wird) und die Begriffe aus dem eigenen Wörterbuch. */
+    private fun startText(lang: String, fillers: Boolean, hint: String): String {
+        val f = if (fillers) FILLER_PROMPT[lang.ifEmpty { "de" }] ?: "" else ""
+        val h = hint.trim()
+        return listOf(f, if (h.isEmpty()) "" else "$h.").filter { it.isNotEmpty() }.joinToString(" ")
+    }
+
+    fun run(ctx: Context, uri: Uri, model: String, lang: String, fillers: Boolean, hint: String, job: Job): JSONObject {
         val t0 = System.currentTimeMillis()
         job.message = "Ton wird gelesen …"
         val audio = AudioDecoder.decode(ctx, uri, job, 0.08)
@@ -33,7 +40,7 @@ object Transcriber {
         job.message = "Transkribiere …"
         job.onCancel { Whisper.abort() }
         val tStart = System.currentTimeMillis()
-        val prompt = if (fillers) FILLER_PROMPT[lang.ifEmpty { "de" }] ?: "" else ""
+        val prompt = startText(lang, fillers, hint)
         val bytes = Whisper.transcribe(modelPath, audio, lang, prompt, threads, object : Whisper.Progress {
             override fun onProgress(percent: Int) {
                 job.progress = 0.08 + 0.91 * percent / 100.0
@@ -51,7 +58,7 @@ object Transcriber {
     }
 
     /** Einzelne Stellen getrennt transkribieren (Lücken, die im Zusammenhang ausgelassen wurden). Zeiten in Sekunden der Datei. */
-    fun runRanges(ctx: Context, uri: Uri, model: String, lang: String, ranges: org.json.JSONArray, job: Job): JSONObject {
+    fun runRanges(ctx: Context, uri: Uri, model: String, lang: String, ranges: org.json.JSONArray, hint: String, job: Job): JSONObject {
         job.message = "Ton wird gelesen …"
         val audio = AudioDecoder.decode(ctx, uri, job, 0.3)
         job.check()
@@ -60,6 +67,7 @@ object Transcriber {
         job.onCancel { Whisper.abort() }
         val out = org.json.JSONArray()
         val pad = 0.15
+        val prompt = startText(lang, false, hint)
         for (n in 0 until ranges.length()) {
             job.check()
             job.message = "Nicht erkannte Stellen nachhören (${n + 1} von ${ranges.length()})"
@@ -68,7 +76,7 @@ object Transcriber {
             val s0 = maxOf(0, ((r.getDouble(0) - pad) * 16000).toInt()); val e0 = minOf(audio.size, ((r.getDouble(1) + pad) * 16000).toInt())
             val words = org.json.JSONArray()
             if (e0 - s0 >= 3200) {
-                val res = JSONObject(String(Whisper.transcribe(modelPath, audio.copyOfRange(s0, e0), lang, "", threads, object : Whisper.Progress {
+                val res = JSONObject(String(Whisper.transcribe(modelPath, audio.copyOfRange(s0, e0), lang, prompt, threads, object : Whisper.Progress {
                     override fun onProgress(percent: Int) {}
                 }), Charsets.UTF_8))
                 val ws = res.optJSONArray("words") ?: org.json.JSONArray()

@@ -56,8 +56,9 @@ def fake_http_get(url, timeout=8.0):
     return (json.dumps(st["releases"]) if "releases" in url else st["notes"]).encode("utf-8")
 
 
-def fake_transcribe(job, path, model_name, language, fillers, ranges=None):
+def fake_transcribe(job, path, model_name, language, fillers, ranges=None, hint=None):
     path = T.norm_path(path)
+    (WORK / "hint.json").write_text(json.dumps({"hint": hint, "ranges": ranges is not None, "datei": Path(path).name}), encoding="utf-8")   # für die Prüfung des Wörterbuch-Hinweises
     info = T.probe(path)
     job["message"] = "Ton wird vorbereitet"
     wav = Path(tempfile.gettempdir()) / f"textschnitt_{uuid.uuid4().hex[:8]}.wav"

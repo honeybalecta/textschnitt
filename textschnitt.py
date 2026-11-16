@@ -37,7 +37,7 @@ os.environ.setdefault("HF_HUB_DISABLE_IMPLICIT_TOKEN", "1")
 import warnings  # noqa: E402
 warnings.filterwarnings("ignore", module="huggingface_hub")
 
-VERSION = "2.28.0"
+VERSION = "2.29.0"
 APP_DIR = Path(__file__).resolve().parent
 FROZEN = bool(getattr(sys, "frozen", False))          # als installierte .exe gebaut
 RES_DIR = Path(getattr(sys, "_MEIPASS", APP_DIR))      # mitgelieferte Dateien (Oberfläche, ffmpeg, Modelle)
@@ -492,7 +492,23 @@ def get_model(name: str, phase: dict, job: dict):
         return _model_cache[name]
 
 
-def transcribe_job(job: dict, path: str, model_name: str, language: str | None, fillers: bool, ranges: list | None = None):
+def asr_hint(hint) -> str | None:
+    """Begriffe aus dem eigenen Wörterbuch als Hinweis für Whisper (hotwords): gilt für jedes Stück der Aufnahme."""
+    text = " ".join(str(hint or "").split())[:600]
+    return text or None
+
+
+def whisper_run(model, audio, hot: str | None, **kw):
+    """model.transcribe mit Hinweis; ältere Fassungen von faster-whisper kennen ihn nicht und laufen ohne."""
+    if hot:
+        try:
+            return model.transcribe(audio, hotwords=hot, **kw)
+        except TypeError:
+            log("faster-whisper kennt keine Hinweise (hotwords) – Transkription ohne Wörterbuch-Hinweis")
+    return model.transcribe(audio, **kw)
+
+
+def transcribe_job(job: dict, path: str, model_name: str, language: str | None, fillers: bool, ranges: list | None = None, hint: str | None = None):
     path = norm_path(path)
     info = probe(path)
     duration = info["duration"] or 1
@@ -518,12 +534,12 @@ def transcribe_job(job: dict, path: str, model_name: str, language: str | None, 
     if job["cancel"]:
         raise RuntimeError("Abgebrochen")
     if ranges is not None:
-        return {"ranges": transcribe_ranges(job, model, device, audio, ranges, language, phase)}
+        return {"ranges": transcribe_ranges(job, model, device, audio, ranges, language, phase, asr_hint(hint))}
     job["progress"] = 0.05
     phase["text"] = "Transkription startet (die erste Minute dauert am längsten)"
     prompt = FILLER_PROMPT.get(language or "de") if fillers else None
-    segments, tinfo = model.transcribe(audio, language=language or None, word_timestamps=True, initial_prompt=prompt,
-                                       beam_size=5 if device == "cuda" else 2, condition_on_previous_text=False, vad_filter=False)
+    segments, tinfo = whisper_run(model, audio, asr_hint(hint), language=language or None, word_timestamps=True, initial_prompt=prompt,
+                                  beam_size=5 if device == "cuda" else 2, condition_on_previous_text=False, vad_filter=False)
     words = []
     t_tr = time.time()
     for si, seg in enumerate(segments):
@@ -543,7 +559,7 @@ def transcribe_job(job: dict, path: str, model_name: str, language: str | None, 
     return {"words": words, "lang": language or getattr(tinfo, "language", None), "env": env, "padded": True}
 
 
-def transcribe_ranges(job: dict, model, device, audio, ranges: list, language: str | None, phase: dict) -> list:
+def transcribe_ranges(job: dict, model, device, audio, ranges: list, language: str | None, phase: dict, hot: str | None = None) -> list:
     """Einzelne Stellen getrennt transkribieren (Lücken, die Whisper im Zusammenhang ausgelassen hat)."""
     out = []
     pad = 0.15
@@ -556,8 +572,8 @@ def transcribe_ranges(job: dict, model, device, audio, ranges: list, language: s
         e0 = min(len(audio), int((float(b) + pad) * 16000))
         words = []
         if e0 - s0 >= 3200:
-            segs, _ = model.transcribe(audio[s0:e0], language=language or None, word_timestamps=True,
-                                       beam_size=5 if device == "cuda" else 2, condition_on_previous_text=False, vad_filter=False)
+            segs, _ = whisper_run(model, audio[s0:e0], hot, language=language or None, word_timestamps=True,
+                                  beam_size=5 if device == "cuda" else 2, condition_on_previous_text=False, vad_filter=False)
             for seg in segs:
                 for w in seg.words or []:
                     if w.word.strip():
@@ -4432,7 +4448,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not whisper_available():
                     raise ValueError("faster-whisper ist nicht installiert.")
                 job = run_job(new_job("transcribe"), transcribe_job, data["uri"], data.get("model") or "small",
-                              data.get("lang") or None, bool(data.get("fillers", True)), data.get("ranges"))
+                              data.get("lang") or None, bool(data.get("fillers", True)), data.get("ranges"), data.get("hint"))
                 return self._json({"job": job["id"]})
             if rest == "api/models/download":
                 job = run_job(new_job("download"), download_job, data["name"])

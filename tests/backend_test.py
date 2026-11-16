@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Prüfungen des Backends ohne Browser: sicheres Speichern, frühere Fassungen, Papierkorb, Speicher verwalten,
 alle Projekte sichern und einspielen, Projekt weitergeben, Vorschaubild der Projektliste, Textzeile und Untertitel im Export,
-Quellenzeilen und Textfassung, Schrift im Export (Größe und Umbruch wie in der Vorschau), Hinweis auf neue Versionen, Fehlerbericht.
+Quellenzeilen und Textfassung, Schrift im Export (Größe und Umbruch wie in der Vorschau), Hinweis aus dem eigenen Wörterbuch für Whisper,
+Hinweis auf neue Versionen, Fehlerbericht.
 Läuft in einem frischen Datenordner; nichts verlässt den Rechner (GitHub ist nachgestellt).
 Aufruf: python3 tests/backend_test.py"""
 import gzip
@@ -567,6 +568,59 @@ def schrift_im_export():
     chk("zur Tonspur heißt die SRT-Datei wie die Tonspur", names(r5) == ["nur_ton.mp3", "nur_ton.srt"], names(r5))
 
 
+def transkript():
+    """Eigenes Wörterbuch (C1): Die Begriffe gehen als Hinweis an Whisper."""
+    from types import SimpleNamespace as NS
+    chk("Hinweis für Whisper: Leerraum bereinigt; leer heißt kein Hinweis", T.asr_hint("  Hermeier,\n  AfD ") == "Hermeier, AfD" and T.asr_hint("") is None and T.asr_hint(None) is None)
+    chk("ein überlanger Hinweis wird gekürzt", len(T.asr_hint("Wort " * 400)) <= 600)
+
+    class Neu:   # faster-whisper ab 1.0.2 kennt hotwords
+        def __init__(self):
+            self.calls = []
+
+        def transcribe(self, audio, hotwords=None, **kw):
+            self.calls.append({"hotwords": hotwords, **kw})
+            seg = NS(end=1.0, words=[NS(word=" Hermeier", start=0.2, end=0.8, probability=0.91), NS(word=" ", start=0.8, end=0.9, probability=0.5)])
+            return iter([seg]), NS(language="de")
+
+    class Alt:   # ältere Fassung: Der Parameter fehlt
+        def __init__(self):
+            self.calls = []
+
+        def transcribe(self, audio, language=None, word_timestamps=False):
+            self.calls.append((language, word_timestamps))
+            return iter(()), None
+
+    m = Neu()
+    T.whisper_run(m, [0.0], "Hermeier, AfD", language="de", word_timestamps=True)
+    chk("der Hinweis geht als hotwords an Whisper", m.calls == [{"hotwords": "Hermeier, AfD", "language": "de", "word_timestamps": True}], m.calls)
+    m = Neu()
+    T.whisper_run(m, [0.0], None, language="de")
+    chk("ohne Wörterbuch bleibt der Aufruf, wie er war", m.calls == [{"hotwords": None, "language": "de"}], m.calls)
+    a = Alt()
+    T.whisper_run(a, [0.0], "Hermeier", language="de", word_timestamps=True)
+    chk("eine ältere Fassung von faster-whisper transkribiert ohne Hinweis weiter", a.calls == [("de", True)], a.calls)
+
+    # der ganze Weg: transcribe_job mit nachgestelltem Modell
+    wav = TMP / "ton.wav"
+    subprocess.run([T.FFMPEG, "-y", "-v", "error", "-f", "lavfi", "-i", "sine=frequency=300:duration=2", "-ac", "1", "-ar", "16000", str(wav)], check=True)
+    m, old = Neu(), T.get_model
+    T.get_model = lambda name, phase, j: (m, "cpu")
+    try:
+        j = {"status": "running", "cancel": False, "progress": 0, "message": ""}
+        res = T.transcribe_job(j, str(wav), "small", "de", True, None, " Hermeier,  AfD ")
+        c = m.calls[0] if m.calls else {}
+        chk("Transkription: Begriffe als hotwords, Füllwörter weiter als Startkontext", c.get("hotwords") == "Hermeier, AfD" and c.get("initial_prompt") == T.FILLER_PROMPT["de"] and c.get("condition_on_previous_text") is False, c)
+        chk("das Ergebnis enthält die Wörter mit Zeiten und Sicherheit", res["words"] == [{"text": " Hermeier", "start": 0.2, "end": 0.8, "prob": 0.91}] and res["lang"] == "de" and bool(res["env"]), res["words"])
+        res = T.transcribe_job(j, str(wav), "small", "de", True, None, "")
+        chk("leeres Wörterbuch: kein Hinweis", m.calls[1].get("hotwords") is None, m.calls[1])
+        res = T.transcribe_job(j, str(wav), "small", "de", False, [[0.2, 1.4]], "")
+        chk("einzelne Stellen nachhören: ohne Hinweis, Zeiten auf die Datei bezogen", m.calls[2].get("hotwords") is None and res["ranges"][0]["words"][0]["text"] == "Hermeier" and abs(res["ranges"][0]["words"][0]["start"] - 0.25) < 0.01, res["ranges"])
+        j["status"] = "done"
+    finally:
+        T.get_model = old
+
+
 def umzug():
     a = json.loads((TMP / "umzug.json").read_text())
     mk(T.FONT_DIR / "Zweite.otf", b"ANDERE-SCHRIFT")      # gleicher Name, anderer Inhalt
@@ -669,7 +723,7 @@ def bericht_und_protokoll():
 if MODE == "umzug":
     umzug()
     sys.exit(1 if BAD else 0)
-for part in (speichern_und_fassungen, speicher, sicherung, projektpakete, kleine_helfer, quellen_und_belege, schrift_im_export, neue_versionen, bericht_und_protokoll):
+for part in (speichern_und_fassungen, speicher, sicherung, projektpakete, kleine_helfer, quellen_und_belege, schrift_im_export, transkript, neue_versionen, bericht_und_protokoll):
     print(f"── {part.__name__.replace('_', ' ')} ──", flush=True)
     part()
 print(f"ERGEBNIS Backend ohne Browser: {N} geprüft, {BAD} Fehler")

@@ -2,6 +2,15 @@
 
 Was sich mit jeder Version von HoneyCut ändert. Die Windows-App zeigt diese Stichpunkte an, sobald eine neuere Version bereitsteht.
 
+## 2.29.0 · Transkript
+- Eigenes Wörterbuch: Namen und Fachbegriffe hinterlegen. Whisper bekommt sie als Hinweis, und bekannte Fehlschreibungen ersetzt HoneyCut nach jeder Transkription von selbst
+- Beim Korrigieren eines Worts merkt sich „Künftig immer so schreiben“ die Korrektur im Wörterbuch und wendet sie gleich im ganzen Text an
+- Unsichere Wörter der Reihe nach prüfen (Taste P): Die Stelle spielt ab, Enter bestätigt oder übernimmt die Korrektur, Tab überspringt
+- Fassungen vergleichen: wiederholte Anläufe nacheinander anhören und wählen, welche Fassung bleibt. Bisher blieb stets die letzte stehen
+- Prüfliste nach dem Aufräumen: jeder Schnitt von „Füllwörter weg“, „Wiederholungen weg“ und „Pausen kürzen“ zum Anhören, einzeln zurückzunehmen
+- Hörprobe: Weggeschnittene Stellen lassen sich aus der Aufnahme anhören, der Schnitt bleibt dabei unberührt
+- Windows: Der Installer entfernt einen alten Programmordner „Textschnitt“ und richtet Verknüpfungen, die noch dorthin zeigen, auf die neue Fassung aus. Projekte und Einstellungen bleiben, wo sie sind
+
 ## 2.28.0 · Quellen und Belege
 - Quellen zu Aussagen (Taste R): Medium, Titel, Datum und Link hinterlegen; im Bild steht für die Dauer des Satzes eine dezente Quellenzeile, die Quellenliste lässt sich für die Beschreibung kopieren
 - „Beleg nötig“ (Umschalt+R): offene Stellen markieren; der Export fragt nach, solange Belege fehlen

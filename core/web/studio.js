@@ -1238,6 +1238,7 @@ function makeClip(o1, o2, fmt, name){
   c.cues = c.cues.filter(x => { if (!x.own) return true; const t = cueTimes(x); return t && t.e > o1 && t.s < o2; });
   c.marks = (c.marks || []).filter(m => { const o = markOut(m); return o >= o1 - 0.05 && o < o2 - 0.05 && !isSrcDeleted(m.at); });
   c.refs = (c.refs || []).filter(r => { const o = refOut(r); return !refGone(r) && o >= o1 - 0.05 && o < o2 - 0.05; });
+  c.checks = [];   // die Prüfliste gehört zum ganzen Video
   c.format = fmt || null;
   c.sub_style = {...c.sub_style, ...CLIP_LOOKS[fmt ? 'punch' : 'classic'], y: fmt === '9:16' || fmt === '4:5' ? 0.7 : 0.86, x: 0.5, pos: 'frei', look: fmt ? 'punch' : 'classic'};
   c.regen = true;
@@ -1405,7 +1406,7 @@ $('#clipHookSet').onclick = () => {
 };
 $('#clipHookDel').onclick = () => { commit(() => P.items = P.items.filter(x => !(x.type === 'title' && x.hook)), false); updateTitles(outPos); $('#clipHook').value = ''; renderClip(); };
 // Tempo
-$('#clipPauses').onclick = () => { let n = 0; commit(() => n = trimPauses(0), false); if (spans.length) tokens.forEach(t => paint(t.i)); toast(n ? `${n} Pausen herausgeschnitten` : 'Keine Pausen mehr'); renderClip(); };
+$('#clipPauses').onclick = () => { let n = 0; commit(() => n = cleanRun('p', () => trimPauses(0)), false); if (spans.length) tokens.forEach(t => paint(t.i)); chkChanged(); toast(n ? `${n} Pausen herausgeschnitten` : 'Keine Pausen mehr'); renderClip(); };
 $('#clipFillers').onclick = () => { $('#fillerBtn').click(); renderClip(); };
 $('#clipRepeats').onclick = () => { $('#repeatBtn').click(); renderClip(); };
 // Auto-Zoom: an Satzanfängen abwechselnd ran (Sprung) und wieder normal – höchstens alle 2 s
@@ -1520,6 +1521,7 @@ const KEYS = [
   ['A', 'Markierung im Text auf den ganzen Satz ausweiten, nochmal: auf den Absatz'], ['Umschalt + Entf', 'nur das Markierte behalten, alles andere löschen'],
   ['C / B', 'Kapitel / Notiz an der Markierung oder an der Abspiellinie'],
   ['R', 'Quelle zur markierten Aussage hinterlegen · mit Umschalt: als „Beleg nötig“ markieren (im Text)'],
+  ['P', 'Unsichere Wörter der Reihe nach prüfen (im Text) · Enter bestätigt oder übernimmt die Korrektur · Tab überspringt · Pfeil nach unten spielt noch einmal · Esc beendet'],
   ['Markierten Text ziehen', 'Abschnitt verschieben'], ['Clip in der Zeitleiste ziehen', 'Clips umsortieren'],
   ['Strg + B', 'an der Abspiellinie teilen'], ['Strg + C / X / V', 'Element kopieren / ausschneiden / an der Abspiellinie einfügen'], ['Strg + D', 'Element duplizieren (direkt dahinter)'], ['Q / W', 'links / rechts der Abspiellinie löschen (mit ausgewähltem Element: nur dessen Teil)'],
   ['Entf / Rücktaste', 'Auswahl löschen'], ['Alt + ← / →', 'Auswahl um ein Bild verschieben'],
@@ -1577,6 +1579,7 @@ document.addEventListener('keydown', e => {
   if (k === 'Escape' && $('#proj').classList.contains('full')){ setFull(false); return; }
   if (!typing && !mod && (k === 'f' || k === 'F')){ e.preventDefault(); setFull(!$('#proj').classList.contains('full')); return; }
   if (k === 'Escape' && TL.pick){ endPick(); return; }
+  if (LQ.on && !typing && lowKey(e)) return;   // Prüfmodus für unsichere Wörter: Enter, Tab, Pfeil nach unten, Esc
   if (Crop.it && (k === 'Escape' || k === 'Enter') && !typing){ e.preventDefault(); endCrop(k === 'Enter'); return; }
   if (k === 'Escape'){ closeMenu(); if (!$('#sheet').classList.contains('hidden')) closeSheet(); else { select(null); clearSel(); } return; }
   if (typing) return;
@@ -1609,7 +1612,8 @@ document.addEventListener('keydown', e => {
     case 'a': case 'A': if (tab === 'text' && tokens.length){ handled(); growSel(); } return;   // Markierung auf Satz bzw. Absatz ausweiten
     case 'c': case 'C': if (tab === 'text' || studioOn()){ handled(); addMark('chap'); } return;
     case 'b': case 'B': if (tab === 'text' || studioOn()){ handled(); addMark('note'); } return;
-    case 'r': case 'R': if (tab === 'text' && tokens.length){ handled(); addRef(e.shiftKey); } return;   // Quelle zur Markierung; mit Umschalt: als „Beleg nötig“ markieren
+    case 'r': case 'R': if (tab === 'text' && tokens.length){ handled(); addRef(e.shiftKey); } return;
+    case 'p': case 'P': if (tab === 'text' && tokens.length){ handled(); if (LQ.on) lowEnd(); else lowStart(); } return;   // unsichere Wörter der Reihe nach prüfen   // Quelle zur Markierung; mit Umschalt: als „Beleg nötig“ markieren
     case 'q': case 'Q': handled(); cutTo('l'); return;
     case 'w': case 'W': handled(); cutTo('r'); return;
     case ',': handled(); trimToPlayhead('l'); return;

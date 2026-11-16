@@ -19,6 +19,7 @@
   }
   const jobOf = txt => { try { return JSON.parse(txt).job; } catch(_){ return ''; } };
   const q = encodeURIComponent;
+  let asrHint = '';   // Begriffe aus dem eigenen Wörterbuch: Hinweis für die nächsten Transkriptionen
   window.TS = {
     info: () => call('GET', 'info'),
     pick(id, kind){
@@ -41,8 +42,9 @@
     deleteProject: id => call('POST', 'project/delete?id=' + q(id), ''),
     models: () => call('GET', 'models'),
     downloadModel: name => jobOf(call('POST', 'models/download', {name})),
-    transcribe: (uri, model, lang, fillers) => jobOf(call('POST', 'transcribe', {uri, model, lang, fillers})),
-    transcribeRanges: (uri, model, lang, ranges) => jobOf(call('POST', 'transcribe', {uri, model, lang, fillers:false, ranges: JSON.parse(ranges)})),
+    setAsrHint: text => { asrHint = String(text || ''); },
+    transcribe: (uri, model, lang, fillers) => jobOf(call('POST', 'transcribe', {uri, model, lang, fillers, hint: asrHint})),
+    transcribeRanges: (uri, model, lang, ranges) => jobOf(call('POST', 'transcribe', {uri, model, lang, fillers:false, hint: asrHint, ranges: JSON.parse(ranges)})),
     exportVideo: plan => jobOf(call('POST', 'export', plan)),
     makeProxy: uri => jobOf(call('POST', 'proxy', {uri})),
     autoMatte: uri => jobOf(call('POST', 'matte', {uri})),

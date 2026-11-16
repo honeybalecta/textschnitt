@@ -78,6 +78,7 @@ lauf hart node "$HERE/p_schutz.mjs"
 lauf hart node "$HERE/p_quellen.mjs"
 lauf hart node "$HERE/p_schnittleiste.mjs"
 lauf hart node "$HERE/p_schrift.mjs"
+lauf hart node "$HERE/p_transkript.mjs"
 for p in stress edit multi editWord; do lauf hart node "$HERE/p_stand.mjs" $p; done
 for p in stress edit; do lauf hart node "$HERE/p_wiedergabe.mjs" $p; done
 

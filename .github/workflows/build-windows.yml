@@ -119,6 +119,55 @@ jobs:
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" packaging\installer.iss
           Get-ChildItem dist\*.exe | Format-Table Name, Length
 
+      # Der Installer läuft hier einmal wirklich durch: mit einer alten Installation aus der Textschnitt-Zeit, mit
+      # Nutzerdaten und mit Verknüpfungen auf die alte Fassung. Geht dabei etwas schief, entsteht kein Release.
+      - name: Installer prüfen (alter Programmordner weg, Daten bleiben)
+        shell: pwsh
+        run: |
+          $la = $env:LOCALAPPDATA
+          $old = "$la\Programs\Textschnitt"; $new = "$la\Programs\HoneyCut"; $data = "$la\Textschnitt"
+          New-Item -ItemType Directory -Force "$old\_internal", "$data\projects\probe" | Out-Null
+          Copy-Item dist\HoneyCut\HoneyCut.exe "$old\HoneyCut.exe"
+          "alt" | Set-Content "$old\_internal\alt.txt"
+          '{"probe": true}' | Set-Content "$data\projects\probe\project.json"
+          $pins = "$env:APPDATA\Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar"
+          New-Item -ItemType Directory -Force $pins | Out-Null
+          $desk = [Environment]::GetFolderPath('Desktop'); $progs = [Environment]::GetFolderPath('Programs')
+          if (-not $desk -or -not $progs) { throw "Desktop oder Startmenü dieses Kontos sind nicht bestimmbar" }
+          New-Item -ItemType Directory -Force $desk, $progs | Out-Null
+          $sh = New-Object -ComObject WScript.Shell
+          $moved = @("$desk\HoneyCut alt.lnk", "$pins\HoneyCut.lnk")
+          foreach ($l in $moved + @("$progs\Textschnitt.lnk")) { $s = $sh.CreateShortcut($l); $s.TargetPath = "$old\HoneyCut.exe"; $s.Save() }
+          $other = "$desk\Editor.lnk"; $s = $sh.CreateShortcut($other); $s.TargetPath = "$env:WINDIR\notepad.exe"; $s.Save()
+
+          $setup = (Get-ChildItem dist\HoneyCut-Setup-*.exe | Select-Object -First 1).FullName
+          $p = Start-Process $setup -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-", "/LOG=$pwd\setup.log" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "Installer endete mit Code $($p.ExitCode)" }
+          Select-String -Path setup.log -Pattern "Programmordner|Verknuepfung" | ForEach-Object { $_.Line }
+          $bad = @()
+          if (-not (Test-Path "$new\HoneyCut.exe")) { $bad += "neue Fassung fehlt in $new" }
+          if (Test-Path $old) { $bad += "alter Programmordner steht noch" }
+          if (-not (Test-Path "$data\projects\probe\project.json") -or (Get-Content "$data\projects\probe\project.json" -Raw) -notmatch "probe") { $bad += "Nutzerdaten fehlen" }
+          if (Test-Path "$progs\Textschnitt.lnk") { $bad += "alte Verknüpfung im Startmenü steht noch" }
+          if (-not (Test-Path "$progs\HoneyCut.lnk")) { $bad += "Eintrag im Startmenü fehlt" }
+          foreach ($l in $moved) { $t = $sh.CreateShortcut($l).TargetPath; if ($t -ne "$new\HoneyCut.exe") { $bad += "Verknüpfung $l zeigt auf $t" } }
+          if ($sh.CreateShortcut($other).TargetPath -notmatch "notepad") { $bad += "fremde Verknüpfung wurde verändert" }
+          if ($bad.Count) { $bad | ForEach-Object { Write-Host "FEHLER: $_" }; throw "Installer-Prüfung fehlgeschlagen" }
+
+          # die installierte Fassung läuft
+          $q = Start-Process "$new\HoneyCut.exe" -ArgumentList "--selftest", "$pwd\selftest-installiert.json" -Wait -PassThru
+          if ($q.ExitCode -ne 0) { Get-Content selftest-installiert.json; throw "Selbsttest der installierten Fassung fehlgeschlagen" }
+
+          # Liegt HoneyCut selbst im Ordner mit dem alten Namen (Update über eine Installation aus der Textschnitt-Zeit),
+          # bleibt dieser Ordner stehen. Nachgestellt über den Eintrag, an dem das Setup die frühere Installation erkennt.
+          $key = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{6C7E1A52-6E3B-4D1A-9B3E-2B7F4C1D9A10}_is1"
+          if (Test-Path -LiteralPath $key) { Set-ItemProperty -LiteralPath $key -Name "Inno Setup: App Path" -Value $old }
+          $p = Start-Process $setup -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-", "/DIR=$old", "/LOG=$pwd\setup2.log" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "Zweite Installation endete mit Code $($p.ExitCode)" }
+          if (-not (Test-Path "$old\HoneyCut.exe") -or -not (Test-Path "$old\_internal")) { throw "Installer hat seinen eigenen Programmordner entfernt" }
+          if (-not (Test-Path "$data\projects\probe\project.json")) { throw "Nutzerdaten fehlen nach der zweiten Installation" }
+          Write-Host "Installer-Prüfung bestanden"
+
       - name: Virenscan mit Microsoft Defender
         shell: pwsh
         run: |
@@ -154,6 +203,7 @@ jobs:
         run: |
           $r = @("### Windows-Build fehlgeschlagen", '```')
           if (Test-Path selftest.json) { $r += Get-Content selftest.json }
+          foreach ($f in @("setup.log", "setup2.log")) { if (Test-Path $f) { $r += "----- $f -----"; $r += (Get-Content $f -Tail 25) } }
           if (Test-Path build.log) { $r += (Get-Content build.log | Select-String -Pattern "Error|error:|Traceback|not found|failed" | Select-Object -Last 40 | ForEach-Object { $_.Line }) ; $r += "----- letzte Zeilen -----"; $r += (Get-Content build.log -Tail 30) }
           $r += '```'
           $r -join "`n" | Out-File -Encoding utf8 report.md
