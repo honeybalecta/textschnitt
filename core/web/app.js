@@ -632,12 +632,12 @@ function renderStorage(body, info, reload){
     else if (g.key === 'proxies'){
       if (g.nfree) btn(el, `Unbenutzte löschen · ${fmtBytes(g.freeable)}`, () => clear('proxies', ''));
       else if (g.count) hint += ' Alle werden von Projekten verwendet.'; }
-    else if (g.key === 'matte'){
-      if (g.nfree) btn(el, `Unbenutzte löschen · ${fmtBytes(g.freeable)}`, () => clear('matte', '', `${n(g.nfree, 'freigestellte Kopie', 'freigestellte Kopien')} löschen (${fmtBytes(g.freeable)})?\n\n${ST_WARN}`));
+    else if (g.key === 'matte' || g.key === 'stab'){ const what = g.key, one = what === 'stab' ? 'beruhigte Kopie' : 'freigestellte Kopie', many = what === 'stab' ? 'beruhigte Kopien' : 'freigestellte Kopien';
+      if (g.nfree) btn(el, `Unbenutzte löschen · ${fmtBytes(g.freeable)}`, () => clear(what, '', `${n(g.nfree, one, many)} löschen (${fmtBytes(g.freeable)})?\n\n${ST_WARN}`));
       for (const i of g.items || []){ const free = !i.used.length, unknown = i.used[0] === '?';
         sub(el, `Kopie vom ${new Date(i.at).toLocaleDateString('de-DE')} · ${fmtBytes(i.bytes)}`,
           unknown ? 'Verwendung unklar' : free ? 'von keinem Projekt verwendet' : 'verwendet von ' + i.used.join(', '),
-          'Löschen', free ? () => clear('matte', i.name, `Diese freigestellte Kopie löschen (${fmtBytes(i.bytes)})?\n\n${ST_WARN}`) : null); } }
+          'Löschen', free ? () => clear(what, i.name, `Diese ${one} löschen (${fmtBytes(i.bytes)})?\n\n${ST_WARN}`) : null); } }
     else if (g.key === 'slides'){
       if (g.nfree) btn(el, `Frühere Bilder löschen · ${fmtBytes(g.freeable)}`, () => clear('slides', '', `${n(g.nfree, 'früheres Folienbild', 'frühere Folienbilder')} löschen (${fmtBytes(g.freeable)})?\n\n${ST_WARN}`));
       else if (g.count) hint += ' Alle vorhandenen Bilder werden von Projekten verwendet.'; }
@@ -715,7 +715,7 @@ setTimeout(() => { if (!$('#home').classList.contains('hidden')) renderUpdateBan
 // ── Alle Projekte sichern, Sicherung einspielen (Desktop) ──
 // Gesichert werden die Projekte samt Folienbildern und Schriften, dazu die eigenen Designprofile, Farbfavoriten, Füllwörter und
 // Untertitel-Looks, dazu das eigene Wörterbuch – ohne die Videos.
-const PREF_KEYS = ['hc-slide-profiles', 'hc-colfav', 'hc-fillers', 'hc-sub-looks', 'hc-dict', 'hc-house', 'hc-blocks', 'hc-emoji', 'hc-clipwords'];
+const PREF_KEYS = ['hc-slide-profiles', 'hc-colfav', 'hc-fillers', 'hc-sub-looks', 'hc-dict', 'hc-house', 'hc-blocks', 'hc-emoji', 'hc-clipwords', 'hc-color-looks'];
 function uiPrefs(){ const o = {}; for (const k of PREF_KEYS){ try { const v = JSON.parse(localStorage.getItem(k)); if (Array.isArray(v) && v.length) o[k] = v; } catch(_){} } return o; }
 function mergePrefs(pr){
   let n = 0; if (!pr || typeof pr !== 'object') return 0;
@@ -1105,7 +1105,7 @@ function tokMarks(){ const o = {}; for (const t of tokens) if (t.spk || t.ks || 
 // Zum Stand gehören auch Format, Bildausschnitt und die Lautstärke der Hauptvideos (fm, fr, sv). Sie fehlten: „Rückgängig“
 // nach einem Formatwechsel, nach dem Verschieben des Ausschnitts oder nach „Alle angleichen“ tat nichts bzw. nur die Hälfte.
 function snapshot(){ return JSON.stringify({d:[...deleted], t:P.trims, c:P.cues, i:P.items, a:P.adj, x:P.dels, y:P.splits, s:P.sub_style, e:P.edits, m:P.moves, k:P.speakers, w:tokMarks(), f:P.slides, wm:P.watermark || null, tr:P.trans || null,
-  fm:P.format || null, fr:P.frame || null, sv:P.sources.map(x => x.vol == null ? null : x.vol), mk:P.marks || [], tl:P.textline || null, rf:P.refs || [], ss:P.srcStyle || null, lw:P.lower || null, cl:P.clipList || [], pt:P.part || null, ps:P.partStyle || null, au:P.audio || null, pg:P.progress || null, ck:P.checks || [], kw:P.kw || []}); }
+  fm:P.format || null, fr:P.frame || null, sv:P.sources.map(x => x.vol == null ? null : x.vol), mk:P.marks || [], tl:P.textline || null, rf:P.refs || [], ss:P.srcStyle || null, lw:P.lower || null, cl:P.clipList || [], pt:P.part || null, ps:P.partStyle || null, au:P.audio || null, pg:P.progress || null, co:P.color || null, ck:P.checks || [], kw:P.kw || []}); }
 function restore(s){ const o = JSON.parse(s); deleted = new Set(o.d); P.trims = o.t; P.cues = o.c; P.items = o.i; P.adj = o.a; P.dels = o.x || []; P.splits = o.y || [];
   if (o.s) P.sub_style = o.s; P.edits = o.e || {}; P.moves = o.m || [];
   const fmCh = 'fm' in o && (P.format || null) !== (o.fm || null), frCh = 'fr' in o && JSON.stringify(P.frame || null) !== JSON.stringify(o.fr || null);
@@ -1124,6 +1124,8 @@ function restore(s){ const o = JSON.parse(s); deleted = new Set(o.d); P.trims = 
   if ('pt' in o){ if (o.pt) P.part = o.pt; else delete P.part; } if ('ps' in o){ if (o.ps) P.partStyle = o.ps; else delete P.partStyle; }
   if ('au' in o){ if (o.au) P.audio = o.au; else delete P.audio; }
   if ('pg' in o){ if (o.pg) P.progress = o.pg; else delete P.progress; }
+  const coCh = 'co' in o && JSON.stringify(P.color || null) !== JSON.stringify(o.co || null);
+  if ('co' in o){ if (o.co) P.color = o.co; else delete P.color; }
   if ('ck' in o) P.checks = o.ck || [];
   if ('kw' in o) P.kw = o.kw || [];
   if (o.f) P.slides = o.f; if (o.k) P.speakers = o.k;
@@ -1137,6 +1139,7 @@ function restore(s){ const o = JSON.parse(s); deleted = new Set(o.d); P.trims = 
   if (joinSheetOpen()) paintJoinSheet(); if (markSheetOpen()) paintMarkSheet(); if (progSheetOpen()) paintProgSheet();
   partChanged(true); if (psCh) partSyncLater();
   chkChanged();
+  if (coCh){ if (!playing) seekOut(outPos, false); if (colorAllPaint && $('#caHost')) colorAllPaint(); }   // Farbe des ganzen Videos: Vorschau und offenes Blatt nachziehen
   if (fmCh || frCh) frameRestored(fmCh); }
 // Format oder Bildausschnitt kamen mit einem früheren Stand zurück: Bühne, Export-Angaben, Clip-Reiter und Folien nachziehen
 function frameRestored(fmCh){
@@ -1387,11 +1390,13 @@ function removeDel(a, b){
   P.dels = out; normDels();
 }
 const FX_DEF = {speed:1, vol:1, bright:0, contrast:0, sat:0, gray:false, tx:0, ty:0, sc:1};   // tx/ty/sc: Lage und Größe des Bildes
-function fxAt(t){ let r = null; for (const x of P.items){ if (x.type === 'fx' && t >= x.at - 1e-6 && t <= x.at + x.dur + 1e-6) r = x; } return r ? {...FX_DEF, ...r.fx} : {...FX_DEF}; }
+function fxAt(t){ let r = null; for (const x of P.items){ if (x.type === 'fx' && t >= x.at - 1e-6 && t <= x.at + x.dur + 1e-6) r = x; }
+  const f = r ? {...FX_DEF, ...r.fx} : {...FX_DEF}; if (r && rampOn(r.fx)) f.speed = rampSpeed(r, t);   // Tempo-Verlauf: Tempo der Stufe
+  return colorMix(f); }
 const segDur = g => (g.out - g.in) / (g.speed || 1);
 function computePieces(){
   normDels();
-  const fxCuts = P.items.filter(x => x.type === 'fx').flatMap(x => [x.at, x.at + x.dur]);
+  const fxCuts = P.items.filter(x => x.type === 'fx').flatMap(x => [x.at, ...rampCuts(x), x.at + x.dur]);
   const sp = [...P.splits, ...fxCuts].sort((a, b) => a - b), out = [];
   ranges.forEach(([s, e, si], ri) => {
     let parts = [{s, e, si, L:{k:'adj', key:'s' + rangeToks[ri][0]}, R:{k:'adj', key:'e' + rangeToks[ri][1]}}];
@@ -1835,12 +1840,12 @@ let vKey = null;
 function mainKeyOf(g){ const it = g && g.kind === 'main' ? fxItemOf(g) : null; const k = it && it.fx && it.fx.key; return keyOn(k) ? k : null; }
 function syncMainKey(){
   const g = timeline[curSeg], k = mainKeyOf(g);
-  if (!k || !window.ChromaGL){ if (vKey){ vKey.canvas.remove(); vKey.destroy(); vKey = null; V.style.opacity = ''; } return; }
+  if (!k || !window.ChromaGL){ if (vKey){ vKey.canvas.remove(); vKey.destroy(); vKey = null; V.style.opacity = ''; } syncKeyBg(null); return; }
   if (!vKey){ try { vKey = ChromaGL.create(2, 2); } catch(_){ vKey = null; } if (!vKey) return; vKey.canvas.className = 'vkey'; V.after(vKey.canvas); }
   vKey.canvas.style.transform = V.style.transform; vKey.canvas.style.transformOrigin = '50% 50%'; vKey.canvas.style.filter = V.style.filter;
   const w = V.videoWidth, h = V.videoHeight; let ok = false;
-  if (w && h){ const s = Math.min(1, 1280 / Math.max(w, h)); ok = vKey.draw(V, k, Math.round(w * s), Math.round(h * s)) !== false && !vKey.gl.isContextLost(); }
-  V.style.opacity = ok ? '0' : ''; vKey.canvas.style.visibility = ok ? '' : 'hidden';
+  if (w && h){ const s = Math.min(1, 1280 / Math.max(w, h)); ok = vKey.draw(V, {...k, bg: null}, Math.round(w * s), Math.round(h * s)) !== false && !vKey.gl.isContextLost(); }
+  V.style.opacity = ok ? '0' : ''; vKey.canvas.style.visibility = ok ? '' : 'hidden'; syncKeyBg(ok ? k : null);
 }
 function drawKeyFrames(){
   for (const [id, kl] of keyLayers){ const el = layers.get(id), it = P && P.items.find(x => x.id === id); if (!el || !it || el.classList.contains('hidden')) continue; if (!keyOn(it.key)){ dropKeyLayer(id); el.style.opacity = ''; continue; } drawKeyLayer(el, it, kl); }
@@ -1848,7 +1853,7 @@ function drawKeyFrames(){
 }
 // Schlüsselfarbe im Bild wählen: nächstes Tippen auf die Bühne liest die Farbe dort
 let keyPick = null;
-function startKeyPick(fn){ keyPick = fn; $('#stageHint').textContent = 'Ins Bild tippen oder klicken: Die Farbe an dieser Stelle wird entfernt'; $('#stageHint').classList.remove('hidden'); }
+function startKeyPick(fn, hint){ keyPick = fn; $('#stageHint').textContent = hint || 'Ins Bild tippen oder klicken: Die Farbe an dieser Stelle wird entfernt'; $('#stageHint').classList.remove('hidden'); }
 function endKeyPick(){ keyPick = null; $('#stageHint').classList.add('hidden'); }
 // Punkt auf der Bühne → Anteil im Medienelement (Vollbild/eingepasst, frei platziert oder das Hauptbild samt Transformation)
 function stageFrac(el, px, py, cover){
@@ -1951,17 +1956,17 @@ function keyBlock(host, o){
       <div class="field"><span>Toleranz <b class="keyTolV"></b></span><input type="range" class="keyTol" min="0.02" max="0.8" step="0.01"></div>
       <div class="field"><span>Weicher Rand <b class="keySoftV"></b></span><input type="range" class="keySoft" min="0" max="0.5" step="0.01"></div>
       <label class="row"><input type="checkbox" class="keySpill"> Farbsaum zurücknehmen</label>
-      ${main ? `<div class="field"><span>Hintergrundfarbe</span><input type="color" class="keyBg" value="#000000"></div><p class="muted small">Bild oder Video als Hintergrund: das Foto auf Spur 1 legen, das Video darüber als Vollbild-Einblendung und dort freistellen.</p>` : ''}
+      ${main ? `<div class="keyBgHost"></div><p class="muted small">Ein Video als Hintergrund: auf Spur 1 legen, die Aufnahme darüber als Vollbild-Einblendung und dort freistellen.</p>` : ''}
     </div>
     ${CAP.matte && o.uri ? `<div class="keyauto"><div class="row wrap"><button class="btn keyAuto" type="button">✦ Hintergrund automatisch erkennen</button><button class="btn keyOrig hidden" type="button">Original zurück</button><button class="btn keyStop hidden" type="button">Abbrechen</button></div>
       <p class="muted small keyAutoHint">Ohne Greenscreen: Die Person wird erkannt, alles andere ersetzt. Erzeugt einmalig eine Kopie des Videos – das dauert je nach Länge einige Minuten.</p>
       <div class="keyProg hidden"><div class="prog"><i></i></div><span class="muted small"></span></div></div>` : ''}
     </div>`);
-  const blk = host.lastElementChild, q = s => blk.querySelector(s);
+  const blk = host.lastElementChild, q = s => blk.querySelector(s); let bgUi = null;
   const cur = () => o.get();
   const paint = () => { const k = cur(), on = !!(k && k.on !== false); q('.keyOn').checked = on; q('.keybody').classList.toggle('hidden', !on); if (!k) return;
     q('.keycols').innerHTML = k.colors.map((c, i) => `<span class="keychip" style="background:${c}" title="${c}"><button type="button" data-i="${i}" title="Farbe entfernen">×</button></span>`).join('') || '<span class="muted small">Noch keine Farbe – im Bild wählen</span>';
-    q('.keyTol').value = k.tol; q('.keyTolV').textContent = Math.round(k.tol * 100) + ' %'; q('.keySoft').value = k.soft; q('.keySoftV').textContent = Math.round(k.soft * 100) + ' %'; q('.keySpill').checked = !!k.spill; if (main) q('.keyBg').value = k.bg || '#000000'; };
+    q('.keyTol').value = k.tol; q('.keyTolV').textContent = Math.round(k.tol * 100) + ' %'; q('.keySoft').value = k.soft; q('.keySoftV').textContent = Math.round(k.soft * 100) + ' %'; q('.keySpill').checked = !!k.spill; if (bgUi) bgUi.paint(); };
   const refresh = () => { seekOut(outPos, false); drawKeyFrames(); };
   const change = (fn, live) => { let k = cur(); if (!k){ k = {...KEY_DEF, colors: []}; if (main) k.bg = '#000000'; } fn(k); o.set(k); paint(); if (!live) changed(false); refresh(); };
   const edit = fn => { const b = snapshot(); change(fn); undo.push(b); if (undo.length > 200) undo.shift(); redo = []; };
@@ -1979,7 +1984,7 @@ function keyBlock(host, o){
     r.onpointerdown = () => { r._b = snapshot(); }; r.oninput = () => change(k => { k[prop] = +r.value; }, true);
     r.onchange = () => { if (r._b){ undo.push(r._b); redo = []; r._b = null; } changed(false); }; }
   q('.keySpill').onchange = () => edit(k => { k.spill = q('.keySpill').checked; });
-  if (main){ const bg = q('.keyBg'); bg.oninput = () => change(k => { k.bg = bg.value; }, true); bg.onchange = () => edit(k => { k.bg = bg.value; }); }
+  if (main) bgUi = keyBgUi(q('.keyBgHost'), {get: cur, edit, live: fn => change(fn, true), orig: () => o.orig ? o.orig() : null, time: () => o.time ? o.time() : 0});
   // Automatisch: Person erkennen, Kopie mit grünem Hintergrund erzeugen, dann wie Greenscreen freistellen
   const auto = q('.keyAuto');
   if (auto){
@@ -2007,7 +2012,7 @@ function swapSource(si, m){
   if (vSi === si) vSi = -1;
   changed(true); seekOut(outPos, false); if (window.renderTimeline) renderTimeline();
 }
-function restoreSource(si){ const s = P.sources[si]; if (!s || !s.orig) return; s.uri = s.orig; delete s.orig; delete s.proxy; delete s.matte; if (vSi === si) vSi = -1; changed(true); seekOut(outPos, false); if (window.renderTimeline) renderTimeline(); }
+function restoreSource(si){ const s = P.sources[si]; if (!s || !s.orig) return; s.uri = s.orig; delete s.orig; delete s.proxy; delete s.matte; delete s.stab; if (vSi === si) vSi = -1; changed(true); seekOut(outPos, false); if (window.renderTimeline) renderTimeline(); }
 // Einblendung: Clip gegen die freigestellte Kopie tauschen und die Kopie in die Ablage legen
 function swapClip(it, m){
   const old = it.clip; P.media ||= [];
@@ -2296,7 +2301,7 @@ const mainBoxOn = () => !!(typeof TL !== 'undefined' && TL.sel && TL.sel.kind ==
 const mainFit = () => { const g = typeof TL !== 'undefined' && TL.sel && timeline[TL.sel.i]; return fitFracOf(g && g.kind === 'main' ? P.sources[g.si] : null); };
 // ── Keyframes auf der Hauptspur: Lage und Größe des Hauptbilds über die Zeit ──
 // fx.kf = [{t, tx, ty, sc}], t in Sekunden der Quelle ab Beginn der Anpassung (it.at). Ohne Keyframes gelten fx.tx/ty/sc fest.
-const fxItemOf = g => g ? (P.items.find(x => x.type === 'fx' && x.at <= g.in + 0.01 && x.at + x.dur >= g.out - 0.01) || null) : null;
+const fxItemOf = g => g && P ? (P.items.find(x => x.type === 'fx' && x.at <= g.in + 0.01 && x.at + x.dur >= g.out - 0.01) || null) : null;
 function mkfAt(kf, rel){
   const n = kf.length, V = k => ({tx: k.tx || 0, ty: k.ty || 0, sc: k.sc || 1});
   if (rel <= kf[0].t) return V(kf[0]); if (rel >= kf[n-1].t) return V(kf[n-1]);
@@ -2550,7 +2555,7 @@ $('#titleOv').addEventListener('pointercancel', endTitleDrag);
 $('#titleOv').addEventListener('click', e => e.stopPropagation());
 $('#titleOv').addEventListener('dblclick', e => { const el = e.target.closest('.titlebox'); if (el && window.editTitle) editTitle(el.dataset.id); });
 function hideOverlay(){ curPip = null; pipTarget = null; allLayers(el => { if (el.pause) el.pause(); el.classList.add('hidden'); }); $('#shapeOv').textContent = ''; $('#blurOv').textContent = ''; blurLive = false; placeBox(); }
-const cssFilter = fx => !fx ? '' : [fx.bright ? `brightness(${(1 + fx.bright).toFixed(3)})` : '', fx.contrast ? `contrast(${(1 + fx.contrast).toFixed(3)})` : '', fx.sat ? `saturate(${(1 + fx.sat / 100).toFixed(3)})` : '', fx.gray ? 'grayscale(1)' : ''].filter(Boolean).join(' ');
+const cssFilter = fx => !fx ? '' : [wbFilterUrl(wbGains(fx)), fx.bright ? `brightness(${(1 + fx.bright).toFixed(3)})` : '', fx.contrast ? `contrast(${(1 + fx.contrast).toFixed(3)})` : '', fx.sat ? `saturate(${(1 + fx.sat / 100).toFixed(3)})` : '', fx.gray ? 'grayscale(1)' : ''].filter(Boolean).join(' ');
 function applySegFx(g){
   const fx = g && g.kind === 'main' ? g.fx : null;
   V.style.filter = cssFilter(fx); const rate = g && g.kind === 'main' ? (g.speed || 1) : 1; if (Math.abs(V.playbackRate - rate) > 0.001) V.playbackRate = clamp(rate, 0.25, 4);
@@ -5311,7 +5316,7 @@ function coverDraw(cv, o){
   if (shown(II)) draw(II, box(II), 'contain'); else if (shown(IV)) draw(IV, box(IV), 'contain');
   else if (!st.classList.contains('audio-only')){
     const g = timeline[curSeg], key = mainKeyOf(g), keyed = !!(vKey && key && V.style.opacity === '0'), b = box(V);
-    if (keyed){ ctx.fillStyle = key.bg || '#000'; ctx.fillRect(0, 0, W, H); }
+    if (keyed) keyBgPaint(ctx, key, W, H);
     ctx.filter = V.style.filter || 'none'; draw(keyed ? vKey.canvas : V, b, 'contain'); ctx.filter = 'none';
   }
   // Einblendungen in der Reihenfolge der Spuren
@@ -5586,7 +5591,8 @@ function wrapTitle(text, size, font, W, H){
   return out.join('\n');
 }
 // Freistellen im Plan: Farben als #rrggbb, Toleranz/weicher Rand wie ffmpeg „chromakey“ (similarity/blend), Hauptbild mit Hintergrundfarbe
-function planKey(k, main){ const n = ChromaGL.norm(k); const o = {colors: n.colors.map(c => c.toLowerCase()), tol: +n.tol.toFixed(3), soft: +n.soft.toFixed(3), spill: !!n.spill}; if (main) o.bg = (k.bg || '#000000').toLowerCase(); return o; }
+let planBg = null;   // [W, H], solange buildPlan für einen echten Export läuft – dann legt planKey das Bild des Hintergrunds ab
+function planKey(k, main){ const n = ChromaGL.norm(k); const o = {colors: n.colors.map(c => c.toLowerCase()), tol: +n.tol.toFixed(3), soft: +n.soft.toFixed(3), spill: !!n.spill}; if (main){ o.bg = (k.bg || '#000000').toLowerCase(); const im = planBg ? keyBgPlan(k, planBg[0], planBg[1]) : null; if (im) o.bgImg = im; } return o; }
 // Ein Abschnitt der Hauptspur für den Plan. a, b: Quellzeit (bei Einschüben die Zeit im Clip) – für den Abschnitt selbst g.in und
 // g.out, für Übergänge das Material davor oder dahinter. vo: „Stimme aufbereiten“ gilt für diesen Export.
 function planSeg(g, a, b, vo){
@@ -5599,12 +5605,14 @@ function planSeg(g, a, b, vo){
     speed:+(fx.speed || 1), vol:+((fx.vol ?? 1) * srcVol(g.si)).toFixed(3), bright:+(fx.bright || 0), contrast:+(fx.contrast || 0), sat:+(fx.sat || 0), gray:!!fx.gray,
     ...(f2 => ({tx:r3(f2.tx || 0), ty:r3(f2.ty || 0), sc:+(f2.sc || 1).toFixed(4)}))(frameFx({tx:+(fx.tx || 0), ty:+(fx.ty || 0), sc:+(fx.sc || 1)})),
     ...(kf => kf ? {kf: kf.map(k => { const f2 = frameFx({tx:+(k.tx || 0), ty:+(k.ty || 0), sc:+(k.sc || 1)}); return {t:r3(fxItemOf(g).at + k.t - a), tx:r3(f2.tx || 0), ty:r3(f2.ty || 0), sc:+(f2.sc || 1).toFixed(4)}; })} : {})(mainKf(g)),
+    ...(w => w ? {wb: w} : {})(wbGains(fx)),
     ...(k => k ? {key: planKey(k, true)} : {})(mainKeyOf(g)),
     ...(vo && s.hasAudio !== false && !s.noAudio ? {voice: voicePlan(g)} : {})};
 }
 function buildPlan(dry){   // dry: nur nachsehen (z. B. für das Titelbild) – es werden keine Bilder abgelegt
   const [W, H] = outSize(), dk = dry ? null : duckPlan(), vo = !dry && voiceExport(), jn = dry ? null : joinPlan(), bl = exFmt === 'video' ? blurPlan(W, H, dry) : [];
-  const segs = timeline.map(g => planSeg(g, g.in, g.out, vo));
+  planBg = dry ? null : [W, H];
+  let segs; try { segs = timeline.map(g => planSeg(g, g.in, g.out, vo)); } finally { planBg = null; }
   const ovs = overlays.flatMap(o => buildSteps(o, {mode:o.x.type, image: isImg(o.x.clip), uri:o.x.clip.uri, in:o.x.in, out:r3(o.x.in + (o.end - o.at)), at:r3(o.at), corner:o.x.corner || 'or', size:o.x.size || 0.33,
     ...(o.x.w != null || (o.x.kf && o.x.kf.length) || hasCrop(o.x) ? (() => { const v = elVals(o.x, 0) || coverVals(o.x); return {x:r3(v.x), y:r3(v.y), w:r3(v.w)}; })() : {}),
     ...(o.x.kf && o.x.kf.length ? {kf: kfPlan(o.x.kf, o.end - o.at)} : {}),
@@ -5730,7 +5738,7 @@ function renderExport(){
     (S().enabled !== false && P.cues.length ? ` · ${computedCues().length} Untertitel` : '') + (exFmt !== 'audio' && partOn() ? ` · „${partText()}“` : '') + (exFmt === 'video' && hookVars().length ? ` · ${hookVars().length} Hook-Varianten` : '') +
     (nJoin => exFmt === 'video' && nJoin ? ` · ${nJoin} ${nJoin > 1 ? 'Übergänge' : 'Übergang'}` : '')(new Set(joinParts.map(p => p.x)).size) +
     (voiceExport() ? ' · Stimme aufbereitet' : '') + (duckPlan() ? ' · Musik weicht der Sprache' : '') +
-    (exFmt !== 'audio' && n.shape ? ` · ${n.shape} ${n.shape > 1 ? 'Formen' : 'Form'}` : '') + (exFmt !== 'audio' && n.blur ? ` · ${n.blur} ${n.blur > 1 ? 'Bereiche' : 'Bereich'} unkenntlich` : '') + (exFmt === 'video' && progOn() ? ' · Fortschrittsbalken' : '');
+    (exFmt !== 'audio' && n.shape ? ` · ${n.shape} ${n.shape > 1 ? 'Formen' : 'Form'}` : '') + (exFmt !== 'audio' && n.blur ? ` · ${n.blur} ${n.blur > 1 ? 'Bereiche' : 'Bereich'} unkenntlich` : '') + (exFmt === 'video' && progOn() ? ' · Fortschrittsbalken' : '') + (exFmt === 'video' && P.color && colorAny(P.color) ? ' · Farbe' : '');
   // Projektformate (CapCut, Schnittprojekt) übernehmen Schnitte und Spuren, aber weder Übergänge noch die Bearbeitung des Tons
   const lost = exFmt === 'video' || exFmt === 'audio' ? [] : [joinParts.length ? 'Übergänge' : '', voiceOn() ? '„Stimme aufbereiten“' : '', duckOn() && audios.some(a => ducks(a.x) && (a.x.vol ?? 1) > 0) ? '„Musik weicht der Sprache“' : ''].filter(Boolean);
   $('#exToneNote').textContent = lost.length ? `${lost.length > 1 ? lost.slice(0, -1).join(', ') + ' und ' + lost[lost.length - 1] : lost[0]} ${lost.length > 1 || lost[0] === 'Übergänge' ? 'stecken' : 'steckt'} nur in den Exporten „${FMT_LBL.video || 'Video'}“ und „${FMT_LBL.audio || 'Ton'}“. In diesem Format bleiben die Schnitte hart und der Ton, wie er aufgenommen ist.` : '';
@@ -6230,7 +6238,7 @@ function autoSet(a){
 // Stil des offenen Projekts als Vorlage
 function houseOf(){
   return {sub: jc(P.sub_style), wm: jc(P.watermark), format: P.format || null, safe: P.settings.safe || '', burn: P.settings.burn !== false, level: P.settings.level !== false,
-    textline: jc(P.textline), srcStyle: jc(P.srcStyle), lower: jc(P.lower), part: jc(P.partStyle), audio: jc(P.audio), progress: jc(P.progress), slideProfile: jc(P.slideProfile), auto: autoVals()};
+    textline: jc(P.textline), srcStyle: jc(P.srcStyle), lower: jc(P.lower), part: jc(P.partStyle), audio: jc(P.audio), progress: jc(P.progress), color: jc(P.color), slideProfile: jc(P.slideProfile), auto: autoVals()};
 }
 // Vorlage in ein Projekt schreiben (auch in ein gerade angelegtes, noch ungeöffnetes). Alles, was die Vorlage abdeckt, wird ersetzt.
 function houseInto(p, st){
@@ -6240,6 +6248,7 @@ function houseInto(p, st){
   if ('part' in st) set('partStyle', st.part);   // Vorlagen aus früheren Fassungen kennen die Kennzeichnung der Reihe noch nicht und lassen sie, wie sie ist
   if ('audio' in st) set('audio', st.audio);   // ebenso die Einstellungen zum Ton (ab 2.34)
   if ('progress' in st) set('progress', st.progress);   // und der Fortschrittsbalken (ab 2.35)
+  if ('color' in st) set('color', st.color);   // und die Farbe für das ganze Video (ab 2.36)
   if ((p.format || null) !== (st.format || null)){ if (st.format && FORMATS[st.format]) p.format = st.format; else delete p.format; delete p.frame; p.frameNew = true; }
   p.settings ||= {pad: 0.06}; p.settings.safe = st.safe || ''; p.settings.burn = st.burn !== false; p.settings.level = st.level !== false;
 }
@@ -6253,6 +6262,7 @@ function houseSummary(st){
   if (st.audio && st.audio.duck && st.audio.duck.on) a.push('Musik weicht der Sprache');
   if (st.audio && st.audio.voice && st.audio.voice.on) a.push('Stimme aufbereiten');
   if (st.progress && st.progress.on !== false) a.push('Fortschrittsbalken');
+  if (st.color && colorAny(st.color)) a.push('Farbe');
   return a.join(' · ');
 }
 // Vorlage auf das offene Projekt anwenden
@@ -7512,6 +7522,315 @@ function openMarker(id){
   $('#mkxZoom').onchange = e => { st.zoom = e.target.checked; };
   window.addEventListener('resize', fit);
   img.onload = fit; img.onerror = () => { toast('Das Bild lässt sich nicht laden'); close(); }; img.src = MEDIA(orig.uri);
+}
+
+// ───────── Bildgestaltung (2.36): Zoom-Schnitte (E4), Standbild und Tempo-Verlauf (E7), Farb-Vorlagen und Weißabgleich (E9),
+//           Bild beruhigen (E11), Hintergründe fürs Freistellen (E12) ─────────
+// Tempo-Verlauf: fx.speed2 = Tempo am Ende der Anpassung. Der Verlauf läuft in Stufen – jede Stufe ist ein eigener Abschnitt mit
+// festem Tempo. So gilt er ohne weiteres Zutun in der Vorschau und in jedem Export.
+const rampOn = fx => !!fx && fx.speed2 != null && Math.abs(fx.speed2 - (fx.speed || 1)) > 0.001;
+// Zahl der Stufen: je 0,15× Unterschied eine (höchstens zwölf), jede mindestens 0,3 s Quellzeit lang
+const rampSteps = x => rampOn(x.fx) ? clamp(Math.ceil(Math.abs(x.fx.speed2 - (x.fx.speed || 1)) / 0.15) + 1, 2, Math.max(2, Math.min(12, Math.floor(x.dur / 0.3)))) : 1;
+function rampCuts(x){ const n = rampSteps(x), out = []; for (let i = 1; i < n; i++) out.push(r3(x.at + x.dur * i / n)); return out; }
+function rampSpeed(x, t){ const n = rampSteps(x), v0 = x.fx.speed || 1; if (n < 2) return v0; const i = clamp(Math.floor((t - x.at) / x.dur * n), 0, n - 1); return +(v0 + (x.fx.speed2 - v0) * i / (n - 1)).toFixed(3); }
+
+// Farbe. Je Abschnitt (fx) und für das ganze Video (P.color): bright, contrast, sat, gray, temp (−100 kühl … 100 warm),
+// tint (−100 grün … 100 magenta). Die Werte des Abschnitts kommen zu denen des ganzen Videos hinzu.
+// Weißabgleich = Verstärkung je Farbkanal bei gleicher Helligkeit; im Plan steht sie als wb = [r, g, b].
+const WB_KT = 0.0035, WB_KM = 0.0025, COLOR_FIELDS = ['bright', 'contrast', 'sat', 'gray', 'temp', 'tint'];
+function wbGains(fx){
+  const t = +(fx && fx.temp) || 0, m = +(fx && fx.tint) || 0; if (Math.abs(t) < 0.05 && Math.abs(m) < 0.05) return null;
+  const r = Math.exp(WB_KT * t + WB_KM * m), b = Math.exp(-WB_KT * t + WB_KM * m), l = 0.2126 * r + 0.7152 + 0.0722 * b;
+  return [r / l, 1 / l, b / l].map(v => +clamp(v, 0.25, 4).toFixed(4));
+}
+function wbFromGains(r, g, b){ const lr = Math.log(r / g), lb = Math.log(b / g); return {temp: Math.round(clamp((lr - lb) / 2 / WB_KT, -100, 100)), tint: Math.round(clamp((lr + lb) / 2 / WB_KM, -100, 100))}; }
+const colorOf = o => { const c = {}; if (!o) return c; for (const k of COLOR_FIELDS){ if (k === 'gray'){ if (o.gray) c.gray = true; } else if (Math.abs(+o[k] || 0) > 1e-4) c[k] = +o[k]; } return c; };
+const colorAny = o => Object.keys(colorOf(o)).length > 0;
+function colorSet(o, c){ for (const k of COLOR_FIELDS){ if (k === 'gray') o.gray = !!c.gray; else if (k === 'temp' || k === 'tint'){ if (Math.abs(+c[k] || 0) > 1e-4) o[k] = +c[k]; else delete o[k]; } else o[k] = +c[k] || 0; } return o; }
+// Wirksame Werte eines Abschnitts: die eigenen und die des ganzen Videos zusammen
+function colorMix(f){
+  const c = P && P.color; if (!c || !colorAny(c)) return f;
+  f.cb = !colorAny(f);   // Farbe kommt nur vom ganzen Video (die Zeitleiste zeigt dann kein Abzeichen am Abschnitt)
+  f.bright = clamp((f.bright || 0) + (c.bright || 0), -0.8, 0.8); f.contrast = clamp((f.contrast || 0) + (c.contrast || 0), -0.8, 0.8); f.sat = clamp((f.sat || 0) + (c.sat || 0), -100, 100);
+  f.gray = !!(f.gray || c.gray); f.temp = clamp((f.temp || 0) + (c.temp || 0), -100, 100); f.tint = clamp((f.tint || 0) + (c.tint || 0), -100, 100);
+  return f;
+}
+// Vorschau: der Weißabgleich als SVG-Filter (feColorMatrix im sRGB-Raum), je Wertesatz ein Filter
+let wbSeq = 0;
+function wbFilterUrl(gn){
+  if (!gn) return '';
+  let host = document.getElementById('hcWbSvg');
+  if (!host){ host = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); host.id = 'hcWbSvg'; host.setAttribute('width', '0'); host.setAttribute('height', '0'); host.setAttribute('aria-hidden', 'true'); host.style.cssText = 'position:absolute;width:0;height:0;pointer-events:none'; document.body.append(host); }
+  const key = gn.join('_'); let f = [...host.children].find(x => x.dataset.k === key);
+  if (!f){
+    f = document.createElementNS('http://www.w3.org/2000/svg', 'filter'); f.id = 'hcWb' + (++wbSeq); f.dataset.k = key; f.setAttribute('color-interpolation-filters', 'sRGB');
+    f.setAttribute('x', '0'); f.setAttribute('y', '0'); f.setAttribute('width', '1'); f.setAttribute('height', '1');
+    const m = document.createElementNS('http://www.w3.org/2000/svg', 'feColorMatrix'); m.setAttribute('type', 'matrix'); m.setAttribute('values', `${gn[0]} 0 0 0 0 0 ${gn[1]} 0 0 0 0 0 ${gn[2]} 0 0 0 0 0 1 0`); f.append(m); host.append(f);
+    while (host.children.length > 16) host.firstElementChild.remove();
+  } else if (f !== host.lastElementChild) host.append(f);   // zuletzt benutzte bleiben
+  return `url(#${f.id})`;
+}
+// Mittlere Farbe eines Bilds (0…1 je Kanal); url: z. B. ein Vorschaubild
+function imgMean(url){
+  return new Promise(res => { if (!url) return res(null); const im = new Image(); im.crossOrigin = 'anonymous';
+    im.onload = () => { try { const c = document.createElement('canvas'); c.width = 32; c.height = 32; const x = c.getContext('2d', {willReadFrequently: true}); x.drawImage(im, 0, 0, 32, 32);
+      const d = x.getImageData(0, 0, 32, 32).data; let r = 0, g = 0, b = 0; for (let i = 0; i < d.length; i += 4){ r += d[i]; g += d[i + 1]; b += d[i + 2]; } const n = d.length / 4 * 255; res([r / n, g / n, b / n]); } catch(_){ res(null); } };
+    im.onerror = () => res(null); im.src = url; });
+}
+async function segMean(g){   // drei Stellen des Abschnitts, gemittelt
+  const s = P.sources[g.si], d = g.out - g.in, out = [0, 0, 0]; let n = 0;
+  for (const f of [0.2, 0.5, 0.8]){ const m = await imgMean(await THUMB(s.uri, Math.max(0, g.in - s.off + d * f), 96)); if (m){ m.forEach((v, i) => out[i] += v); n++; } }
+  return n ? out.map(v => v / n) : null;
+}
+const lumOf = c => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+// Wie das Bild mit seinen Farbwerten im Mittel aussieht (Weißabgleich und Helligkeit; Kontrast und Sättigung lassen das Mittel fast gleich)
+function lookMean(m, f){ const gn = wbGains(f) || [1, 1, 1], b = 1 + (f.bright || 0); return m.map((v, i) => v * gn[i] * b); }
+// Farbwerte, mit denen Abschnitt g im Mittel so aussieht wie Abschnitt ref (Rückgabe: {temp, tint, bright} für die eigenen Werte von g)
+async function colorMatch(g, ref){
+  const a = await segMean(g), b = await segMean(ref); if (!a || !b || Math.min(...a) < 0.02 || Math.min(...b) < 0.02) return null;
+  const want = lookMean(b, ref.fx || {}), base = (P && P.color) || {};
+  const wb = wbFromGains(want[0] / a[0], want[1] / a[1], want[2] / a[2]);
+  const gn = wbGains(wb) || [1, 1, 1], lum = lumOf(a.map((v, i) => v * gn[i]));
+  return {temp: clamp(wb.temp - (base.temp || 0), -100, 100), tint: clamp(wb.tint - (base.tint || 0), -100, 100), bright: +clamp(lumOf(want) / Math.max(0.01, lum) - 1 - (base.bright || 0), -0.5, 0.5).toFixed(2)};
+}
+// Weiß im Bild wählen: die Stelle wird farbneutral. col = '#rrggbb' des unveränderten Bilds; own = Werte, die schon von anderswo wirken
+function wbFromPixel(col, other){
+  const n = parseInt(col.slice(1), 16), c = [(n >> 16 & 255) / 255, (n >> 8 & 255) / 255, (n & 255) / 255];
+  if (Math.max(...c) < 0.12) return {err: 'Diese Stelle ist zu dunkel – eine helle graue oder weiße Fläche wählen'};
+  if (Math.max(...c) - Math.min(...c) > 0.45) return {err: 'Diese Stelle ist zu farbig – eine graue oder weiße Fläche wählen'};
+  const wb = wbFromGains(1 / Math.max(0.03, c[0]), 1 / Math.max(0.03, c[1]), 1 / Math.max(0.03, c[2]));
+  return {temp: clamp(wb.temp - ((other && other.temp) || 0), -100, 100), tint: clamp(wb.tint - ((other && other.tint) || 0), -100, 100)};
+}
+// Farb-Vorlagen: mitgelieferte und eigene (auf diesem Gerät, reisen mit der Sicherung)
+const CLOOK_KEY = 'hc-color-looks';
+const CLOOKS = [{id: 'neutral', name: 'Neutral', v: {}}, {id: 'warm', name: 'Warm', v: {temp: 22, sat: 6}}, {id: 'kuehl', name: 'Kühl', v: {temp: -22}},
+  {id: 'kraeftig', name: 'Kräftig', v: {contrast: 0.12, sat: 24}}, {id: 'matt', name: 'Matt', v: {contrast: -0.1, sat: -18, bright: 0.04}}, {id: 'sw', name: 'Schwarzweiß', v: {gray: true, contrast: 0.1}}];
+let colorLooks = (() => { try { const v = JSON.parse(localStorage.getItem(CLOOK_KEY)); return Array.isArray(v) ? v.filter(l => l && l.id && l.name && l.v) : []; } catch(_){ return []; } })();
+function saveColorLooks(){ try { localStorage.setItem(CLOOK_KEY, JSON.stringify(colorLooks)); } catch(_){} }
+const clookSame = (a, b) => JSON.stringify(colorOf(a)) === JSON.stringify(colorOf(b));
+// Bedienblock „Farbe“ – für einen Abschnitt (Anpassen) und für das ganze Video. o: {get() → Werte, set(fn), live(fn), other() → Werte, die
+// zusätzlich wirken, match? → Knopf „angleichen“}
+function colorBlock(host, o){
+  host.insertAdjacentHTML('beforeend', `<div class="colblk">
+    <div class="field"><span>Helligkeit <b class="cV" data-k="bright"></b></span><input type="range" class="cR" data-k="bright" min="-0.5" max="0.5" step="0.02"></div>
+    <div class="field"><span>Kontrast <b class="cV" data-k="contrast"></b></span><input type="range" class="cR" data-k="contrast" min="-0.5" max="0.5" step="0.02"></div>
+    <div class="field"><span>Sättigung <b class="cV" data-k="sat"></b></span><input type="range" class="cR" data-k="sat" min="-100" max="100" step="5"></div>
+    <div class="field"><span>Farbtemperatur <b class="cV" data-k="temp"></b></span><input type="range" class="cR wb-temp" data-k="temp" min="-100" max="100" step="1"></div>
+    <div class="field"><span>Tönung <b class="cV" data-k="tint"></b></span><input type="range" class="cR wb-tint" data-k="tint" min="-100" max="100" step="1"></div>
+    <label class="row"><input type="checkbox" class="cGray"> Schwarzweiß</label>
+    <div class="row wrap"><button class="btn small cPick" type="button">◎ Weiß im Bild wählen</button>${o.match ? '<button class="btn small cMatch" type="button">⇆ An den Clip davor angleichen</button>' : ''}</div>
+    <div class="field"><span>Farb-Vorlagen</span><div class="clooks"></div></div>
+  </div>`);
+  const blk = host.lastElementChild, q = s => blk.querySelector(s), fmt = {bright: v => Math.round(v * 100), contrast: v => Math.round(v * 100), sat: v => Math.round(v), temp: v => v > 0 ? `warm ${Math.round(v)}` : v < 0 ? `kühl ${Math.round(-v)}` : '0', tint: v => v > 0 ? `magenta ${Math.round(v)}` : v < 0 ? `grün ${Math.round(-v)}` : '0'};
+  const paint = () => { const f = o.get() || {};
+    blk.querySelectorAll('.cR').forEach(r => { const v = +f[r.dataset.k] || 0; r.value = v; blk.querySelector(`.cV[data-k="${r.dataset.k}"]`).textContent = fmt[r.dataset.k](v); });
+    q('.cGray').checked = !!f.gray;
+    q('.clooks').innerHTML = CLOOKS.map(l => `<button type="button" class="look-chip${clookSame(f, l.v) ? ' on' : ''}" data-cl="${l.id}"><b>${esc(l.name)}</b></button>`).join('')
+      + colorLooks.map(l => `<span class="look-chip${clookSame(f, l.v) ? ' on' : ''}" data-cl="own:${esc(l.id)}" title="Vorlage „${esc(l.name)}“ übernehmen"><b>${esc(l.name)}</b><button type="button" data-del="${esc(l.id)}" title="Vorlage löschen">×</button></span>`).join('')
+      + '<button type="button" class="look-chip add" data-cl="+">+ Speichern</button>'; };
+  blk.querySelectorAll('.cR').forEach(r => { r.addEventListener('input', () => o.live(f => { const v = +r.value; if ((r.dataset.k === 'temp' || r.dataset.k === 'tint') && !v) delete f[r.dataset.k]; else f[r.dataset.k] = v; })); r.addEventListener('input', paint); });
+  q('.cGray').addEventListener('input', () => { o.live(f => { f.gray = q('.cGray').checked; }); paint(); });
+  q('.cPick').onclick = e => { e.stopPropagation(); const g = timeline[curSeg]; if (!g || g.kind !== 'main' || !hasVid(P.sources[g.si])) return toast('Die Abspiellinie steht gerade auf keinem Video der Hauptspur');
+    startKeyPick(col => { const w = wbFromPixel(col, o.other ? o.other() : null); if (w.err) return toast(w.err); o.set(f => colorSet(f, {...colorOf(f), temp: w.temp, tint: w.tint})); paint(); toast('Weißabgleich gesetzt'); },
+      'Ins Bild tippen oder klicken: Diese Stelle wird farbneutral (am besten etwas Weißes oder Graues)'); };
+  if (o.match) q('.cMatch').onclick = async e => { e.stopPropagation(); const b = q('.cMatch'); b.disabled = true; try { await o.match(paint); } finally { b.disabled = false; } };
+  q('.clooks').onclick = async e => { e.stopPropagation();
+    const del = e.target.closest('[data-del]'); if (del){ colorLooks = colorLooks.filter(l => l.id !== del.dataset.del); saveColorLooks(); return paint(); }
+    const c = e.target.closest('[data-cl]'); if (!c) return; const id = c.dataset.cl;
+    if (id === '+'){ const cur = colorOf(o.get()); if (!Object.keys(cur).length) return toast('Erst Farbwerte einstellen');
+      const name = await askName('Name der Farb-Vorlage', ''); if (!name) return;
+      colorLooks = colorLooks.filter(l => l.name !== name.slice(0, 30)).concat({id: newId(), name: name.slice(0, 30), v: cur}); saveColorLooks(); toast('Farb-Vorlage gespeichert'); return paint(); }
+    const l = id.startsWith('own:') ? colorLooks.find(x => x.id === id.slice(4)) : CLOOKS.find(x => x.id === id); if (!l) return;
+    o.set(f => colorSet(f, l.v)); paint(); };
+  paint(); return {paint};
+}
+// Farbe für das ganze Video (P.color)
+let colorAllPaint = null;
+function openColorAll(){
+  if (!P) return; pausePlay();
+  const body = $('#sheetBody');
+  body.innerHTML = `<h3>Farbe für das ganze Video</h3><p class="muted small">Gilt für alle Abschnitte der Hauptspur. Was unter „Anpassen“ an einem einzelnen Abschnitt eingestellt ist, kommt hinzu.</p>
+    <div id="caHost"></div><div class="row" style="margin-top:12px"><button class="btn" id="caReset">Zurücksetzen</button><button class="btn primary" id="caOk" style="margin-left:auto">Fertig</button></div>`;
+  const refresh = () => { timeline.forEach(g => { if (g.kind === 'main') g.fx = fxAt((g.in + g.out) / 2); }); seekOut(outPos, false); drawKeyFrames(); if (window.renderTimeline) renderTimeline(); };
+  const put = c => { if (colorAny(c)) P.color = colorOf(c); else delete P.color; };
+  const ui = colorBlock($('#caHost'), {get: () => P.color || {}, other: () => { const g = timeline[curSeg], it = g && g.kind === 'main' ? fxItemOf(g) : null; return it ? it.fx : null; },
+    live: fn => { commitBurst('colall', () => { const c = {...(P.color || {})}; fn(c); put(c); }); refresh(); },
+    set: fn => { commit(() => { const c = {...(P.color || {})}; fn(c); put(c); }, false); refresh(); }});
+  $('#caReset').onclick = () => { commit(() => { delete P.color; }, false); refresh(); ui.paint(); };
+  $('#caOk').onclick = () => closeSheet();
+  colorAllPaint = ui.paint; body.onclick = null; openSheet(true);
+}
+// Der Abschnitt, an den „angleichen“ sich hält: der nächste davor mit Bild, der nicht zur selben Anpassung gehört – sonst der nächste danach
+function matchRef(it){
+  const [a, b] = [it.at, it.at + it.dur], mine = g => g.kind === 'main' && g.in >= a - 0.01 && g.out <= b + 0.01, ok = g => g.kind === 'main' && hasVid(P.sources[g.si]) && !mine(g);
+  const k0 = timeline.findIndex(mine); if (k0 < 0) return null;
+  for (let k = k0 - 1; k >= 0; k--) if (ok(timeline[k])) return timeline[k];
+  for (let k = k0 + 1; k < timeline.length; k++) if (ok(timeline[k])) return timeline[k];
+  return null;
+}
+
+// Zoom-Schnitte (E4): Jeder zweite Abschnitt zwischen zwei Schnitten rückt leicht näher – Sprünge im Bild wirken dadurch gewollt.
+// Entsteht aus Zoom-Elementen mit auto: 'cut'; ein erneutes Anwenden ersetzt sie.
+let cutZoomSkipped = 0;
+const CUTZOOM = {1: 1.06, 2: 1.1, 3: 1.16}, CUTZOOM_LBL = {1: 'leicht', 2: 'mittel', 3: 'deutlich'};
+function zoomRuns(){   // Abschnitte der Hauptspur, an Stellen ohne Sprung im Bild (geteilt, Anpassung) zusammengefasst
+  const runs = []; let prev = null;
+  for (const g of timeline){
+    if (g.kind !== 'main' || !hasVid(P.sources[g.si])){ prev = null; continue; }
+    if (prev && prev.si === g.si && Math.abs(prev.b - g.in) < 0.002) prev.b = g.out; else { prev = {si: g.si, a: g.in, b: g.out}; runs.push(prev); }
+  }
+  return runs;
+}
+function cutZoomApply(level){
+  const str = CUTZOOM[level] || CUTZOOM[2]; let n = 0; cutZoomSkipped = 0;
+  // Unkenntlich gemachte Bereiche folgen einem Zoom nicht von selbst: Abschnitte, über denen einer liegt, bleiben, wie sie sind
+  const blurs = P.items.filter(x => x.type === 'blur').map(x => itemOutRange(x));
+  commit(() => {
+    P.items = P.items.filter(x => !(x.type === 'zoom' && x.auto === 'cut'));
+    const taken = P.items.filter(x => x.type === 'zoom');
+    zoomRuns().forEach((r, k) => { if (k % 2 === 0 || r.b - r.a < 0.3) return;
+      if (taken.some(z => z.at < r.b && z.at + z.dur > r.a)) return;   // hier steht schon ein eigener Zoom
+      const o0 = srcToOut(r.a + 0.001), o1 = srcToOut(r.b - 0.001); if (blurs.some(([a, e]) => a < o1 && e > o0)){ cutZoomSkipped++; return; }
+      P.items.push({id: newId(), type: 'zoom', auto: 'cut', at: r3(r.a), dur: r3(r.b - r.a), kind: 'punch', strength: str, cx: 0.5, cy: 0.42}); n++; });
+  }, false);
+  seekOut(outPos, false); if (window.renderTimeline) renderTimeline(); return n;
+}
+function openCutZoom(){
+  if (!P) return; pausePlay();
+  let level = 2; try { level = clamp(+localStorage.getItem('hc-cutzoom') || 2, 1, 3); } catch(_){}
+  const body = $('#sheetBody'), have = () => P.items.filter(x => x.type === 'zoom' && x.auto === 'cut');
+  const cur = have()[0]; if (cur){ const l = Object.keys(CUTZOOM).find(k => Math.abs(CUTZOOM[k] - cur.strength) < 0.005); if (l) level = +l; }
+  body.innerHTML = `<h3>Zoom-Schnitte</h3><p class="muted small">Jeder zweite Abschnitt zwischen zwei Schnitten rückt leicht näher. Sprünge im Bild wirken dadurch wie ein gewollter Wechsel der Einstellung.</p>
+    <div class="field"><span>Stärke</span><div class="seg-ctl" id="czLevel">${[1, 2, 3].map(v => `<button data-v="${v}">${CUTZOOM_LBL[v]}</button>`).join('')}</div></div>
+    <p class="small" id="czInfo"></p>
+    <div class="row" style="margin-top:12px"><button class="btn danger" id="czOff">Entfernen</button><button class="btn primary" id="czOk" style="margin-left:auto">Anwenden</button></div>`;
+  const paint = () => { $$('#czLevel button').forEach(b => b.classList.toggle('on', +b.dataset.v === level)); const n = have().length, r = zoomRuns().length;
+    $('#czInfo').textContent = r < 2 ? 'Das Video hat noch keinen Schnitt mit Bildsprung.' : n ? `${n} von ${r} Abschnitten sind herangerückt. Nach weiteren Schnitten hier erneut anwenden.` + (cutZoomSkipped ? ` ${cutZoomSkipped === 1 ? 'Ein Abschnitt mit einem unkenntlich gemachten Bereich bleibt' : cutZoomSkipped + ' Abschnitte mit unkenntlich gemachten Bereichen bleiben'}, wie ${cutZoomSkipped === 1 ? 'er ist' : 'sie sind'}.` : '') : `${r} Abschnitte zwischen den Schnitten.`;
+    $('#czOff').classList.toggle('hidden', !n); };
+  $('#czLevel').onclick = e => { const b = e.target.closest('button'); if (!b) return; level = +b.dataset.v; try { localStorage.setItem('hc-cutzoom', level); } catch(_){} if (have().length) cutZoomApply(level); paint(); };
+  $('#czOk').onclick = () => { const n = cutZoomApply(level); paint(); toast(n ? `${n} Zoom-Schnitte gesetzt` : 'Dafür braucht es mindestens zwei Abschnitte mit einem Schnitt dazwischen'); };
+  $('#czOff').onclick = () => { commit(() => { P.items = P.items.filter(x => !(x.type === 'zoom' && x.auto === 'cut')); }, false); seekOut(outPos, false); if (window.renderTimeline) renderTimeline(); paint(); toast('Zoom-Schnitte entfernt'); };
+  body.onclick = null; paint(); openSheet(true);
+}
+
+// Standbild (E7): das Hauptbild an der Abspiellinie – mit Lage, Zoom, Farbe und Hintergrund – als Bild an dieser Stelle einschieben
+function freezeDraw(cv){
+  const st = $('#stage'), R = st.getBoundingClientRect(), W = cv.width, H = cv.height, k = W / R.width, ctx = cv.getContext('2d');
+  ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
+  const g = timeline[curSeg], key = mainKeyOf(g), keyed = !!(vKey && key && V.style.opacity === '0'), el = keyed ? vKey.canvas : V;
+  const r = V.getBoundingClientRect(), b = {x: (r.left - R.left) * k, y: (r.top - R.top) * k, w: r.width * k, h: r.height * k};
+  const vw = el.videoWidth || el.width || 0, vh = el.videoHeight || el.height || 0; if (!vw || !vh) return false;
+  if (keyed) keyBgPaint(ctx, key, W, H);
+  const f = Math.min(b.w / vw, b.h / vh), dw = vw * f, dh = vh * f;
+  ctx.filter = V.style.filter || 'none'; ctx.drawImage(el, b.x + (b.w - dw) / 2, b.y + (b.h - dh) / 2, dw, dh); ctx.filter = 'none';
+  return true;
+}
+async function addFreeze(){
+  if (!P || !TS.saveImage) return toast('Ein Standbild geht in dieser Version noch nicht');
+  const g = timeline[segAtOut(outPos)]; if (!g || g.kind !== 'main' || !hasVid(P.sources[g.si])) return toast('Die Abspiellinie steht auf keinem Video der Hauptspur');
+  pausePlay(); seekOut(outPos, false);
+  if (V.seeking || V.readyState < 2) await new Promise(res => { const t = setTimeout(res, 1500); V.addEventListener('seeked', () => { clearTimeout(t); res(); }, {once: true}); });
+  drawKeyFrames();
+  const [W, H] = baseDims().map(v => Math.round(v / 2) * 2), cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+  let url; try { if (!freezeDraw(cv)) return toast('Das Bild ist noch nicht geladen – kurz warten und nochmal'); url = cv.toDataURL('image/png'); } catch(e){ return toast('Das Bild ließ sich nicht greifen'); }
+  const src = outToSrcT(outPos), m = J(TS.saveImage(`standbild-${hashStr(JSON.stringify([P.sources[g.si].uri, r3(src), W, H, V.style.transform, V.style.filter]))}.png`, url, W, H, P.id));
+  if (!m || !m.uri) return toast('Das Standbild konnte nicht gespeichert werden');
+  const it = {id: newId(), type: 'insert', at: r3(src), clip: {...jc(m), name: 'Standbild'}, in: 0, out: 2, corner: 'or', size: 0.4, freeze: true};
+  commit(() => P.items.push(it), true);
+  if (tokens.length && window.renderTranscript) renderTranscript();
+  const k = timeline.findIndex(x => x.kind === 'insert' && x.item === it); if (k >= 0) seekOut(timeline[k].o, false);
+  if (typeof TL !== 'undefined' && k >= 0){ TL.sel = {kind: 'insert', itemId: it.id, i: k}; if (window.renderTimeline) renderTimeline(); }
+  toast('Standbild eingefügt (2 s) – die Dauer lässt sich am Rand ziehen');
+}
+
+// Hintergründe fürs Freistellen (E12). Am Schlüssel des Hauptbilds: bgKind 'color' (bg), 'grad' (bg oben → bg2 unten),
+// 'image' (bgImg: eigenes Bild) oder 'blur' (bgImg: weichgezeichnetes Standbild der Aufnahme). Im Plan steht für alles außer der
+// Farbe key.bgImg = Bilddatei. Der Hintergrund füllt immer die ganze Fläche – auch die Ränder eines eingepassten oder verkleinerten
+// Hauptbilds; in der Vorschau liegt er als eigene Ebene (#keyBg) hinter dem durchsichtig freigestellten Bild.
+const keyBgKind = k => k && k.bgKind && k.bgKind !== 'color' && (k.bgKind === 'grad' || (k.bgImg && k.bgImg.uri)) ? k.bgKind : 'color';
+const keyBgCache = new Map();   // uri → geladenes Bild (fürs Titelbild und Standbild)
+function keyBgImage(uri){ let im = keyBgCache.get(uri); if (!im){ im = new Image(); im.crossOrigin = 'anonymous'; im.src = MEDIA(uri); keyBgCache.set(uri, im); if (keyBgCache.size > 6) keyBgCache.delete(keyBgCache.keys().next().value); } return im; }
+function keyBgCss(k){ const kind = keyBgKind(k); return kind === 'grad' ? `linear-gradient(180deg, ${k.bg || '#000000'}, ${k.bg2 || '#000000'})` : kind === 'color' ? (k.bg || '#000000') : `#000 url("${MEDIA(k.bgImg.uri)}") center / cover no-repeat`; }
+function keyBgPaint(ctx, k, W, H){
+  const kind = keyBgKind(k);
+  if (kind === 'grad'){ const g = ctx.createLinearGradient(0, 0, 0, H); g.addColorStop(0, k.bg || '#000000'); g.addColorStop(1, k.bg2 || '#000000'); ctx.fillStyle = g; ctx.fillRect(0, 0, W, H); return; }
+  ctx.fillStyle = kind === 'color' ? (k.bg || '#000') : '#000'; ctx.fillRect(0, 0, W, H); if (kind === 'color') return;
+  const im = keyBgImage(k.bgImg.uri); if (!im.complete || !im.naturalWidth) return;
+  const f = Math.max(W / im.naturalWidth, H / im.naturalHeight), dw = im.naturalWidth * f, dh = im.naturalHeight * f; ctx.drawImage(im, (W - dw) / 2, (H - dh) / 2, dw, dh);
+}
+function syncKeyBg(k){ const el = $('#keyBg'), css = k ? keyBgCss(k) : ''; if (!el) return; el.classList.toggle('hidden', !css); if (css && el.dataset.css !== css){ el.style.background = css; el.dataset.css = css; if (keyBgKind(k) === 'image' || keyBgKind(k) === 'blur') keyBgImage(k.bgImg.uri); } }
+// Bilddatei des Hintergrunds für den Plan (Verlauf: in der Größe des Videos gezeichnet)
+function keyBgPlan(k, W, H){
+  const kind = keyBgKind(k); if (kind === 'color') return null;
+  if (kind !== 'grad') return k.bgImg.uri;
+  if (!TS.saveImage) return null;
+  const cv = document.createElement('canvas'); cv.width = W; cv.height = H; keyBgPaint(cv.getContext('2d'), k, W, H);
+  const m = J(TS.saveImage(`hintergrund-${(k.bg || '#000000').slice(1)}-${(k.bg2 || '#000000').slice(1)}-${W}x${H}.png`.toLowerCase(), cv.toDataURL('image/png'), W, H, P.id)); return m && m.uri ? m.uri : null;
+}
+// Weichgezeichnetes Standbild einer Aufnahme (uri) zur Quellzeit t als Bilddatei
+async function keyBgBlur(uri, t){
+  if (!TS.saveImage) return null;
+  const src = await THUMB(uri, Math.max(0, t), 360); if (!src) return null;   // im Browser liefert THUMB ein Versprechen
+  const im = await new Promise(res => { const i = new Image(); i.crossOrigin = 'anonymous'; i.onload = () => res(i); i.onerror = () => res(null); i.src = src; }); if (!im) return null;
+  const w = 960, h = Math.max(2, Math.round(960 * im.naturalHeight / im.naturalWidth / 2) * 2), s = document.createElement('canvas'), cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+  // zweimal stark verkleinern und weich vergrößern: geht in jedem Browser und ergibt eine ruhige Fläche ohne Kanten
+  s.width = 48; s.height = Math.max(2, Math.round(48 * h / w)); const sx = s.getContext('2d'); sx.imageSmoothingQuality = 'high'; sx.drawImage(im, 0, 0, s.width, s.height);
+  const m2 = document.createElement('canvas'); m2.width = 192; m2.height = Math.round(192 * h / w); const mx = m2.getContext('2d'); mx.imageSmoothingQuality = 'high'; mx.drawImage(s, 0, 0, m2.width, m2.height);
+  const cx = cv.getContext('2d'); cx.imageSmoothingQuality = 'high'; cx.drawImage(m2, 0, 0, w, h);
+  const m = J(TS.saveImage(`hintergrund-weich-${hashStr(uri + '|' + r3(t))}.png`, cv.toDataURL('image/png'), w, h, P.id)); return m && m.uri ? {uri: m.uri, width: w, height: h} : null;
+}
+// Bedienung im Block „Freistellen“ des Hauptbilds: Art des Hintergrunds
+function keyBgUi(host, o){   // o: {get() → key, edit(fn), live(fn), orig() → Original der Aufnahme oder null, time() → Quellzeit in der Aufnahme}
+  host.insertAdjacentHTML('beforeend', `<div class="field keybg"><span>Hintergrund</span><div class="seg-ctl kbKind"><button type="button" data-v="color">Farbe</button><button type="button" data-v="grad">Verlauf</button><button type="button" data-v="image">Bild</button><button type="button" data-v="blur">Weich</button></div>
+    <div class="row wrap kbRow"><input type="color" class="keyBg" value="#000000" title="Farbe (beim Verlauf: oben)"><input type="color" class="keyBg2 hidden" value="#000000" title="Farbe unten"><button type="button" class="btn small kbPick hidden">Bild wählen …</button><span class="muted small kbNote"></span></div></div>`);
+  const blk = host.lastElementChild, q = s => blk.querySelector(s);
+  const paint = () => { const k = o.get() || {}, kind = keyBgKind(k);
+    blk.querySelectorAll('.kbKind button').forEach(b => { b.classList.toggle('on', b.dataset.v === kind); if (b.dataset.v === 'blur') b.classList.toggle('hidden', !o.orig()); });
+    q('.keyBg').value = k.bg || '#000000'; q('.keyBg2').value = k.bg2 || '#000000';
+    q('.keyBg').classList.toggle('hidden', kind !== 'color' && kind !== 'grad'); q('.keyBg2').classList.toggle('hidden', kind !== 'grad'); q('.kbPick').classList.toggle('hidden', kind !== 'image');
+    q('.kbNote').textContent = kind === 'image' ? (k.bgImg && k.bgImg.name) || '' : kind === 'blur' ? 'weichgezeichnetes Standbild der Aufnahme' : kind === 'grad' ? 'oben → unten' : ''; };
+  const pickImg = async () => { const m = await pickMedia('clip'); if (!m) return false; if (m.kind !== 'image'){ toast('Bitte ein Foto oder eine Grafik wählen'); return false; } o.edit(k => { k.bgKind = 'image'; k.bgImg = {uri: m.uri, name: m.name || 'Bild', width: m.width, height: m.height}; }); return true; };
+  blk.querySelector('.kbKind').onclick = async e => { const b = e.target.closest('button'); if (!b) return; e.stopPropagation(); const v = b.dataset.v;
+    if (v === 'color') o.edit(k => { delete k.bgKind; });
+    else if (v === 'grad') o.edit(k => { k.bgKind = 'grad'; if (!k.bg2) k.bg2 = '#000000'; if (!k.bg || k.bg === '#000000') k.bg = '#3a3a38'; });
+    else if (v === 'image'){ const k = o.get(); if (k && k.bgImg && k.bgImg.name && k.bgKind !== 'image' && !/^hintergrund-weich/.test(k.bgImg.name)) o.edit(x => { x.bgKind = 'image'; }); else await pickImg(); }
+    else if (v === 'blur'){ const uri = o.orig(); if (!uri) return; b.disabled = true; const m = await keyBgBlur(uri, o.time()); b.disabled = false; if (!m) return toast('Das Standbild ließ sich nicht erzeugen'); o.edit(k => { k.bgKind = 'blur'; k.bgImg = {...m, name: 'hintergrund-weich'}; }); }
+    paint(); };
+  q('.kbPick').onclick = async e => { e.stopPropagation(); if (await pickImg()) paint(); };
+  for (const [cls, prop] of [['.keyBg', 'bg'], ['.keyBg2', 'bg2']]){ const c = q(cls); c.oninput = () => o.live(k => { k[prop] = c.value; }); c.onchange = () => o.edit(k => { k[prop] = c.value; }); c.onclick = e => e.stopPropagation(); }
+  paint(); return {paint};
+}
+
+// Bild beruhigen (E11, Windows): erzeugt eine stabilisierte Kopie der Aufnahme und tauscht sie ein – Transkript und Schnitt bleiben.
+const STAB_LBL = {1: 'leicht', 2: 'mittel', 3: 'stark'};
+function stabBlock(host, o){   // o: {si() → Nummer der Aufnahme}
+  if (!CAP.stabilize || !TS.stabilize) return null;
+  host.insertAdjacentHTML('beforeend', `<div class="field stabblk"><span>Bild beruhigen</span>
+    <div class="seg-ctl stLevel">${[1, 2, 3].map(v => `<button type="button" data-v="${v}">${STAB_LBL[v]}</button>`).join('')}</div>
+    <div class="row wrap"><button class="btn stGo" type="button">≋ Verwackeln ausgleichen</button><button class="btn stOrig hidden" type="button">Original zurück</button><button class="btn stStop hidden" type="button">Abbrechen</button></div>
+    <p class="muted small stHint"></p><div class="keyProg stProg hidden"><div class="prog"><i></i></div><span class="muted small"></span></div></div>`);
+  const blk = host.lastElementChild, q = s => blk.querySelector(s); let level = 2;
+  const src = () => { const si = o.si(); return si != null ? P.sources[si] : null; };
+  const paint = () => { const s = src(), on = !!(s && s.stab), ok = !!(s && hasVid(s) && s.kind !== 'image'); if (on) level = clamp(+s.stab || 2, 1, 3);
+    blk.querySelectorAll('.stLevel button').forEach(b => b.classList.toggle('on', +b.dataset.v === level));
+    q('.stGo').textContent = on ? '≋ Erneut ausgleichen' : '≋ Verwackeln ausgleichen'; q('.stGo').disabled = !ok || !!(s && s.matte);
+    q('.stOrig').classList.toggle('hidden', !on || !!(s && s.matte));
+    q('.stHint').textContent = s && s.matte ? 'Diese Aufnahme ist freigestellt. Erst beruhigen, dann freistellen: „Original zurück“ beim Freistellen nimmt beides zurück.'
+      : on ? `Die Aufnahme läuft als beruhigte Kopie (${STAB_LBL[level]}). Der Rand ist dafür leicht beschnitten.` : 'Gleicht Wackeln aus der Hand aus. Erzeugt einmalig eine Kopie der Aufnahme; der Rand wird dafür leicht beschnitten. Das dauert je nach Länge einige Minuten.'; };
+  blk.querySelector('.stLevel').onclick = e => { const b = e.target.closest('button'); if (!b) return; e.stopPropagation(); level = +b.dataset.v; paint(); };
+  q('.stGo').onclick = e => { e.stopPropagation(); const s = src(), si = o.si(); if (!s) return;
+    q('.stGo').disabled = true; q('.stStop').classList.remove('hidden'); q('.stProg').classList.remove('hidden'); q('.stProg span').textContent = 'Wird vorbereitet …';
+    let jid; try { jid = TS.stabilize(s.orig || s.uri, level); } catch(err){ toast('Beruhigen nicht möglich: ' + err.message); q('.stGo').disabled = false; return; }
+    q('.stStop').onclick = ev => { ev.stopPropagation(); TS.cancel(jid); };
+    const end = () => { q('.stStop').classList.add('hidden'); q('.stProg').classList.add('hidden'); paint(); };
+    watchJob(jid, j => { q('.stProg i').style.width = Math.round((j.progress || 0) * 100) + '%'; q('.stProg span').textContent = j.message || ''; },
+      j => { const m = j.result; if (!m || !m.uri){ end(); return toast('Das Beruhigen hat nichts ergeben'); }
+        if (P.sources[si] !== s){ end(); return; }   // das Projekt wurde inzwischen gewechselt
+        swapSource(si, m); s.stab = level; delete s.matte; changed(true); end(); toast('Das Bild läuft jetzt ruhiger' + (m.method === 'deshake' ? ' (einfaches Verfahren)' : '')); },
+      j => { end(); if (j.status !== 'cancelled') toast('Beruhigen fehlgeschlagen: ' + (j.error || '')); }); };
+  q('.stOrig').onclick = e => { e.stopPropagation(); const si = o.si(); if (si == null) return; restoreSource(si); paint(); toast('Die Aufnahme läuft wieder im Original'); };
+  blk.addEventListener('click', e => { if (e.target.closest('button')) e.stopPropagation(); });
+  paint(); return {paint};
 }
 
 // ───────── Clips in Serie (2.33): Vormerken und Clip-Reihe (F2), Zusammenschnitt (F3), Vorschläge (F1), Hook-Varianten (F4), „Teil 1/3“ (F5), Suche über alle Projekte (C9) ─────────

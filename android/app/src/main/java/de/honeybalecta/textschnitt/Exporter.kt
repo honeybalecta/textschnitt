@@ -36,6 +36,7 @@ import androidx.media3.effect.BitmapOverlay
 import androidx.media3.effect.Brightness
 import androidx.media3.effect.Contrast
 import androidx.media3.effect.HslAdjustment
+import androidx.media3.effect.RgbAdjustment
 import androidx.media3.effect.RgbFilter
 import androidx.media3.effect.MatrixTransformation
 import androidx.media3.effect.OverlayEffect
@@ -129,6 +130,9 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
         ).setFrameRate(Math.round(fps).toInt())
         else EditedMediaItem.Builder(clip(o.getString("uri"), inS, outS)).setRemoveAudio(removeAudio)
         val fx = ArrayList<Effect>(pre)   // Freistellen zuerst – auf dem unveränderten Bild, wie in der Vorschau
+        // Weißabgleich: Verstärkung je Farbkanal (wb = [r, g, b])
+        o.optJSONArray("wb")?.let { a -> if (a.length() >= 3) { val g = FloatArray(3) { a.optDouble(it, 1.0).toFloat().coerceIn(0.25f, 4f) }
+            if (g.any { Math.abs(it - 1f) > 0.001f }) fx.add(RgbAdjustment.Builder().setRedScale(g[0]).setGreenScale(g[1]).setBlueScale(g[2]).build()) } }
         val bright = o.optDouble("bright", 0.0).toFloat(); if (Math.abs(bright) > 0.001) fx.add(Brightness(bright.coerceIn(-1f, 1f)))
         val contrast = o.optDouble("contrast", 0.0).toFloat(); if (Math.abs(contrast) > 0.001) fx.add(Contrast(contrast.coerceIn(-1f, 1f)))
         val sat = o.optDouble("sat", 0.0).toFloat(); if (Math.abs(sat) > 0.01) fx.add(HslAdjustment.Builder().adjustSaturation(sat.coerceIn(-100f, 100f)).build())
@@ -196,6 +200,23 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
         return Composition.Builder(seqs)
     }
 
+    // Hintergrundbilder fürs Freistellen, je Datei einmal geladen (höchstens 2048 px Kante)
+    private val backdrops = HashMap<String, Bitmap?>()
+    private fun backdropOf(uri: String): Bitmap? {
+        if (uri.isEmpty()) return null
+        return backdrops.getOrPut(uri) { runCatching {
+            val u = Uri.parse(uri)
+            fun open() = if (u.scheme == "content") ctx.contentResolver.openInputStream(u) else u.path?.let { java.io.FileInputStream(it) }
+            val b = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            open()?.use { android.graphics.BitmapFactory.decodeStream(it, null, b) }
+            var n = 1; while (maxOf(b.outWidth, b.outHeight) / n > 2048) n *= 2
+            open()?.use { android.graphics.BitmapFactory.decodeStream(it, null, android.graphics.BitmapFactory.Options().apply { inSampleSize = n }) }
+        }.getOrNull() }
+    }
+
+    private fun colorBitmap(hex: String): Bitmap = Bitmap.createBitmap(2, 2, Bitmap.Config.ARGB_8888).apply {
+        eraseColor(runCatching { android.graphics.Color.parseColor(hex) }.getOrDefault(android.graphics.Color.BLACK)) }
+
     /** Ein Abschnitt im Aufbau der Hauptspur: eingepasst, mit Zoom, Lage und Größe, Farben und Freistellen.
      *  layer: als Bild-Ebene eines Übergangs – ohne Ton und bis an den Bildrand deckend. */
     private fun mainItem(s: JSONObject, layer: Boolean = false): EditedMediaItem {
@@ -220,10 +241,15 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
         // Lage und Größe des Clips (Mitte verschieben, um die Mitte skalieren)
         if (animated) fx.add(KeyframeEffect(kfs, s.optDouble("speed", 1.0).coerceIn(0.25, 4.0)))
         else if (win == null && (Math.abs(sc - 1) > 1e-3 || Math.abs(tx) > 1e-4 || Math.abs(ty) > 1e-4)) fx.add(TransformEffect(sc.toFloat(), tx.toFloat(), ty.toFloat()))
-        if (layer) fx.add(OpaqueEffect())
         val key = s.optJSONObject("key")
+        val keyed = key != null && s.optBoolean("hasVideo", true)
+        // Freigestellt: Das Hauptbild bleibt durchsichtig, bis Lage und Größe stehen; dann kommt der Hintergrund dahinter (Bild oder
+        // Farbe) und füllt die ganze Fläche – auch die Ränder eines eingepassten oder verkleinerten Bilds
+        val backdrop = if (keyed) (backdropOf(key!!.optString("bgImg")) ?: colorBitmap(key.optString("bg", "#000000"))) else null
+        if (backdrop != null) fx.add(BackdropEffect(backdrop))
+        if (layer) fx.add(OpaqueEffect())
         return item(s, s.getDouble("in"), s.getDouble("out"), layer, fx,
-            pre = if (key != null && s.optBoolean("hasVideo", true)) listOf(ChromaKeyEffect(key, true)) else emptyList(), fade = if (layer) 0.0 else CUT_FADE)
+            pre = if (keyed) listOf(ChromaKeyEffect(key!!, backdrop == null)) else emptyList(), fade = if (layer) 0.0 else CUT_FADE)
     }
 
     fun start() {

@@ -1200,7 +1200,136 @@ def bericht_und_protokoll():
 if MODE == "umzug":
     umzug()
     sys.exit(1 if BAD else 0)
-PARTS = (speichern_und_fassungen, speicher, sicherung, projektpakete, kleine_helfer, quellen_und_belege, schrift_im_export, transkript, export_231, untertitel_effekte, ton_234, belege_235, neue_versionen, bericht_und_protokoll)
+def bild_236():
+    """2.36: Weißabgleich (segments[].wb), Bild hinter dem freigestellten Hauptbild (key.bgImg), Tempo in Stufen, Standbild als
+    Bild-Einschub – am fertigen Video ausgemessen; dazu „Bild beruhigen“ (Kopie mit denselben Bildzeiten, ruhigeres Bild, Abbruch,
+    Speicherverwaltung)."""
+    import numpy as np
+    vd = TMP / "bild"
+    vd.mkdir(parents=True, exist_ok=True)
+    W, H, FPS = 640, 360, 30
+
+    def ff(*a):
+        subprocess.run([T.FFMPEG, "-v", "error", "-y", *a], check=True, capture_output=True)
+    video = vd / "gruen.mp4"   # Greenscreen mit einem Feld mit warmem Farbstich (160, 128, 96), 4 s
+    ff("-f", "lavfi", "-i", f"color=c=0x00FF00:s={W}x{H}:r={FPS}:d=4,drawbox=x=200:y=80:w=240:h=200:color=0xA08060:t=fill", "-pix_fmt", "yuv420p", "-c:v", "libx264", "-crf", "10", "-g", "15", str(video))
+    ff("-f", "lavfi", "-i", "color=c=0x2040C0:s=320x320", "-frames:v", "1", str(vd / "blau.png"))   # quadratisch: muss füllend eingepasst werden
+    KEY = {"colors": ["#00ff00"], "tol": 0.3, "soft": 0.05, "spill": True, "bg": "#c02020"}
+
+    def seg(a, b, **kw):
+        return {"kind": "main", "src": 0, "uri": str(video), "in": a, "out": b, "zooms": [], "hasAudio": False, "hasVideo": True, "speed": 1, "vol": 1,
+                "bright": 0, "contrast": 0, "sat": 0, "gray": False, "tx": 0, "ty": 0, "sc": 1, **kw}
+
+    def plan(name, segs, **kw):
+        return {"format": "video", "name": name, "width": W, "height": H, "fps": FPS, "total": round(sum((s["out"] - s["in"]) / (s.get("speed") or 1) for s in segs), 3), "quality": "hoch", "burn": False,
+                "audioFormat": "wav", "overlays": [], "segments": segs,
+                "sources": [{"uri": str(video), "name": "gruen.mp4", "duration": 4, "width": W, "height": H, "fps": FPS, "hasAudio": False, "hasVideo": True}], **kw}
+
+    def rgb(file):   # alle Bilder in Farbe
+        raw = subprocess.run([T.FFMPEG, "-v", "error", "-i", str(file), "-an", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], capture_output=True, check=True).stdout
+        return np.frombuffer(raw, np.uint8).reshape(-1, H, W, 3).astype(int)
+
+    def px(f, x, y):   # Mittel über 9 × 9 Pixel
+        return [int(round(v)) for v in f[y - 4:y + 5, x - 4:x + 5].reshape(-1, 3).mean(axis=0)]
+
+    def close(a, b, tol=6):
+        return all(abs(a[i] - b[i]) <= tol for i in range(3))
+
+    # ── Weißabgleich ──
+    chk("Weißabgleich aus dem Plan: nur drei gültige Werte zählen, [1, 1, 1] ist keiner",
+        T.wb_gains([0.8, 1, 1.3]) == [0.8, 1.0, 1.3] and T.wb_gains([1, 1, 1]) is None and T.wb_gains(None) is None and T.wb_gains(["x", 1, 1]) is None and T.wb_gains([9, 1, 0.01]) == [4.0, 1.0, 0.25])
+    inp, graph = T.build_graph(plan("w1", [seg(0, 1, wb=[0.8, 1, 1.3333], contrast=0.1)]), True, None)
+    chk("Filtergraph: Weißabgleich als Verstärkung je Farbkanal, vor Helligkeit und Kontrast", -1 < graph.find("colorchannelmixer=rr=0.8000:gg=1.0000:bb=1.3333") < graph.find("eq=brightness"), graph[:300])
+    inp, graph = T.build_graph(plan("w2", [seg(0, 1)]), True, None)
+    chk("Filtergraph: ohne Weißabgleich bleibt die Farbkette, wie sie war", "colorchannelmixer" not in graph)
+    f0 = rgb(T.export_job(job(), plan("bild_ohne", [seg(0, 1)]))["playable"])
+    f1 = rgb(T.export_job(job(), plan("bild_wb", [seg(0, 1, wb=[0.8, 1, 1.3333])]))["playable"])
+    chk("Export: Das Feld mit Farbstich (160, 128, 96) wird mit dem Weißabgleich neutral grau", close(px(f0[15], 320, 120), [160, 128, 96]) and close(px(f1[15], 320, 120), [126, 126, 124], 4), [px(f0[15], 320, 120), px(f1[15], 320, 120)])
+
+    # ── Bild hinter dem freigestellten Hauptbild ──
+    inp, graph = T.build_graph(plan("k1", [seg(0, 1, key={**KEY, "bgImg": str(vd / "blau.png")})]), True, None)
+    chk("Filtergraph: Das Hintergrundbild kommt als eigene Eingabe und füllt die Fläche", inp.count("-i") == 2 and "force_original_aspect_ratio=increase,crop=640:360" in graph and "color=c=0xc02020" not in graph, graph[:200])
+    inp, graph = T.build_graph(plan("k2", [seg(0, 1, key={**KEY, "bgImg": str(vd / "fehlt.png")})]), True, None)
+    chk("Filtergraph: Fehlt die Bilddatei, gilt die Hintergrundfarbe", inp.count("-i") == 1 and "color=c=0xc02020" in graph)
+    fk = rgb(T.export_job(job(), plan("bild_farbe", [seg(0, 1, key=KEY)]))["playable"])
+    fb = rgb(T.export_job(job(), plan("bild_hintergrund", [seg(0, 1, key={**KEY, "bgImg": str(vd / "blau.png")})]))["playable"])
+    chk("Export: freigestellt über der Hintergrundfarbe wie bisher", close(px(fk[15], 40, 40), [192, 32, 32], 8) and close(px(fk[15], 320, 120), [160, 128, 96], 8), [px(fk[15], 40, 40), px(fk[15], 320, 120)])
+    chk("Export: Mit Hintergrundbild steht das Bild hinter dem Feld, das Feld bleibt", close(px(fb[15], 40, 40), [32, 64, 192], 8) and close(px(fb[15], 600, 330), [32, 64, 192], 8) and close(px(fb[15], 320, 120), [160, 128, 96], 8), [px(fb[15], 40, 40), px(fb[15], 320, 120)])
+    fs = rgb(T.export_job(job(), plan("bild_klein", [seg(0, 1, sc=0.5, key={**KEY, "bgImg": str(vd / "blau.png")})]))["playable"])
+    chk("Export: Ist das Hauptbild verkleinert, füllt der Hintergrund auch den Rand", close(px(fs[15], 20, 20), [32, 64, 192], 8) and close(px(fs[15], 320, 165), [160, 128, 96], 8), [px(fs[15], 20, 20), px(fs[15], 320, 165)])
+    fw = rgb(T.export_job(job(), plan("bild_beides", [seg(0, 1, wb=[0.8, 1, 1.3333], key={**KEY, "bgImg": str(vd / "blau.png")})]))["playable"])
+    chk("Export: Weißabgleich und Hintergrundbild zusammen – das Feld neutral, der Hintergrund unverändert", close(px(fw[15], 320, 120), [126, 126, 124], 5) and close(px(fw[15], 40, 40), [32, 64, 192], 8), [px(fw[15], 320, 120), px(fw[15], 40, 40)])
+
+    fg = rgb(T.export_job(job(), plan("bild_sw", [seg(0, 1, gray=True, contrast=0.2, key={**KEY, "bgImg": str(vd / "blau.png")})]))["playable"])
+    p1, p2 = px(fg[15], 320, 120), px(fg[15], 40, 40)
+    chk("Export: Schwarzweiß und Kontrast gelten für das freigestellte Bild – freigestellt wird vorher, der Hintergrund behält seine Farbe", max(p1) - min(p1) <= 4 and close(p2, [32, 64, 192], 8), [p1, p2])
+    fl = rgb(T.export_job(job(), plan("bild_rand", [seg(0, 1, sc=0.5, tx=0.2, key=KEY)]))["playable"])
+    chk("Export: Auch die Hintergrundfarbe füllt den Rand eines verkleinerten, verschobenen Hauptbilds", close(px(fl[15], 20, 20), [192, 32, 32], 8) and close(px(fl[15], 448, 165), [160, 128, 96], 8), [px(fl[15], 20, 20), px(fl[15], 448, 165)])
+    # ── Tempo in Stufen und Standbild ──
+    steps = [seg(0, 1, speed=1), seg(1, 2, speed=1.5), seg(2, 3, speed=2)]
+    ft = rgb(T.export_job(job(), plan("bild_tempo", steps))["playable"])
+    want = round((1 + 1 / 1.5 + 1 / 2) * FPS)
+    chk("Export: drei Stufen mit 1×, 1,5× und 2× ergeben die erwartete Länge", abs(len(ft) - want) <= 2, [len(ft), want])
+    ff("-i", str(video), "-vf", "select=eq(n\\,30),drawbox=x=0:y=0:w=60:h=60:color=white:t=fill", "-frames:v", "1", str(vd / "standbild.png"))
+    still = {"kind": "insert", "uri": str(vd / "standbild.png"), "in": 0, "out": 1, "image": True, "hasAudio": False, "hasVideo": True, "vol": 1}
+    fz = rgb(T.export_job(job(), plan("bild_standbild", [seg(0, 1), still, seg(1, 2)]))["playable"])
+    chk("Export: Das Standbild steht eine Sekunde zwischen den beiden Abschnitten", len(fz) == 90 and close(px(fz[20], 30, 30), [0, 255, 0], 12) and close(px(fz[45], 30, 30), [255, 255, 255], 8) and close(px(fz[75], 30, 30), [0, 255, 0], 12)
+        and int(np.abs(fz[35] - fz[55]).max()) <= 6, [len(fz), px(fz[45], 30, 30)])
+
+    # ── Bild beruhigen ──
+    wack = vd / "wackel.mp4"   # ein stehendes Wolkenmuster, dessen Ausschnitt hin- und herwandert
+    ff("-f", "lavfi", "-i", "nullsrc=s=760x440:r=30,geq=lum='random(1)*255':cb=128:cr=128,gblur=sigma=6,eq=contrast=4", "-frames:v", "1", str(vd / "muster.png"))
+    ff("-loop", "1", "-framerate", "30", "-i", str(vd / "muster.png"), "-f", "lavfi", "-i", "sine=frequency=262:sample_rate=44100", "-vf", "crop=640:360:60+22*sin(t*9)+12*sin(t*23):40+16*cos(t*7)+9*sin(t*19)", "-t", "3", "-pix_fmt", "yuv420p", "-c:v", "libx264", "-crf", "14", "-g", "30", "-c:a", "aac", str(wack))
+
+    def unruhe(file):   # mittlerer Unterschied aufeinanderfolgender Bilder (Graustufen, Bildmitte)
+        raw = subprocess.run([T.FFMPEG, "-v", "error", "-i", str(file), "-an", "-f", "rawvideo", "-pix_fmt", "gray", "-"], capture_output=True, check=True).stdout
+        g = np.frombuffer(raw, np.uint8).reshape(-1, H, W).astype(int)[:, 60:300, 100:540]
+        return len(g), float(np.abs(g[1:] - g[:-1]).mean())
+    method = T.stab_method()
+    chk("Bild beruhigen: das Verfahren steht fest (vidstab, sonst deshake)", method in ("vidstab", "deshake"), method)
+    j = job()
+    r = T.stabilize_job(j, str(wack), 2)
+    n0, u0 = unruhe(wack)
+    n1, u1 = unruhe(r["uri"])
+    chk("Bild beruhigen: eine Kopie im Datenordner mit Ton, derselben Bildzahl und Länge", Path(r["uri"]).parent == D / "beruhigt" and r["hasAudio"] and n1 == n0 and abs(r["duration"] - 3) < 0.1 and r["width"] == W and r["height"] == H
+        and r["orig"] == str(wack) and r["method"] == method and r["level"] == 2 and j["progress"] > 0.9, [n0, n1, r["duration"]])
+    chk("Bild beruhigen: Das Bild steht deutlich ruhiger", u1 < u0 * (0.6 if method == "vidstab" else 0.95), [round(u0, 2), round(u1, 2)])
+    left = sorted(x.name for x in (D / "beruhigt").iterdir())
+    chk("Bild beruhigen: Messdatei und Zwischenstand sind aufgeräumt", left == [Path(r["uri"]).name], left)
+    t0 = time.time()
+    r2 = T.stabilize_job(job(), str(wack), 2)
+    chk("Bild beruhigen: Ein zweiter Aufruf nimmt die vorhandene Kopie", r2["uri"] == r["uri"] and time.time() - t0 < 1.5)
+    r3 = T.stabilize_job(job(), str(wack), 9)
+    u3 = unruhe(r3["uri"])[1]
+    chk("Bild beruhigen: Je Stärke eine eigene Kopie; „stark“ beruhigt mehr; unbekannte Stufen fallen auf die nächste gültige", r3["uri"] != r["uri"] and r3["level"] == 3 and (u3 < u1 or method != "vidstab") and T.stabilize_job(job(), str(wack), "x")["uri"] == r["uri"], [round(u1, 2), round(u3, 2)])
+    try:
+        T.stabilize_job(job(), str(vd / "blau.png"), 2)
+        chk("Bild beruhigen: Ein Foto wird abgewiesen", False)
+    except ValueError as e:
+        chk("Bild beruhigen: Ein Foto wird abgewiesen", "nur mit Videos" in str(e))
+    jc = job()
+    jc["cancel"] = True
+    try:
+        T.stabilize_job(jc, str(wack), 1)
+        chk("Bild beruhigen: Abbruch", False)
+    except RuntimeError:
+        left = sorted(x.name for x in (D / "beruhigt").iterdir())
+        chk("Bild beruhigen: Nach einem Abbruch bleibt nichts Halbes liegen", len(left) == 2 and all(x.endswith(".mp4") and ".tmp." not in x for x in left), left)
+    # Speicher verwalten: beruhigte Kopien wie freigestellte
+    for x in (D / "beruhigt").iterdir():
+        t = time.time() - 3600
+        os.utime(x, (t, t))
+    mk(T.PROJ_DIR / "st1.json", json.dumps({"id": "st1", "name": "Wackelvideo", "sources": [{"uri": r["uri"], "orig": str(wack), "stab": 2, "duration": 3}], "items": []}))
+    g = {x["key"]: x for x in T.storage_info()["groups"]}
+    used = sorted(len(i["used"]) for i in g["stab"]["items"])
+    chk("Speicher verwalten: beruhigte Kopien mit ihrer Verwendung", g["stab"]["count"] == 2 and used == [0, 1] and g["stab"]["nfree"] == 1, [g["stab"]["count"], used])
+    c = T.storage_clear("stab")
+    chk("Speicher verwalten: Die unbenutzte Kopie wird gelöscht, die verwendete bleibt", c["count"] == 1 and Path(r["uri"]).exists() and not Path(r3["uri"]).exists())
+    (T.PROJ_DIR / "st1.json").unlink()
+    chk("Die App meldet das Beruhigen an die Oberfläche und nennt das Verfahren im Fehlerbericht", T.app_info().get("stabilize") is True and "Bild beruhigen" in T.report_text({}))
+
+
+PARTS = (speichern_und_fassungen, speicher, sicherung, projektpakete, kleine_helfer, quellen_und_belege, schrift_im_export, transkript, export_231, untertitel_effekte, ton_234, belege_235, bild_236, neue_versionen, bericht_und_protokoll)
 for part in [p for p in PARTS if p.__name__ == MODE] or PARTS:
     print(f"── {part.__name__.replace('_', ' ')} ──", flush=True)
     part()

@@ -2,6 +2,18 @@
 
 Was sich mit jeder Version von HoneyCut ändert. Die Windows-App zeigt diese Stichpunkte an, sobald eine neuere Version bereitsteht.
 
+## 2.36.0 · Bildgestaltung
+- Farbe für das ganze Video (Studio → „Farbe“): Helligkeit, Kontrast, Sättigung, Farbtemperatur und Tönung gelten für alle Abschnitte; was unter „Anpassen“ an einem einzelnen Abschnitt steht, kommt hinzu. Gehört zum Hausstil
+- Weißabgleich: „Weiß im Bild wählen“ macht eine angetippte weiße oder graue Stelle farbneutral; „An den Clip davor angleichen“ bringt Farbe und Helligkeit zweier Aufnahmen zusammen
+- Farb-Vorlagen: Neutral, Warm, Kühl, Kräftig, Matt und Schwarzweiß, dazu eigene unter einem Namen – sie stehen in jedem Projekt bereit und reisen mit der Sicherung
+- Zoom-Schnitte (Studio → „Zoom-Schnitte“): Jeder zweite Abschnitt zwischen zwei Schnitten rückt leicht näher, in drei Stärken. Sprünge im Bild wirken dadurch wie ein gewollter Wechsel der Einstellung
+- Standbild (Studio → „Standbild“): Das Bild an der Abspiellinie bleibt zwei Sekunden stehen, etwa für eine Einblendung; die Dauer lässt sich am Rand ziehen
+- Tempo-Verlauf („Anpassen“ → „Tempo-Verlauf: am Ende“): Das Tempo eines Abschnitts steigt oder fällt in feinen Stufen vom Anfangs- zum Endwert
+- Hintergründe fürs Freistellen: hinter der freigestellten Person eine Farbe, ein Verlauf, ein eigenes Bild oder – nach „Hintergrund automatisch erkennen“ – ein weichgezeichnetes Standbild der Aufnahme. Der Hintergrund füllt die ganze Fläche, auch um ein verkleinertes Hauptbild herum
+- Bild beruhigen (Windows, „Anpassen“ → „Verwackeln ausgleichen“): gleicht Wackeln aus der Hand in drei Stärken aus. Es entsteht einmalig eine Kopie der Aufnahme; Transkript und Schnitt bleiben, „Original zurück“ nimmt es zurück. „Speicher verwalten“ führt die Kopien als eigene Gruppe
+- Farbe, Weißabgleich und Hintergründe gelten in der Vorschau und im Video-Export unter Windows, Android und im Browser. CapCut- und Concat-Projekte übernehmen Zoom-Schnitte, Standbild und die Stufen des Tempo-Verlaufs
+- Behoben: Im Windows-Export wirkte die Farbanpassung vor dem Freistellen – mit „Schwarzweiß“ oder starker Sättigung ging der Greenscreen dort verloren. Rückgängig zeichnet die Vorschau nach einer Farbänderung sofort neu. Die Zeitleiste fragt kein Vorschaubild hinter dem letzten Bild einer Aufnahme mehr an
+
 ## 2.35.0 · Belege im Bild
 - Formen und Pfeile: Rahmen, Kreis, Pfeil und Textmarker über dem Bild – im Bild verschieben, an der Ecke in der Größe ändern, mit Keyframes (Taste M) über die Zeit bewegen
 - Unkenntlich machen: Gesichter, Kennzeichen oder Namen verpixeln, weichzeichnen oder abdecken, als Ellipse oder Rechteck. Mit Keyframes folgt der Bereich dem, was er verdeckt. Wechselt das Format oder der Bildausschnitt – auch bei Clips im Hochformat und im Export-Paket –, bleibt er auf derselben Stelle des Bilds

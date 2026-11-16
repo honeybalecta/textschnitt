@@ -146,13 +146,14 @@ try {
     if (window.select) select(null); seekOut(1, false);
     const s = addMarkItem('shape', 'rect'), b = addMarkItem('blur');
     commit(() => { Object.assign(s, {dur: 3, x: 0.25, y: 0.3, w: 0.2, ar: 1.6, color: '#FFE14D', thick: 3}); Object.assign(b, {dur: 3, x: 0.7, y: 0.6, w: 0.25, ar: 1, kind: 'pixel', form: 'rect', str: 1});
-      P.progress = {on: true, pos: 'u', size: 3, color: '#3E8A55', bg: true}; }, true);
+      P.progress = {on: true, pos: 'u', size: 3, color: '#3E8A55', bg: true};
+      P.color = {temp: 25, contrast: 0.05}; }, true);   // Bildgestaltung (2.36): Farbe für das ganze Video – der Weißabgleich rechnet im Export mit
     if (window.select) select(null);
     exFmt = 'video'; const plan = buildPlan();
-    return {marks: marks.map(m => ({type: m.x.type, at: m.at, end: m.end, x: m.x.x, y: m.x.y, w: m.x.w, ar: m.x.ar})), blurs: (plan.blurs || []).length, top: plan.overlays.filter(o => o.top).length,
+    return {wb: plan.segments.filter(s => s.kind === 'main' && s.wb).length, marks: marks.map(m => ({type: m.x.type, at: m.at, end: m.end, x: m.x.x, y: m.x.y, w: m.x.w, ar: m.x.ar})), blurs: (plan.blurs || []).length, top: plan.overlays.filter(o => o.top).length,
       bar: plan.overlays.filter(o => o.progress).length, total, size: [plan.width, plan.height]};
   });
-  step('Form, unkenntlich gemachter Bereich und Fortschrittsbalken stehen im Plan', bel.marks.length === 2 && bel.blurs === 1 && bel.top === 3 && bel.bar === 2 && Math.abs(bel.total - cut.total) < 0.01, bel);
+  step('Form, unkenntlich gemachter Bereich, Fortschrittsbalken und Weißabgleich stehen im Plan', bel.marks.length === 2 && bel.blurs === 1 && bel.top === 3 && bel.bar === 2 && bel.wb >= 1 && Math.abs(bel.total - cut.total) < 0.01, bel);
   await exportAs('video', 'out-belege.mp4');
   fs.writeFileSync(path.join(OUT, 'belege.json'), JSON.stringify(bel));
 

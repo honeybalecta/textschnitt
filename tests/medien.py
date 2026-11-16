@@ -6,6 +6,8 @@
    ton.mp4 (Sprache mit Rauschen, Brummen und Nachhall) und musik.wav für die Prüfungen am Ton,
    takt.mp4 (30 s): jedes Bild trägt seine Nummer als Balkenmuster – daran lesen die Prüfungen Schnitte und Übergänge bildgenau ab,
    karo.mp4 (12 s): ein Schachbrett aus 4 Pixel großen Feldern – daran messen die Prüfungen, wo im fertigen Bild gemittelt wurde,
+   gruen.mp4 (10 s): Greenscreen mit einem Feld in der Mitte (erst mit Farbstich, dann neutral) für Farbe und Hintergründe,
+   wackel.mp4 (4 s): ein stehendes Wolkenmuster mit wanderndem Ausschnitt für das Beruhigen,
    drei kurze Einspieler (broll1–3.mp4), acht Folienbilder und ein Logo.
 Aufruf: python3 tests/medien.py <Zielordner>   – vorhandene Dateien bleiben stehen."""
 import array
@@ -286,6 +288,15 @@ def main(out: Path) -> None:
     if not (out / "karo.mp4").exists():
         ff("-f", "lavfi", "-i", "color=c=black:size=640x360:rate=30,format=gray,geq=lum='16+219*mod(floor(X/4)+floor(Y/4)\\,2)'", "-f", "lavfi", "-i", "sine=frequency=330:sample_rate=44100",
            "-t", "12", "-af", "volume=0.1", "-pix_fmt", "yuv420p", "-c:v", "libx264", "-preset", "veryfast", "-crf", "10", "-g", "30", "-c:a", "aac", "-b:a", "96k", str(out / "karo.mp4"))
+    if not (out / "gruen.mp4").exists():   # Greenscreen: grüne Fläche, in der Mitte ein Feld – erst mit warmem Farbstich, ab 5 s neutral grau
+        ff("-f", "lavfi", "-i", "color=c=0x00FF00:size=640x360:rate=30,drawbox=x=200:y=80:w=240:h=200:color=0xA08060:t=fill:enable='lt(t,5)',"
+           "drawbox=x=200:y=80:w=240:h=200:color=0x808080:t=fill:enable='gte(t,5)',drawbox=x=300:y=160:w=40:h=40:color=0x202020:t=fill",
+           "-f", "lavfi", "-i", "sine=frequency=392:sample_rate=44100", "-t", "10", "-af", "volume=0.1", "-pix_fmt", "yuv420p", "-c:v", "libx264", "-preset", "veryfast", "-crf", "10", "-g", "30", "-c:a", "aac", "-b:a", "96k", str(out / "gruen.mp4"))
+    if not (out / "wackel.mp4").exists():   # ein stehendes Wolkenmuster, dessen Ausschnitt hin- und herwandert – wie aus der Hand gefilmt
+        ff("-f", "lavfi", "-i", "nullsrc=s=760x440:r=30,geq=lum='random(1)*255':cb=128:cr=128,gblur=sigma=6,eq=contrast=4", "-frames:v", "1", str(out / "wackel.png"))
+        ff("-loop", "1", "-framerate", "30", "-i", str(out / "wackel.png"), "-f", "lavfi", "-i", "sine=frequency=262:sample_rate=44100",
+           "-vf", "crop=640:360:60+22*sin(t*9)+12*sin(t*23):40+16*cos(t*7)+9*sin(t*19)",
+           "-t", "4", "-af", "volume=0.1", "-pix_fmt", "yuv420p", "-c:v", "libx264", "-preset", "veryfast", "-crf", "14", "-g", "30", "-c:a", "aac", "-b:a", "96k", str(out / "wackel.mp4"))
     for k, (src, freq) in enumerate((("testsrc=size=640x360:rate=30", 440), ("smptebars=size=640x360:rate=30", 554), ("rgbtestsrc=size=640x360:rate=30", 659)), 1):
         mp4 = out / f"broll{k}.mp4"
         if not mp4.exists():

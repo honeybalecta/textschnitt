@@ -27,6 +27,8 @@ const files = {
   '/vendor/media.js': ['text/javascript', fs.readFileSync(path.join(HERE, 'attrappe', 'media.js'), 'utf8')],
 };
 await page.route('http://hc.test/**', route => { const f = files[new URL(route.request().url()).pathname]; return f ? route.fulfill({ status: 200, contentType: f[0] + '; charset=utf-8', body: f[1] }) : route.fulfill({ status: 404, body: '' }); });
+// das Freistellen (ChromaGL) kommt im Browser aus core/web/chroma.js
+await page.addInitScript(fs.readFileSync(path.join(REPO, 'core', 'web', 'chroma.js'), 'utf8'));
 // der Rechenkern von „Stimme aufbereiten“ kommt im Browser aus app.js
 await page.addInitScript(src => { globalThis.voiceDspLib = new Function(src + '\nreturn voiceDspLib;')(); }, cut(fs.readFileSync(path.join(REPO, 'core', 'web', 'app.js'), 'utf8'), 'function voiceDspLib(){'));
 
@@ -39,6 +41,8 @@ const run = (plan, levels = []) => page.evaluate(async ([plan, levels]) => {
     const c = document.createElement('canvas'); c.width = 64; c.height = 36; const x = c.getContext('2d'); x.fillStyle = '#181818'; x.fillRect(0, 0, 64, 36);
     FILES.bild = new File([await new Promise(r => c.toBlob(r, 'image/png'))], 'bild.png', { type: 'image/png' });
     FILES.karo = mk('karo.mp4', { fps: 30, duration: 30, pattern: 'karo', audio: [[1000, 0.1]] });
+    FILES.gs = mk('gruen.mp4', { fps: 30, duration: 30, pattern: 'gruen', audio: [[1000, 0.1]] });
+    c.width = 320; c.height = 320; x.fillStyle = '#2040C0'; x.fillRect(0, 0, 320, 320); FILES.blau = new File([await new Promise(r => c.toBlob(r, 'image/png'))], 'blau.png', { type: 'image/png' });
     for (const [k, col, w, h] of [['rot', '#FF0000', 32, 32], ['gruen', '#00FF00', 32, 32], ['balken', '#E5402A', 640, 4]]){ c.width = w; c.height = h; x.fillStyle = col; x.fillRect(0, 0, w, h);
       FILES[k] = new File([await new Promise(r => c.toBlob(r, 'image/png'))], k + '.png', { type: 'image/png' }); }
   }
@@ -168,6 +172,33 @@ try {
   const b5 = await run(kplan({ blurs: [{ ...rect, kind: 'soft' }], overlays: ovs }));
   const o5 = await probe(fr(30), (px) => ({ rot: px(160, 180), a: px(129, 181), c: px(142, 181) }));
   chk('weichgezeichnet: dieselbe Stelle verläuft (kein hartes Feld), die Form darüber bleibt scharf', !b5.error && o5 && o5.rot.join() === '255,0,0' && o5.a.join() !== o5.c.join() && o5.a[1] > o5.a[0], b5.error || (o5 && [o5.a, o5.c]));
+
+  // ── Bildgestaltung (2.36): Weißabgleich (wb) und Hintergrund hinter dem freigestellten Hauptbild (key.bg, key.bgImg) ──
+  // Dieselben Erwartungen wie beim Windows-Export (backend_test.py, bild_236): das Feld (160, 128, 96) auf grüner Fläche.
+  const gseg = (a, b, kw = {}) => ({ ...seg(a, b, kw), uri: 'gs' });
+  const gplan = segs => plan(segs, { sources: [{ uri: 'gs', name: 'gruen.mp4', duration: 30, width: 640, height: 360, fps: 30, hasAudio: true, hasVideo: true }] });
+  const KEY = { colors: ['#00ff00'], tol: 0.3, soft: 0.05, spill: true, bg: '#c02020' };
+  const farbe = px => ({ feld: px(320, 120), ecke: px(40, 40), unten: px(600, 330), rand: px(20, 20), mitte: px(320, 165), rechts: px(448, 165) });
+  const nah = (a, b, tol = 6) => !!a && a.slice(0, 3).every((v, i) => Math.abs(v - b[i]) <= tol);
+  await want([fr(15)]);
+  let g = await run(gplan([gseg(0, 1)])); let c = await probe(fr(15), farbe);
+  chk('Greenscreen ohne alles: Feld und grüne Fläche stehen im Bild', !g.error && nah(c.feld, [160, 128, 96], 3) && nah(c.ecke, [0, 255, 0], 3), g.error || c);
+  g = await run(gplan([gseg(0, 1, { wb: [0.8, 1, 1.3333] })])); c = await probe(fr(15), farbe);
+  chk('Weißabgleich: Das Feld mit Farbstich wird neutral grau, Grün bleibt Grün', !g.error && nah(c.feld, [128, 128, 128], 4) && c.ecke[1] > 240 && c.ecke[0] < 10, g.error || c);
+  g = await run(gplan([gseg(0, 1, { wb: [1.2, 1, 0.9] })])); c = await probe(fr(15), farbe);
+  chk('Weißabgleich mit Werten über 1: Rot wird kräftiger, Blau schwächer', !g.error && nah(c.feld, [192, 128, 86], 4), g.error || c);
+  g = await run(gplan([gseg(0, 1, { key: KEY })])); c = await probe(fr(15), farbe);
+  chk('freigestellt: Die Hintergrundfarbe steht hinter dem Feld', !g.error && nah(c.ecke, [192, 32, 32], 4) && nah(c.feld, [160, 128, 96], 6), g.error || c);
+  g = await run(gplan([gseg(0, 1, { key: { ...KEY, bgImg: 'blau' } })])); c = await probe(fr(15), farbe);
+  chk('freigestellt mit Hintergrundbild: Das Bild füllt die Fläche hinter dem Feld', !g.error && nah(c.ecke, [32, 64, 192], 4) && nah(c.unten, [32, 64, 192], 4) && nah(c.feld, [160, 128, 96], 6), g.error || c);
+  g = await run(gplan([gseg(0, 1, { key: { ...KEY, bgImg: 'fehlt' } })])); c = await probe(fr(15), farbe);
+  chk('fehlt die Bilddatei, gilt die Hintergrundfarbe', !g.error && nah(c.ecke, [192, 32, 32], 4), g.error || c);
+  g = await run(gplan([gseg(0, 1, { sc: 0.5, tx: 0.2, key: { ...KEY, bgImg: 'blau' } })])); c = await probe(fr(15), farbe);
+  chk('verkleinertes, verschobenes Hauptbild: Der Hintergrund füllt auch den Rand', !g.error && nah(c.rand, [32, 64, 192], 4) && nah(c.rechts, [160, 128, 96], 6), g.error || c);
+  g = await run(gplan([gseg(0, 1, { sc: 0.5, tx: 0.2, key: KEY })])); c = await probe(fr(15), farbe);
+  chk('… ebenso die Hintergrundfarbe', !g.error && nah(c.rand, [192, 32, 32], 4) && nah(c.rechts, [160, 128, 96], 6), g.error || c);
+  g = await run(gplan([gseg(0, 1, { wb: [0.8, 1, 1.3333], gray: true, key: { ...KEY, bgImg: 'blau' } })])); c = await probe(fr(15), farbe);
+  chk('Farbe gilt für das freigestellte Bild: Feld neutral, Hintergrund unverändert', !g.error && Math.max(...c.feld.slice(0, 3)) - Math.min(...c.feld.slice(0, 3)) <= 4 && nah(c.ecke, [32, 64, 192], 4), g.error || c);
   await want(null);
   chk('keine Fehlermeldungen der Seite', logs.length === 0, logs.slice(0, 5));
 } catch (e) {

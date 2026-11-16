@@ -141,7 +141,8 @@ function tileThumbs(t, f){
   for (let i = i0; i < i1; i++){
     const tm = Math.round((inS + (i + 0.5) * tw / TL.pps * speed) / q) * q;
     const img = document.createElement('img'); img.loading = 'lazy'; img.decoding = 'async'; img.style.width = tw + 'px'; img.alt = '';
-    const u = THUMB(m.uri, Math.min(tm, inS + d), 120); if (u && u.then) u.then(x => { if (x) img.src = x; }); else thSet(img, u); box.append(img);
+    const u = THUMB(m.uri, Math.min(tm, Math.max(inS, inS + d - 0.1)), 120);   // nie hinter dem letzten Bild des Ausschnitts
+ if (u && u.then) u.then(x => { if (x) img.src = x; }); else thSet(img, u); box.append(img);
   }
   t.prepend(box);
 }
@@ -189,8 +190,8 @@ function paintMedia(b, m, dl = 0, dr = 0){
   }
   b.prepend(frag);
 }
-const fxBadges = fx => { if (!fx) return ''; const b = []; if (fx.speed && Math.abs(fx.speed - 1) > 0.001) b.push(`${(+fx.speed).toFixed(2).replace(/\.?0+$/, '').replace('.', ',')}×`);
-  if (fx.vol != null && Math.abs(fx.vol - 1) > 0.001) b.push(fx.vol <= 0.001 ? '🔇' : `🔊${Math.round(fx.vol * 100)}%`); if (fx.gray) b.push('S/W'); else if (fx.bright || fx.contrast || fx.sat) b.push('🎨'); return b.join(' '); };
+const fxBadges = fx => { if (!fx) return ''; const b = []; if (fx.ramp && fx.speed2 != null && Math.abs(fx.speed2 - (fx.speed || 1)) > 0.001) b.push(`${String(fx.speed || 1).replace('.', ',')}→${String(fx.speed2).replace('.', ',')}×`); else if (fx.speed && Math.abs(fx.speed - 1) > 0.001) b.push(`${(+fx.speed).toFixed(2).replace(/\.?0+$/, '').replace('.', ',')}×`);
+  if (fx.vol != null && Math.abs(fx.vol - 1) > 0.001) b.push(fx.vol <= 0.001 ? '🔇' : `🔊${Math.round(fx.vol * 100)}%`); if (fx.cb){ } else if (fx.gray) b.push('S/W'); else if (fx.bright || fx.contrast || fx.sat || fx.temp || fx.tint) b.push('🎨'); return b.join(' '); };
 function renderMain(pad){
   const tr = $('#trMain'); tr.innerHTML = '';
   const [w, h] = dispSize(primary()); const asp = w / h, multi = P.sources.length > 1;
@@ -287,7 +288,7 @@ function renderFx(pad){
   for (const z of P.items.filter(x => x.type === 'zoom' || x.type === 'fx')){
     const [a, e] = itemOutRange(z);
     const b = blk(z.type, a, e - a, pad, {id: z.id});
-    const txt = z.type === 'zoom' ? `🔍 ${z.kind === 'punch' ? 'Sprung' : z.kind === 'in' ? 'rein' : 'raus'} ${z.strength.toFixed(2).replace('.', ',')}×` : ('⚙ ' + (fxBadges({...FX_DEF, ...z.fx}) || 'Anpassung'));
+    const txt = z.type === 'zoom' ? `🔍 ${z.kind === 'punch' ? 'Sprung' : z.kind === 'in' ? 'rein' : 'raus'} ${z.strength.toFixed(2).replace('.', ',')}×` : ('⚙ ' + (fxBadges({...FX_DEF, ...z.fx, ramp: true}) || 'Anpassung'));
     b.insertAdjacentHTML('beforeend', `<span class="txt">${esc(txt)}</span>`);
     tr.append(b);
   }
@@ -755,11 +756,11 @@ function toolListBase(){
   const s = TL.sel; const g = s && (s.kind === 'main' || s.kind === 'insert') ? timeline[s.i] : null;
   if (!s) return [T('📱', 'Clip ab hier …', () => clipDialog(outPos, Math.min(total, outPos + 30))), T('▭', 'Leinwand', openCanvas), T('✂', 'Teilen', splitHere), T('⌫', 'Bis hier weg', () => cutTo('l')), T('⌦', 'Ab hier weg', () => cutTo('r')), T('＋', 'Clip', addClip), T('T', 'Titel', addTitle), T('💬', 'Untertitel', addOwnCue), T('🔍', 'Zoom', addZoom),
     T('⬭', 'Form', () => addShapeMenu()), T('▦', 'Unkenntlich', () => addMarkItem('blur')), T('▬', 'Fortschritt', openProgress),
-    T('⧓', 'Übergang', () => openJoin()), T('🚩', 'Kapitel', () => addMark('chap')), T('📝', 'Notiz', () => addMark('note')), T('🖼', 'Titelbild', openCover),
+    T('⧓', 'Übergang', () => openJoin()), T('⏸', 'Standbild', addFreeze), T('🔍', 'Zoom-Schnitte', openCutZoom), T('🎨', 'Farbe', openColorAll), T('🚩', 'Kapitel', () => addMark('chap')), T('📝', 'Notiz', () => addMark('note')), T('🖼', 'Titelbild', openCover),
     ...(P.moves.length ? [T('↺', 'Reihenfolge zurück', () => { commit(() => P.moves = [], true); if (tokens.length) renderTranscript(); toast('Ursprüngliche Reihenfolge'); })] : [])];
   if (s.kind === 'main') return [T('📱', 'Als Clip …', () => clipDialog(g.o, g.o + segDur(g))), T('✂', 'Teilen', splitHere), T('⚙', 'Anpassen', () => openFx(g)),
     T('◆', hasMainKfHere(g) ? 'Keyframe weg (M)' : 'Keyframe (M)', () => toggleMainKeyframe(g)), T('🗑', 'Löschen', delSel, 'danger'), T('⇤', 'Anfang −1', () => nudge('l', -1)), T('⇥', 'Anfang +1', () => nudge('l', 1)),
-    T('⇤', 'Ende −1', () => nudge('r', -1)), T('⇥', 'Ende +1', () => nudge('r', 1)), T('⧓', 'Übergang', () => openJoin(joinEdgeOf(s.i))), T('🔍', 'Zoom', addZoom), T('T', 'Titel', addTitle), T('＋', 'Clip', addClip)];
+    T('⇤', 'Ende −1', () => nudge('r', -1)), T('⇥', 'Ende +1', () => nudge('r', 1)), T('⧓', 'Übergang', () => openJoin(joinEdgeOf(s.i))), T('⏸', 'Standbild', addFreeze), T('🔍', 'Zoom', addZoom), T('T', 'Titel', addTitle), T('＋', 'Clip', addClip)];
   const cuts = [T('⌫', 'Bis hier weg', () => cutSel('l')), T('⌦', 'Ab hier weg', () => cutSel('r'))];
   if (s.kind === 'insert') return [T('🎞', 'Ausschnitt', () => openItem(g.item.id)), T('🗑', 'Löschen', delSel, 'danger'), ...cuts, T('⧓', 'Übergang', () => openJoin(joinEdgeOf(s.i))), T('⇄', 'Als B-Roll', () => convert('broll'))];
   if (s.kind === 'mark'){ const it = selItem(); return [T('⚙', it.type === 'blur' ? 'Art & Stärke' : 'Art & Farbe', () => openMark(it.id)), T('🗑', 'Löschen', delSel, 'danger'), ...cuts,
@@ -1140,28 +1141,38 @@ function openFxItem(it){
   const body = $('#sheetBody');
   body.innerHTML = `<h3>Anpassen</h3>
     <div class="field"><span>Geschwindigkeit <b id="fxSpeedV"></b></span><div class="seg-ctl" id="fxSpeed">${SPEEDS.map(v => `<button data-v="${v}">${String(v).replace('.', ',')}×</button>`).join('')}</div></div>
+    <div class="field"><span>Tempo-Verlauf: am Ende <b id="fxRampV"></b></span><div class="seg-ctl" id="fxRamp"><button data-v="">gleich</button>${SPEEDS.map(v => `<button data-v="${v}">${String(v).replace('.', ',')}×</button>`).join('')}</div><p class="muted small" id="fxRampNote"></p></div>
     <div class="field"><span>Lautstärke <b id="fxVolV"></b></span><input type="range" id="fxVol" min="0" max="2" step="0.05"></div>
-    <div class="field"><span>Helligkeit <b id="fxBrightV"></b></span><input type="range" id="fxBright" min="-0.5" max="0.5" step="0.02"></div>
-    <div class="field"><span>Kontrast <b id="fxContrastV"></b></span><input type="range" id="fxContrast" min="-0.5" max="0.5" step="0.02"></div>
-    <div class="field"><span>Sättigung <b id="fxSatV"></b></span><input type="range" id="fxSat" min="-100" max="100" step="5"></div>
-    <label class="row"><input type="checkbox" id="fxGray"> Schwarzweiß</label>
-    <p class="muted small">Gilt für den gewählten Bereich (${fmtS(itemOutRange(it)[0])} – ${fmtS(itemOutRange(it)[1])}). Lautstärke über 100 % hört man erst im Export.</p>
+    <div id="fxColHost"></div>
+    <p class="muted small">Gilt für den gewählten Bereich (${fmtS(itemOutRange(it)[0])} – ${fmtS(itemOutRange(it)[1])}). Lautstärke über 100 % hört man erst im Export.${P.color && colorAny(P.color) ? ' Die Farbwerte kommen zu „Farbe für das ganze Video“ hinzu.' : ''}</p>
     <div id="fxKeyHost"></div>
+    <div id="fxStabHost"></div>
     <div class="row" style="margin-top:12px"><button class="btn" id="fxReset">Zurücksetzen</button><button class="btn danger" id="fxDel">Entfernen</button><button class="btn primary" id="fxOk" style="margin-left:auto">Fertig</button></div>`;
   const keySrc = () => { const g = timeline[segAtOut(Math.max(itemOutRange(it)[0], Math.min(outPos, itemOutRange(it)[1] - 0.01)))]; return g && g.kind === 'main' ? g.si : (timeline.find(x => x.kind === 'main') || {}).si; };
   const keyUi = keyBlock($('#fxKeyHost'), {main: true, get: () => it.fx.key || null, set: k => { it.fx.key = k; }, el: () => V,
     uri: () => { const si = keySrc(); const s = si != null && P.sources[si]; return s && hasVid(s) ? s.uri : null; }, hasOrig: () => { const si = keySrc(); return !!(si != null && P.sources[si] && P.sources[si].orig); },
+    orig: () => { const si = keySrc(), s = si != null && P.sources[si]; return s && s.matte && s.orig ? s.orig : null; }, time: () => { const si = keySrc(), s = si != null && P.sources[si]; return s ? clamp(outToSrcT(outPos) - s.off, 0, Math.max(0, s.duration - 0.1)) : 0; },
     applyMatte: m => swapSource(keySrc(), m), restoreOrig: () => restoreSource(keySrc())});
+  const stabUi = stabBlock($('#fxStabHost'), {si: keySrc});
   openSheet(true);
   const before = snapshot();
-  const paint = () => { const f = it.fx; $$('#fxSpeed button').forEach(b => b.classList.toggle('on', Math.abs(+b.dataset.v - f.speed) < 0.001)); $('#fxSpeedV').textContent = String(f.speed).replace('.', ',') + '×';
-    $('#fxVol').value = f.vol; $('#fxVolV').textContent = Math.round(f.vol * 100) + '%'; $('#fxBright').value = f.bright; $('#fxBrightV').textContent = Math.round(f.bright * 100); $('#fxContrast').value = f.contrast; $('#fxContrastV').textContent = Math.round(f.contrast * 100);
-    $('#fxSat').value = f.sat; $('#fxSatV').textContent = f.sat; $('#fxGray').checked = !!f.gray; };
+  const refresh = () => { seekOut(outPos, false); drawKeyFrames(); };
+  const colUi = colorBlock($('#fxColHost'), {get: () => it.fx, other: () => P.color || null,
+    live: fn => { fn(it.fx); changedLive(); refresh(); }, set: fn => { fn(it.fx); changed(true); refresh(); },
+    match: async paintCol => { const g = timeline.find(x => x.kind === 'main' && x.in >= it.at - 0.01 && x.out <= it.at + it.dur + 0.01), ref = matchRef(it);
+      if (!g || !ref) return toast('Dafür braucht es einen zweiten Abschnitt mit Bild');
+      const m = await colorMatch(g, ref); if (!m) return toast('Die Bilder ließen sich nicht vergleichen');
+      if (m.temp) it.fx.temp = m.temp; else delete it.fx.temp; if (m.tint) it.fx.tint = m.tint; else delete it.fx.tint; it.fx.bright = m.bright;
+      changed(true); refresh(); paintCol(); toast('Farbe und Helligkeit an den Clip davor angeglichen'); }});
+  const paint = () => { const f = it.fx, ramp = rampOn(f); $$('#fxSpeed button').forEach(b => b.classList.toggle('on', Math.abs(+b.dataset.v - f.speed) < 0.001)); $('#fxSpeedV').textContent = String(f.speed).replace('.', ',') + '×';
+    $$('#fxRamp button').forEach(b => b.classList.toggle('on', b.dataset.v === '' ? !ramp : ramp && Math.abs(+b.dataset.v - f.speed2) < 0.001));
+    $('#fxRampV').textContent = ramp ? String(f.speed2).replace('.', ',') + '×' : ''; $('#fxRampNote').classList.toggle('hidden', !ramp); $('#fxRampNote').textContent = ramp ? `Das Tempo geht in ${rampSteps(it)} Stufen von ${String(f.speed).replace('.', ',')}× auf ${String(f.speed2).replace('.', ',')}×.` : '';
+    $('#fxVol').value = f.vol; $('#fxVolV').textContent = Math.round(f.vol * 100) + '%'; };
   paint();
-  const upd = () => { it.fx.vol = +$('#fxVol').value; it.fx.bright = +$('#fxBright').value; it.fx.contrast = +$('#fxContrast').value; it.fx.sat = +$('#fxSat').value; it.fx.gray = $('#fxGray').checked; paint(); changedLive(); seekOut(outPos, false); };
-  ['fxVol', 'fxBright', 'fxContrast', 'fxSat', 'fxGray'].forEach(i => $('#' + i).addEventListener('input', upd));
-  $('#fxSpeed').onclick = e => { const b = e.target.closest('button'); if (!b) return; it.fx.speed = +b.dataset.v; paint(); changed(true); seekOut(outPos, false); };
-  $('#fxReset').onclick = () => { it.fx = {...FX_DEF}; paint(); keyUi.paint(); changed(true); seekOut(outPos, false); drawKeyFrames(); if (window.renderTimeline) renderTimeline(); };
+  $('#fxVol').addEventListener('input', () => { it.fx.vol = +$('#fxVol').value; paint(); changedLive(); seekOut(outPos, false); });
+  $('#fxSpeed').onclick = e => { const b = e.target.closest('button'); if (!b) return; it.fx.speed = +b.dataset.v; if (!rampOn(it.fx)) delete it.fx.speed2; paint(); changed(true); seekOut(outPos, false); };
+  $('#fxRamp').onclick = e => { const b = e.target.closest('button'); if (!b) return; if (b.dataset.v === '' || Math.abs(+b.dataset.v - it.fx.speed) < 0.001) delete it.fx.speed2; else it.fx.speed2 = +b.dataset.v; paint(); changed(true); seekOut(outPos, false); };
+  $('#fxReset').onclick = () => { it.fx = {...FX_DEF}; paint(); colUi.paint(); keyUi.paint(); changed(true); seekOut(outPos, false); drawKeyFrames(); if (window.renderTimeline) renderTimeline(); };
   $('#fxDel').onclick = () => { closeSheet(); commit(() => P.items = P.items.filter(x => x !== it)); };
   $('#fxOk').onclick = () => { const same = JSON.stringify(it.fx) === JSON.stringify(FX_DEF); if (same) P.items = P.items.filter(x => x !== it); undo.push(before); redo = []; closeSheet(); changed(true); };
   body.onclick = null;

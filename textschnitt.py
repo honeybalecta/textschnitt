@@ -37,7 +37,7 @@ os.environ.setdefault("HF_HUB_DISABLE_IMPLICIT_TOKEN", "1")
 import warnings  # noqa: E402
 warnings.filterwarnings("ignore", module="huggingface_hub")
 
-VERSION = "2.35.0"
+VERSION = "2.36.0"
 APP_DIR = Path(__file__).resolve().parent
 FROZEN = bool(getattr(sys, "frozen", False))          # als installierte .exe gebaut
 RES_DIR = Path(getattr(sys, "_MEIPASS", APP_DIR))      # mitgelieferte Dateien (Oberfläche, ffmpeg, Modelle)
@@ -678,6 +678,71 @@ def proxy_job(job: dict, path: str):
 MATTE_MODEL = "rvm_mobilenetv3_fp32.onnx"   # Robust Video Matting (Lin et al.), MobileNetV3, ca. 15 MB
 MATTE_URL = "https://github.com/PeterL1n/RobustVideoMatting/releases/download/v1.0.0/" + MATTE_MODEL
 MATTE_BG = "00ff00"   # einheitliche Schlüsselfarbe im Ergebnis – wird danach wie ein Greenscreen entfernt
+
+
+# ───────────────────────────── Bild beruhigen (E11) ─────────────────────────────
+# Gleicht Wackeln aus der Hand aus: zwei Durchgänge mit „vidstab“ (Bewegung messen, dann gegenrechnen); fehlt der Filter im
+# mitgelieferten ffmpeg, übernimmt das einfachere „deshake“. Das Ergebnis ist eine Kopie mit denselben Bildzeiten und demselben
+# Ton – Transkript und Schnitt gelten weiter. Der Rand wird leicht beschnitten (fester Zoom), damit keine Kanten ins Bild wandern.
+STAB_LEVELS = {1: (4, 8), 2: (6, 16), 3: (8, 30)}   # Stufe → (shakiness, smoothing)
+_stab_method: list = []
+
+
+def stab_method() -> str:
+    if not _stab_method:
+        try:
+            out = subprocess.run([FFMPEG, "-hide_banner", "-filters"], capture_output=True, text=True, timeout=20, **NOWIN).stdout
+        except Exception:
+            out = ""
+        _stab_method.append("vidstab" if "vidstabdetect" in out and "vidstabtransform" in out else "deshake")
+    return _stab_method[0]
+
+
+def stabilize_job(job: dict, path: str, level=2):
+    path = norm_path(path)
+    info = probe(path)
+    if not info["hasVideo"] or info["kind"] == "image":
+        raise ValueError("Beruhigen geht nur mit Videos.")
+    try:
+        level = min(3, max(1, int(level)))
+    except (TypeError, ValueError):
+        level = 2
+    method = stab_method()
+    out_dir = DATA_DIR / "beruhigt"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out = out_dir / (hashlib.sha1(f"{path}|{os.path.getmtime(path)}|stab{level}|{method}".encode("utf-8")).hexdigest()[:16] + ".mp4")
+    res = lambda: {**probe(str(out)), "name": Path(path).stem + " – beruhigt", "orig": path, "method": method, "level": level}  # noqa: E731
+    if out.exists() and out.stat().st_size > 0:
+        return res()
+    dur = float(info["duration"] or 1)
+    shak, smooth = STAB_LEVELS[level]
+    tmp_out, trf = out.with_suffix(".tmp.mp4"), out_dir / (out.stem + ".trf")
+    try:
+        if method == "vidstab":
+            job["message"] = "Bewegung wird gemessen …"
+            # Die Messdatei liegt im Arbeitsordner und wird nur mit ihrem Namen genannt – Pfade mit Doppelpunkt (C:\…) vertragen die Filter nicht
+            run_ffmpeg(["-i", path, "-map", "0:v:0", "-vf", f"vidstabdetect=shakiness={shak}:accuracy=15:result={trf.name}", "-an", "-f", "null", "-"], dur, job, 0.0, 0.4, cwd=out_dir)
+            if job["cancel"]:
+                raise RuntimeError("Abgebrochen")
+            vf = f"vidstabtransform=input={trf.name}:smoothing={smooth}:optzoom=1:interpol=bicubic:crop=black,format=yuv420p"
+            base, span = 0.4, 0.6
+        else:
+            vf = f"deshake=rx={16 * level}:ry={16 * level}:edge=mirror,format=yuv420p"
+            base, span = 0.0, 1.0
+        job["message"] = "Bild wird beruhigt …"
+        run_ffmpeg(["-i", path, "-map", "0:v:0"] + (["-map", "0:a:0", "-c:a", "aac", "-b:a", "192k"] if info["hasAudio"] else []) +
+                   ["-vf", vf, "-c:v", "libx264", "-preset", "fast", "-crf", "16", "-movflags", "+faststart", tmp_out.name], dur, job, base, span, cwd=out_dir)
+        if job["cancel"]:
+            raise RuntimeError("Abgebrochen")
+        tmp_out.replace(out)
+    finally:
+        for x in (tmp_out, trf):
+            try:
+                x.unlink(missing_ok=True)
+            except OSError:
+                pass
+    log(f"Bild beruhigt ({method}, Stufe {level}): {Path(path).name}")
+    return res()
 
 
 def matte_model_path() -> Path | None:
@@ -1687,7 +1752,16 @@ def cover_window(s: dict, plan: dict, W: int, H: int, fx: dict) -> str | None:
 def seg_fx(s: dict) -> dict:
     return {"speed": max(0.25, min(4.0, float(s.get("speed") or 1))), "vol": max(0.0, min(8.0, float(s.get("vol", 1) if s.get("vol") is not None else 1))),
             "bright": float(s.get("bright") or 0), "contrast": float(s.get("contrast") or 0), "sat": float(s.get("sat") or 0), "gray": bool(s.get("gray")),
-            "tx": float(s.get("tx") or 0), "ty": float(s.get("ty") or 0), "sc": max(0.05, float(s.get("sc") or 1))}
+            "tx": float(s.get("tx") or 0), "ty": float(s.get("ty") or 0), "sc": max(0.05, float(s.get("sc") or 1)), "wb": wb_gains(s.get("wb"))}
+
+
+def wb_gains(raw) -> list | None:
+    """Weißabgleich aus dem Plan: Verstärkung je Farbkanal [r, g, b]; None = keiner."""
+    try:
+        v = [min(4.0, max(0.25, float(x))) for x in raw][:3]
+    except (TypeError, ValueError):
+        return None
+    return v if len(v) == 3 and any(abs(x - 1) > 1e-3 for x in v) else None
 
 
 def pw_expr(pts: list[tuple[float, float]]) -> str:
@@ -1838,8 +1912,20 @@ def chroma_graph(key: dict | None, inl: str, outl: str, tag: str) -> list[str]:
     return parts
 
 
+def key_pad(key: dict | None) -> str:
+    """Farbe für die Ränder eines freigestellten Hauptbilds: die erste Schlüsselfarbe – sie wird mit freigestellt."""
+    for c in list((key or {}).get("colors") or [])[:4]:
+        c = str(c).strip().lstrip("#")
+        if len(c) == 6 and all(ch in "0123456789abcdefABCDEF" for ch in c):
+            return c.lower()
+    return "00ff00"
+
+
 def video_fx_chain(fx: dict) -> str:
     parts = []
+    wb = fx.get("wb")
+    if wb:   # Weißabgleich zuerst, auf dem unveränderten Bild (wie in der Vorschau)
+        parts.append(f"colorchannelmixer=rr={wb[0]:.4f}:gg={wb[1]:.4f}:bb={wb[2]:.4f}")
     if fx["bright"] or fx["contrast"] or fx["sat"]:
         parts.append(f"eq=brightness={fx['bright'] * 0.5:.3f}:contrast={1 + fx['contrast']:.3f}:saturation={max(0.0, 1 + fx['sat'] / 100):.3f}")
     if fx["gray"]:
@@ -2196,8 +2282,14 @@ def build_graph(plan: dict, with_video: bool, ass_name: str | None):
             if with_video:
                 ck = bool(s.get("hasVideo", True) and chroma_graph(s.get("key"), "", "", ""))
                 vfin = vlab
-                if ck:   # freigestellt: das fertige Bild wird noch über die Hintergrundfarbe gelegt
+                fitc, padc, fxc = fit, "black", video_fx_chain(fx)
+                if ck:
+                    # Freigestellt: Das fertige Bild wird noch über den Hintergrund gelegt. Ränder (eingepasstes oder verkleinertes
+                    # Bild) stehen in der Schlüsselfarbe – so füllt der Hintergrund die ganze Fläche. Die Farbanpassung folgt nach dem
+                    # Freistellen, auf dem freigestellten Bild: wie in der Vorschau, im Browser und unter Android.
                     vlab = f"[vq{k}]"
+                    padc = "0x" + key_pad(s.get("key"))
+                    fitc, fxc = fit.replace(":black,", f":{padc},"), ""
                 kf = [k for k in (s.get("kf") or []) if isinstance(k, dict)]
                 if len(kf) == 1:   # ein Keyframe = feste Werte
                     fx = {**fx, "sc": max(0.05, float(kf[0].get("sc") or 1)), "tx": float(kf[0].get("tx") or 0), "ty": float(kf[0].get("ty") or 0)}
@@ -2206,7 +2298,7 @@ def build_graph(plan: dict, with_video: bool, ass_name: str | None):
                     # Keyframes: Lage und Größe ändern sich über die Zeit – eingepasstes Bild, dann zoompan je Bild
                     spv = f"setpts=(PTS-STARTPTS)/{sp:.4f}" if abs(sp - 1) > 1e-3 else "setpts=PTS-STARTPTS"
                     z = kf_filter(kf, s.get("zooms") or [], a0, sp, W, H, fps_s)
-                    parts.append(f"[{i}:v:0]trim=start={a0 + off:.4f}:end={b0 + off:.4f},{spv},{fit},fps={fps_s}{z}{video_fx_chain(fx)},format=yuv420p{vlab}")
+                    parts.append(f"[{i}:v:0]trim=start={a0 + off:.4f}:end={b0 + off:.4f},{spv},{fitc},fps={fps_s}{z}{fxc},format=yuv420p{vlab}")
                 elif s.get("hasVideo", True):
                     z = ""
                     # Vergrößerter Ausschnitt, der das Bild ganz füllt (z. B. 9:16 aus 16:9): direkt aus der Quelle
@@ -2224,15 +2316,15 @@ def build_graph(plan: dict, with_video: bool, ass_name: str | None):
                     spv = f"setpts=(PTS-STARTPTS)/{sp:.4f}" if abs(sp - 1) > 1e-3 else "setpts=PTS-STARTPTS"
                     tf = not win and (abs(fx["sc"] - 1) > 1e-3 or abs(fx["tx"]) > 1e-4 or abs(fx["ty"]) > 1e-4)
                     lab = f"[vp{k}]" if tf else vlab
-                    fitk = f"crop={win},scale={W}:{H},setsar=1" if win else fit
-                    parts.append(f"[{i}:v:0]trim=start={a0 + off:.4f}:end={b0 + off:.4f},{spv},{fitk},fps={fps_s}{z}{video_fx_chain(fx)},format=yuv420p{lab}")
+                    fitk = f"crop={win},scale={W}:{H},setsar=1" if win else fitc
+                    parts.append(f"[{i}:v:0]trim=start={a0 + off:.4f}:end={b0 + off:.4f},{spv},{fitk},fps={fps_s}{z}{fxc},format=yuv420p{lab}")
                     if tf:   # Bild verkleinern/vergrößern und verschieben, Rest schwarz
                         sc_ = fx["sc"]
                         sw, sh = W * sc_, H * sc_
                         X, Y = (W - sw) / 2 + fx["tx"] * W, (H - sh) / 2 + fx["ty"] * H
                         # nur den sichtbaren Teil ausschneiden und skalieren – auch bei sehr starkem Zoom klein und schnell
                         vx0, vy0, vx1, vy1 = max(0.0, X), max(0.0, Y), min(float(W), X + sw), min(float(H), Y + sh)
-                        parts.append(f"color=c=black:s={W}x{H}:r={fps_s}:d={d:.4f},format=yuv420p[vb{k}]")
+                        parts.append(f"color=c={padc}:s={W}x{H}:r={fps_s}:d={d:.4f},format=yuv420p[vb{k}]")
                         if vx1 - vx0 < 2 or vy1 - vy0 < 2:
                             parts.append(f"[vp{k}]nullsink")
                             parts.append(f"[vb{k}]null{vlab}")
@@ -2244,12 +2336,20 @@ def build_graph(plan: dict, with_video: bool, ass_name: str | None):
                             parts.append(f"[vp{k}]crop={min(cw, W)}:{min(ch, H)}:{cx0}:{cy0},scale={ow}:{oh},setsar=1[vs{k}]")
                             parts.append(f"[vb{k}][vs{k}]overlay=x={round(vx0)}:y={round(vy0)}:shortest=1:eof_action=pass,format=yuv420p,setsar=1{vlab}")
                 else:
-                    parts.append(f"color=c=black:s={W}x{H}:r={fps_s},trim=duration={d:.4f},format=yuv420p,setsar=1{vlab}")
+                    parts.append(f"color=c={padc}:s={W}x{H}:r={fps_s},trim=duration={d:.4f},format=yuv420p,setsar=1{vlab}")
                 if ck:
                     bg = str((s.get("key") or {}).get("bg") or "#000000").lstrip("#")
                     bg = bg if len(bg) == 6 else "000000"
-                    parts += chroma_graph(s.get("key"), vlab, f"[vk{k}]", f"q{k}")
-                    parts.append(f"color=c=0x{bg}:s={W}x{H}:r={fps_s}:d={d:.4f},format=yuv420p[kb{k}]")
+                    fxk = video_fx_chain(fx)
+                    parts += chroma_graph(s.get("key"), vlab, f"[vk{k}]" if not fxk else f"[vkr{k}]", f"q{k}")
+                    if fxk:   # Farbe auf dem freigestellten Bild; die Deckkraft bleibt
+                        parts.append(f"[vkr{k}]format=rgba{fxk},format=yuva444p[vk{k}]")
+                    bgi = str((s.get("key") or {}).get("bgImg") or "")
+                    if bgi and os.path.exists(norm_path(bgi)):   # Bild, das das ganze Bild füllt (Verlauf, eigenes Bild, weichgezeichnetes Standbild)
+                        bi = image_input(bgi, d)
+                        parts.append(f"[{bi}:v:0]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},setsar=1,fps={fps_s},format=yuv420p,trim=duration={d:.4f},setpts=PTS-STARTPTS[kb{k}]")
+                    else:
+                        parts.append(f"color=c=0x{bg}:s={W}x{H}:r={fps_s}:d={d:.4f},format=yuv420p[kb{k}]")
                     parts.append(f"[kb{k}][vk{k}]overlay=shortest=1:eof_action=pass,format=yuv420p,setsar=1{vfin}")
                     vlab = vfin
             if is_tr:
@@ -3423,6 +3523,63 @@ def belege_selftest() -> dict:
     return out
 
 
+def bild_selftest() -> dict:
+    """Probe für den Selbsttest der gebauten App und für die Prüfläufe (2.36): ein kurzer Export eines Greenscreen-Bilds mit
+    Weißabgleich und einem Bild als Hintergrund, dazu „Bild beruhigen“ an einem wandernden Ausschnitt – gerechnet mit dem
+    mitgelieferten ffmpeg. Gemessen wird am fertigen Video: Das Feld mit Farbstich ist neutral, hinter ihm steht das Bild; die
+    beruhigte Kopie hat dieselbe Bildzahl und steht ruhiger. „verfahren“ nennt, womit beruhigt wurde (vidstab oder deshake)."""
+    import numpy as np
+    tmp = Path(tempfile.mkdtemp(prefix="textschnitt_bild_"))
+    w, h, fps = 320, 180, 25
+    out: dict = {"ok": False, "verfahren": stab_method()}
+    made: list[Path] = []
+    try:
+        video, bg, wolke, wackel = tmp / "gruen.mp4", tmp / "blau.png", tmp / "wolke.png", tmp / "wackel.mp4"
+
+        def ff(*args):
+            subprocess.run([FFMPEG, "-v", "error", "-y", *args], check=True, capture_output=True, stdin=subprocess.DEVNULL, **NOWIN)
+
+        def frames(file, fmt, ch):
+            raw = subprocess.run([FFMPEG, "-v", "error", "-i", str(file), "-an", "-f", "rawvideo", "-pix_fmt", fmt, "pipe:1"], capture_output=True, stdin=subprocess.DEVNULL, **NOWIN).stdout
+            return np.frombuffer(raw, dtype=np.uint8).reshape((-1, h, w, ch) if ch > 1 else (-1, h, w)).astype(float)
+        ff("-f", "lavfi", "-i", f"color=c=0x00FF00:size={w}x{h}:rate={fps},drawbox=x=100:y=40:w=120:h=100:color=0xA08060:t=fill", "-t", "1",
+           "-c:v", "libx264", "-preset", "veryfast", "-crf", "12", "-pix_fmt", "yuv420p", str(video))
+        ff("-f", "lavfi", "-i", "color=c=0x2040C0:size=64x64", "-frames:v", "1", str(bg))
+        plan = {"format": "video", "name": "probe_bild", "width": w, "height": h, "fps": fps, "total": 1, "quality": "hoch", "burn": False, "overlays": [],
+                "segments": [{"kind": "main", "src": 0, "uri": str(video), "in": 0, "out": 1, "zooms": [], "hasAudio": False, "hasVideo": True, "speed": 1, "vol": 1,
+                              "bright": 0, "contrast": 0, "sat": 0, "gray": False, "tx": 0, "ty": 0, "sc": 1, "wb": [0.8, 1, 1.3333],
+                              "key": {"colors": ["#00ff00"], "tol": 0.3, "soft": 0.05, "spill": True, "bg": "#000000", "bgImg": str(bg)}}],
+                "sources": [{"uri": str(video), "name": video.name, "duration": 1, "width": w, "height": h, "fps": fps, "hasAudio": False, "hasVideo": True}]}
+        res = export_job({"cancel": False, "progress": 0, "message": ""}, plan)
+        fr = frames(res["playable"], "rgb24", 3)
+        if len(fr) > 12:
+            out["feld"] = [round(float(v)) for v in fr[12][70:110, 130:190].reshape(-1, 3).mean(axis=0)]
+            out["hintergrund"] = [round(float(v)) for v in fr[12][8:28, 8:40].reshape(-1, 3).mean(axis=0)]
+        # Beruhigen: ein stehendes Wolkenmuster, dessen Ausschnitt wandert
+        ff("-f", "lavfi", "-i", f"nullsrc=s={w + 80}x{h + 60}:r={fps},geq=lum='random(1)*255':cb=128:cr=128,gblur=sigma=5,eq=contrast=4", "-frames:v", "1", str(wolke))
+        ff("-loop", "1", "-framerate", str(fps), "-i", str(wolke), "-vf", f"crop={w}:{h}:40+14*sin(t*9)+8*sin(t*23):30+10*cos(t*7)+6*sin(t*19)", "-t", "2",
+           "-c:v", "libx264", "-preset", "veryfast", "-crf", "14", "-pix_fmt", "yuv420p", str(wackel))
+        st = stabilize_job({"cancel": False, "progress": 0, "message": ""}, str(wackel), 3)
+        made.append(Path(st["uri"]))
+        a, b = frames(wackel, "gray", 1), frames(st["uri"], "gray", 1)
+        unruhe = lambda g: round(float(np.abs(g[1:, 30:-30, 40:-40] - g[:-1, 30:-30, 40:-40]).mean()), 2)  # noqa: E731
+        out["bilder"] = [int(len(a)), int(len(b))]
+        out["unruhe"] = [unruhe(a), unruhe(b)]
+        out["ok"] = bool(out.get("feld") and max(out["feld"]) - min(out["feld"]) <= 8 and 110 < out["feld"][1] < 140
+                         and abs(out["hintergrund"][0] - 32) < 12 and abs(out["hintergrund"][2] - 192) < 14
+                         and out["bilder"][0] == out["bilder"][1] and out["unruhe"][1] < out["unruhe"][0] * (0.6 if out["verfahren"] == "vidstab" else 1.0))
+    except Exception as e:
+        out["fehler"] = f"{type(e).__name__}: {e}"[:300]
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+        for x in made:   # die Probe-Kopie gehört nicht in den Datenordner
+            try:
+                x.unlink(missing_ok=True)
+            except OSError:
+                pass
+    return out
+
+
 # ───────────────────────────── Projekte ─────────────────────────────
 
 BACKUP_DIR = DATA_DIR / "sicherungen"   # frühere Fassungen der Projekte (je Projekt ein Ordner, gepackt)
@@ -3815,7 +3972,7 @@ def housekeeping() -> None:
     except OSError as e:
         log(f"Aufräumen (Vorschaubilder): {e!r}")
     try:   # liegengebliebene Teilstücke abgebrochener Vorgänge (älter als ein Tag)
-        for d, pat in ((DATA_DIR / "freigestellt", "*.tmp.mp4"), (CACHE_DIR / "proxies", "*.tmp.mp4"),
+        for d, pat in ((DATA_DIR / "freigestellt", "*.tmp.mp4"), (DATA_DIR / "beruhigt", "*.tmp.mp4"), (DATA_DIR / "beruhigt", "*.trf"), (CACHE_DIR / "proxies", "*.tmp.mp4"),
                        (DATA_DIR / "models", "*.part"), (PROJ_DIR, "*.tmp")):
             for x in d.glob(pat) if d.is_dir() else []:
                 st = x.stat()
@@ -3865,7 +4022,7 @@ def sweep_orphans(now: float) -> int:
     """Vorschau-Dateien entfernen (verkleinerte Kopien für Videos, die sich in der Vorschau nicht abspielen ließen), auf die
     kein Projekt mehr verweist – das Video wurde ersetzt oder das Projekt gelöscht. Als „verwendet“ zählt alles, was in
     irgendeinem Projekt oder in einer Sicherung steht. Lässt sich ein Projekt nicht lesen, wird nichts entfernt.
-    Bewusst NICHT angefasst werden Folienbilder und freigestellte Kopien: Auf sie können bereits exportierte CapCut- und
+    Bewusst NICHT angefasst werden Folienbilder, freigestellte und beruhigte Kopien: Auf sie können bereits exportierte CapCut- und
     Concat-Projekte verweisen."""
     import gzip
     stamp = CACHE_DIR / "aufgeraeumt.txt"
@@ -4012,6 +4169,10 @@ def storage_info() -> dict:
     groups.append({"key": "matte", "label": "Freigestellte Kopien", "bytes": sum(i["bytes"] for i in mt), "count": len(mt),
                    "freeable": sum(i["bytes"] for i in mt if not i["used"]), "nfree": sum(1 for i in mt if not i["used"]), "items": mt, "warn": True,
                    "hint": "Kopien von Videos mit entferntem Hintergrund. Löschen lässt sich nur, was kein Projekt mehr verwendet."})
+    sb = files(DATA_DIR / "beruhigt", "*.mp4")
+    groups.append({"key": "stab", "label": "Beruhigte Kopien", "bytes": sum(i["bytes"] for i in sb), "count": len(sb),
+                   "freeable": sum(i["bytes"] for i in sb if not i["used"]), "nfree": sum(1 for i in sb if not i["used"]), "items": sb, "warn": True,
+                   "hint": "Kopien von Videos mit ausgeglichenem Wackeln. Löschen lässt sich nur, was kein Projekt mehr verwendet."})
     fol = DATA_DIR / "folien"
     sl = [x for d in (fol.iterdir() if fol.is_dir() else []) if d.is_dir() for x in d.glob("*.png")]
     old = [x for x in sl if x.name.startswith(SLIDE_OLD) and x.name not in refs and not _is_fresh(x)] if free_ok else []
@@ -4062,7 +4223,7 @@ def storage_clear(what: str, name: str = "") -> dict:
         for x in (d.iterdir() if d.is_dir() else []):
             if x.is_file() and ".tmp." not in x.name:   # ein Bild, das gerade entsteht, bleibt
                 kill(x)
-    elif what in ("proxies", "matte", "slides"):
+    elif what in ("proxies", "matte", "stab", "slides"):
         refs = storage_refs()   # frisch gerechnet; ein unlesbares Projekt bricht hier ab, bevor etwas gelöscht ist
         if what == "slides":
             fol = DATA_DIR / "folien"
@@ -4078,7 +4239,7 @@ def storage_clear(what: str, name: str = "") -> dict:
                 except OSError:
                     pass
         else:
-            d = CACHE_DIR / "proxies" if what == "proxies" else DATA_DIR / "freigestellt"
+            d = CACHE_DIR / "proxies" if what == "proxies" else DATA_DIR / ("beruhigt" if what == "stab" else "freigestellt")
             for x in (d.glob("*.mp4") if d.is_dir() else []):
                 if x.name not in refs and ".tmp." not in x.name and (not name or x.name == name) and not _is_fresh(x):
                     kill(x)
@@ -4298,6 +4459,7 @@ def report_text(ui: dict | None = None) -> str:
     safe("Grafikkarte für die Transkription", lambda: "ja" if __import__("ctranslate2").get_cuda_device_count() > 0 else "nein (Prozessor)")
     safe("Whisper-Modelle", lambda: ", ".join(f"{m['name']} ({'eingebaut' if m['bundled'] else 'geladen' if m['installed'] else 'nicht geladen'})" for m in models_list()) or "keine")
     safe("Freistellen", lambda: "verfügbar" if matte_available() else "nicht verfügbar")
+    safe("Bild beruhigen", lambda: "vidstab" if stab_method() == "vidstab" else "einfaches Verfahren (deshake)")
     safe("Übersetzen", lambda: ", ".join(translate_pairs()) if translate_available() else "nicht verfügbar")
     safe("HoneyDeck", lambda: (lambda d: f"{(d / 'version.txt').read_text(encoding='utf-8').strip()} ({d})" if d else "nicht installiert")(deck_dir()))
     add("")
@@ -4927,7 +5089,7 @@ def open_file(path: str):
 
 def app_info() -> dict:
     cc = capcut_drafts_dir()
-    return {"platform": "desktop", "version": VERSION, "exportFormats": ["video", "audio", "capcut", "concat"], "bus": True, "matte": matte_available(), "translate": translate_available(), "translatePairs": translate_pairs(),
+    return {"platform": "desktop", "version": VERSION, "exportFormats": ["video", "audio", "capcut", "concat"], "bus": True, "matte": matte_available(), "stabilize": True, "translate": translate_available(), "translatePairs": translate_pairs(),
             "capcutDir": str(cc) if cc else None, "concatDir": str(concat_root()),
             "whisper": whisper_available(), "os": platform.system()}
 
@@ -5279,6 +5441,9 @@ class Handler(BaseHTTPRequestHandler):
                 if not matte_available():
                     raise ValueError("Automatisches Freistellen braucht onnxruntime (in der installierten Version enthalten).")
                 job = run_job(new_job("matte"), matte_job, data["uri"])
+                return self._json({"job": job["id"]})
+            if rest == "api/stabilize":
+                job = run_job(new_job("stabilize"), stabilize_job, data["uri"], data.get("level") or 2)
                 return self._json({"job": job["id"]})
             if rest == "api/cancel":
                 job = JOBS.get(data.get("id", ""))

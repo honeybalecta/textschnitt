@@ -94,9 +94,12 @@ try:
             yel = sum(1 for r, g, bb in reg if r > 200 and g > 170 and bb < 140)
             notes.append(f"- {'ℹ️' if yel > 300 else '⚠️'} Form: {yel} gelbe Pixel am Rahmen")
         row = [b.getpixel((x, h - 3)) for x in range(w)]
-        green = [x for x, (r, g, bb) in enumerate(row) if g > r + 30 and g > bb + 20]
+        # Der Balken (#3E8A55) beginnt am linken Rand: seine Kante ist das Ende der ersten zusammenhängenden Strecke in seiner Farbe.
+        # (Das Testbild selbst hat weiter rechts grüne Flächen, die durch die Grundlinie scheinen – sie zählen nicht.)
+        bar = lambda p: abs(p[0] - 0x3E) < 40 and abs(p[1] - 0x8A) < 40 and abs(p[2] - 0x55) < 40
+        edge = next((x for x in range(w) if not bar(row[x])), w)
         want = t / float(bel.get("total") or 1) * w
-        notes.append(f"- {'ℹ️' if green and abs(green[-1] - want) < w * 0.03 else '⚠️'} Fortschrittsbalken: Kante bei {green[-1] if green else '–'} px (erwartet etwa {want:.0f} von {w})")
+        notes.append(f"- {'ℹ️' if abs(edge - want) < w * 0.03 else '⚠️'} Fortschrittsbalken: Kante bei {edge} px (erwartet etwa {want:.0f} von {w})")
 except Exception as e:
     notes.append(f"- ℹ️ Belege im Bild nicht nachgemessen: {str(e)[:150]}")
 

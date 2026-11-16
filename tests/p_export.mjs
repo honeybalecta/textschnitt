@@ -17,7 +17,11 @@ const fresh = async (file, cutTo, tr = true) => { await leave(); const id = awai
   if (cutTo) await ev(t => { const m = timeline.filter(g => g.kind === 'main'); commit(() => addDel(m[0].in + t, m[m.length - 1].out), true); }, cutTo);
   await ev(() => { P.settings.burn = false; setTab('export'); }); await sleep(300); return id; };
 const q = () => ev(() => EXQ.map(x => ({ name: x.name, st: x.status, info: x.info, err: x.error, note: x.result && x.result.note, files: x.result && x.result.files, plan: x.plan && { w: x.plan.width, h: x.plan.height, gpu: !!x.plan.gpu, level: !!x.plan.level, extras: (x.plan.extras || []).map(e => e.name), text: !!x.plan.textfile, pack: x.plan.pack || null } })));
-const idle = (t = 240000) => page.waitForFunction(() => !exDirect && EXQ.every(x => x.status !== 'wait' && x.status !== 'run'), null, { timeout: t });
+// Warten, bis nichts mehr läuft oder wartet. Läuft die Zeit ab, steht der Zustand der Warteschlange in der Meldung –
+// samt dem Auftrag im Backend (so lässt sich ein Hänger auf dem Prüfrechner nachvollziehen).
+const idle = async (t = 240000) => { try { await page.waitForFunction(() => !exDirect && EXQ.every(x => x.status !== 'wait' && x.status !== 'run'), null, { timeout: t }); }
+  catch (e) { const z = await ev(() => ({ direkt: exDirect, liste: EXQ.map(x => { let j = null; try { j = x.job ? JSON.parse(TS.job(x.job)) : null; } catch (_) {} return [x.name, x.status, Math.round((x.progress || 0) * 100), x.message || '', j && [j.status, j.cancel, Math.round((j.progress || 0) * 100), (j.error || '').slice(0, 120)]]; }) })).catch(() => null);
+    throw new Error('Warteschlange wird nicht leer: ' + JSON.stringify(z) + ' · ' + String(e.message).slice(0, 80)); } };
 const clearQ = async () => { for (const x of await q()) for (const f of x.files || []) trash.add(f); await ev(() => { EXQ.length = 0; paintQueue(); }); };
 const toastTxt = () => ev(() => document.querySelector('#toast').textContent);
 const dur = f => +execFileSync('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', f]).toString().trim();

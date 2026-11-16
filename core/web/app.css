@@ -1302,3 +1302,14 @@ label.col input{width:100%}
 .mkx-bar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:10px 14px;border-top:1px solid var(--line)}
 .mkx-bar label{font-size:13px}.mkx-sp{flex:1}
 @media (max-width: 700px){ .choice.shapes{grid-template-columns:repeat(2,1fr)} .mkx-bar{gap:8px} .mkx-bar .btn{flex:1;text-align:center;justify-content:center} .mkx-sp{display:none} }
+
+/* ── Bildgestaltung (2.36) ── */
+.stage .key-bg{position:absolute;inset:0;pointer-events:none;background-size:cover;background-position:center}
+.clooks{display:flex;flex-wrap:wrap;gap:6px}
+.clooks .look-chip{cursor:pointer}
+.clooks .look-chip.add{border-style:dashed}
+.colblk .wb-temp{accent-color:#c8862a}
+.colblk .wb-tint{accent-color:#a04a8a}
+.keybg .kbRow{margin-top:6px;align-items:center}
+.stabblk .seg-ctl{margin-bottom:6px}
+.clooks button.look-chip{padding:0 12px;color:inherit;font:inherit;font-size:13px}

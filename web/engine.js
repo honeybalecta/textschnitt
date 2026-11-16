@@ -220,8 +220,22 @@ function regionFx(ctx, src, win, reg, cell, soft, ellipse, tmp){
   ctx.clip(); ctx.imageSmoothingEnabled = !!soft; if (soft) ctx.imageSmoothingQuality = 'low';
   ctx.drawImage(cur, 0, 0, sw, sh, wx, wy, ww, wh); ctx.restore(); ctx.imageSmoothingEnabled = true;
 }
+// Weißabgleich aus dem Plan: Verstärkung je Farbkanal [r, g, b]; null = keiner
+function wbOf(raw){ if (!Array.isArray(raw) || raw.length < 3) return null; const v = raw.slice(0, 3).map(x => clamp(+x || 1, 0.25, 4)); return v.some(x => Math.abs(x - 1) > 1e-3) ? v : null; }
+// … als Filter für das Zeichnen des Hauptbilds: eine Farbmatrix im sRGB-Raum (dieselbe Rechnung wie „colorchannelmixer“ im
+// Windows-Export und wie in der Vorschau), angewandt nach dem Freistellen. Je Wertesatz ein SVG-Filter im Dokument.
+function wbFilter(wb){
+  const NS = 'http://www.w3.org/2000/svg', key = wb.map(v => v.toFixed(4)).join('_');
+  let host = document.getElementById('hcWbExport');
+  if (!host){ host = document.createElementNS(NS, 'svg'); host.id = 'hcWbExport'; host.setAttribute('width', '0'); host.setAttribute('height', '0'); host.style.cssText = 'position:absolute;width:0;height:0;pointer-events:none'; document.body.append(host); }
+  let f = [...host.children].find(x => x.dataset.k === key);
+  if (!f){ f = document.createElementNS(NS, 'filter'); f.id = 'hcWbX' + (host.children.length + 1) + '_' + Date.now().toString(36); f.dataset.k = key; f.setAttribute('color-interpolation-filters', 'sRGB');
+    f.setAttribute('x', '0'); f.setAttribute('y', '0'); f.setAttribute('width', '1'); f.setAttribute('height', '1');
+    const m = document.createElementNS(NS, 'feColorMatrix'); m.setAttribute('type', 'matrix'); m.setAttribute('values', `${wb[0]} 0 0 0 0 0 ${wb[1]} 0 0 0 0 0 ${wb[2]} 0 0 0 0 0 1 0`); f.append(m); host.append(f); }
+  return `url(#${f.id})`;
+}
 function segFx(s){
-  return {speed: clamp(+s.speed || 1, 0.25, 4), vol: clamp(s.vol == null ? 1 : +s.vol, 0, 8), bright:+s.bright || 0, contrast:+s.contrast || 0, sat:+s.sat || 0, gray:!!s.gray,
+  return {speed: clamp(+s.speed || 1, 0.25, 4), vol: clamp(s.vol == null ? 1 : +s.vol, 0, 8), bright:+s.bright || 0, contrast:+s.contrast || 0, sat:+s.sat || 0, gray:!!s.gray, wb: wbOf(s.wb),
     tx:+s.tx || 0, ty:+s.ty || 0, sc: clamp(+s.sc || 1, 0.002, 400), kf: Array.isArray(s.kf) && s.kf.length ? s.kf.map(k => ({t:+k.t || 0, tx:+k.tx || 0, ty:+k.ty || 0, sc: clamp(+k.sc || 1, 0.002, 400)})).sort((a, b) => a.t - b.t) : null};
 }
 // Keyframes der Hauptspur: Lage/Größe zum Zeitpunkt rel (Quellsekunden ab Abschnittsbeginn)
@@ -532,6 +546,7 @@ class Renderer {
   // Bildquelle eines Abschnitts: Foto oder die Videobilder zu den Quellzeiten times (in dieser Reihenfolge abzuholen)
   async openSeg(s, BW, BH, times, tag){
     const file = s.hasVideo === false ? null : this.fileOf(s.uri), q = {bm: null, it: null, last: null};
+    if (s.kind === 'main' && s.key && s.key.bgImg){ const bf = this.fileOf(s.key.bgImg); if (bf) try { q.bg = await bitmapOf(bf); } catch(_){} }
     if (file && (s.image || isImageFile(file))) q.bm = await bitmapOf(file);
     else if (file){
       const tr = await videoTrack(file);
@@ -545,9 +560,12 @@ class Renderer {
     const {W, H} = this, BW = base.width, BH = base.height;
     bctx.fillStyle = '#000'; bctx.fillRect(0, 0, BW, BH);
     if (q.bm) drawFit(bctx, q.bm, 0, 0, BW, BH, false); else if (q.last) bctx.drawImage(q.last, 0, 0);
-    const img = s.kind === 'main' && s.key ? this.keyed(base, {...s.key, bg: s.key.bg || '#000000'}, slot, 4096) : base;
-    ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
-    const flt = s.kind === 'main' ? cssFilter(s.fx) : '';
+    // freigestellt: Der Hintergrund (Farbe oder Bild) füllt die ganze Fläche, das Hauptbild liegt durchsichtig darüber
+    const keyed = s.kind === 'main' && s.key ? this.keyed(base, {...s.key, bg: null}, slot, 4096) : null, wb = s.kind === 'main' ? s.fx.wb : null;
+    const img = keyed || base;
+    ctx.fillStyle = keyed && keyed !== base ? (s.key.bg || '#000000') : '#000'; ctx.fillRect(0, 0, W, H);
+    if (keyed && keyed !== base && q.bg) drawFit(ctx, q.bg, 0, 0, W, H, true);
+    const flt = s.kind === 'main' ? ((wb && this.canFilter ? wbFilter(wb) + ' ' : '') + cssFilter(s.fx)).trim() : '';
     const z = s.kind === 'main' ? zoomAt(s.zooms, st) : {s:1};
     if (flt && this.canFilter) ctx.filter = flt;
     const mf = s.kind === 'main' ? mainAt(s.fx, st - s.in) : s.fx;
@@ -557,7 +575,7 @@ class Renderer {
     else ctx.drawImage(img, 0, 0, W, H);
     if (tf) ctx.restore();
     if (flt && this.canFilter) ctx.filter = 'none';
-    if (flt && !this.canFilter) manualFx(ctx, W, H, s.fx);
+    if ((flt || wb) && !this.canFilter) manualFx(ctx, W, H, s.fx);
   }
   async segment(s, o, frames, add){
     if (!frames.length) return;
@@ -744,9 +762,9 @@ function drawFit(ctx, img, x, y, w, h, cover){
 }
 // Für Browser ohne Canvas-Filter (ältere Safari): Farbanpassung pixelweise
 function manualFx(ctx, W, H, fx){
-  const img = ctx.getImageData(0, 0, W, H), d = img.data, b = 1 + fx.bright, c = 1 + fx.contrast, s = fx.gray ? 0 : 1 + fx.sat / 100;
+  const img = ctx.getImageData(0, 0, W, H), d = img.data, b = 1 + fx.bright, c = 1 + fx.contrast, s = fx.gray ? 0 : 1 + fx.sat / 100, wb = fx.wb || [1, 1, 1];
   for (let i = 0; i < d.length; i += 4){
-    let r = d[i] * b, g = d[i + 1] * b, bl = d[i + 2] * b;
+    let r = d[i] * wb[0] * b, g = d[i + 1] * wb[1] * b, bl = d[i + 2] * wb[2] * b;
     r = (r - 128) * c + 128; g = (g - 128) * c + 128; bl = (bl - 128) * c + 128;
     const l = 0.2126 * r + 0.7152 * g + 0.0722 * bl;
     d[i] = l + (r - l) * s; d[i + 1] = l + (g - l) * s; d[i + 2] = l + (bl - l) * s;

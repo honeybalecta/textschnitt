@@ -136,6 +136,9 @@ def selftest(out_path: str) -> int:
         rep["belege"] = T.belege_selftest()
         if not rep["belege"].get("ok"):
             raise RuntimeError(f"Unkenntlich machen im Export stimmt nicht: {rep['belege']}")
+        rep["bild"] = T.bild_selftest()
+        if not rep["bild"].get("ok"):
+            raise RuntimeError(f"Weißabgleich, Hintergrund oder Beruhigen im Export stimmen nicht: {rep['bild']}")
         # Export über die Grafikkarte: Das mitgelieferte ffmpeg muss die Encoder von Nvidia, Intel und AMD kennen; die Suche nach
         # einer nutzbaren Grafikkarte darf auf einem Rechner ohne sie nichts finden und nicht scheitern.
         enc = subprocess.run([T.FFMPEG, "-hide_banner", "-encoders"], capture_output=True, text=True, **T.NOWIN).stdout

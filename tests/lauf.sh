@@ -91,6 +91,7 @@ lauf hart node "$HERE/p_untertitel.mjs"
 lauf hart node "$HERE/p_clips.mjs"
 lauf hart node "$HERE/p_ton.mjs"
 lauf hart node "$HERE/p_belege.mjs"
+lauf hart node "$HERE/p_bild.mjs"
 lauf hart node "$HERE/p_browser.mjs"
 for p in stress edit multi editWord; do lauf hart node "$HERE/p_stand.mjs" $p; done
 for p in stress edit; do lauf hart node "$HERE/p_wiedergabe.mjs" $p; done

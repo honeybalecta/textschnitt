@@ -2,7 +2,8 @@
 // (web/engine.js) ohne echte Dateien und ohne Kodierer durchläuft – für p_browser.mjs.
 //   „Videodatei“: ein Objekt {name, type, fake: {fps, audio: [[Frequenz, Scheitelwert], …]}}. Sie liefert zu jeder Zeit das Balkenbild
 //   ihrer Bildnummer (wie takt.mp4, siehe medien.py) und als Ton die Summe der angegebenen Sinustöne (Stereo, 48 kHz).
-//   Mit fake.pattern = 'karo' zeigt sie ein Schachbrett aus 8 Pixel großen Feldern (für Prüfungen am Bildinhalt).
+//   Mit fake.pattern = 'karo' zeigt sie ein Schachbrett aus 8 Pixel großen Feldern (für Prüfungen am Bildinhalt),
+//   mit fake.pattern = 'gruen' einen Greenscreen mit einem Feld in der Mitte (Freistellen, Hintergründe, Weißabgleich).
 //   „Kodierer“: liest aus jedem fertigen Bild die Balken ab (HC_OUT.frames = [[Zeit, [v0 … v9]], …]) und sammelt den Ton
 //   (HC_OUT.audio = {L, R} als Listen von Float32Array). HC_OUT.sinks zählt die angelegten Bildquellen je Datei.
 //   HC_OUT.want = [Zeit, …] hält die fertigen Bilder zu diesen Zeiten ganz fest (HC_OUT.shots = [{t, w, h, data}]).
@@ -21,6 +22,8 @@ function bars(ctx, w, h, n){
   ctx.fillStyle = '#181818'; ctx.fillRect(0, 0, w, h); ctx.fillStyle = '#E8E8E8';
   for (let b = 0; b < BITS; b++) if ((n >> b) & 1) ctx.fillRect(Math.round(b * w / BITS), 0, Math.round((b + 1) * w / BITS) - Math.round(b * w / BITS), h);
 }
+// Greenscreen: grüne Fläche, in der Mitte ein Feld mit warmem Farbstich (wie gruen.mp4, siehe medien.py)
+function gruen(ctx, w, h){ ctx.fillStyle = '#00FF00'; ctx.fillRect(0, 0, w, h); ctx.fillStyle = '#A08060'; ctx.fillRect(Math.round(w * 200 / 640), Math.round(h * 80 / 360), Math.round(w * 240 / 640), Math.round(h * 200 / 360)); }
 function karo(ctx, w, h){
   ctx.fillStyle = '#181818'; ctx.fillRect(0, 0, w, h); ctx.fillStyle = '#E8E8E8';
   for (let y = 0; y < h; y += 8) for (let x = (y / 8) % 2 ? 8 : 0; x < w; x += 16) ctx.fillRect(x, y, 8, 8);
@@ -33,7 +36,7 @@ export class CanvasSink {
     return { [Symbol.asyncIterator](){ let i = 0; return {
       async next(){ if (i >= ts.length) return { done: true, value: undefined }; const t = ts[i++]; await null;
         if (!(t >= 0) || t >= (self.fake.duration || 1e9)) return { done: false, value: null };
-        const c = self.pool[self.k++ % self.pool.length]; if (self.fake.pattern === 'karo') karo(c.getContext('2d'), self.w, self.h); else bars(c.getContext('2d'), self.w, self.h, Math.floor(t * self.fake.fps + 1e-4)); return { done: false, value: { canvas: c, timestamp: t } }; },
+        const c = self.pool[self.k++ % self.pool.length]; if (self.fake.pattern === 'karo') karo(c.getContext('2d'), self.w, self.h); else if (self.fake.pattern === 'gruen') gruen(c.getContext('2d'), self.w, self.h); else bars(c.getContext('2d'), self.w, self.h, Math.floor(t * self.fake.fps + 1e-4)); return { done: false, value: { canvas: c, timestamp: t } }; },
       async return(){ i = ts.length; return { done: true, value: undefined }; } }; } }; }
 }
 export class AudioSampleSink {
