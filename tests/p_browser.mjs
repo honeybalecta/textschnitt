@@ -3,6 +3,8 @@
 // Balkenbild seiner Bildnummer (wie takt.mp4) und klingt als Sinuston; der „Kodierer“ liest jedes fertige Bild ab und sammelt den Ton.
 // Geprüft wird damit, was der Browser-Export aus dem Plan macht: Schnitte, Übergänge (2.34), Tempo, Bild-Einschub, „Musik weicht der
 // Sprache“ und „Stimme aufbereiten“. Die Erwartungen sind dieselben wie beim Windows-Export (backend_test.py, ton_234).
+// Belege im Bild (2.35): unkenntlich gemachte Bereiche (plan.blurs) am Schachbrett-Muster gemessen, Formen und Fortschrittsbalken
+// als Bilder darüber (top). Die Fenster-Rechnung ist dieselbe wie in textschnitt.py (blur_graph) und OvGeom.java.
 import fs from 'node:fs';
 import path from 'node:path';
 import { browser as startBrowser, pruefung, HERE } from './drv.mjs';
@@ -36,6 +38,9 @@ const run = (plan, levels = []) => page.evaluate(async ([plan, levels]) => {
     window.FILES = { takt: mk('takt.mp4', { fps: 30, duration: 30, audio: [[1000, 0.1], [50, 0.05]] }), musik: mk('musik.wav', { duration: 40, audio: [[3000, 0.2]] }) };
     const c = document.createElement('canvas'); c.width = 64; c.height = 36; const x = c.getContext('2d'); x.fillStyle = '#181818'; x.fillRect(0, 0, 64, 36);
     FILES.bild = new File([await new Promise(r => c.toBlob(r, 'image/png'))], 'bild.png', { type: 'image/png' });
+    FILES.karo = mk('karo.mp4', { fps: 30, duration: 30, pattern: 'karo', audio: [[1000, 0.1]] });
+    for (const [k, col, w, h] of [['rot', '#FF0000', 32, 32], ['gruen', '#00FF00', 32, 32], ['balken', '#E5402A', 640, 4]]){ c.width = w; c.height = h; x.fillStyle = col; x.fillRect(0, 0, w, h);
+      FILES[k] = new File([await new Promise(r => c.toBlob(r, 'image/png'))], k + '.png', { type: 'image/png' }); }
   }
   const job = { cancel: false, progress: 0, message: '' };
   let res; try { res = await E.render(plan, uri => FILES[uri] || null, job); } catch (e) { return { error: String(e && e.stack || e) }; }
@@ -110,6 +115,60 @@ try {
   const lv = [[50, 0.5, 1.9], [50, 2.5, 3.9]];
   const raw = await run(plan([seg(0, 2), seg(3, 5)]), lv), cl = await run(plan([seg(0, 2, { voice: { k: 's0' } }), seg(3, 5, { voice: { k: 's0', lvl: [[0, 1], [2, 1]] } })]), lv);
   chk('Stimme aufbereiten: Brummen deutlich leiser, in beiden Abschnitten; gleiche Länge', !raw.error && !cl.error && near(raw.levels[0], -26.02, 0.5) && cl.levels[0] < raw.levels[0] - 15 && cl.levels[1] < raw.levels[1] - 15 && cl.samples === raw.samples, raw.error || cl.error || [raw.levels, cl.levels]);
+
+  // ── Belege im Bild (2.35) ──
+  // Ein fertiges Bild auswerten: fn(px, s) läuft in der Seite; px(x, y) → [r, g, b]
+  const probe = (t, fn) => page.evaluate(([t, src]) => { const s = HC_OUT.shots.find(q => Math.abs(q.t - t) < 1e-3); if (!s) return null;
+    const px = (x, y) => { const i = (y * s.w + x) * 4; return [s.data[i], s.data[i + 1], s.data[i + 2]]; };
+    return new Function('px', 's', 'return (' + src + ')(px, s)')(px, s); }, [t, fn.toString()]);
+  // Rahmen um alle Pixel, die nicht mehr zum Schachbrett gehören (Werte zwischen den beiden Feldfarben), und die Spanne ihrer Werte
+  const changed = (px, s) => { let x0 = 1e9, y0 = 1e9, x1 = -1, y1 = -1, n = 0, lo = 255, hi = 0; const seen = new Set();
+    for (let y = 0; y < s.h; y++) for (let x = 0; x < s.w; x++){ const [r, g, b] = px(x, y); if (r === g && g === b && (r <= 0x1A || r >= 0xE6)) continue;
+      n++; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; if (r < lo) lo = r; if (r > hi) hi = r; seen.add(r << 16 | g << 8 | b); }
+    return { box: n ? [x0, y0, x1, y1] : null, n, lo, hi, colors: seen.size }; };
+  const want = ts => page.evaluate(ts => { HC_OUT.want = ts; }, ts);
+  const kseg = (a, b) => ({ ...seg(a, b), uri: 'karo' });
+  const kplan = kw => plan([kseg(0, 2)], { sources: [{ uri: 'karo', name: 'karo.mp4', duration: 30, width: 640, height: 360, fps: 30, hasAudio: true, hasVideo: true }], ...kw });
+  const fr = n => +(n / 30).toFixed(4);
+  await want([fr(6), fr(30), fr(51)]);
+  const b0 = await run(kplan({}));
+  const leer = await probe(fr(30), changed);
+  chk('Schachbrett ohne Bereiche: jedes Pixel hat eine der beiden Feldfarben', !b0.error && leer && leer.n === 0, b0.error || leer);
+  // 1) Rechteck verpixelt, 0,5 bis 1,5 s: Fenster [96, 224) × [116, 244), Felder von 16 Pixeln → jedes Feld mittelt zu Grau
+  const rect = { at: 0.5, d: 1, x: 0.25, y: 0.5, w: 0.2, wmax: 0.2, aspect: 1, form: 'rect', kind: 'pixel', cell: 0.025 };
+  const b1 = await run(kplan({ blurs: [rect] }));
+  const r1 = [await probe(fr(6), changed), await probe(fr(30), changed), await probe(fr(51), changed)];
+  chk('verpixeltes Rechteck: genau der Bereich ist betroffen, davor und danach nichts', !b1.error && r1[0] && r1[0].n === 0 && r1[2].n === 0 && r1[1].box && r1[1].box.join() === '96,116,223,243' && r1[1].n === 128 * 128, b1.error || r1.map(q => q && [q.box, q.n]));
+  chk('verpixeltes Rechteck: Die Felder mitteln das Schachbrett zu gleichmäßigem Grau', r1[1] && r1[1].lo >= 120 && r1[1].hi <= 136 && r1[1].colors <= 12, r1[1] && [r1[1].lo, r1[1].hi, r1[1].colors]);
+  // 2) Ellipse weichgezeichnet mit Keyframes: wandert von 0,7 nach 0,8 und wächst von 0,1 auf 0,2 der Bildbreite
+  const ell = { at: 0.5, d: 1, x: 0.7, y: 0.5, w: 0.1, wmax: 0.2, aspect: 1, form: 'ellipse', kind: 'soft', cell: 0.025, kf: [{ t: 0, x: 0.7, y: 0.5, w: 0.1 }, { t: 1, x: 0.8, y: 0.5, w: 0.2 }] };
+  await want([fr(15), fr(30)]);
+  const b2 = await run(kplan({ blurs: [ell] }));
+  const e0 = await probe(fr(15), changed), e1 = await probe(fr(30), changed);
+  const nearBox = (q, w) => q && q.box && q.box.every((v, i) => Math.abs(v - w[i]) <= 2);
+  chk('weichgezeichnete Ellipse mit Keyframes: Lage und Größe folgen dem Verlauf', !b2.error && nearBox(e0, [416, 148, 479, 211]) && nearBox(e1, [432, 132, 527, 227]), b2.error || [e0 && e0.box, e1 && e1.box]);
+  const ecken = await probe(fr(30), (px) => [px(435, 135), px(524, 224), px(480, 180), px(440, 180)].map(p => p[0]));
+  chk('Ellipse: Die Ecken ihres Rahmens bleiben Schachbrett, Mitte und Achse sind grau', ecken && [ecken[0], ecken[1]].every(v => v <= 0x1A || v >= 0xE6) && ecken[2] > 100 && ecken[2] < 156 && ecken[3] > 100 && ecken[3] < 156, ecken);
+  chk('Ellipse: Fläche passt zur Ellipse (π/4 des Rahmens)', e1 && Math.abs(e1.n / (96 * 96) - Math.PI / 4) < 0.03, e1 && +(e1.n / (96 * 96)).toFixed(3));
+  // 3) Randlage: Der Bereich ragt links unten aus dem Bild – das Fenster rückt ins Bild, verändert wird nur der sichtbare Teil
+  await want([fr(30)]);
+  const b3 = await run(kplan({ blurs: [{ ...rect, x: 0.02, y: 0.95 }] }));
+  const r3 = await probe(fr(30), changed);
+  chk('Bereich am Bildrand: nur der sichtbare Teil ist betroffen', !b3.error && nearBox(r3, [0, 278, 76, 359]), b3.error || (r3 && r3.box));
+  // 4) Reihenfolge: Einblendungen darunter werden mit unkenntlich, Formen und Fortschrittsbalken (top) liegen unberührt darüber
+  const img = (uri, x, y, w, kw = {}) => ({ mode: 'pip', image: true, uri, at: 0, in: 0, out: 2, x, y, w, aspect: 1, track: 5, vol: 0, hasAudio: false, width: 32, height: 32, rotation: 0, ...kw });
+  const ovs = [img('gruen', 0.2, 0.5, 0.04), img('rot', 0.25, 0.5, 0.05, { track: 100, top: true }),
+    img('balken', 0.5, 358 / 360, 1, { aspect: 160, track: 150, top: true, opacity: 0.35, width: 640, height: 4 }),
+    img('balken', 0.5, 358 / 360, 1, { aspect: 160, track: 151, top: true, width: 640, height: 4, kf: [{ t: 0, x: -0.5, y: 358 / 360, w: 1 }, { t: 2, x: 0.5, y: 358 / 360, w: 1 }] })];
+  const b4 = await run(kplan({ blurs: [rect], overlays: ovs }));
+  const o4 = await probe(fr(30), (px) => ({ rot: px(160, 180), a: px(129, 181), b: px(140, 190), c: px(142, 181), frei: px(118, 170 - 60), balken: [px(100, 358), px(310, 357)], grund: px(500, 358), ueber: px(500, 354) }));
+  chk('Form über dem Bereich bleibt scharf (reines Rot in der Mitte)', !b4.error && o4 && o4.rot.join() === '255,0,0', b4.error || (o4 && o4.rot));
+  chk('Einblendung unter dem Bereich wird mit verpixelt: Mischfarbe, im ganzen Feld gleich', o4 && o4.a.join() === o4.b.join() && o4.a.join() === o4.c.join() && o4.a[1] > o4.a[0] + 40 && o4.a[0] > 10 && o4.a[1] < 250, o4 && [o4.a, o4.b, o4.c]);
+  chk('Fortschrittsbalken: zur Hälfte der Zeit ist die linke Bildhälfte gefüllt, rechts liegt die Grundlinie', o4 && o4.balken.every(p => p.join() === '229,64,42') && o4.grund.join() !== '229,64,42' && o4.grund[0] > o4.grund[2] + 20 && (o4.ueber[0] <= 0x1A || o4.ueber[0] >= 0xE6), o4 && [o4.balken, o4.grund, o4.ueber]);
+  const b5 = await run(kplan({ blurs: [{ ...rect, kind: 'soft' }], overlays: ovs }));
+  const o5 = await probe(fr(30), (px) => ({ rot: px(160, 180), a: px(129, 181), c: px(142, 181) }));
+  chk('weichgezeichnet: dieselbe Stelle verläuft (kein hartes Feld), die Form darüber bleibt scharf', !b5.error && o5 && o5.rot.join() === '255,0,0' && o5.a.join() !== o5.c.join() && o5.a[1] > o5.a[0], b5.error || (o5 && [o5.a, o5.c]));
+  await want(null);
   chk('keine Fehlermeldungen der Seite', logs.length === 0, logs.slice(0, 5));
 } catch (e) {
   chk('Prüfung läuft ohne Abbruch durch', false, String(e && e.stack || e).slice(0, 600));

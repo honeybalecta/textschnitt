@@ -229,9 +229,37 @@ public final class TonTest {
     chk("Stimme, Prozessor: ein leerer Clip endet ohne Ausgabe", drive(q, new short[0], 2, r).length == 0 && q.isEnded());
   }
 
+  // Rechenteile für Einblendungen und unkenntlich gemachte Bereiche (2.35): dieselben Erwartungen wie im Windows-Export
+  static boolean eq(float[] a, double... b) { if (a == null || a.length != b.length) return false; for (int i = 0; i < b.length; i++) if (Math.abs(a[i] - b[i]) > 1e-4) return false; return true; }
+  static void ovGeom() {
+    float[][] kf = {{0.5f, 0.2f, 0.3f, 0.1f}, {2.5f, 0.6f, 0.7f, 0.3f}};
+    chk("Lage: ohne Keyframes die festen Werte", eq(de.honeybalecta.textschnitt.OvGeom.at(null, 1f, 0.4f, 0.5f, 0.2f), 0.4, 0.5, 0.2) && eq(de.honeybalecta.textschnitt.OvGeom.at(new float[0][], 1f, 0.4f, 0.5f, 0.2f), 0.4, 0.5, 0.2));
+    chk("Lage: zwischen zwei Keyframes gleichmäßig, davor und dahinter der Randwert",
+        eq(de.honeybalecta.textschnitt.OvGeom.at(kf, 1.5f, 0, 0, 0), 0.4, 0.5, 0.2) && eq(de.honeybalecta.textschnitt.OvGeom.at(kf, 0f, 0, 0, 0), 0.2, 0.3, 0.1) && eq(de.honeybalecta.textschnitt.OvGeom.at(kf, 9f, 0, 0, 0), 0.6, 0.7, 0.3)
+        && eq(de.honeybalecta.textschnitt.OvGeom.at(kf, -3f, 0, 0, 0), 0.2, 0.3, 0.1));
+    chk("Anker: Mitte im Bild → Mitte des Overlays an dieser Stelle", eq(de.honeybalecta.textschnitt.OvGeom.anchor(0.3f, 0.5f), 0, 0.3) && eq(de.honeybalecta.textschnitt.OvGeom.anchor(-1f, 0.1f), 0, -1));
+    chk("Anker: Mitte außerhalb → die Stelle des Overlays, die auf dem Bildrand liegt",
+        eq(de.honeybalecta.textschnitt.OvGeom.anchor(1.4f, 1f), -0.4, 1) && eq(de.honeybalecta.textschnitt.OvGeom.anchor(-2f, 1f), 1, -1) && eq(de.honeybalecta.textschnitt.OvGeom.anchor(-1.5f, 1f), 0.5, -1));
+    chk("Anker: Overlay ganz außerhalb → nichts zu zeigen", de.honeybalecta.textschnitt.OvGeom.anchor(3f, 1f) == null && de.honeybalecta.textschnitt.OvGeom.anchor(-2.5f, 0.4f) == null && de.honeybalecta.textschnitt.OvGeom.anchor(1.2f, 0f) == null);
+    boolean in = true;   // alle Anker bleiben zwischen −1 und 1, und die Stelle stimmt: Mitte + Anker · halbe Breite = Anker im Bild
+    for (float c = -4f; c <= 4f && in; c += 0.07f) for (float h = 0.05f; h <= 3f && in; h += 0.11f) { float[] q = de.honeybalecta.textschnitt.OvGeom.anchor(c, h);
+      if (q == null) { if (Math.abs(c) <= 1f + h) in = Math.abs(Math.abs(c) - 1f - h) < 1e-4; continue; }
+      in = Math.abs(q[0]) <= 1f && Math.abs(q[1]) <= 1f && Math.abs(c + q[0] * h - q[1]) < 1e-4; }
+    chk("Anker: für jede Lage zulässig und an der richtigen Stelle", in);
+    chk("Bereich: Fenster, Mitte, halbe Ausdehnung und Felder wie im Windows-Export (fest, mittig)",
+        eq(de.honeybalecta.textschnitt.OvGeom.blurBox(0.25f, 0.5f, 0.2f, 1f, 0.2f, 19.2f, 640, 360), 96, 116, 128, 128, 160, 180, 64, 64, 7, 7));
+    chk("Bereich: am Bildrand bleibt das Fenster im Bild, der Bereich ragt hinaus",
+        eq(de.honeybalecta.textschnitt.OvGeom.blurBox(0.02f, 0.9f, 0.2f, 2f, 0.2f, 12.8f, 640, 360), 0, 292, 128, 64, 12.8, 324, 64, 32, 10, 5));
+    chk("Bereich: wechselnde Größe – das Fenster hat die größte, der Bereich die aktuelle",
+        eq(de.honeybalecta.textschnitt.OvGeom.blurBox(0.6f, 0.3f, 0.15f, 0.8f, 0.3f, 12.8f, 640, 360), 288, 0, 192, 240, 384, 108, 48, 60, 15, 19));
+    int[][] c0 = de.honeybalecta.textschnitt.OvGeom.chunks(0, 4), c5 = de.honeybalecta.textschnitt.OvGeom.chunks(5, 4), c6 = de.honeybalecta.textschnitt.OvGeom.chunks(6, 6);
+    chk("Gruppen: keine, eine volle und ein Rest", c0.length == 0 && c5.length == 2 && c5[0][0] == 0 && c5[0][1] == 4 && c5[1][0] == 4 && c5[1][1] == 5 && c6.length == 1 && c6[0][1] == 6);
+  }
+
   public static void main(String[] a) throws Exception {
     gainCurve();
     voiceProcessor();
+    ovGeom();
     if (a.length > 0) voiceCases(a[0]);
     System.out.println("ERGEBNIS Android-Tonklassen: " + n + " geprüft, " + bad + " Fehler");
     System.exit(bad > 0 ? 1 : 0);

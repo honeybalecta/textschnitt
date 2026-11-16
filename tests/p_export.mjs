@@ -95,7 +95,9 @@ await clearQ();
 
 // Abbrechen, Herausnehmen, Erneut, Fehler
 await ev(i => { pausePlay(); clearTimeout(saveT); saveNow(); closeProject(); openProject(i); }, idK); await page.waitForFunction(i => P && P.id === i, idK); await sleep(400);
-await ev(() => { setTab('export'); document.querySelector('#exName').value = 'eins'; }); await page.click('#exQueueBtn'); await page.waitForFunction(() => EXQ.length === 1);
+// „eins“ wird gleich abgebrochen und muss dann sicher noch laufen: in voller HD-Größe dauert der Export auf jedem Rechner lange genug
+const langerAuftrag = name => ev(name => { setTab('export'); const p = buildPlan(); p.name = name; p.width = 1920; p.height = 1080; p.quality = 'hoch'; exqAdd({ name, proj: P.id, info: 'Test', plan: p, tv: '', tvName: '' }); }, name);
+await langerAuftrag('eins'); await page.waitForFunction(() => EXQ.length === 1);
 await ev(() => { document.querySelector('#exName').value = 'zwei'; }); await page.click('#exQueueBtn'); await page.waitForFunction(() => EXQ.length === 2);
 await ev(() => { document.querySelector('#exName').value = 'drei'; }); await page.click('#exQueueBtn'); await page.waitForFunction(() => EXQ.length === 3);
 st = await ev(() => [...document.querySelectorAll('#queueList .q-row')].map(r => r.className.replace('q-row ', '') + ':' + r.querySelector('.q-msg').textContent.replace(/Exportiere.*|Startet.*|\d+ %/, 'läuft') + ':' + [...r.querySelectorAll('button')].map(b => b.dataset.a).join(',')));
@@ -125,16 +127,23 @@ chk('scheitert ein Export, steht der Grund am Eintrag und die übrigen laufen we
 await clearQ();
 
 // Direkter Export und Warteschlange kommen sich nicht in die Quere
-await ev(() => { document.querySelector('#exName').value = 'lang_in_der_schlange'; }); await page.click('#exQueueBtn'); await page.waitForFunction(() => EXQ.length === 1 && EXQ[0].status === 'run');
+// (der Export in der Schlange ist ein langer Auftrag – so läuft er sicher noch, wenn „Video exportieren“ gedrückt wird)
+await langerAuftrag('lang_in_der_schlange'); await page.waitForFunction(() => EXQ.length === 1 && EXQ[0].status === 'run');
 await ev(() => { document.querySelector('#exName').value = 'direkt_gedrueckt'; });
 st = await ev(() => document.querySelector('#exBtn').title);
 await page.click('#exBtn'); await page.waitForFunction(() => EXQ.length === 2, null, { timeout: 15000 });
 const s2 = await ev(() => [exDirect, EXQ.map(x => x.status).join(), document.querySelector('#toast').textContent]);
 chk('läuft die Warteschlange, reiht „Video exportieren“ den Export ein', /wird eingereiht/.test(st) && s2[0] === false && s2[1] === 'run,wait' && /„direkt_gedrueckt“ ist eingereiht/.test(s2[2]), [st, s2]);
+await ev(() => { const b = document.querySelector('#queueList .q-row:first-child [data-a="cancel"]'); if (b) b.click(); });   // den langen Auftrag nicht abwarten – der eingereihte rückt nach
 await idle(); await clearQ();
-await ev(() => { document.querySelector('#exName').value = 'direkt_zuerst'; }); await page.click('#exBtn'); await page.waitForFunction(() => exDirect, null, { timeout: 15000 });
-await ev(() => { document.querySelector('#exName').value = 'wartet_auf_direkt'; }); await page.click('#exQueueBtn'); await page.waitForFunction(() => EXQ.length === 1);
-const s3 = await ev(() => [exDirect, EXQ[0].status, document.querySelector('#toast').textContent]);
+// beide Knöpfe in einem Zug in der Seite: Zwischen dem Start des direkten Exports und dem Einreihen liegt kein Umweg über die Prüfung
+const s3 = await ev(async () => {
+  const warte = async f => { for (let k = 0; k < 1500 && !f(); k++) await new Promise(r => setTimeout(r, 10)); return f(); };
+  document.querySelector('#exName').value = 'direkt_zuerst'; document.querySelector('#exBtn').click();
+  if (!(await warte(() => exDirect))) return [false, 'der direkte Export startet nicht', ''];
+  document.querySelector('#exName').value = 'wartet_auf_direkt'; document.querySelector('#exQueueBtn').click();
+  await warte(() => EXQ.length === 1);
+  return [exDirect, EXQ[0] ? EXQ[0].status : 'nicht eingereiht', document.querySelector('#toast').textContent]; });
 await page.waitForFunction(() => !exDirect, null, { timeout: 240000 }); await sleep(300);
 const s4 = await ev(() => [EXQ[0].status, (exResult && exResult.files) || []]); s4[1].forEach(f => trash.add(f));
 await idle();

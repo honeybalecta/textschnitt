@@ -18,7 +18,7 @@ function outToSrc(o){
 function itemOutRange(it){
   if (it.type === 'join'){ const k = joinIndex(it), T = k > 0 ? timeline[k].o : -1; return [T, T]; }   // Übergang: die Stelle seines Schnitts
   if (it.type === 'zoom' || it.type === 'fx'){ const a = srcToOut(snapSrc(it.at)); return [a, Math.max(a + 0.15, srcToOut(snapSrc(it.at + it.dur)))]; }
-  if (it.type === 'title'){ const a = srcToOut(snapSrc(it.at)); return [a, a + it.dur]; }
+  if (it.type === 'title' || isMark(it)){ const a = srcToOut(snapSrc(it.at)); return [a, a + it.dur]; }
   const ov = overlays.find(o => o.x === it); if (ov) return [ov.at, ov.end];
   const a = srcToOut(snapSrc(it.at)); return [a, a + (it.out - it.in)];
 }
@@ -33,7 +33,7 @@ function renderTimeline(){
   $('#tlTotal').textContent = '/ ' + fmtS(total);
   // Schnitt-Zeitleiste im Text-Reiter: nur Zeitskala, Hauptspur und die Wörter darunter
   const lite = tlLite(); if (lite && TL.sel && TL.sel.kind !== 'main') TL.sel = null;
-  renderRuler(pad); renderMain(pad); if (lite) renderWords(pad); else { renderOvl(pad); renderAud(pad); renderFx(pad); renderTitles(pad); renderTxt(pad); }
+  renderRuler(pad); renderMain(pad); if (lite) renderWords(pad); else { renderOvl(pad); renderAud(pad); renderFx(pad); renderMarks(pad); renderTitles(pad); renderTxt(pad); }
   paintLinks(); restoreSel(); updateTools(); paintBar();
   if (TL.mode === 'center') syncScroll(outPos, true); else placeHead(outPos);
 }
@@ -244,6 +244,8 @@ function renderOvl(pad){
       b._m = isImg(c) ? {img: c.uri, inS: 0, d: span} : {uri: c.uri, inS: it.in || 0, d: span, aspect: (c.width && c.height) ? dispSize(c)[0] / dispSize(c)[1] : 16 / 9, speed: spd || 1, src: {uri: c.uri}};
       paintMedia(b, b._m); }
     for (const k of o.x.kf || []){ if (k.t > o.end - o.at + 0.01) continue; const d = document.createElement('i'); d.className = 'kf'; d.dataset.t = k.t; d.style.left = (k.t * TL.pps) + 'px'; d.title = 'Keyframe – antippen springt hierher'; b.append(d); }
+    (o.x.build || []).forEach((s, j) => { if (!j || s.t > o.end - o.at - 0.03) return; const d = document.createElement('i'); d.className = 'stp' + (s.a ? ' auto' : ''); d.dataset.t = s.t; d.style.left = (s.t * TL.pps) + 'px'; d.title = `Schritt ${j + 1} von ${o.x.build.length} – antippen springt hierher`; b.append(d); });
+    if (o.x.build) b.classList.add('build');
     tr.append(b);
   }
 }
@@ -287,6 +289,20 @@ function renderFx(pad){
     const b = blk(z.type, a, e - a, pad, {id: z.id});
     const txt = z.type === 'zoom' ? `🔍 ${z.kind === 'punch' ? 'Sprung' : z.kind === 'in' ? 'rein' : 'raus'} ${z.strength.toFixed(2).replace('.', ',')}×` : ('⚙ ' + (fxBadges({...FX_DEF, ...z.fx}) || 'Anpassung'));
     b.insertAdjacentHTML('beforeend', `<span class="txt">${esc(txt)}</span>`);
+    tr.append(b);
+  }
+}
+// Formen und unkenntlich gemachte Bereiche: eine Zeile mit so vielen Bahnen, wie sich Elemente zeitlich überschneiden.
+// Ohne solche Elemente hat die Zeile keine Höhe – die Zeitleiste bleibt, wie sie war.
+function renderMarks(pad){
+  const tr = $('#trMark'), {map, n} = markLanes(); tr.querySelectorAll('.blk').forEach(x => x.remove());
+  $('.tl-body').style.setProperty('--nmk', n);
+  for (const m of marks){
+    const it = m.x, b = blk('mark ' + it.type + (blurFx(it) ? ' fx' : ''), m.at, m.end - m.at, pad, {id: it.id});
+    b.style.top = `calc(${map.get(it.id) || 0} * (var(--fh) + 4px))`; b.style.bottom = 'auto'; b.style.height = 'var(--fh)';
+    b.insertAdjacentHTML('beforeend', `<span class="txt"></span>`); b.querySelector('.txt').textContent = markName(it) + (it.type === 'shape' && it.kind === 'arrow' ? ' ' + SHAPE_ARROWS[shapeSpec(it).dir] : '');
+    if (it.type === 'shape') b.style.setProperty('--mc', shapeSpec(it).color);
+    for (const k of it.kf || []){ if (k.t > m.end - m.at + 0.01) continue; const d = document.createElement('i'); d.className = 'kf'; d.dataset.t = k.t; d.style.left = (k.t * TL.pps) + 'px'; d.title = 'Keyframe – antippen springt hierher'; b.append(d); }
     tr.append(b);
   }
 }
@@ -408,13 +424,14 @@ function select(sel){
   if (Crop.it && !(sel && sel.id === Crop.it.id)) endCrop(true);
   tlInner.querySelectorAll('.blk.sel').forEach(x => x.classList.remove('sel'));
   TL.sel = sel; const b = selBlock(); if (b) b.classList.add('sel'); else TL.sel = null;
-  paintLinks(); updateTools(); if (P) updateTitles(outPos);
+  paintLinks(); updateTools(); if (P){ updateTitles(outPos); if (sel && sel.kind === 'mark' || $('#shapeOv').firstChild || $('#blurOv').firstChild) updateOverlay(outPos); }
 }
+const selKind = it => isMark(it) ? 'mark' : it.type === 'zoom' ? 'zoom' : it.type === 'fx' ? 'fx' : it.type === 'title' ? 'title' : it.type === 'audio' ? 'aud' : 'ovl';
 function selectBlock(b){
   const tr = b.parentElement.id;
   if (tr === 'trMain'){ const g = timeline[+b.dataset.i]; select(g.kind === 'insert' ? {kind:'insert', i:+b.dataset.i, itemId:g.item.id} : {kind:'main', i:+b.dataset.i, src:(g.in + g.out) / 2}); }
   else if (tr === 'trTxt') select({kind:'cue', id:b.dataset.cid});
-  else { const it = P.items.find(x => x.id === b.dataset.id); if (!it) return; select({kind: it.type === 'zoom' ? 'zoom' : it.type === 'fx' ? 'fx' : it.type === 'title' ? 'title' : it.type === 'audio' ? 'aud' : 'ovl', id: it.id}); }
+  else { const it = P.items.find(x => x.id === b.dataset.id); if (!it) return; select({kind: selKind(it), id: it.id}); }
 }
 // ── Verbinden: mehrere Objekte auswählen (Strg/Umschalt+Klick oder „Verbinden …“), dann zu einer Gruppe machen ──
 const blkKey = b => b.dataset.cid ? 'c:' + b.dataset.cid : b.dataset.id ? 'i:' + b.dataset.id : null;
@@ -451,6 +468,8 @@ tlInner.addEventListener('click', e => {
     const go = o => { if (playing) pausePlay(); seekOut(o, false); if (TL.mode === 'center') syncScroll(outPos, true); else placeHead(outPos); selectBlock(b); };
     if (e.target.dataset.o != null){ go(+e.target.dataset.o); return; }
     const it = P.items.find(x => x.id === b.dataset.id), a = it && ovOf(it); if (a) go(a.at + +e.target.dataset.t); return; }
+  if (e.target.classList.contains('stp') && b){ const it = P.items.find(x => x.id === b.dataset.id), a = it && ovOf(it);
+    if (a){ if (playing) pausePlay(); seekOut(Math.min(a.at + +e.target.dataset.t, Math.max(0, total - 0.01)), false); if (TL.mode === 'center') syncScroll(outPos, true); else placeHead(outPos); selectBlock(b); } return; }
   if (TL.pick){ if (k){ if (TL.pick.has(k)) TL.pick.delete(k); else TL.pick.add(k); paintLinks(); updateTools(); } return; }
   if (tlLite()){   // Schnitt-Zeitleiste: Wort anklicken markiert es im Text, Einschübe sind hier nicht auswählbar
     const wd = e.target.closest('.wd'); if (wd){ const i = +wd.dataset.i; selA = selB = i; showSel(); if (spans[i]) spans[i].scrollIntoView({block: 'center', behavior: 'smooth'});
@@ -521,7 +540,7 @@ tlInner.addEventListener('pointerdown', e => {
   if (!b) return;
   const h = e.target.closest('.h');
   if (tlLite() && (!h || !TL.sel || TL.sel.kind !== 'main')) return;   // Schnitt-Zeitleiste: nur die Kanten lassen sich ziehen
-  const s = TL.sel, it = s.kind === 'ovl' || s.kind === 'aud' || s.kind === 'zoom' || s.kind === 'fx' || s.kind === 'title' ? selItem() : null;
+  const s = TL.sel, it = s.kind === 'ovl' || s.kind === 'aud' || s.kind === 'zoom' || s.kind === 'fx' || s.kind === 'title' || s.kind === 'mark' ? selItem() : null;
   const start = () => {
     TL.drag = {b, side: h ? (h.classList.contains('l') ? 'l' : 'r') : 'm', x0: e.clientX, sl0: tlEl.scrollLeft, left0: parseFloat(b.style.left), w0: parseFloat(b.style.width), moved: false, d: 0, pts: snapPoints(it)};
     if (playing) pausePlay();
@@ -611,7 +630,7 @@ function clampDrag(side, d){
     if (side === 'l') return clamp(d, img ? -a : -it.in, it.out - it.in - 0.1);
     if (side === 'r') return clamp(d, -(it.out - it.in - 0.1), img ? Math.max(0, total - (a + it.out - it.in)) : it.clip.duration - it.out);
     return clamp(d, -a, total - a - 0.1); }
-  if (s.kind === 'zoom' || s.kind === 'fx' || s.kind === 'title'){ const it = selItem(), [a, e] = itemOutRange(it);
+  if (s.kind === 'zoom' || s.kind === 'fx' || s.kind === 'title' || s.kind === 'mark'){ const it = selItem(), [a, e] = itemOutRange(it);
     if (side === 'l') return clamp(d, -a, e - a - 0.15); if (side === 'r') return clamp(d, -(e - a - 0.15), total - e); return clamp(d, -a, total - e); }
   if (s.kind === 'cue'){ const t = cueTimes(selCue()); if (!t) return 0;
     if (side === 'l') return clamp(d, -t.s, t.e - t.s - 0.2); if (side === 'r') return clamp(d, -(t.e - t.s - 0.2), total - t.e); return clamp(d, -t.s, total - t.e); }
@@ -688,17 +707,19 @@ function linkedDrag(side, d){
     } else if (s.kind === 'ovl' || s.kind === 'aud'){
       const it = selItem(), [a] = itemOutRange(it);
       if (side === 'l'){ if (isImg(it.clip)){ const len = it.out - it.in - d; it.in = 0; it.out = r3(len); } else it.in = +(it.in + d).toFixed(3);
-        it.at = +outToSrc(a + d).toFixed(3); if (it.kf) it.kf.forEach(k => k.t = r3(k.t - d)); }
+        it.at = +outToSrc(a + d).toFixed(3); if (it.kf) it.kf.forEach(k => k.t = r3(k.t - d));
+        if (it.build) it.build.forEach((b, j) => { if (j && !b.a) b.t = r3(Math.max(0.05 * j, b.t - d)); }); }   // feste Schritte bleiben an ihrer Stelle im Video
       else if (side === 'r') it.out = +(it.out + d).toFixed(3);
       else it.at = +outToSrc(a + d).toFixed(3);
+      if (it.build && side !== 'm'){ computeOverlays(); slRetime(it); }
     } else if (s.kind === 'zoom' || s.kind === 'fx'){
       const it = selItem(), [a, e] = itemOutRange(it);
       const na = side === 'r' ? a : a + d, ne = side === 'l' ? e : e + d;
       const sa = outToSrc(na), se = outToSrc(ne);
       it.at = +sa.toFixed(3); it.dur = +Math.max(0.15, se - sa).toFixed(3);
-    } else if (s.kind === 'title'){
+    } else if (s.kind === 'title' || s.kind === 'mark'){
       const it = selItem(), [a] = itemOutRange(it);
-      if (side === 'l'){ it.at = +outToSrc(a + d).toFixed(3); it.dur = +Math.max(0.3, it.dur - d).toFixed(2); }
+      if (side === 'l'){ it.at = +outToSrc(a + d).toFixed(3); it.dur = +Math.max(0.3, it.dur - d).toFixed(2); if (it.kf) it.kf.forEach(k => k.t = r3(k.t - d)); }
       else if (side === 'r') it.dur = +Math.max(0.3, it.dur + d).toFixed(2);
       else it.at = +outToSrc(a + d).toFixed(3);
     } else if (s.kind === 'cue'){
@@ -733,6 +754,7 @@ function linkTools(){
 function toolListBase(){
   const s = TL.sel; const g = s && (s.kind === 'main' || s.kind === 'insert') ? timeline[s.i] : null;
   if (!s) return [T('📱', 'Clip ab hier …', () => clipDialog(outPos, Math.min(total, outPos + 30))), T('▭', 'Leinwand', openCanvas), T('✂', 'Teilen', splitHere), T('⌫', 'Bis hier weg', () => cutTo('l')), T('⌦', 'Ab hier weg', () => cutTo('r')), T('＋', 'Clip', addClip), T('T', 'Titel', addTitle), T('💬', 'Untertitel', addOwnCue), T('🔍', 'Zoom', addZoom),
+    T('⬭', 'Form', () => addShapeMenu()), T('▦', 'Unkenntlich', () => addMarkItem('blur')), T('▬', 'Fortschritt', openProgress),
     T('⧓', 'Übergang', () => openJoin()), T('🚩', 'Kapitel', () => addMark('chap')), T('📝', 'Notiz', () => addMark('note')), T('🖼', 'Titelbild', openCover),
     ...(P.moves.length ? [T('↺', 'Reihenfolge zurück', () => { commit(() => P.moves = [], true); if (tokens.length) renderTranscript(); toast('Ursprüngliche Reihenfolge'); })] : [])];
   if (s.kind === 'main') return [T('📱', 'Als Clip …', () => clipDialog(g.o, g.o + segDur(g))), T('✂', 'Teilen', splitHere), T('⚙', 'Anpassen', () => openFx(g)),
@@ -740,7 +762,13 @@ function toolListBase(){
     T('⇤', 'Ende −1', () => nudge('r', -1)), T('⇥', 'Ende +1', () => nudge('r', 1)), T('⧓', 'Übergang', () => openJoin(joinEdgeOf(s.i))), T('🔍', 'Zoom', addZoom), T('T', 'Titel', addTitle), T('＋', 'Clip', addClip)];
   const cuts = [T('⌫', 'Bis hier weg', () => cutSel('l')), T('⌦', 'Ab hier weg', () => cutSel('r'))];
   if (s.kind === 'insert') return [T('🎞', 'Ausschnitt', () => openItem(g.item.id)), T('🗑', 'Löschen', delSel, 'danger'), ...cuts, T('⧓', 'Übergang', () => openJoin(joinEdgeOf(s.i))), T('⇄', 'Als B-Roll', () => convert('broll'))];
-  if (s.kind === 'ovl'){ const it = selItem(); return [T('🎞', 'Ausschnitt', () => openItem(it.id)), T('🗑', 'Löschen', delSel, 'danger'), ...cuts, T('◰', 'Zuschneiden', () => startCrop(it)),
+  if (s.kind === 'mark'){ const it = selItem(); return [T('⚙', it.type === 'blur' ? 'Art & Stärke' : 'Art & Farbe', () => openMark(it.id)), T('🗑', 'Löschen', delSel, 'danger'), ...cuts,
+    T('◆', hasKfHere(it) ? 'Keyframe weg (M)' : 'Keyframe (M)', () => toggleKeyframe(it)), T('−', 'Kleiner', () => pipScale(1 / 1.15)), T('＋', 'Größer', () => pipScale(1.15)),
+    ...(it.type === 'shape' && it.kind === 'arrow' ? [T('⟳', 'Drehen', () => { commit(() => arrowTurn(it, (shapeSpec(it).dir + 1) % 8), false); seekOut(outPos, false); renderTimeline(); })] : []),
+    T('↥', 'Nach vorn', () => markOrder(it, 1)), T('↧', 'Nach hinten', () => markOrder(it, -1))]; }
+  if (s.kind === 'ovl'){ const it = selItem(), sl = it.slide ? P.slides.find(q => q.id === it.slide) : null; return [T('🎞', 'Ausschnitt', () => openItem(it.id)), T('🗑', 'Löschen', delSel, 'danger'), ...cuts, T('◰', 'Zuschneiden', () => startCrop(it)),
+    ...(canMark(it) ? [T('🖍', it.mark ? 'Markierung' : 'Markieren', () => openMarker(it.id))] : []),
+    ...(it.build ? [T('⏭', 'Schritt hierher', () => stepHere(it)), T('☰', 'Aufbau', () => openBuild(it))] : sl && (slStepsOf(sl) > 1 || slBuildBlocked(sl)) ? [T('☰', 'Aufbauen', () => slBuildSet(sl, true))] : []),
     T('◆', hasKfHere(it) ? 'Keyframe weg (M)' : 'Keyframe (M)', () => toggleKeyframe(it)),
     T('−', 'Kleiner', () => pipScale(1 / 1.15)), T('＋', 'Größer', () => pipScale(1.15)), T('↗', 'Ecke', cycleCorner),
     ...(it.w != null || it.type === 'pip' ? [T('▣', 'Vollbild', () => convert('broll'))] : []),
@@ -859,16 +887,54 @@ function addClip(){
     <button class="tile" data-t="audio"><b>Nur Ton</b><span>Nur die Tonspur der Datei, auf einer Tonspur – das Bild bleibt weg</span></button>
     <button class="tile" data-t="wm"><b>Wasserzeichen</b><span>${P.watermark ? 'Logo bearbeiten – liegt über dem ganzen Video' : 'Logo oder Bild, das die ganze Zeit im Bild liegt – ohne eigene Spur'}</span></button>
     <button class="tile" data-t="tline"><b>Textzeile</b><span>${P.textline ? 'Textzeile bearbeiten – steht über die ganze Länge im Bild' : 'Kleine Zeile über die ganze Länge, z. B. Kanalname oder „V. i. S. d. P.“'}</span></button>
-    <button class="tile" data-t="lower"><b>Bauchbinde</b><span>Name und Funktion einer Person, im Design deiner Folien</span></button></div>`;
+    <button class="tile" data-t="lower"><b>Bauchbinde</b><span>Name und Funktion einer Person, im Design deiner Folien</span></button>
+    <button class="tile" data-t="shape"><b>Form oder Pfeil</b><span>Rahmen, Kreis, Pfeil oder Textmarker – zeigt auf das, worum es geht; mit Keyframes beweglich</span></button>
+    <button class="tile" data-t="blur"><b>Unkenntlich machen</b><span>Gesichter, Kennzeichen oder Namen verpixeln, weichzeichnen oder abdecken</span></button>
+    <button class="tile" data-t="prog"><b>Fortschrittsbalken</b><span>${P.progress ? 'Leiste bearbeiten – zeigt, wie weit das Video ist' : 'Schmale Leiste am Bildrand, die zeigt, wie weit das Video ist'}</span></button></div>`;
   openSheet(false);
   body.onclick = async e => {
     const b = e.target.closest('[data-t]'); if (!b) return; const type = b.dataset.t;
     if (type === 'wm') return openWatermark();
     if (type === 'tline') return openTextline();
     if (type === 'lower') return openLower();
+    if (type === 'shape'){ closeSheet(); return addShapeMenu(); }
+    if (type === 'blur'){ closeSheet(); return addMarkItem('blur'); }
+    if (type === 'prog') return openProgress();
     $('#sheet').classList.add('hidden'); $('#sheetBack').classList.add('hidden');
     const o = outPos, clip = await pickMedia('clip'); if (!clip) return;
     placeMedia(clip, type, o, null, true);
+  };
+}
+// Form anlegen: erst die Art wählen
+function addShapeMenu(){
+  const body = $('#sheetBody');
+  body.innerHTML = `<h3>Form an der Abspiellinie</h3><div class="choice shapes">${SHAPE_KINDS.map(([k, n]) => `<button class="tile" data-k="${k}"><i class="shp shp-${k}"></i><b>${n}</b></button>`).join('')}</div>
+    <p class="muted small">Die Form liegt über dem Bild und lässt sich dort verschieben und in der Größe ändern. Farbe, Strich und Dauer stellst du danach ein.</p>`;
+  openSheet(false);
+  body.onclick = e => { const b = e.target.closest('[data-k]'); if (!b) return; closeSheet(); const it = addMarkItem('shape', b.dataset.k); if (it) openMark(it.id); };
+}
+// Stapel: Form oder Bereich vor bzw. hinter die anderen legen (Reihenfolge in der Liste der Elemente)
+function markOrder(it, dir){
+  const same = P.items.filter(x => x.type === it.type), k = same.indexOf(it), other = same[k + dir]; if (!other) return toast(dir > 0 ? 'Liegt schon ganz vorn' : 'Liegt schon ganz hinten');
+  commit(() => { const a = P.items.indexOf(it), b = P.items.indexOf(other); P.items[a] = other; P.items[b] = it; }, true); seekOut(outPos, false); toast(dir > 0 ? 'Eine Lage nach vorn' : 'Eine Lage nach hinten');
+}
+// Folie, die sich aufbaut: Schritte ansehen und verteilen
+function openBuild(it){
+  const body = $('#sheetBody'), sl = P.slides.find(q => q.id === it.slide);
+  const paint = () => { if (!it.build){ closeSheet(); return; } const a = ovOf(it);
+    body.innerHTML = `<h3>Aufbau Schritt für Schritt</h3><div id="bdForm">
+      <p class="muted small">Die Folie erscheint in ${it.build.length} Schritten. „Schritt hierher“ legt den Schritt, der der Abspiellinie am nächsten ist, genau an ihre Stelle; im Studio schaltet auch die Taste N weiter.</p>
+      <div class="bd-list">${it.build.map((b, j) => `<button data-j="${j}"><b>Schritt ${j + 1}</b><span>${a ? fmtS(a.at + b.t) : ''}${b.a ? ' · verteilt' : j ? ' · gesetzt' : ''}</span></button>`).join('')}</div>
+      <div class="row wrap" style="margin-top:10px"><button class="btn" id="bdText"${sl && sl.a != null ? '' : ' disabled'}>Nach dem gesprochenen Text</button><button class="btn" id="bdEven">Gleichmäßig verteilen</button></div>
+      <div class="row" style="margin-top:12px"><button class="btn danger" id="bdOff">Auf einmal zeigen</button><button class="btn primary" id="bdOk" style="margin-left:auto">Fertig</button></div></div>`; };
+  paint(); openSheet(true);
+  body.onclick = async e => {
+    const b = e.target.closest('button'); if (!b) return;
+    if (b.dataset.j != null){ const a = ovOf(it); if (a){ if (playing) pausePlay(); seekOut(Math.min(a.at + it.build[+b.dataset.j].t + 0.01, Math.max(0, total - 0.01)), false); revealHead(outPos); } return; }
+    if (b.id === 'bdText'){ stepsAuto(it, false); paint(); return; }
+    if (b.id === 'bdEven'){ stepsAuto(it, true); paint(); return; }
+    if (b.id === 'bdOff'){ closeSheet(); if (sl) await slBuildSet(sl, false); else { commit(() => { delete it.build; }, true); seekOut(outPos, false); } return; }
+    if (b.id === 'bdOk') closeSheet();
   };
 }
 // Wasserzeichen einstellen: Bild, Ecke, Größe, Abstand zum Rand, Deckkraft
@@ -1192,7 +1258,7 @@ function pasteClip(at){
         it.track = !busy(c.track || 1) ? (c.track || 1) : freeTrack(start, start + c.dur);
       }
       P.items.push(it); made.push(it); computeOverlays();
-      if (!sel || sel.kind === 'cue') sel = {kind: it.type === 'broll' || it.type === 'pip' ? 'ovl' : it.type === 'audio' ? 'aud' : it.type, id: it.id};
+      if (!sel || sel.kind === 'cue') sel = {kind: selKind(it), id: it.id};
     }
     if (made.length > 1){ const gid = newId(); made.forEach(x => { if (x.type !== 'insert') x.lk = gid; }); const ms = made.filter(x => x.lk); if (ms.length > 1) relinkGroup(ms); else ms.forEach(x => delete x.lk); }
   }, false);
@@ -1610,7 +1676,7 @@ const KEYS = [
   ['Strg + B', 'an der Abspiellinie teilen'], ['Strg + C / X / V', 'Element kopieren / ausschneiden / an der Abspiellinie einfügen'], ['Strg + D', 'Element duplizieren (direkt dahinter)'], ['Q / W', 'links / rechts der Abspiellinie löschen (mit ausgewähltem Element: nur dessen Teil)'],
   ['Entf / Rücktaste', 'Auswahl löschen'], ['Alt + ← / →', 'Auswahl um ein Bild verschieben'],
   [', / .', 'Anfang / Ende der Auswahl zur Abspiellinie trimmen'],
-  ['M', 'Keyframe an der Abspiellinie setzen / entfernen (ausgewählter Clip oder Einblendung)'], ['U', 'Untertitel weggeschnittener Wörter behalten / wieder weg (markierte Wörter oder ausgewählter Untertitel)'], ['F', 'Vollbild-Vorschau'],
+  ['M', 'Keyframe an der Abspiellinie setzen / entfernen (ausgewählter Clip, Einblendung, Form oder unkenntlich gemachter Bereich)'], ['U', 'Untertitel weggeschnittener Wörter behalten / wieder weg (markierte Wörter oder ausgewählter Untertitel)'], ['F', 'Vollbild-Vorschau'],
   ['Strg / Umschalt + Klick', 'Objekte zum Verbinden auswählen'], ['Umschalt + Mausrad', 'Spuren senkrecht scrollen'],
   ['Element senkrecht ziehen', 'auf eine andere Videospur legen'],
   ['T', 'Titel an der Abspiellinie'], ['E', 'Clip anpassen (Tempo, Lautstärke, Farbe)'], ['S', 'Einrasten an / aus'],
@@ -1631,6 +1697,7 @@ function editPoints(){
   const pts = new Set([0, total]);
   timeline.forEach(g => { pts.add(+g.o.toFixed(3)); pts.add(+(g.o + segDur(g)).toFixed(3)); });
   overlays.forEach(o => { pts.add(+o.at.toFixed(3)); pts.add(+o.end.toFixed(3)); });
+  marks.forEach(o => { pts.add(+o.at.toFixed(3)); pts.add(+o.end.toFixed(3)); });
   return [...pts].sort((a, b) => a - b);
 }
 function jumpEdit(dir){
@@ -1710,9 +1777,9 @@ document.addEventListener('keydown', e => {
         commit(() => keepSubs(cut, on), false); toast(on ? 'Untertitel bleibt – erscheint kurz am Schnitt' : 'Untertitel wieder weg'); } }
       return; }
     case 't': case 'T': if (studioOn()){ handled(); addTitle(); } return;
-    case 'm': case 'M': if (studioOn()){ handled(); const it = TL.sel && TL.sel.kind === 'ovl' ? selItem() : (curPip || null);
+    case 'm': case 'M': if (studioOn()){ handled(); const it = TL.sel && (TL.sel.kind === 'ovl' || TL.sel.kind === 'mark') ? selItem() : (curPip || null);
       if (!it && TL.sel && TL.sel.kind === 'main'){ toggleMainKeyframe(timeline[TL.sel.i]); return; }
-      if (!it) toast('Erst einen Clip oder eine Einblendung auswählen – M setzt dann an der Abspiellinie einen Keyframe'); else { if (!TL.sel || TL.sel.id !== it.id) select({kind:'ovl', id:it.id}); toggleKeyframe(it); } } return;
+      if (!it) toast('Erst einen Clip oder eine Einblendung auswählen – M setzt dann an der Abspiellinie einen Keyframe'); else { if (!TL.sel || TL.sel.id !== it.id) select({kind: isMark(it) ? 'mark' : 'ovl', id:it.id}); toggleKeyframe(it); } } return;
     case 'e': case 'E': if (studioOn()){ handled(); const g = curMainSeg(); if (g) openFx(g); } return;
     case 's': case 'S': if (studioOn()){ handled(); $('#snapBtn').click(); } return;
     case 'Delete': case 'Backspace':
@@ -1744,6 +1811,7 @@ tlInner.addEventListener('dblclick', e => {
   const b = e.target.closest('.blk'); if (!b || tlLite()) return;
   if (b.classList.contains('cue')){ select({kind:'cue', id:b.dataset.cid}); editCue(); }
   else if (b.classList.contains('title')){ select({kind:'title', id:b.dataset.id}); editTitle(b.dataset.id); }
+  else if (b.classList.contains('mark')){ select({kind:'mark', id:b.dataset.id}); openMark(b.dataset.id); }
   else if (b.classList.contains('fx')){ select({kind:'fx', id:b.dataset.id}); openFxItem(selItem()); }
   else if (b.classList.contains('main')){ selectBlock(b); openFx(timeline[TL.sel.i]); }
 });

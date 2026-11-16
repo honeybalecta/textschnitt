@@ -30,13 +30,16 @@ lauf() {   # lauf <hart|weich> <Programm> <Datei> [Angaben …]
   local art="$1"; shift
   local name="${*:2}" tmp="$OUT/einzel.log"; name="${name#"$HERE"/}"
   echo "== $name" | tee -a "$LOG"
+  rm -f "$HC_WORK/gpu.json"   # eine nachgestellte Grafikkarte aus einer abgebrochenen Prüfung soll die nächste nicht beeinflussen
   timeout 1200 "$@" > "$tmp" 2>&1; local rc=$?
   cat "$tmp" >> "$LOG"
-  local erg; erg="$(grep '^ERGEBNIS' "$tmp" | tail -1 | sed 's/^ERGEBNIS //')"
-  [ -n "$erg" ] || erg="$name: ohne Ergebnis abgebrochen (Code $rc)"
+  local erg ohne=0; erg="$(grep '^ERGEBNIS' "$tmp" | tail -1 | sed 's/^ERGEBNIS //')"
+  [ -n "$erg" ] || { erg="$name: ohne Ergebnis abgebrochen (Code $rc)"; ohne=1; }
   grep -E '^(FEHLER|ABWEICHUNG)' "$tmp" | cut -c1-400 | head -12
+  [ $ohne -eq 0 ] || { echo "   letzte Zeilen:"; tail -6 "$tmp" | cut -c1-300 | sed 's/^/     /'; }
   if [ $rc -eq 0 ]; then echo "- ✅ $erg" >> "$OUT/zeilen.txt"
   elif [ "$art" = hart ]; then FAILS=$((FAILS + 1)); echo "- ❌ $erg" >> "$OUT/zeilen.txt"; grep -E '^FEHLER' "$tmp" | cut -c1-300 | head -6 | sed 's/^/    - /' >> "$OUT/zeilen.txt"
+    [ $ohne -eq 0 ] || tail -4 "$tmp" | cut -c1-300 | sed 's/^/    - /' >> "$OUT/zeilen.txt"
   else WARN=$((WARN + 1)); echo "- ⚠️ $erg" >> "$OUT/zeilen.txt"; grep -E '^ABWEICHUNG|^FEHLER' "$tmp" | cut -c1-300 | head -6 | sed 's/^/    - /' >> "$OUT/zeilen.txt"; fi
   echo "   → $erg"
 }
@@ -87,6 +90,7 @@ lauf hart node "$HERE/p_export.mjs"
 lauf hart node "$HERE/p_untertitel.mjs"
 lauf hart node "$HERE/p_clips.mjs"
 lauf hart node "$HERE/p_ton.mjs"
+lauf hart node "$HERE/p_belege.mjs"
 lauf hart node "$HERE/p_browser.mjs"
 for p in stress edit multi editWord; do lauf hart node "$HERE/p_stand.mjs" $p; done
 for p in stress edit; do lauf hart node "$HERE/p_wiedergabe.mjs" $p; done

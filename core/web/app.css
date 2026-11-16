@@ -1244,3 +1244,61 @@ label.col input{width:100%}
 .jn.early::after,.jn.late::after{content:"";position:absolute;inset:3px;background:var(--creme);clip-path:polygon(0 50%,100% 0,100% 100%)}
 .jn.late::after{clip-path:polygon(0 0,100% 50%,0 100%)}
 .jn.off{opacity:.45}   /* gewählt, aber an diesem Schnitt fehlt das Bildmaterial dafür */
+
+/* ── Belege im Bild (2.35): Formen, unkenntlich gemachte Bereiche, Fortschrittsbalken, Markieren, Aufbau der Folien ── */
+/* Ein Keyframe am Anfang oder Ende verdeckte die Griffe zum Kürzen: Am ausgewählten Element liegen die Griffe obenauf */
+.blk.sel .h{z-index:4}
+.mark-ov{position:absolute;inset:0;z-index:3;pointer-events:none;overflow:hidden}
+.mark-ov canvas.mk{position:absolute;pointer-events:auto;cursor:move;touch-action:none}
+.mark-ov canvas.mk.fx{background:#000}
+#proj:not([data-tab=studio]):not([data-tab=clip]) .mark-ov canvas.mk{pointer-events:none}
+.prog-ov{position:absolute;left:0;right:0;bottom:0;z-index:3;pointer-events:none}
+.prog-ov.top{bottom:auto;top:0}
+.prog-ov i{display:block;height:100%;width:100%;transform-origin:0 50%;transform:scaleX(0)}
+/* Zeile „Formen“ in der Zeitleiste: so hoch wie Bahnen belegt sind (--nmk), ohne Elemente gar nicht da */
+.tl-body{--nmk:0}
+.g-mark{height:calc(var(--nmk) * (var(--fh) + 4px) + min(1, var(--nmk)) * 2px);border-top-width:calc(min(1, var(--nmk)) * 1px);overflow:hidden}
+.t-mark{top:calc(var(--rh) + var(--mh) + var(--fh) + 18px + var(--nov) * (var(--oh) + 6px) + var(--nau, 1) * (var(--ah) + 6px));height:calc(var(--nmk) * (var(--fh) + 4px));border-top-width:calc(min(1, var(--nmk)) * 1px)}
+.t-title{top:calc(var(--rh) + var(--mh) + var(--fh) + 18px + var(--nov) * (var(--oh) + 6px) + var(--nau, 1) * (var(--ah) + 6px) + var(--nmk) * (var(--fh) + 4px) + min(1, var(--nmk)) * 2px)}
+.t-txt{top:calc(var(--rh) + var(--mh) + var(--fh) + var(--th) + 24px + var(--nov) * (var(--oh) + 6px) + var(--nau, 1) * (var(--ah) + 6px) + var(--nmk) * (var(--fh) + 4px) + min(1, var(--nmk)) * 2px)}
+.tl-inner{height:calc(var(--rh) + var(--mh) + var(--fh) + var(--th) * 2 + 30px + var(--nov) * (var(--oh) + 6px) + var(--nau, 1) * (var(--ah) + 6px) + var(--nmk) * (var(--fh) + 4px) + min(1, var(--nmk)) * 2px) !important}
+#proj[data-tab=text] .g-mark,#proj[data-tab=text] .t-mark{display:none !important}
+.blk.mark{background:#3D3B35;box-shadow:inset 3px 0 0 var(--mc, var(--creme)),inset 0 0 0 1px rgba(237,231,218,.14)}
+.blk.mark .txt{color:var(--creme);left:9px}
+.blk.mark.blur{background:repeating-conic-gradient(#46443D 0 25%,#3D3B35 0 50%) 0 0/10px 10px;box-shadow:inset 0 0 0 1px rgba(237,231,218,.14)}
+.blk.mark.blur .txt{left:5px;text-shadow:0 1px 2px rgba(0,0,0,.9)}
+.blk .stp{position:absolute;top:0;bottom:0;width:2px;margin-left:-1px;background:var(--creme);z-index:3;cursor:pointer;box-shadow:0 0 0 1px rgba(19,19,18,.5)}
+.blk .stp::after{content:'';position:absolute;left:-4px;top:-1px;border:5px solid transparent;border-top-color:var(--creme)}
+.blk .stp.auto{opacity:.55}
+/* Blätter: Farbfelder, Richtungen, Formen */
+.swatches{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.swatches button{width:30px;height:30px;border-radius:50%;border:2px solid var(--line);padding:0;font-size:12px;font-weight:700;color:var(--on-accent)}
+.swatches button.on{border-color:var(--creme);box-shadow:0 0 0 2px var(--honig)}
+.swatches input[type=color]{width:34px;height:30px;padding:0;border:1px solid var(--line);border-radius:8px;background:transparent}
+.seg-ctl.dirs button{font-size:16px;padding:0}
+.choice.shapes{grid-template-columns:repeat(4,1fr)}
+.choice.shapes .tile{align-items:center;text-align:center;gap:8px}
+.shp{display:block;width:44px;height:30px;box-sizing:border-box;margin:2px auto 0}
+.shp-rect{border:3px solid var(--honig)}
+.shp-ellipse{border:3px solid var(--honig);border-radius:50%;width:32px}
+.shp-arrow{background:linear-gradient(var(--honig),var(--honig)) 0 50%/34px 3px no-repeat;position:relative}
+.shp-arrow::after{content:'';position:absolute;right:0;top:50%;margin-top:-8px;border:8px solid transparent;border-left:12px solid var(--honig);border-right:0}
+.shp-marker{background:rgba(255,225,77,.55);border-radius:5px;height:16px;margin-top:9px}
+.bd-list{display:flex;flex-direction:column;gap:4px;max-height:34vh;overflow:auto}
+.bd-list button{display:flex;justify-content:space-between;gap:12px;align-items:center;min-height:var(--ctl-sm);padding:0 10px;border:1px solid var(--line);border-radius:8px;background:var(--surface);font-size:13px;text-align:left}
+.bd-list button span{color:var(--muted);font-size:12px}
+.sl-build{margin:6px 0 2px}
+#exBlurNote.warn{color:var(--rot);font-weight:600}
+/* Markieren im Screenshot: bildschirmfüllend */
+.mkx{position:fixed;inset:0;z-index:90;background:var(--anthrazit);display:flex;flex-direction:column;padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)}
+.mkx-top{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;padding:10px 14px;border-bottom:1px solid var(--line)}
+.mkx-top b{font-size:15px}.mkx-top span{color:var(--muted);font-size:12.5px}
+.mkx-stage{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;overflow:hidden;background:#0b0b0a}
+.mkx-img{position:relative;touch-action:none;cursor:crosshair;user-select:none;-webkit-user-select:none}
+.mkx-img img,.mkx-img canvas{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+.mkx-rects{position:absolute;inset:0}
+.mkx-r{position:absolute;mix-blend-mode:multiply;cursor:pointer;box-sizing:border-box}
+.mkx-r.new{outline:1px dashed rgba(19,19,18,.7)}
+.mkx-bar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:10px 14px;border-top:1px solid var(--line)}
+.mkx-bar label{font-size:13px}.mkx-sp{flex:1}
+@media (max-width: 700px){ .choice.shapes{grid-template-columns:repeat(2,1fr)} .mkx-bar{gap:8px} .mkx-bar .btn{flex:1;text-align:center;justify-content:center} .mkx-sp{display:none} }

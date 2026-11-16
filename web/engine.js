@@ -201,6 +201,25 @@ function kfAt(kf, rel){
     return {x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f, w: a.w + (b.w - a.w) * f}; } }
   return kf[n-1];
 }
+// Bereich einer Leinwand verpixeln oder weichzeichnen (dieselbe Rechnung wie im Titelbild der Oberfläche und – in den Maßen –
+// wie im Windows-Export): Fenster win = [x, y, w, h] in Pixeln, darin der Bereich reg; das Raster ist am Fenster verankert.
+// Verkleinert wird in Schritten auf die Hälfte: So mittelt jeder Browser sauber, auch wenn er beim starken Verkleinern nur
+// wenige Punkte liest.
+function regionFx(ctx, src, win, reg, cell, soft, ellipse, tmp){
+  const [wx, wy, ww, wh] = win, nx = Math.max(1, Math.round(ww / cell)), ny = Math.max(1, Math.round(wh / cell));
+  let cur = src, sx = wx, sy = wy, sw = ww, sh = wh, k = 0;
+  for (;;){
+    const tw = Math.max(nx, Math.ceil(sw / 2)), th = Math.max(ny, Math.ceil(sh / 2));
+    const c = tmp[k % 2] ||= document.createElement('canvas'); c.width = tw; c.height = th;
+    const x = c.getContext('2d'); x.imageSmoothingEnabled = true; x.imageSmoothingQuality = 'high'; x.drawImage(cur, sx, sy, sw, sh, 0, 0, tw, th);
+    cur = c; sx = sy = 0; sw = tw; sh = th; k++;
+    if (tw <= nx && th <= ny) break;
+  }
+  ctx.save(); ctx.beginPath();
+  if (ellipse) ctx.ellipse(reg[0] + reg[2] / 2, reg[1] + reg[3] / 2, reg[2] / 2, reg[3] / 2, 0, 0, Math.PI * 2); else ctx.rect(reg[0], reg[1], reg[2], reg[3]);
+  ctx.clip(); ctx.imageSmoothingEnabled = !!soft; if (soft) ctx.imageSmoothingQuality = 'low';
+  ctx.drawImage(cur, 0, 0, sw, sh, wx, wy, ww, wh); ctx.restore(); ctx.imageSmoothingEnabled = true;
+}
 function segFx(s){
   return {speed: clamp(+s.speed || 1, 0.25, 4), vol: clamp(s.vol == null ? 1 : +s.vol, 0, 8), bright:+s.bright || 0, contrast:+s.contrast || 0, sat:+s.sat || 0, gray:!!s.gray,
     tx:+s.tx || 0, ty:+s.ty || 0, sc: clamp(+s.sc || 1, 0.002, 400), kf: Array.isArray(s.kf) && s.kf.length ? s.kf.map(k => ({t:+k.t || 0, tx:+k.tx || 0, ty:+k.ty || 0, sc: clamp(+k.sc || 1, 0.002, 400)})).sort((a, b) => a.t - b.t) : null};
@@ -474,6 +493,11 @@ class Renderer {
     this.base = document.createElement('canvas'); this.base.width = W; this.base.height = H; this.bctx = this.base.getContext('2d', {alpha:false});
     this.ovs = (plan.overlays || []).filter(o => o.mode !== 'audio').map(o => ({...o, at:+o.at, d: Math.max(0.05, o.out - o.in)})).sort((a, b) => (a.track || 1) - (b.track || 1) || a.at - b.at);
     this.ovState = new Map();
+    // Unkenntlich gemachte Bereiche (plan.blurs): wirken auf alles Bildmaterial; Einblendungen mit top (Formen, Fortschrittsbalken) liegen darüber
+    this.blurs = (plan.blurs || []).filter(b => b && +b.d > 0.02 && +b.w > 0).map(b => { const kf = Array.isArray(b.kf) && b.kf.length >= 2 ? b.kf.map(k => ({t:+k.t, x:+k.x, y:+k.y, w:+k.w})).sort((p, q) => p.t - q.t) : null;
+      return {at:+b.at, d:+b.d, x:+b.x, y:+b.y, w:+b.w, kf, a: Math.max(0.02, +b.aspect || 1), cell: Math.max(2, (+b.cell || 0.02) * W), soft: b.kind === 'soft', ellipse: b.form === 'ellipse',
+        wmax: Math.max(+b.wmax || 0, +b.w, ...(kf || []).map(k => k.w))}; });
+    this.fxTmp = [];
     // Übergänge: Bild-Ebenen direkt über der Hauptspur (plan.trans), je mit einem Abschnitt im Aufbau der Hauptspur
     // Sichtbar von t0 bis t1: das Fenster [at, at + d) mit der Deckkraft a0 → a1, davor und dahinter der bildgleiche Vor- und
     // Nachlauf (lead, tail) mit dem Randwert – so sitzt der Schnitt auch bei gerundeten Zeiten im Plan bildgenau.
@@ -579,7 +603,9 @@ class Renderer {
   endJoin(j){ const st = this.jnState.get(j); if (st && !st.done){ st.done = true; if (st.it && st.it.return) st.it.return(); st.base = st.bctx = st.last = null; } }
   async overlays(t){
     const {ctx, W, H, fps} = this;
+    let blurred = !this.blurs.length;
     for (const o of this.ovs){
+      if (!blurred && o.top){ this.blurAll(t); blurred = true; }
       if (t < o.at - 1e-6 || t >= o.at + o.d) { if (t >= o.at + o.d) this.endOverlay(o); continue; }
       let rect, sinkWH = null;
       if (o.w != null){
@@ -617,6 +643,18 @@ class Renderer {
       else if (st.bm) drawFit(ctx, im, ...rect, true);
       else ctx.drawImage(im, rect[0], rect[1], rect[2], rect[3]);
       ctx.globalAlpha = 1;
+    }
+    if (!blurred) this.blurAll(t);
+  }
+  // Bereiche zur Zeit t unkenntlich machen: Fenster in der größten Größe des Bereichs um seine Mitte, im Bild gehalten
+  blurAll(t){
+    const {ctx, W, H} = this;
+    for (const b of this.blurs){
+      if (t < b.at - 1e-6 || t >= b.at + b.d) continue;
+      const v = b.kf ? kfAt(b.kf, t - b.at) : b, rw = v.w * W, rh = rw / b.a;
+      const ww = Math.min(W, Math.max(2, Math.ceil(b.wmax * W / 2) * 2)), wh = Math.min(H, Math.max(2, Math.ceil(b.wmax * W / b.a / 2) * 2));
+      const wx = clamp(Math.trunc((v.x * W - ww / 2) / 2) * 2, 0, W - ww), wy = clamp(Math.trunc((v.y * H - wh / 2) / 2) * 2, 0, H - wh);
+      regionFx(ctx, ctx.canvas, [wx, wy, ww, wh], [v.x * W - rw / 2, v.y * H - rh / 2, rw, rh], b.cell, b.soft, b.ellipse, this.fxTmp);
     }
   }
   // Freistellen per Farbschlüssel: dieselbe Rechnung wie in der Vorschau (chroma.js); liefert eine Leinwand mit dem freigestellten Bild

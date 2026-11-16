@@ -2,9 +2,11 @@
 // (web/engine.js) ohne echte Dateien und ohne Kodierer durchläuft – für p_browser.mjs.
 //   „Videodatei“: ein Objekt {name, type, fake: {fps, audio: [[Frequenz, Scheitelwert], …]}}. Sie liefert zu jeder Zeit das Balkenbild
 //   ihrer Bildnummer (wie takt.mp4, siehe medien.py) und als Ton die Summe der angegebenen Sinustöne (Stereo, 48 kHz).
+//   Mit fake.pattern = 'karo' zeigt sie ein Schachbrett aus 8 Pixel großen Feldern (für Prüfungen am Bildinhalt).
 //   „Kodierer“: liest aus jedem fertigen Bild die Balken ab (HC_OUT.frames = [[Zeit, [v0 … v9]], …]) und sammelt den Ton
 //   (HC_OUT.audio = {L, R} als Listen von Float32Array). HC_OUT.sinks zählt die angelegten Bildquellen je Datei.
-const OUT = globalThis.HC_OUT = { frames: [], audio: { L: [], R: [] }, sinks: [], reset(){ this.frames = []; this.audio = { L: [], R: [] }; this.sinks = []; } };
+//   HC_OUT.want = [Zeit, …] hält die fertigen Bilder zu diesen Zeiten ganz fest (HC_OUT.shots = [{t, w, h, data}]).
+const OUT = globalThis.HC_OUT = { frames: [], audio: { L: [], R: [] }, sinks: [], want: null, shots: [], reset(){ this.frames = []; this.audio = { L: [], R: [] }; this.sinks = []; this.shots = []; } };
 export const ALL_FORMATS = [];
 export class BlobSource { constructor(file){ this.file = file; } }
 export class Input {
@@ -19,6 +21,10 @@ function bars(ctx, w, h, n){
   ctx.fillStyle = '#181818'; ctx.fillRect(0, 0, w, h); ctx.fillStyle = '#E8E8E8';
   for (let b = 0; b < BITS; b++) if ((n >> b) & 1) ctx.fillRect(Math.round(b * w / BITS), 0, Math.round((b + 1) * w / BITS) - Math.round(b * w / BITS), h);
 }
+function karo(ctx, w, h){
+  ctx.fillStyle = '#181818'; ctx.fillRect(0, 0, w, h); ctx.fillStyle = '#E8E8E8';
+  for (let y = 0; y < h; y += 8) for (let x = (y / 8) % 2 ? 8 : 0; x < w; x += 16) ctx.fillRect(x, y, 8, 8);
+}
 // Bilder zu Zeitpunkten: wie ein Decoder das letzte Bild, dessen Zeit erreicht ist; die Leinwände kommen reihum aus einem kleinen Vorrat
 export class CanvasSink {
   constructor(track, o){ this.fake = track.fake; this.w = o.width; this.h = o.height; this.pool = Array.from({ length: o.poolSize || 1 }, () => { const c = document.createElement('canvas'); c.width = o.width; c.height = o.height; return c; }); this.k = 0;
@@ -27,7 +33,7 @@ export class CanvasSink {
     return { [Symbol.asyncIterator](){ let i = 0; return {
       async next(){ if (i >= ts.length) return { done: true, value: undefined }; const t = ts[i++]; await null;
         if (!(t >= 0) || t >= (self.fake.duration || 1e9)) return { done: false, value: null };
-        const c = self.pool[self.k++ % self.pool.length]; bars(c.getContext('2d'), self.w, self.h, Math.floor(t * self.fake.fps + 1e-4)); return { done: false, value: { canvas: c, timestamp: t } }; },
+        const c = self.pool[self.k++ % self.pool.length]; if (self.fake.pattern === 'karo') karo(c.getContext('2d'), self.w, self.h); else bars(c.getContext('2d'), self.w, self.h, Math.floor(t * self.fake.fps + 1e-4)); return { done: false, value: { canvas: c, timestamp: t } }; },
       async return(){ i = ts.length; return { done: true, value: undefined }; } }; } }; }
 }
 export class AudioSampleSink {
@@ -46,7 +52,8 @@ export class CanvasSource {
   constructor(canvas){ this.canvas = canvas; }
   async add(t){ const c = this.canvas, x = c.getContext('2d'), v = [];
     for (let b = 0; b < BITS; b++){ const p = x.getImageData(Math.floor((b + 0.5) * c.width / BITS), c.height >> 1, 1, 1).data; v.push(+(((p[0] + p[1] + p[2]) / 3 - 0x18) / (0xE8 - 0x18)).toFixed(3)); }
-    OUT.frames.push([+t.toFixed(4), v]); }
+    OUT.frames.push([+t.toFixed(4), v]);
+    if (OUT.want && OUT.want.some(q => Math.abs(q - t) < 1e-3)) OUT.shots.push({ t: +t.toFixed(4), w: c.width, h: c.height, data: x.getImageData(0, 0, c.width, c.height).data }); }
   close(){}
 }
 export class AudioSampleSource {

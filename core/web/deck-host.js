@@ -43,10 +43,10 @@
   window.deckReload = () => { if (hd && frame && !document.getElementById('paneSlides').classList.contains('hidden')) hd.reload(); };
 
   // Folien zeichnen (von slides.js aufgerufen, wenn HoneyDeck da ist)
-  window.deckRender = (sl, W, H, k, prof, safe) => HoneyDeck.render(sl, W, H, {k, profile: prof, safe, imgUrl: uri => !uri ? null : /^(data:|blob:|https?:)/.test(uri) ? uri : MEDIA(uri)});
+  window.deckRender = (sl, W, H, k, prof, safe, step) => HoneyDeck.render(sl, W, H, {k, profile: prof, safe, ...(step != null ? {step} : {}), imgUrl: uri => !uri ? null : /^(data:|blob:|https?:)/.test(uri) ? uri : MEDIA(uri)});
 
   const wordsOf = () => tokens.filter(t => t.type !== 'pause' && isTextTok(t.i)).map(t => ({i: t.i, w: t.type === 'unk' ? (P.edits[t.i] || '') : tokText(t), p: t.p, cut: isCut(t.i)})).filter(t => t.w);
-  const MEDIA_KEYS = ['media', 'mediaKey', 'rev'];
+  const MEDIA_KEYS = ['media', 'mediaKey', 'rev', 'stepMedia', 'stepKey'];
 
   window.HC_DECK_HOST = {
     ready(h){ hd = h; },

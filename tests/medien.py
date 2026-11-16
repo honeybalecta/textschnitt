@@ -5,6 +5,7 @@
    serie.mp4 (knapp 3 min) mit festem Text in sechs Absätzen: Fragen, Zahlen und Schlagwörter für die Clip-Vorschläge,
    ton.mp4 (Sprache mit Rauschen, Brummen und Nachhall) und musik.wav für die Prüfungen am Ton,
    takt.mp4 (30 s): jedes Bild trägt seine Nummer als Balkenmuster – daran lesen die Prüfungen Schnitte und Übergänge bildgenau ab,
+   karo.mp4 (12 s): ein Schachbrett aus 4 Pixel großen Feldern – daran messen die Prüfungen, wo im fertigen Bild gemittelt wurde,
    drei kurze Einspieler (broll1–3.mp4), acht Folienbilder und ein Logo.
 Aufruf: python3 tests/medien.py <Zielordner>   – vorhandene Dateien bleiben stehen."""
 import array
@@ -282,6 +283,9 @@ def main(out: Path) -> None:
         ton(out)
     if not all((out / f).exists() for f in ("takt.mp4", "takt.words.json")):
         takt(out)
+    if not (out / "karo.mp4").exists():
+        ff("-f", "lavfi", "-i", "color=c=black:size=640x360:rate=30,format=gray,geq=lum='16+219*mod(floor(X/4)+floor(Y/4)\\,2)'", "-f", "lavfi", "-i", "sine=frequency=330:sample_rate=44100",
+           "-t", "12", "-af", "volume=0.1", "-pix_fmt", "yuv420p", "-c:v", "libx264", "-preset", "veryfast", "-crf", "10", "-g", "30", "-c:a", "aac", "-b:a", "96k", str(out / "karo.mp4"))
     for k, (src, freq) in enumerate((("testsrc=size=640x360:rate=30", 440), ("smptebars=size=640x360:rate=30", 554), ("rgbtestsrc=size=640x360:rate=30", 659)), 1):
         mp4 = out / f"broll{k}.mp4"
         if not mp4.exists():

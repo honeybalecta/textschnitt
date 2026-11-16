@@ -77,8 +77,14 @@ export async function dropScratch(page, nid){
 }
 // Ergebnisse zählen und am Ende eine Zeile für den Bericht ausgeben
 export function pruefung(titel){
-  let n = 0, bad = 0;
+  let n = 0, bad = 0, zu = false;
   const chk = (name, ok, extra) => { n++; if (!ok) bad++; console.log((ok ? 'ok     ' : 'FEHLER ') + name + (extra !== undefined && extra !== '' ? ' · ' + (typeof extra === 'string' ? extra : JSON.stringify(extra)) : '')); return ok; };
-  const ende = async br => { if (br) await br.close(); console.log(`ERGEBNIS ${titel}: ${n} geprüft, ${bad} Fehler`); process.exit(bad ? 1 : 0); };
+  const ende = async br => { zu = true; if (br) await br.close().catch(() => {}); console.log(`ERGEBNIS ${titel}: ${n} geprüft, ${bad} Fehler`); process.exit(bad ? 1 : 0); };
+  // Bricht eine Prüfung mitten im Lauf ab (eine Wartezeit läuft ab, ein Element fehlt), steht der Grund als Fehlerzeile im Bericht –
+  // vorher blieb nur „ohne Ergebnis abgebrochen“, und die Ursache stand irgendwo im Protokoll.
+  const abbruch = e => { if (zu) return; zu = true;
+    console.log('FEHLER Prüfung abgebrochen · ' + String((e && e.stack) || e).replace(/\s+/g, ' ').slice(0, 600));
+    console.log(`ERGEBNIS ${titel}: ${n} geprüft, ${bad + 1} Fehler (nach ${n} Prüfungen abgebrochen)`); process.exit(1); };
+  process.on('uncaughtException', abbruch); process.on('unhandledRejection', abbruch);
   return { chk, ende, fehler: () => bad };
 }

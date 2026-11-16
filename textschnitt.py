@@ -37,7 +37,7 @@ os.environ.setdefault("HF_HUB_DISABLE_IMPLICIT_TOKEN", "1")
 import warnings  # noqa: E402
 warnings.filterwarnings("ignore", module="huggingface_hub")
 
-VERSION = "2.34.0"
+VERSION = "2.35.0"
 APP_DIR = Path(__file__).resolve().parent
 FROZEN = bool(getattr(sys, "frozen", False))          # als installierte .exe gebaut
 RES_DIR = Path(getattr(sys, "_MEIPASS", APP_DIR))      # mitgelieferte Dateien (Oberfläche, ffmpeg, Modelle)
@@ -1717,15 +1717,77 @@ def ovl_geom(o: dict, W: int, H: int):
             # nur die Lage ändert sich: Bild einmal skalieren, nur die Position wird je Bild berechnet
             pw = max(2, round(W * ws[0] / 2) * 2)
             ph = max(2, round(pw / a / 2) * 2)
-            return {"anim": False, "move": True, "w": pw, "h": ph, "x": f"{W}*({xx})-overlay_w/2", "y": f"{H}*({yx})-overlay_h/2"}
+            # Lage auf ganze Pixel gerundet wie bei festen Einblendungen (ffmpeg schneidet sonst ab: ein Balken am Bildrand säße
+            # mit Keyframes zwei Zeilen höher als ohne)
+            return {"anim": False, "move": True, "w": pw, "h": ph, "x": f"floor({W}*({xx})-overlay_w/2+0.5)", "y": f"floor({H}*({yx})-overlay_h/2+0.5)"}
         wx = pw_expr([(at + float(k["t"]), float(k["w"])) for k in ks])
         mw = max(2, round(W * max(ws) / 2) * 2)
         return {"anim": True, "move": True, "w": f"max(2,trunc({W}*({wx})/2)*2)", "h": f"max(2,trunc({W}*({wx})/{a:.5f}/2)*2)",
-                "x": f"{W}*({xx})-overlay_w/2", "y": f"{H}*({yx})-overlay_h/2", "maxw": mw, "maxh": max(2, round(mw / a / 2) * 2)}
+                "x": f"floor({W}*({xx})-overlay_w/2+0.5)", "y": f"floor({H}*({yx})-overlay_h/2+0.5)", "maxw": mw, "maxh": max(2, round(mw / a / 2) * 2)}
     k0 = kf[0] if kf else o
     pw = max(2, round(W * float(k0["w"]) / 2) * 2)
     ph = max(2, round(pw / a / 2) * 2)
     return {"anim": False, "move": False, "w": pw, "h": ph, "x": round(float(k0["x"]) * W - pw / 2), "y": round(float(k0["y"]) * H - ph / 2)}
+
+
+def blur_graph(blurs: list, cur: str, parts: list, inputs: list, W: int, H: int, fps_s: str, total: float) -> str:
+    """Unkenntlich gemachte Bereiche (plan["blurs"]) in die Bildkette einbauen; liefert das neue Ende der Kette.
+    Je Bereich: {at, d, x, y, w, aspect, kf?, form: rect|ellipse, kind: pixel|soft, cell, wmax?, mask?} – Mitte und Breite als Anteile
+    des Bilds, cell = Feldgröße als Anteil der Bildbreite. Gerechnet wird in einem Fenster in der größten Größe des Bereichs, das
+    seiner Mitte folgt und im Bild bleibt: ausschneiden, auf wenige Felder verkleinern (Mittelwert je Feld), wieder vergrößern
+    (hart = verpixelt, weich = weichgezeichnet), zurücklegen. Eine Maske begrenzt das Fenster auf den Bereich, wo beide sich
+    unterscheiden (Ellipse, wechselnde Größe, Lage am Bildrand). Die Kette läuft über die ganze Länge mit – ein Zuschnitt in der
+    Zeit würde die Bilder der Hauptkette davor im Speicher stauen; das kleine Fenster kostet kaum Rechenzeit."""
+    for j, b in enumerate(blurs):
+        try:
+            at, d = float(b["at"]), max(0.05, float(b["d"]))
+            a = max(0.02, float(b.get("aspect") or 1))
+            kf = sorted([k for k in (b.get("kf") or []) if isinstance(k, dict)], key=lambda k: float(k["t"]))
+            pts = ([(at + float(k["t"]), float(k["x"]), float(k["y"]), float(k["w"])) for k in kf] if len(kf) >= 2
+                   else [(at, float((kf[0] if kf else b)["x"]), float((kf[0] if kf else b)["y"]), float((kf[0] if kf else b)["w"]))])
+        except (KeyError, TypeError, ValueError):
+            continue
+        ws = [p[3] for p in pts]
+        wmax = max(max(ws), float(b.get("wmax") or 0))
+        cw = min(W, max(2, math.ceil(wmax * W / 2) * 2))
+        ch = min(H, max(2, math.ceil(wmax * W / a / 2) * 2))
+        cell = max(2.0, float(b.get("cell") or 0.02) * W)
+        sw, sh = max(1, round(cw / cell)), max(1, round(ch / cell))
+        xx = pw_expr([(p[0], p[1]) for p in pts])
+        yx = pw_expr([(p[0], p[2]) for p in pts])
+        wx = pw_expr([(p[0], p[3]) for p in pts])
+        xc = f"max(0,min({W - cw},trunc(({W}*({xx})-{cw / 2:.1f})/2)*2))"
+        yc = f"max(0,min({H - ch},trunc(({H}*({yx})-{ch / 2:.1f})/2)*2))"
+        anim = max(ws) - min(ws) > 1e-4
+        # Ragt der Bereich an einem Keyframe über das Bild hinaus, sitzt das Fenster dort nicht mehr mittig auf ihm
+        edge = any(p[1] * W - p[3] * W / 2 < -0.5 or p[1] * W + p[3] * W / 2 > W + 0.5 or p[2] * H - p[3] * W / a / 2 < -0.5
+                   or p[2] * H + p[3] * W / a / 2 > H + 0.5 for p in pts)
+        mask = b.get("mask") if (b.get("form") == "ellipse" or anim or edge or wmax - max(ws) > 1e-4) else None
+        up = "bilinear" if b.get("kind") == "soft" else "neighbor"
+        parts.append(f"{cur}split[bva{j}][bvb{j}]")
+        # accurate_rnd: ohne diese Angabe rundet der Skalierer einfarbige Flächen um eine Stufe daneben – der Bereich hätte einen Farbstich
+        parts.append(f"[bvb{j}]crop={cw}:{ch}:x='{xc}':y='{yc}',format=yuv444p,scale={sw}:{sh}:flags=area+accurate_rnd+full_chroma_int,"
+                     f"scale={cw}:{ch}:flags={up}+accurate_rnd+full_chroma_int,setsar=1[bl{j}]")
+        en = f"enable='between(t,{at:.4f},{at + d:.4f})'"
+        if mask and os.path.isfile(norm_path(str(mask))):
+            inputs.append(["-i", norm_path(str(mask))])
+            i = len(inputs) - 1
+            if anim:
+                nfr = max(1, int(d * float(fps_s) + 2))
+                ms = (f"[{i}:v:0]format=gray,loop=loop={nfr}:size=1:start=0,setpts=N/({fps_s})/TB+{at:.4f}/TB,"
+                      f"scale=w='max(2,trunc({W}*({wx})))':h='max(2,trunc({W}*({wx})/{a:.5f}))':eval=frame,setsar=1[bms{j}]")
+            else:
+                ms = f"[{i}:v:0]format=gray,scale={max(2, round(ws[0] * W))}:{max(2, round(ws[0] * W / a))},setsar=1,setpts=PTS-STARTPTS+{at:.4f}/TB[bms{j}]"
+            parts.append(ms)
+            parts.append(f"color=c=black:s={cw}x{ch}:r={fps_s}:d={total + 1:.3f},format=gray[bbk{j}]")
+            parts.append(f"[bbk{j}][bms{j}]overlay=x='floor({W}*({xx})-overlay_w/2+0.5)-({xc})':y='floor({H}*({yx})-overlay_h/2+0.5)-({yc})':eval=frame:"
+                         f"eof_action=repeat,format=gray[bmk{j}]")
+            parts.append(f"[bl{j}][bmk{j}]alphamerge[blm{j}]")
+            parts.append(f"[bva{j}][blm{j}]overlay=x='{xc}':y='{yc}':eval=frame:eof_action=pass:{en},format=yuv420p[bo{j}]")
+        else:
+            parts.append(f"[bva{j}][bl{j}]overlay=x='{xc}':y='{yc}':eval=frame:eof_action=pass:{en},format=yuv420p[bo{j}]")
+        cur = f"[bo{j}]"
+    return cur
 
 
 def chroma_graph(key: dict | None, inl: str, outl: str, tag: str) -> list[str]:
@@ -2265,9 +2327,14 @@ def build_graph(plan: dict, with_video: bool, ass_name: str | None):
         parts.append("[apre]alimiter=limit=0.89:attack=5:release=60:level=false[aout]")
     if with_video:
         cur = "[base]"
+        # Unkenntlich gemachte Bereiche wirken auf alles Bildmaterial; Formen und Fortschrittsbalken (top) liegen darüber
+        blurs = [b for b in (plan.get("blurs") or []) if isinstance(b, dict)]
         for k, o in enumerate(ovs):
             if o.get("mode") == "audio":   # Tonspur: nur gemischt, kein Bild
                 continue
+            if blurs and o.get("top"):
+                cur = blur_graph(blurs, cur, parts, inputs, W, H, fps_s, float(plan.get("total") or 0))
+                blurs = []
             at, inn, out = float(o["at"]), float(o["in"]), float(o["out"])
             d = max(0.05, out - inn)
             g = ovl_geom(o, W, H)
@@ -2330,6 +2397,8 @@ def build_graph(plan: dict, with_video: bool, ass_name: str | None):
             ev = ":eval=frame" if g and (g["anim"] or g["move"]) else ""
             parts.append(f"{cur}[o{k}]overlay=x={x}:y={y}{ev}:eof_action={'repeat' if still else 'pass'}:enable='between(t,{at:.4f},{at + d:.4f})'[c{k}]")
             cur = f"[c{k}]"
+        if blurs:
+            cur = blur_graph(blurs, cur, parts, inputs, W, H, fps_s, float(plan.get("total") or 0))
         if ass_name:
             parts.append(f"{cur}subtitles=filename={ass_name}:fontsdir=fonts[vout]")
         else:
@@ -2397,6 +2466,18 @@ def shift_plan(plan: dict, segs: list[dict], o0: float, dur: float) -> dict:
             q["kf"] = [{**k, "t": float(k["t"]) - cut} for k in o["kf"]]
         ovs.append(q)
     sub["overlays"] = ovs
+    bls = []
+    for b in plan.get("blurs") or []:   # unkenntlich gemachte Bereiche: wie Einblendungen verschieben und zuschneiden
+        at, d = float(b["at"]), float(b["d"])
+        a, e = max(at, o0), min(at + d, o0 + dur)
+        if e - a < 0.02:
+            continue
+        q = dict(b)
+        q["at"], q["d"] = a - o0, e - a
+        if b.get("kf"):
+            q["kf"] = [{**k, "t": float(k["t"]) - (a - at)} for k in b["kf"]]
+        bls.append(q)
+    sub["blurs"] = bls
     if plan.get("duck"):
         sub["duck"] = shift_curve(clean_curve(plan["duck"]), o0, dur)
     return sub
@@ -3003,7 +3084,8 @@ def write_capcut(plan: dict, root: Path, name: str, cues: list[dict], style: dic
                           scale=round(cover_factor(info["width"], info["height"], W, H), 4), render=trk)
         by_track.setdefault(trk, []).append(seg)
     for trk in sorted(by_track):
-        tracks.append({"attribute": 0, "flag": 0, "id": uuid.uuid4().hex, "is_default_name": False, "name": f"Video {trk + 1}",
+        # Formen und abgedeckte Bereiche (Spuren ab 100) liegen über allem Bildmaterial und heißen in CapCut auch so
+        tracks.append({"attribute": 0, "flag": 0, "id": uuid.uuid4().hex, "is_default_name": False, "name": f"Formen {trk - 99}" if trk >= 100 else f"Video {trk + 1}",
                        "segments": by_track[trk], "type": "video"})
     for trk in sorted(aud_by):
         tracks.append({"attribute": 0, "flag": 0, "id": uuid.uuid4().hex, "is_default_name": False, "name": f"Ton {trk}",
@@ -3279,6 +3361,61 @@ def ton_selftest() -> dict:
         want0, want1 = (16 + 2 * 35 - 16) * 255 / 219, (16 + 2 * 55 - 16) * 255 / 219
         out["ok"] = bool(-16 < out["absenkung_db"] < -12 and out["brummen_db"] < -10 and len(y0) == len(y1) and k < len(y0)
                          and abs(y0[k] - want0) < 4 * step and abs(y1[k] - want1) < 4 * step)
+    except Exception as e:
+        out["fehler"] = f"{type(e).__name__}: {e}"[:300]
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return out
+
+
+def belege_selftest() -> dict:
+    """Probe für den Selbsttest der gebauten App und für die Prüfläufe: ein kurzer Export mit einem verpixelten Rechteck, einer
+    weichgezeichneten Ellipse, die wandert und wächst, und einer Form darüber – gerechnet mit dem mitgelieferten ffmpeg.
+    Gemessen wird am fertigen Video: Im Bereich ist das Schachbrett der Aufnahme zu Grau gemittelt, daneben steht es unverändert,
+    die Form liegt scharf darüber, und vor und nach der Zeit des Bereichs ist das Bild unberührt."""
+    import numpy as np
+    tmp = Path(tempfile.mkdtemp(prefix="textschnitt_belege_"))
+    w, h, fps = 320, 180, 25
+    out: dict = {"ok": False}
+    try:
+        video, maske, form = tmp / "muster.mp4", tmp / "maske.png", tmp / "form.png"
+
+        def ff(*args):
+            subprocess.run([FFMPEG, "-v", "error", "-y", *args], check=True, capture_output=True, stdin=subprocess.DEVNULL, **NOWIN)
+        # Aufnahme: Schachbrett aus 4 Pixel großen Feldern; Maske der Ellipse (weiß = Bereich); eine weiße Form
+        ff("-f", "lavfi", "-i", f"color=c=black:size={w}x{h}:rate={fps},format=gray,geq=lum='16+219*mod(floor(X/4)+floor(Y/4)\\,2)'", "-t", "3",
+           "-c:v", "libx264", "-preset", "veryfast", "-crf", "12", "-g", "25", "-pix_fmt", "yuv420p", str(video))
+        ff("-f", "lavfi", "-i", "color=c=black:size=96x96,format=gray,geq=lum='255*lte(pow((X+0.5-48)/48\\,2)+pow((Y+0.5-48)/48\\,2)\\,1)'", "-frames:v", "1", str(maske))
+        ff("-f", "lavfi", "-i", "color=c=white:size=16x16", "-frames:v", "1", str(form))
+        plan = {"format": "video", "name": "probe_belege", "width": w, "height": h, "fps": fps, "total": 3, "quality": "hoch", "burn": False,
+                "segments": [{"kind": "main", "src": 0, "uri": str(video), "in": 0, "out": 3, "zooms": [], "hasAudio": False, "hasVideo": True, "speed": 1, "vol": 1,
+                              "bright": 0, "contrast": 0, "sat": 0, "gray": False, "tx": 0, "ty": 0, "sc": 1}],
+                "sources": [{"uri": str(video), "name": video.name, "duration": 3, "width": w, "height": h, "fps": fps, "hasAudio": False, "hasVideo": True}],
+                # Rechteck: Fenster [48, 112) × [58, 122), vier mal vier Felder zu 16 Pixeln; Ellipse: bei 1,5 s um (240, 90), 48 Pixel breit
+                "blurs": [{"at": 0.8, "d": 1.4, "x": 0.25, "y": 0.5, "w": 0.2, "wmax": 0.2, "aspect": 1, "form": "rect", "kind": "pixel", "cell": 0.05},
+                          {"at": 0.8, "d": 1.4, "x": 0.7, "y": 0.5, "w": 0.1, "wmax": 0.2, "aspect": 1, "form": "ellipse", "kind": "soft", "cell": 0.05, "mask": str(maske),
+                           "kf": [{"t": 0, "x": 0.7, "y": 0.5, "w": 0.1}, {"t": 1.4, "x": 0.8, "y": 0.5, "w": 0.2}]}],
+                "overlays": [{"mode": "pip", "image": True, "uri": str(form), "at": 0, "in": 0, "out": 3, "x": 0.25, "y": 0.5, "w": 0.05, "aspect": 1, "track": 100,
+                              "vol": 0, "hasAudio": False, "width": 16, "height": 16, "rotation": 0, "top": True}]}
+        res = export_job({"cancel": False, "progress": 0, "message": ""}, plan)
+        raw = subprocess.run([FFMPEG, "-v", "error", "-i", res["playable"], "-an", "-f", "rawvideo", "-pix_fmt", "gray", "pipe:1"],
+                             capture_output=True, stdin=subprocess.DEVNULL, **NOWIN).stdout
+        fr = np.frombuffer(raw, dtype=np.uint8).reshape(-1, h, w).astype(float)
+        out["bilder"] = int(len(fr))
+
+        def span(k, x0, y0, x1, y1):   # Spanne der Helligkeit in einem Ausschnitt: groß = Schachbrett, klein = gemittelt
+            p = fr[k][y0:y1, x0:x1]
+            return round(float(p.max() - p.min()), 1)
+        mid, pre, post = int(1.5 * fps), int(0.3 * fps), int(2.6 * fps)
+        if len(fr) > post:
+            links = fr[mid][62:118, 52:68]   # im Rechteck, neben der Form
+            out["rechteck"] = [round(float(links.mean()), 1), span(mid, 52, 62, 68, 118)]
+            out["daneben"] = span(mid, 8, 62, 40, 118)
+            out["form"] = round(float(fr[mid][85:95, 75:85].mean()), 1)
+            out["ellipse"] = [span(mid, 232, 82, 248, 98), span(mid, 217, 67, 223, 73)]   # Mitte gemittelt, Ecke des Rahmens unberührt
+            out["davor"], out["danach"] = span(pre, 52, 62, 108, 118), span(post, 52, 62, 108, 118)
+            out["ok"] = bool(out["rechteck"][1] < 40 and 105 < out["rechteck"][0] < 150 and out["daneben"] > 120 and out["form"] > 205
+                             and out["ellipse"][0] < 60 and out["ellipse"][1] > 120 and out["davor"] > 120 and out["danach"] > 120)
     except Exception as e:
         out["fehler"] = f"{type(e).__name__}: {e}"[:300]
     finally:
@@ -3771,7 +3908,9 @@ def sweep_orphans(now: float) -> int:
 # hat und worauf kein Projekt, keine frühere Fassung und kein Projekt im Papierkorb mehr verweist. Was gelöscht werden darf,
 # rechnet der Server bei jedem Aufruf neu aus – die Oberfläche nennt nur die Gruppe.
 
-_SLIDE_RE = re.compile(r"folie-[A-Za-z0-9_.\-]+?\.png")
+# Erzeugte Bilder, die ein Projekt verwendet: Folien (auch die Bilder ihrer Schritte) und markierte Screenshots
+_SLIDE_RE = re.compile(r"(?:folie|markiert)-[A-Za-z0-9_.\-]+?\.png")
+SLIDE_OLD = ("folie-", "markiert-")   # nur diese räumt „Frühere Bilder löschen“ weg; Formen, Balken und Masken sind winzig und entstehen je Export neu
 
 
 def _du(d: Path) -> tuple[int, int]:
@@ -3875,10 +4014,10 @@ def storage_info() -> dict:
                    "hint": "Kopien von Videos mit entferntem Hintergrund. Löschen lässt sich nur, was kein Projekt mehr verwendet."})
     fol = DATA_DIR / "folien"
     sl = [x for d in (fol.iterdir() if fol.is_dir() else []) if d.is_dir() for x in d.glob("*.png")]
-    old = [x for x in sl if x.name.startswith("folie-") and x.name not in refs and not _is_fresh(x)] if free_ok else []
+    old = [x for x in sl if x.name.startswith(SLIDE_OLD) and x.name not in refs and not _is_fresh(x)] if free_ok else []
     groups.append({"key": "slides", "label": "Folienbilder", "bytes": sum(x.stat().st_size for x in sl), "count": len(sl),
                    "freeable": sum(x.stat().st_size for x in old), "nfree": len(old), "warn": True,
-                   "hint": "Bei jeder Änderung einer Folie entsteht ein neues Bild; die früheren bleiben liegen."})
+                   "hint": "Bei jeder Änderung einer Folie oder einer Markierung im Screenshot entsteht ein neues Bild; die früheren bleiben liegen."})
     models = []
     for name, label, _mb in MODELS:
         if name in bundled_models():
@@ -3930,8 +4069,8 @@ def storage_clear(what: str, name: str = "") -> dict:
             for d in (fol.iterdir() if fol.is_dir() else []):
                 if not d.is_dir():
                     continue
-                for x in d.glob("folie-*.png"):
-                    if x.name not in refs and not _is_fresh(x):
+                for x in d.glob("*.png"):
+                    if x.name.startswith(SLIDE_OLD) and x.name not in refs and not _is_fresh(x):
                         kill(x)
                 try:
                     if not any(d.iterdir()):

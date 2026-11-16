@@ -21,6 +21,8 @@ const { browser, page, logs } = await launch();
 const dialogs = []; page.on('dialog', d => dialogs.push(d.message()));
 const toastText = () => page.evaluate(() => document.querySelector('#toast').textContent);
 const sid = await scratch(page, PJ.kurz);
+// Reste früherer Läufe (Bilder gelöschter Testprojekte) vorab freigeben – die Prüfung unten zählt genau ein früheres Folienbild
+await api('storage/clear', { what: 'slides' });
 // Ausgangslage im Datenordner: je eine verwendete und eine unbenutzte Datei
 const used = `${DATA}/freigestellt/1111111111111111.mp4`, free = `${DATA}/freigestellt/2222222222222222.mp4`, orphan = `${DATA}/cache/proxies/3333333333333333.mp4`;
 const slUsed = `${DATA}/folien/${sid.slice(0, 20)}/folie-t1-2.png`, slOld = `${DATA}/folien/${sid.slice(0, 20)}/folie-t1-1.png`;

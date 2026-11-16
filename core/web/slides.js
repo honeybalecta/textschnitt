@@ -56,7 +56,7 @@ const slIsDark = (sl, k, pr) => { if (sl.dark != null) return !!sl.dark; const t
 let slCur = null, slSel = null, slOpen = null;
 const slIdx = sl => P.slides.indexOf(P.slides.find(x => x.id === sl.id) || sl);
 // Alles, was das Aussehen einer Folie bestimmt (ohne die gespeicherten Bilddaten)
-const slLook = sl => { const o = {...sl}; delete o.media; delete o.mediaKey; delete o.rev; delete o.a; delete o.b; delete o.cue; return o; };   // ausgewählte Folie, Auswahl im Transkript, laufende Folie im Studio
+const slLook = sl => { const o = {...sl}; delete o.media; delete o.mediaKey; delete o.rev; delete o.a; delete o.b; delete o.cue; delete o.stepMedia; delete o.stepKey; return o; };   // ausgewählte Folie, Auswahl im Transkript, laufende Folie im Studio
 
 // ───────── Zeichnen ─────────
 const slImgCache = new Map();
@@ -115,13 +115,13 @@ function subSlideY(s, e){
   return on ? 1 - f / 2 : null;
 }
 window.subSlideY = subSlideY;
-async function renderSlide(sl, W, H, k, prof, safe){
+async function renderSlide(sl, W, H, k, prof, safe, step){   // step: nur die ersten Schritte zeigen (Aufbau Schritt für Schritt); fehlt: die ganze Folie
   // Mit HoneyDeck zeichnet dessen Engine (gleiches Ergebnis für die bisherigen Folienarten, dazu neue Arten und Symbole)
-  if (window.HC_DECK_ON) return deckRender(sl, W, H, k ?? slIdx(sl), prof || slProfile(), safe ?? slSafe());
+  if (window.HC_DECK_ON) return deckRender(sl, W, H, k ?? slIdx(sl), prof || slProfile(), safe ?? slSafe(), step);
   const pr = prof || slProfile(); await slFonts(pr);
   safe ??= slSafe();
   if (safe > 0){   // Folie in den oberen Teil setzen, darunter Fläche in Hintergrundfarbe
-    const ih = Math.round(H * (1 - safe)), inner = await renderSlide(sl, W, ih, k, pr, 0);
+    const ih = Math.round(H * (1 - safe)), inner = await renderSlide(sl, W, ih, k, pr, 0, step);
     const out = document.createElement('canvas'); out.width = W; out.height = H; const c2 = out.getContext('2d');
     c2.fillStyle = slColors(pr, slIsDark(sl, k, pr) || sl.layout === 'vollbild').bg; c2.fillRect(0, 0, W, H); c2.drawImage(inner, 0, 0);
     return out;
@@ -174,7 +174,7 @@ async function renderSlide(sl, W, H, k, prof, safe){
     for (; sz > 2 * u; sz *= 0.93){ ctx.font = INTER(500)(sz); rows = items.map(t => slWrap(ctx, t, maxW - 6 * u)); h = rows.reduce((n, r) => n + r.length * sz * 1.3, 0) + sz * 0.7 * Math.max(0, items.length - 1); if (h <= area) break; }
     ctx.font = INTER(500)(sz); rows = items.map(t => slWrap(ctx, t, maxW - 6 * u));
     const gap = sz * 0.7; y += Math.max(0, (area - h) / 2.5);
-    rows.forEach(r => { ctx.fillStyle = C.acc; ctx.fillRect(px, y + sz * 0.3, sz * 0.5, sz * 0.5); slText(ctx, {lines: r, size: sz}, px + 6 * u, y - sz * 0.1, 1.3, C.fg); y += r.length * sz * 1.3 + gap; });
+    rows.forEach((r, i) => { if (step == null || i < step){ ctx.fillStyle = C.acc; ctx.fillRect(px, y + sz * 0.3, sz * 0.5, sz * 0.5); slText(ctx, {lines: r, size: sz}, px + 6 * u, y - sz * 0.1, 1.3, C.fg); } y += r.length * sz * 1.3 + gap; });
   } else if (L === 'zitat'){
     ctx.font = LORA(700)(30 * u); ctx.fillStyle = C.acc; ctx.textAlign = AL; const qa = ctx.measureText('“').actualBoundingBoxAscent || 21 * u; ctx.fillText('“', CEN ? W / 2 : px - 1.5 * u, py + 1 * u + qa);
     const top = py + 16 * u, area = bottom - top - (sl.title ? 8 * u : 0);
@@ -210,6 +210,7 @@ async function renderSlide(sl, W, H, k, prof, safe){
     const cols = [sl.text || '', sl.text2 || ''], gap = 5 * u;
     const colW = port ? cw : (cw - gap) / 2, colH = port ? (bottom - y - gap) / 2 : bottom - y;
     cols.forEach((t, i) => {
+      if (step != null && i >= step) return;
       const x0 = port ? px : px + i * (colW + gap), y0 = port ? y + i * (colH + gap) : y;
       ctx.fillStyle = C.soft; ctx.fillRect(x0, y0, colW, colH);
       ctx.fillStyle = i === 0 ? C.acc : C.fg; ctx.fillRect(x0, y0, colW, 0.7 * u);
@@ -262,11 +263,135 @@ async function slMedia(sl){
   sl.media = m; sl.mediaKey = key;
   return m;
 }
+// ───────── Aufbau Schritt für Schritt (B4) ─────────
+// Eine Folie mit sl.build erscheint nach und nach: Stichpunkte einzeln, bei „Zwei Seiten“ erst links, dann rechts; mit HoneyDeck
+// (ab 1.3.0) auch Piktogramme, Ablauf, Zeitstrahl, Richtig/Falsch, Kennzahlen und Balken. Eingesetzt ist sie EIN Element mit
+// build = [{t, clip, a?}] – t Sekunden ab Beginn (build[0].t = 0), clip das Bild des Schritts, a = Zeit von selbst verteilt.
+// Die Vorschau wählt das Bild nach der Zeit; der Exportplan macht daraus lückenlos aufeinanderfolgende Bilder derselben Spur.
+const SL_BUILD_KINDS = ['liste', 'zwei', 'icons', 'prozess', 'zeitstrahl', 'checkliste', 'zahlen', 'balken'];
+const slLines = sl => String(sl.text || '').split('\n').map(x => x.trim()).filter(Boolean);
+const slDeckSteps = () => !!(window.HoneyDeck && HoneyDeck.steps);
+function slStepsOf(sl){   // so viele Schritte hat die Folie, wenn sie sich aufbaut (1 = sie erscheint auf einmal)
+  if (window.HC_DECK_ON) return slDeckSteps() ? Math.max(1, HoneyDeck.steps(sl) | 0) : 1;
+  return sl.layout === 'liste' ? Math.max(1, slLines(sl).length) : sl.layout === 'zwei' ? 2 : 1;
+}
+const slStepN = sl => sl.build ? slStepsOf(sl) : 1;
+// Kann die Folienart sich aufbauen, aber die installierte HoneyDeck-Fassung zeichnet noch keine Schritte?
+const slBuildBlocked = sl => !!window.HC_DECK_ON && !slDeckSteps() && SL_BUILD_KINDS.includes(sl.layout);
+const slStepTexts = sl => window.HC_DECK_ON && window.HoneyDeck && HoneyDeck.stepTexts ? HoneyDeck.stepTexts(sl) : sl.layout === 'zwei' ? [sl.text || '', sl.text2 || ''] : slLines(sl);
+// Bilder der Schritte 1 … n (das letzte ist die ganze Folie)
+async function slStepMedia(sl){
+  const full = await slMedia(sl), n = slStepN(sl); if (n < 2) return [full];
+  const key = sl.mediaKey + '|' + n;
+  if (sl.stepMedia && sl.stepKey === key && sl.stepMedia.length === n) return sl.stepMedia;
+  const [W, H] = outSize(), k = slIdx(sl), out = [];
+  for (let j = 1; j < n; j++){
+    const cv = await renderSlide(sl, W, H, k, null, null, j), m = J(TS.saveImage(`folie-${sl.id}-${sl.rev}-s${j}.png`, cv.toDataURL('image/png'), W, H, P.id));
+    if (!m || !m.uri) throw new Error('Folie konnte nicht gespeichert werden');
+    m.name = `Folie ${k + 1} – Schritt ${j} von ${n}.png`; out.push(m);
+  }
+  out.push(full); sl.stepMedia = out; sl.stepKey = key; return out;
+}
+// Gesprochene Wörter des geschnittenen Videos zwischen s und e: [{w, o, ss}] – Wort, Zeit im Ergebnis, Beginn seines Satzes
+function slSpoken(s, e){
+  const out = []; if (!tokens.length) return out; if (order.length !== tokens.length) computeOrder();
+  let ss = null, fresh = true;
+  for (const i of order){ const t = tokens[i]; if (!isTextTok(i) || isCut(i)) continue; const w = tokText(t); if (!w) continue;
+    const o = srcToOut(snapSrc(wS(t))); if (fresh){ ss = o; fresh = false; } if (sentEnd(w)) fresh = true;
+    if (o < s - 0.05) continue; if (o >= e) break;
+    out.push({w: norm(w), o, ss: Math.max(ss, s)}); }
+  return out;
+}
+// Stichworte eines Schritts: die längeren Wörter und Zahlen, ohne Zeichen zum Hervorheben
+function slKeyWords(text){
+  const all = [...new Set(String(text || '').replace(/[*_#]/g, ' ').split(/\s+/).map(norm).filter(Boolean))], key = all.filter(w => w.length >= 5 || /\d/.test(w));
+  return key.length ? key : all;
+}
+// Zeiten der Schritte einer Folie, die von s bis e läuft → [{t, a?}]. Gesucht wird, wo die Stichworte eines Schritts gesprochen
+// werden; der Schritt erscheint mit dem Satz, in dem sie fallen. Schritte ohne Fundstelle liegen gleichmäßig zwischen den anderen.
+function slStepTimes(sl, s, e, n){
+  const D = Math.max(0.2, e - s), ts = new Array(n).fill(null), texts = slStepTexts(sl), words = sl.a != null ? slSpoken(s, e) : [];
+  ts[0] = 0; let from = 0, prev = 0;
+  for (let j = 1; j < n && words.length; j++){
+    const q = slKeyWords(texts[j]); if (!q.length) continue;
+    let best = -1, bs = 0;
+    for (let p = from; p < words.length; p++){ if (!q.includes(words[p].w)) continue;
+      const seen = new Set(); for (let r = p; r < Math.min(words.length, p + Math.max(8, q.length * 3)); r++) if (q.includes(words[r].w)) seen.add(words[r].w);
+      const sc = seen.size / q.length; if (sc > bs + 1e-9){ bs = sc; best = p; } }
+    if (best < 0 || bs < (q.length <= 2 ? 0.5 : 0.34)) continue;
+    let t = words[best].ss - s; if (t < prev + 0.3) t = words[best].o - s - 0.12;   // mehrere Schritte in einem Satz: am Wort selbst
+    if (t < prev + 0.3 || t > D - 0.3) continue;
+    ts[j] = t; prev = t; from = best + 1;
+  }
+  return slSpread(ts.map((t, j) => t == null ? {t: 0, a: 1} : {t: r3(t)}), D);
+}
+// Von selbst verteilte Schritte (a) gleichmäßig zwischen die festen legen; feste bleiben, wo sie sind
+function slSpread(steps, D){
+  steps[0].t = 0; delete steps[0].a;
+  for (let j = 1; j < steps.length; ){
+    if (!steps[j].a){ j++; continue; }
+    let q = j; while (q < steps.length && steps[q].a) q++;
+    const t0 = steps[j - 1].t, t1 = q < steps.length ? steps[q].t : D, m = q - j;
+    for (let i = 0; i < m; i++) steps[j + i].t = r3(t0 + (t1 - t0) * (i + 1) / (m + 1));
+    j = q;
+  }
+  return steps;
+}
+const slDur = it => { const [a, e] = itemOutRange(it); return Math.max(0.2, e - a); };
+function slRetime(it){ if (it.build && it.build.length > 1) slSpread(it.build, slDur(it)); }
+// Bilder (und beim ersten Mal die Zeiten) eines eingesetzten Elements nach dem Stand der Folie setzen
+function slSetClips(it, sl, ms){
+  it.clip = clipOfSource(ms[ms.length - 1]);
+  if (ms.length < 2){ delete it.build; return; }
+  const old = it.build && it.build.length === ms.length ? it.build : null;
+  if (old) old.forEach((b, j) => { b.clip = clipOfSource(ms[j]); });
+  else { const [a, e] = itemOutRange(it); it.build = slStepTimes(sl, a, e, ms.length).map((b, j) => ({...b, clip: clipOfSource(ms[j])})); }
+  slRetime(it);
+}
+// Schritt eines Aufbaus zur Zeit rel (Sekunden ab Beginn) und sein Bild
+function buildAt(it, rel){ const b = it.build; let k = 0; for (let j = 1; j < b.length; j++){ if (rel >= b[j].t - 1e-4) k = j; else break; } return k; }
+const itClip = (it, rel) => it.build && it.build.length > 1 ? it.build[buildAt(it, rel)].clip : it.clip;
+window.itClip = itClip;
+const slPre = new Map();   // Bilder der Schritte vorab laden, damit der Wechsel in der Vorschau ohne Verzögerung kommt
+function slPreload(it){ for (const b of it.build || []){ const u = MEDIA(b.clip.uri); if (!slPre.has(u)){ if (slPre.size > 200) slPre.clear(); const im = new Image(); im.src = u; slPre.set(u, im); } } }
+// Exportplan: aus dem einen Element werden die Bilder der Schritte, lückenlos hintereinander auf derselben Spur
+function buildSteps(o, q){
+  const b = o.x.build; if (!b || b.length < 2) return [q];
+  const edges = []; for (let j = 0; j < b.length; j++){ const t = r3(o.at + (j ? clamp(+b[j].t || 0, 0, o.end - o.at) : 0)); if (j && (t >= o.end - 0.04 || t - edges[edges.length - 1][0] < 0.04)) continue; edges.push([t, j]); }
+  return edges.map(([t, j], n) => { const end = n + 1 < edges.length ? edges[n + 1][0] : r3(o.end), c = b[j].clip;
+    return {...q, uri: c.uri, at: t, in: 0, out: r3(end - t), width: c.width, height: c.height, ...(q.kf ? {kf: q.kf.map(k => ({...k, t: r3(k.t - (t - edges[0][0]))}))} : {})}; });
+}
+// Aufbau an- oder ausschalten (Studio und Folien-Reiter): Die eingesetzten Elemente der Folie ziehen nach
+async function slBuildSet(sl, on){
+  if (on && slBuildBlocked(sl)) return toast('Der Aufbau Schritt für Schritt braucht HoneyDeck ab Version 1.3.0 – bitte HoneyDeck aktualisieren');
+  if (on && slStepsOf(sl) < 2) return toast(SL_BUILD_KINDS.includes(sl.layout) ? 'Die Folie braucht mindestens zwei Einträge' : 'Diese Folienart erscheint auf einmal');
+  commit(() => { if (on) sl.build = true; else delete sl.build; }, false);
+  await slRefresh(sl); if (tlOn() && window.renderTimeline) renderTimeline();
+  toast(on ? `Die Folie baut sich in ${slStepN(sl)} Schritten auf – die Marken im Element zeigen, wann` : 'Die Folie erscheint wieder auf einmal');
+}
+// Den Schritt, der der Abspiellinie am nächsten liegt, genau hierher legen
+function stepHere(it){
+  const a = ovOf(it); if (!a || !it.build) return; const rel = outPos - a.at, D = a.end - a.at;
+  if (rel < 0.15 || rel > D - 0.1) return toast('Abspiellinie in die Folie setzen, hinter ihren Anfang');
+  let k = 1; for (let j = 2; j < it.build.length; j++) if (Math.abs(it.build[j].t - rel) < Math.abs(it.build[k].t - rel)) k = j;
+  commit(() => { const b = it.build; b[k].t = r3(rel); delete b[k].a;
+    for (let j = k - 1; j >= 1; j--) if (b[j].t > b[j + 1].t - 0.1){ b[j].t = r3(Math.max(0.05 * j, b[j + 1].t - 0.1)); }   // Reihenfolge wahren
+    for (let j = k + 1; j < b.length; j++) if (b[j].t < b[j - 1].t + 0.1){ b[j].t = r3(b[j - 1].t + 0.1); }
+    slRetime(it); }, false);
+  if (window.renderTimeline) renderTimeline(); seekOut(outPos, false); toast(`Schritt ${k + 1} von ${it.build.length} beginnt hier`);
+}
+// Zeiten neu aus dem Text holen bzw. gleichmäßig verteilen
+function stepsAuto(it, even){
+  const sl = P.slides.find(s => s.id === it.slide), [a, e] = itemOutRange(it); if (!it.build) return;
+  commit(() => { const ts = even || !sl ? it.build.map((b, j) => j ? {t: 0, a: 1} : {t: 0}) : slStepTimes(sl, a, e, it.build.length); it.build.forEach((b, j) => { b.t = ts[j].t; if (ts[j].a) b.a = 1; else delete b.a; }); slRetime(it); }, false);
+  if (window.renderTimeline) renderTimeline(); seekOut(outPos, false);
+  toast(even || !sl || sl.a == null ? 'Schritte gleichmäßig verteilt' : `Schritte nach dem Text gelegt (${it.build.filter((b, j) => j && !b.a).length} von ${it.build.length - 1} im Text gefunden)`);
+}
 const slItems = sl => P.items.filter(x => x.slide === sl.id);
 // Geänderte Folie: eingesetzte B-Roll-Elemente bekommen das neue Bild
 async function slRefresh(sl){
   if (!slItems(sl).length) return;
-  try { const m = await slMedia(sl); slItems(sl).forEach(it => { it.clip = clipOfSource(m); }); changed(true); seekOut(outPos, false); } catch(e){ toast(e.message); }
+  try { const ms = await slStepMedia(sl); computeOverlays(); slItems(sl).forEach(it => slSetClips(it, sl, ms)); changed(true); seekOut(outPos, false); } catch(e){ toast(e.message); }
 }
 // Alle verknüpften Folien an ihrer Stelle einsetzen (vorher eingesetzte Folien werden ersetzt)
 async function slPlaceAll(){
@@ -274,48 +399,58 @@ async function slPlaceAll(){
   if (!list.length) return toast('Erst Folien mit dem Text verknüpfen (Text markieren → „Neue Folie“ oder „Nur verknüpfen“)');
   toast('Folien werden erzeugt …');
   const gapless = $('#slGapless').checked, medias = [];
-  try { for (const x of list) medias.push(await slMedia(x.sl)); } catch(e){ return toast(e.message); }
+  try { for (const x of list) medias.push(await slStepMedia(x.sl)); } catch(e){ return toast(e.message); }
   commit(() => {
     P.items = P.items.filter(it => !it.slide || !list.some(x => x.sl.id === it.slide));
     computeOverlays();
     const ranges = list.map((x, k) => { const n = list[k + 1], s = x.t.s; let e = gapless && n ? n.t.s : Math.min(total, x.t.e + 1.2); if (!gapless && n) e = Math.min(e, n.t.s); return [s, Math.max(s + 0.5, Math.min(e, total))]; });
     const track = freeTrack(ranges[0][0], ranges[ranges.length - 1][1]);
-    list.forEach((x, k) => { const [s, e] = ranges[k];
-      P.items.push({id: newId(), type: 'broll', slide: x.sl.id, at: r3(outToSrc(s)), clip: clipOfSource(medias[k]), in: 0, out: r3(e - s), track}); });
+    list.forEach((x, k) => { const [s, e] = ranges[k], ms = medias[k];
+      P.items.push({id: newId(), type: 'broll', slide: x.sl.id, at: r3(outToSrc(s)), clip: clipOfSource(ms[ms.length - 1]), in: 0, out: r3(e - s), track,
+        ...(ms.length > 1 ? {build: slStepTimes(x.sl, s, e, ms.length).map((b, j) => ({...b, clip: clipOfSource(ms[j])}))} : {})}); });
   }, true);
   seekOut(outPos, false); renderSlides();
-  toast(`${list.length} Folien als B-Roll eingesetzt – Feinarbeit im Studio`);
+  { const nb = list.filter((x, k) => medias[k].length > 1).length; toast(`${list.length} Folien als B-Roll eingesetzt${nb ? ` – ${nb === 1 ? 'eine baut' : nb + ' bauen'} sich Schritt für Schritt auf` : ''} – Feinarbeit im Studio`); }
 }
 // Studio: nächste Folie ab der Abspiellinie; die laufende endet hier
 async function slNext(){
   if (!P.slides.length) return toast('Noch keine Folien – im Reiter „Folien“ anlegen');
   const t = outPos, open = slOpen && P.items.find(x => x.id === slOpen);
+  if (open && open.build){   // die laufende Folie baut sich auf: N zeigt den nächsten Schritt
+    const j = open.build.findIndex((b, n) => n && b.a), [a] = itemOutRange(open);
+    if (j > 0){
+      if (t - a < open.build[j - 1].t + 0.15) return toast('Die Abspiellinie steht noch vor dem letzten Schritt – weiterspielen, dann N');
+      commit(() => { open.build[j].t = r3(t - a); delete open.build[j].a; slRetime(open); }, true); seekOut(outPos, false);
+      return toast(`Schritt ${j + 1} von ${open.build.length}` + (j + 1 < open.build.length ? ' – N zeigt den nächsten' : ' – die Folie steht ganz; N setzt die nächste Folie ein'));
+    }
+  }
   let k;
   if (open){ k = P.slides.findIndex(s => s.id === open.slide) + 1; }
   else { const placed = P.slides.map((s, i) => slItems(s).length ? i : -1).filter(i => i >= 0); k = placed.length ? Math.max(...placed) + 1 : 0;
     if (k >= P.slides.length) k = P.slides.findIndex(s => !slItems(s).length); }
   if (k < 0 || k >= P.slides.length){ if (open) slClose(); return toast('Alle Folien sind eingesetzt'); }
-  const sl = P.slides[k]; let m;
-  try { m = await slMedia(sl); } catch(e){ return toast(e.message); }
+  const sl = P.slides[k]; let m, ms;
+  try { ms = await slStepMedia(sl); m = ms[ms.length - 1]; } catch(e){ return toast(e.message); }
   let it;
   commit(() => {
     let track = null;
-    if (open){ const [a] = itemOutRange(open); if (t > a + 0.1){ open.out = r3(open.in + (t - a)); track = elTrack(open); } else { P.items = P.items.filter(x => x !== open); track = elTrack(open); } }
+    if (open){ const [a] = itemOutRange(open); if (t > a + 0.1){ open.out = r3(open.in + (t - a)); track = elTrack(open); computeOverlays(); slRetime(open); } else { P.items = P.items.filter(x => x !== open); track = elTrack(open); } }
     computeOverlays();
     const len = Math.max(0.5, total - t);
     if (!track) track = freeTrack(t, t + len);
     it = {id: newId(), type: 'broll', slide: sl.id, at: r3(outToSrc(t)), clip: clipOfSource(m), in: 0, out: r3(len), track};
-    P.items.push(it);
+    if (ms.length > 1) it.build = ms.map((q, j) => ({t: 0, ...(j ? {a: 1} : {}), clip: clipOfSource(q)}));   // die Schritte kommen mit N
+    P.items.push(it); if (it.build){ computeOverlays(); slRetime(it); }
   }, true);
   slOpen = it.id; TL.sel = {kind: 'ovl', id: it.id}; renderTimeline(); seekOut(outPos, false);
-  toast(`Folie ${k + 1} von ${P.slides.length} läuft – weiterspielen oder springen, dann N für die nächste (Umschalt+N beendet)`);
+  toast(it.build ? `Folie ${k + 1} von ${P.slides.length} läuft und baut sich auf – weiterspielen, dann N für jeden der ${it.build.length} Schritte` : `Folie ${k + 1} von ${P.slides.length} läuft – weiterspielen oder springen, dann N für die nächste (Umschalt+N beendet)`);
 }
 function slClose(){
   const open = slOpen && P.items.find(x => x.id === slOpen); slOpen = null;
   if (!open) return toast('Keine laufende Folie');
   const [a] = itemOutRange(open), t = outPos;
   if (t <= a + 0.1) return toast('Abspiellinie hinter den Anfang der Folie setzen');
-  commit(() => { open.out = r3(open.in + (t - a)); }, true); seekOut(outPos, false); toast('Folie endet hier');
+  commit(() => { open.out = r3(open.in + (t - a)); computeOverlays(); slRetime(open); }, true); seekOut(outPos, false); toast('Folie endet hier');
 }
 
 // ───────── Designprofile: Auswahl und Bearbeitung ─────────
@@ -450,6 +585,7 @@ function renderSlEdit(){
     <div class="sl-fields">${L.f.map(f => f === 'img'
       ? `<div class="field"><span>${lbl(f)}</span><div class="row wrap"><button class="btn small" id="slImgPick">${sl.img ? 'Anderes Bild …' : 'Bild wählen …'}</button>${sl.img ? '<button class="btn small ghost" id="slImgDel">entfernen</button>' : ''}</div></div>`
       : `<label class="field"><span>${lbl(f)}</span>${f === 'text' || f === 'text2' ? `<textarea data-f="${f}" rows="${sl.layout === 'liste' || f === 'text2' || sl.layout === 'zwei' ? 4 : 3}"></textarea>` : `<input type="text" data-f="${f}">`}</label>`).join('')}</div>
+    ${slStepsOf(sl) > 1 ? `<label class="row small sl-build"><input type="checkbox" id="slBuild"${sl.build ? ' checked' : ''}> Schritt für Schritt aufbauen (${slStepsOf(sl)} Schritte, passend zum gesprochenen Text)</label>` : ''}
     <div class="sl-link muted small">${t ? `⛓ verknüpft mit „${esc(slWords(sl.a, sl.b).slice(0, 120))}“ · ${fmtS(t.s)} – ${fmtS(t.e)} <button class="btn small ghost" id="slUnlink">lösen</button> <button class="btn small ghost" id="slJump">▶ anhören</button>` : 'nicht mit dem Text verknüpft – im Studio mit N einsetzen oder unten markieren und „⛓ Nur verknüpfen“'}</div>`;
   box.querySelectorAll('[data-f]').forEach(inp => { inp.value = sl[inp.dataset.f] || ''; });
   const th = sl.dark == null ? 'auto' : sl.dark ? 'dark' : 'light'; box.querySelectorAll('#slTheme button').forEach(b => b.classList.toggle('on', b.dataset.v === th));
@@ -524,7 +660,7 @@ $('#paneSlides').addEventListener('click', async e => {
     commit(() => {
       if (a === 'up' && k > 0) P.slides.splice(k - 1, 0, P.slides.splice(k, 1)[0]);
       if (a === 'down' && k < P.slides.length - 1) P.slides.splice(k + 1, 0, P.slides.splice(k, 1)[0]);
-      if (a === 'dup'){ const c = {...JSON.parse(JSON.stringify(sl)), id: newId(), a: null, b: null}; delete c.media; delete c.mediaKey; P.slides.splice(k + 1, 0, c); slCur = c; }
+      if (a === 'dup'){ const c = {...JSON.parse(JSON.stringify(sl)), id: newId(), a: null, b: null}; delete c.media; delete c.mediaKey; delete c.stepMedia; delete c.stepKey; P.slides.splice(k + 1, 0, c); slCur = c; }
       if (a === 'del'){ P.slides.splice(k, 1); P.items = P.items.filter(x => x.slide !== sl.id); if (slCur === sl) slCur = P.slides[Math.min(k, P.slides.length - 1)] || null; }
     }, a === 'del'); renderSlides(); return; }
   const l = e.target.closest('[data-l]'); if (l && slCur){ commit(() => slCur.layout = l.dataset.l, false); slChanged(slCur, true); return; }
@@ -534,6 +670,7 @@ $('#paneSlides').addEventListener('click', async e => {
   if (e.target.id === 'slUnlink' && slCur){ commit(() => { slCur.a = slCur.b = null; }, false); renderSlides(); return; }
   if (e.target.id === 'slJump' && slCur){ const t = slTimes(slCur); if (t){ seekOut(Math.max(0, t.s - 0.3), false); startPlay(); stopAt = t.e + 0.3; } return; }
 });
+$('#slEdit').addEventListener('change', e => { if (e.target.id === 'slBuild' && slCur) slBuildSet(slCur, e.target.checked); });
 $('#slEdit').addEventListener('focusin', e => { if (e.target.dataset.f) e.target._b = snapshot(); });
 $('#slEdit').addEventListener('input', e => { const f = e.target.dataset.f; if (!f || !slCur) return; slCur[f] = e.target.value; slChanged(slCur); });
 $('#slEdit').addEventListener('focusout', e => { if (e.target._b && e.target._b !== snapshot()){ undo.push(e.target._b); redo = []; } e.target._b = null; const it = document.querySelector(`.sl-item[data-id="${slCur && slCur.id}"]`); if (it) slThumb(slCur, it.querySelector('img')); });
@@ -570,4 +707,4 @@ document.addEventListener('keydown', e => {
   const tag = document.activeElement?.tagName; if (tag === 'TEXTAREA' || tag === 'INPUT' || tag === 'SELECT') return;
   if (e.key === 'n' || e.key === 'N'){ e.preventDefault(); if (e.shiftKey) slClose(); else slNext(); }
 });
-if (typeof KEYS !== 'undefined') KEYS.push(['N / Umschalt + N', 'nächste Folie ab der Abspiellinie als B-Roll / laufende Folie beenden']);
+if (typeof KEYS !== 'undefined') KEYS.push(['N / Umschalt + N', 'nächste Folie ab der Abspiellinie als B-Roll – bei einer Folie, die sich aufbaut: der nächste Schritt / laufende Folie beenden']);

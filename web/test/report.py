@@ -17,7 +17,7 @@ def decodes(f):
     return r.stderr.strip()[:300]
 
 total = exp.get("total")
-for name in ("out.mp4", "out-ton.mp4", "out.mp3", "out.wav"):
+for name in ("out.mp4", "out-ton.mp4", "out-belege.mp4", "out.mp3", "out.wav"):
     f = OUT / name
     if not f.exists():
         checks.append((name, False, "fehlt")); continue
@@ -62,6 +62,43 @@ try:
             notes.append(f"- {'ℹ️' if abs(d) < 6 else '⚠️'} Stimme aufbereiten an der Sprachausgabe: Sprache {a[0]:.1f} → {b[0]:.1f} dB ({d:+.1f}), leiseste Stellen {a[1]:.1f} → {b[1]:.1f} dB")
 except Exception as e:
     notes.append(f"- ℹ️ Pegelvergleich nicht möglich: {str(e)[:150]}")
+
+# Belege im Bild: Form, Bereich und Balken im fertigen Video – am Bild nachgemessen (reine Auskunft; den Plan und den Export prüft der Test)
+try:
+    bj = OUT / "belege.json"
+    if bj.exists() and (OUT / "out-belege.mp4").exists() and (OUT / "out-ton.mp4").exists():
+        from PIL import Image
+        bel = json.loads(bj.read_text())
+        ms = {m["type"]: m for m in bel.get("marks", [])}
+        t = max(m["at"] for m in ms.values()) + 1.0
+
+        def grab(src, name):
+            subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", f"{t:.2f}", "-i", str(OUT / src), "-frames:v", "1", str(OUT / name)], check=True)
+            return Image.open(OUT / name).convert("RGB")
+        a, b = grab("out-ton.mp4", "frame-ohne.png"), grab("out-belege.mp4", "frame-belege.png")
+        w, h = b.size
+
+        def rough(im, box):   # mittlerer Unterschied waagerecht benachbarter Pixel: hoch = Einzelheiten, niedrig = gemittelt
+            px = im.crop(box).convert("L"); cw, ch = px.size; d = list(px.getdata())
+            return sum(abs(d[y * cw + x] - d[y * cw + x + 1]) for y in range(ch) for x in range(cw - 1)) / max(1, ch * (cw - 1))
+        bl = ms.get("blur")
+        if bl:
+            bw = bl["w"] * w; bh = bw / bl["ar"]
+            box = tuple(int(v) for v in (bl["x"] * w - bw * 0.4, bl["y"] * h - bh * 0.4, bl["x"] * w + bw * 0.4, bl["y"] * h + bh * 0.4))
+            r0, r1 = rough(a, box), rough(b, box)
+            notes.append(f"- {'ℹ️' if r1 < r0 * 0.6 or r0 < 1 else '⚠️'} Unkenntlich machen: Einzelheiten im Bereich {r0:.1f} → {r1:.1f} (mittlerer Unterschied benachbarter Pixel)")
+        sh = ms.get("shape")
+        if sh:
+            sw = sh["w"] * w; shh = sw / sh["ar"]
+            reg = b.crop(tuple(int(v) for v in (sh["x"] * w - sw / 2 - 4, sh["y"] * h - shh / 2 - 4, sh["x"] * w + sw / 2 + 4, sh["y"] * h + shh / 2 + 4))).getdata()
+            yel = sum(1 for r, g, bb in reg if r > 200 and g > 170 and bb < 140)
+            notes.append(f"- {'ℹ️' if yel > 300 else '⚠️'} Form: {yel} gelbe Pixel am Rahmen")
+        row = [b.getpixel((x, h - 3)) for x in range(w)]
+        green = [x for x, (r, g, bb) in enumerate(row) if g > r + 30 and g > bb + 20]
+        want = t / float(bel.get("total") or 1) * w
+        notes.append(f"- {'ℹ️' if green and abs(green[-1] - want) < w * 0.03 else '⚠️'} Fortschrittsbalken: Kante bei {green[-1] if green else '–'} px (erwartet etwa {want:.0f} von {w})")
+except Exception as e:
+    notes.append(f"- ℹ️ Belege im Bild nicht nachgemessen: {str(e)[:150]}")
 
 lines = ["### Web-Version: Browser-Test", f"Browser: {res.get('browser')} {res.get('browserVersion', '')}", ""]
 ok_all = True

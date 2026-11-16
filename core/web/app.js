@@ -1105,7 +1105,7 @@ function tokMarks(){ const o = {}; for (const t of tokens) if (t.spk || t.ks || 
 // Zum Stand gehören auch Format, Bildausschnitt und die Lautstärke der Hauptvideos (fm, fr, sv). Sie fehlten: „Rückgängig“
 // nach einem Formatwechsel, nach dem Verschieben des Ausschnitts oder nach „Alle angleichen“ tat nichts bzw. nur die Hälfte.
 function snapshot(){ return JSON.stringify({d:[...deleted], t:P.trims, c:P.cues, i:P.items, a:P.adj, x:P.dels, y:P.splits, s:P.sub_style, e:P.edits, m:P.moves, k:P.speakers, w:tokMarks(), f:P.slides, wm:P.watermark || null, tr:P.trans || null,
-  fm:P.format || null, fr:P.frame || null, sv:P.sources.map(x => x.vol == null ? null : x.vol), mk:P.marks || [], tl:P.textline || null, rf:P.refs || [], ss:P.srcStyle || null, lw:P.lower || null, cl:P.clipList || [], pt:P.part || null, ps:P.partStyle || null, au:P.audio || null, ck:P.checks || [], kw:P.kw || []}); }
+  fm:P.format || null, fr:P.frame || null, sv:P.sources.map(x => x.vol == null ? null : x.vol), mk:P.marks || [], tl:P.textline || null, rf:P.refs || [], ss:P.srcStyle || null, lw:P.lower || null, cl:P.clipList || [], pt:P.part || null, ps:P.partStyle || null, au:P.audio || null, pg:P.progress || null, ck:P.checks || [], kw:P.kw || []}); }
 function restore(s){ const o = JSON.parse(s); deleted = new Set(o.d); P.trims = o.t; P.cues = o.c; P.items = o.i; P.adj = o.a; P.dels = o.x || []; P.splits = o.y || [];
   if (o.s) P.sub_style = o.s; P.edits = o.e || {}; P.moves = o.m || [];
   const fmCh = 'fm' in o && (P.format || null) !== (o.fm || null), frCh = 'fr' in o && JSON.stringify(P.frame || null) !== JSON.stringify(o.fr || null);
@@ -1123,6 +1123,7 @@ function restore(s){ const o = JSON.parse(s); deleted = new Set(o.d); P.trims = 
   const psCh = 'ps' in o && JSON.stringify(P.partStyle || null) !== JSON.stringify(o.ps || null);
   if ('pt' in o){ if (o.pt) P.part = o.pt; else delete P.part; } if ('ps' in o){ if (o.ps) P.partStyle = o.ps; else delete P.partStyle; }
   if ('au' in o){ if (o.au) P.audio = o.au; else delete P.audio; }
+  if ('pg' in o){ if (o.pg) P.progress = o.pg; else delete P.progress; }
   if ('ck' in o) P.checks = o.ck || [];
   if ('kw' in o) P.kw = o.kw || [];
   if (o.f) P.slides = o.f; if (o.k) P.speakers = o.k;
@@ -1133,7 +1134,7 @@ function restore(s){ const o = JSON.parse(s); deleted = new Set(o.d); P.trims = 
   if (lowerSheetOpen()) paintLowerSheet(); if (tab === 'subs') renderSpeakers();
   if (mkCh){ paintMarksBtn(); if (marksSheetOpen()) renderMarksSheet(); }
   if (clCh){ paintClipsBtn(); if (clipsSheetOpen()) renderClipsSheet(); }
-  if (joinSheetOpen()) paintJoinSheet();
+  if (joinSheetOpen()) paintJoinSheet(); if (markSheetOpen()) paintMarkSheet(); if (progSheetOpen()) paintProgSheet();
   partChanged(true); if (psCh) partSyncLater();
   chkChanged();
   if (fmCh || frCh) frameRestored(fmCh); }
@@ -1206,7 +1207,8 @@ function changed(rerender = true){
   resyncPlay(anchor);
   if (rerender){ if (tab === 'subs') renderSubs(); if (tlOn() && window.renderStudio) renderStudio(); }
   else if (tab === 'subs') updateSubsList();
-  cueCache.at = -1; if (!playing){ updateSubs(outPos); viewSrcLine(); viewLower(); viewPart(); }   // Quellenzeile, Bauchbinde und Kennzeichnung der Reihe folgen dem Schnitt
+  cueCache.at = -1; if (!playing){ updateSubs(outPos); viewSrcLine(); viewLower(); viewPart(); viewProgress();   // Quellenzeile, Bauchbinde und Kennzeichnung der Reihe folgen dem Schnitt
+    if (marks.length || $('#shapeOv').firstChild || $('#blurOv').firstChild) updateOverlay(outPos); }   // Formen und Bereiche ebenso (auch nach dem Löschen und nach „Rückgängig“)
   if (tab === 'export') renderExport(); else if (tab === 'clip') renderLenLights(); else if (tab === 'subs') a11yLater();
   textLater(); if (refsAll().length || lowerSheetOpen()) refsLater(); if (clipsSheetOpen()) clipsLater();
   clearTimeout(saveT); $('#saved').textContent = '…'; saveT = setTimeout(saveNow, 700);
@@ -1518,7 +1520,7 @@ function zoomAt(src){
   return {s, cx, cy};
 }
 function recompute(noTL){
-  computeRanges(); computePieces(); computeOrder(); buildTimeline(); syncLinks(); computeOverlays(); computeAudios(); computeJoins(); drawScrub();
+  computeRanges(); computePieces(); computeOrder(); buildTimeline(); syncLinks(); computeOverlays(); computeMarks(); computeAudios(); computeJoins(); drawScrub();
   refMemo = null; lowerMemo = null; lowerRects.clear(); clipTokMemo = null; audioDirty();   // Quellenzeilen, Bauchbinden und vorgemerkte Abschnitte folgen dem Schnitt
   if (!noTL && !tlHold && tlOn() && window.renderTimeline) renderTimeline();
   setText($('#tTot'), fmtT(total)); setText($('#sideTot'), fmtT(total));
@@ -1700,6 +1702,7 @@ function loopStep(){
     }
   }
   if (keyLayers.size || vKey || (P && timeline.length && mainKeyOf(timeline[curSeg]))) drawKeyFrames();
+  if (blurLive && P) blurPaint();   // unkenntlich gemachte Bereiche folgen jedem Bild
 }
 // Die Schleife darf nie abreißen: Ein Fehler in einem einzelnen Durchlauf wurde früher nicht abgefangen – danach lief zwar
 // das Video weiter, aber Zeitanzeige, Schnitte und Einblendungen standen still, bis das Programm neu gestartet wurde.
@@ -1727,7 +1730,8 @@ const PIP_M = 0.03;
 // Zuschnitt eines Elements: crop = {l, t, r, b} (Anteile, die links/oben/rechts/unten wegfallen)
 const cropOf = it => { const c = it && it.crop; return c ? {l: c.l || 0, t: c.t || 0, r: c.r || 0, b: c.b || 0} : {l: 0, t: 0, r: 0, b: 0}; };
 const hasCrop = it => { const c = cropOf(it); return c.l + c.t + c.r + c.b > 0.0005; };
-const elAspect = it => { const c = cropOf(it); return clipAspect(it.clip) * Math.max(0.02, 1 - c.l - c.r) / Math.max(0.02, 1 - c.t - c.b); };
+const elAspect = it => { if (!it.clip) return (PipDrag.on && PipDrag.it === it && PipDrag.ar) || Math.max(0.02, +it.ar || 1);   // Formen und Bereiche: eigenes Seitenverhältnis
+  const c = cropOf(it); return clipAspect(it.clip) * Math.max(0.02, 1 - c.l - c.r) / Math.max(0.02, 1 - c.t - c.b); };
 const lerp = (a, b, f) => a + (b - a) * f;
 function kfAt(kf, rel){
   const n = kf.length; if (rel <= kf[0].t) return kf[0]; if (rel >= kf[n-1].t) return kf[n-1];
@@ -1735,6 +1739,14 @@ function kfAt(kf, rel){
   return kf[n-1];
 }
 // Werte zum Zeitpunkt rel; null = Vollbild (B-Roll füllt das Bild)
+// Keyframes eines Elements für den Exportplan: alle bis zu seinem Ende (d Sekunden). Liegt einer dahinter – etwa nach dem Kürzen
+// oder weil das Video vorher endet –, schließt die Bewegung am Ende mit dem Wert, den die Vorschau dort zeigt. Vorher fiel er
+// weg, und im Export blieb das Element am letzten Keyframe davor stehen.
+function kfPlan(kf, d){
+  const ks = (kf || []).slice().sort((a, b) => a.t - b.t), out = ks.filter(k => k.t <= d + 0.01).map(k => ({t: k.t, x: k.x, y: k.y, w: k.w}));
+  if (ks.length > out.length && (!out.length || d - out[out.length - 1].t > 0.01)){ const v = kfAt(ks, d); out.push({t: r3(d), x: r3(v.x), y: r3(v.y), w: r3(v.w)}); }
+  return out;
+}
 function elVals(it, rel){
   if (it.kf && it.kf.length) return kfAt(it.kf, rel);
   if (it.w != null) return {x: it.x, y: it.y, w: it.w};
@@ -1771,7 +1783,7 @@ function pipCorner(it, c){
   const v = {w: v0.w, x: c === 'mm' ? 0.5 : (c[1] === 'l' ? m + pw / 2 : W - m - pw / 2) / W, y: c === 'mm' ? 0.5 : (c[0] === 'o' ? m + ph / 2 : H - m - ph / 2) / H};
   setElVals(it, curRel(it), v); if (c !== 'mm') it.corner = c;
 }
-const ovOf = it => overlays.find(o => o.x === it);
+const ovOf = it => overlays.find(o => o.x === it) || marks.find(m => m.x === it);
 function curRel(it){ const a = ovOf(it); return a ? clamp(outPos - a.at, 0, a.end - a.at) : 0; }
 // Keyframe an der Abspiellinie setzen bzw. entfernen
 function toggleKeyframe(it){
@@ -2011,7 +2023,7 @@ function restoreClip(it){ const c = it.clip; if (!c || !c.orig) return; const m 
 function releaseMedia(el){ if (!el || !el.dataset.src) return; try { el.pause(); } catch(_){} el.removeAttribute('src'); delete el.dataset.src; if (el.load) try { el.load(); } catch(_){} }
 const PRELOAD_S = 2.5;   // so viele Sekunden vorher wird eine Einblendung geladen
 let curPip = null, pipTarget = null, layerOrder = '';
-function selOvlId(){ return typeof TL !== 'undefined' && TL.sel && (TL.sel.kind === 'ovl') ? TL.sel.id : null; }
+function selOvlId(){ return typeof TL !== 'undefined' && TL.sel && (TL.sel.kind === 'ovl' || TL.sel.kind === 'mark') ? TL.sel.id : null; }
 // ── Wasserzeichen: ein Bild, das über die ganze Länge im Bild liegt (P.watermark), ohne eigene Spur ──
 // pos: o/m/u (oben/mitte/unten) + l/m/r; size und margin als Anteil der kürzeren Bildseite, op = Deckkraft
 const WM_DEF = {pos: 'or', size: 0.16, margin: 0.035, op: 0.85, on: true};
@@ -2238,7 +2250,7 @@ function updateOverlay(o){
   const order = act.map(a => a.x.id).join(',');
   if (order !== layerOrder){ layerOrder = order; act.forEach(a => $('#stage').insertBefore(layerFor(a.x), $('#pipBox'))); }
   act.forEach((a, k) => {
-    const it = a.x, el = layerFor(it), url = MEDIA(it.clip.uri);
+    const it = a.x, el = layerFor(it), url = MEDIA(itClip(it, o - a.at).uri); if (it.build) slPreload(it);
     if (el.dataset.src !== url){ el.src = url; el.dataset.src = url; }
     if (el.classList.contains('hidden')) el.classList.remove('hidden');
     const v = PipDrag.on && PipDrag.it === it ? PipDrag : elVals(it, o - a.at), r = elRect(it, v, W, H) || (hasCrop(it) || Crop.it === it ? elRect(it, coverVals(it), W, H) : null);
@@ -2249,8 +2261,9 @@ function updateOverlay(o){
     if (playing && el.paused) el.play().catch(() => {}); if (!playing && !el.paused) el.pause();
   });
   updateAudio(o); updateJoin(o); placeDeco(act, o, W, H); placeWatermark(W, H); placeTextline(W, H); placeSrcLine(W, H, o); placeLower(W, H, o); placePart(W, H, o);
-  // Griffe: am ausgewählten Element, sonst am obersten
-  const sel = selOvlId(), mainSel = typeof TL !== 'undefined' && TL.sel && TL.sel.kind === 'main', tgt = act.find(a => a.x.id === sel) || (mainSel ? null : act[act.length - 1]) || null;   // Hauptclip ausgewählt: Rahmen am Hauptbild
+  const actM = placeMarks(o, W, H); placeProgress(W, H, o);
+  // Griffe: am ausgewählten Element (auch Form oder Bereich), sonst am obersten
+  const sel = selOvlId(), mainSel = typeof TL !== 'undefined' && TL.sel && TL.sel.kind === 'main', tgt = act.find(a => a.x.id === sel) || actM.find(a => a.x.id === sel) || (mainSel ? null : act[act.length - 1]) || null;   // Hauptclip ausgewählt: Rahmen am Hauptbild
   curPip = tgt ? tgt.x : null; pipTarget = tgt;
   placeBox(W, H);
 }
@@ -2419,15 +2432,16 @@ function resetCrop(){ if (Crop.it){ Crop.cur = {l:0, t:0, r:0, b:0}; Crop.ratio 
   box.addEventListener('dblclick', e => { e.stopPropagation(); endCrop(true); });
 })();
 const PipDrag = {on:false};
-$('#pipBox').addEventListener('pointerdown', e => {
+$('#pipBox').addEventListener('pointerdown', e => pipDragStart(e, e.target.classList.contains('pip-h') ? 'size' : 'move'));
+function pipDragStart(e, mode){
   if (!curPip && !mainBoxOn()) return; e.preventDefault(); e.stopPropagation(); $('#pipBox').setPointerCapture(e.pointerId);
   if (playing) pausePlay(); if (PipDrag.pinchT) return;
-  const st = $('#stage').getBoundingClientRect(), W = st.width, H = st.height, mode = e.target.classList.contains('pip-h') ? 'size' : 'move';
+  const st = $('#stage').getBoundingClientRect(), W = st.width, H = st.height;
   if (!curPip){ const f = mainFx(); Object.assign(PipDrag, {on:true, main:true, it:null, moved:false, mode, x0:e.clientX, y0:e.clientY, stx:f.tx, sty:f.ty, ssc:f.sc, tx:f.tx, ty:f.ty, sc:f.sc}); return; }
   const it = curPip, rel = outPos - pipTarget.at, v = elVals(it, rel) || coverVals(it), r = elRect(it, v, W, H) || {cx: W / 2, cy: H / 2, w: v.w * W, h: v.w * W / elAspect(it)};
-  Object.assign(PipDrag, {on:true, main:false, moved:false, it, rel, mode, x0:e.clientX, y0:e.clientY,
+  Object.assign(PipDrag, {on:true, main:false, moved:false, it, rel, mode, x0:e.clientX, y0:e.clientY, ar: null, sh: r.h,
     sx: r.cx / W, sy: r.cy / H, sw: r.w / W, left: r.cx - r.w / 2, top: r.cy - r.h / 2, x: r.cx / W, y: r.cy / H, w: r.w / W, clip: it.clip});
-});
+}
 $('#pipBox').addEventListener('pointermove', e => {
   const g = PipDrag; if (!g.on || g.pinchT) return; const st = $('#stage').getBoundingClientRect(), W = st.width, H = st.height;
   const dx = e.clientX - g.x0, dy = e.clientY - g.y0; if (Math.abs(dx) + Math.abs(dy) > 3) g.moved = true;
@@ -2442,6 +2456,10 @@ $('#pipBox').addEventListener('pointermove', e => {
     // Kanten rasten am Bildrand ein (z. B. Oberkante eines hohen Bildes genau oben)
     for (const e of [0, 1]){ if (Math.abs(x - hw - e) < 0.015) x = e + hw; else if (Math.abs(x + hw - e) < 0.015) x = e - hw; if (Math.abs(y - hh - e) < 0.015) y = e + hh; else if (Math.abs(y + hh - e) < 0.015) y = e - hh; }
     x = clamp(x, 0.04 - hw, 0.96 + hw); y = clamp(y, 0.04 - hh, 0.96 + hh); g.x = x; g.y = y; }
+  else if (isMark(g.it) && !e.shiftKey){   // Form oder Bereich: Breite und Höhe frei (Umschalt hält das Seitenverhältnis)
+    const mn = Math.min(W, H) * 0.02, pw = clamp(dx + g.sw * W, mn, W * 20); let ph = clamp(dy + g.sh, mn, H * 20);
+    if (Math.abs(pw / ph - 1) < 0.06 && (g.it.kind === 'ellipse' || g.it.form === 'ellipse' || g.it.kind === 'rect')) ph = pw;   // nahe am Quadrat bzw. Kreis: einrasten
+    g.ar = pw / ph; g.w = pw / W; g.x = (g.left + pw / 2) / W; g.y = (g.top + ph / 2) / H; }
   else { const a = elAspect(g.it); let pw = Math.max(dx + g.sw * W, W * 0.03, (dy + g.sw * W / a) * a); pw = Math.min(pw, W * 20);
     g.w = pw / W; g.x = (g.left + pw / 2) / W; g.y = (g.top + pw / a / 2) / H; }
   $('#stage').classList.toggle('snap-x', g.mode === 'move' && g.x === 0.5);
@@ -2453,7 +2471,7 @@ function endPipDrag(){
   if (g.main){ const sg = timeline[TL.sel.i];
     commit(() => setMainVals(sg, {tx: g.tx, ty: g.ty, sc: g.sc}), false);
     seekOut(outPos, false); if (window.renderTimeline && mainKf(sg)) renderTimeline(); toast(`Hauptbild: ${Math.round(g.sc * 100)} %` + (mainKf(sg) ? ' · Keyframe' : '')); return; }
-  const it = g.it; commit(() => setElVals(it, g.rel, {x: g.x, y: g.y, w: g.w}), false);
+  const it = g.it, ar = g.ar; g.ar = null; commit(() => { if (ar && isMark(it)) it.ar = +clamp(ar, 0.02, 50).toFixed(4); setElVals(it, g.rel, {x: g.x, y: g.y, w: g.w}); }, false);
   seekOut(outPos, false); if (sheetItem === it) paintItem();
   toast(`Größe ${Math.round(g.w * 100)} % der Bildbreite` + (it.kf && it.kf.length ? ' · Keyframe' : ''));
 }
@@ -2531,7 +2549,7 @@ $('#titleOv').addEventListener('pointerup', endTitleDrag);
 $('#titleOv').addEventListener('pointercancel', endTitleDrag);
 $('#titleOv').addEventListener('click', e => e.stopPropagation());
 $('#titleOv').addEventListener('dblclick', e => { const el = e.target.closest('.titlebox'); if (el && window.editTitle) editTitle(el.dataset.id); });
-function hideOverlay(){ curPip = null; pipTarget = null; allLayers(el => { if (el.pause) el.pause(); el.classList.add('hidden'); }); placeBox(); }
+function hideOverlay(){ curPip = null; pipTarget = null; allLayers(el => { if (el.pause) el.pause(); el.classList.add('hidden'); }); $('#shapeOv').textContent = ''; $('#blurOv').textContent = ''; blurLive = false; placeBox(); }
 const cssFilter = fx => !fx ? '' : [fx.bright ? `brightness(${(1 + fx.bright).toFixed(3)})` : '', fx.contrast ? `contrast(${(1 + fx.contrast).toFixed(3)})` : '', fx.sat ? `saturate(${(1 + fx.sat / 100).toFixed(3)})` : '', fx.gray ? 'grayscale(1)' : ''].filter(Boolean).join(' ');
 function applySegFx(g){
   const fx = g && g.kind === 'main' ? g.fx : null;
@@ -5305,6 +5323,7 @@ function coverDraw(cv, o){
   const lw = $('#lowerOv img'); if (lw && lw.complete && lw.naturalWidth) draw(lw, box(lw), 'fill');
   const pv = $('#partOv img'); if (pv && pv.complete && pv.naturalWidth) draw(pv, box(pv), 'fill');
   const wm = $('#wm'); if (shown(wm)){ ctx.globalAlpha = clamp(+wm.style.opacity || 1, 0, 1); draw(wm, box(wm), 'fill'); ctx.globalAlpha = 1; }
+  coverMarks(cv);   // unkenntlich gemachte Bereiche und Formen gehören auch ins Titelbild
   // Schrift aus dem Video: Titel, Textzeile, Untertitel – dieselben Angaben wie im Export
   if (o.titles || o.subs){
     const plan = buildPlan(true), sub = plan.subs, sty = (sub && sub.style) || {};
@@ -5409,7 +5428,7 @@ function openCover(){
 $('#coverBtn').onclick = openCover; $('#clipCover').onclick = openCover;
 
 // ───────── Elemente (Clips, Zoom) ─────────
-const TYPE_LBL = {broll:'B-Roll', insert:'Einschub', pip:'Einblendung', zoom:'Zoom', fx:'Anpassung', title:'Titel', audio:'Ton'};
+const TYPE_LBL = {broll:'B-Roll', insert:'Einschub', pip:'Einblendung', zoom:'Zoom', fx:'Anpassung', title:'Titel', audio:'Ton', shape:'Form', blur:'Unkenntlich'};
 let sheetItem = null, pinMode = false;
 function openSheet(passive){ $('#sheet').classList.remove('hidden'); $('#sheet').classList.toggle('passive', !!passive); $('#sheetBack').classList.toggle('hidden', !!passive); }
 function openItem(id){
@@ -5493,6 +5512,7 @@ function openItem(id){
 }
 function paintItem(){
   const it = sheetItem; if (!it) return;
+  if (isMark(it)) return paintMarkSheet();
   $$('#sheet .seg-ctl button').forEach(b => { const id = b.parentElement.id; const v = b.dataset.v;
     b.classList.toggle('on', (id === 'zKind' && it.kind === v) || (id === 'cMode' && it.type === v) || (id === 'cCorner' && it.w == null && it.corner === v) || (id === 'cSplit' && splitOf(it) === v) || (id === 'cDuck' && duckRole(it) === v)); });
   if (it.type === 'zoom'){ $('#zStr').value = it.strength; $('#zStrV').textContent = it.strength.toFixed(2).replace('.', ',') + '×'; $('#zDur').textContent = it.dur.toFixed(1).replace('.', ',') + ' s'; $('#zAt').textContent = fmtS(srcToOut(snapSrc(it.at)));
@@ -5583,16 +5603,17 @@ function planSeg(g, a, b, vo){
     ...(vo && s.hasAudio !== false && !s.noAudio ? {voice: voicePlan(g)} : {})};
 }
 function buildPlan(dry){   // dry: nur nachsehen (z. B. für das Titelbild) – es werden keine Bilder abgelegt
-  const [W, H] = outSize(), dk = dry ? null : duckPlan(), vo = !dry && voiceExport(), jn = dry ? null : joinPlan();
+  const [W, H] = outSize(), dk = dry ? null : duckPlan(), vo = !dry && voiceExport(), jn = dry ? null : joinPlan(), bl = exFmt === 'video' ? blurPlan(W, H, dry) : [];
   const segs = timeline.map(g => planSeg(g, g.in, g.out, vo));
-  const ovs = overlays.map(o => ({mode:o.x.type, image: isImg(o.x.clip), uri:o.x.clip.uri, in:o.x.in, out:r3(o.x.in + (o.end - o.at)), at:r3(o.at), corner:o.x.corner || 'or', size:o.x.size || 0.33,
+  const ovs = overlays.flatMap(o => buildSteps(o, {mode:o.x.type, image: isImg(o.x.clip), uri:o.x.clip.uri, in:o.x.in, out:r3(o.x.in + (o.end - o.at)), at:r3(o.at), corner:o.x.corner || 'or', size:o.x.size || 0.33,
     ...(o.x.w != null || (o.x.kf && o.x.kf.length) || hasCrop(o.x) ? (() => { const v = elVals(o.x, 0) || coverVals(o.x); return {x:r3(v.x), y:r3(v.y), w:r3(v.w)}; })() : {}),
-    ...(o.x.kf && o.x.kf.length ? {kf: o.x.kf.filter(k => k.t <= o.end - o.at + 0.01).map(k => ({t:k.t, x:k.x, y:k.y, w:k.w}))} : {}),
+    ...(o.x.kf && o.x.kf.length ? {kf: kfPlan(o.x.kf, o.end - o.at)} : {}),
     ...(hasCrop(o.x) ? {crop: (c => ({l:r3(c.l), t:r3(c.t), r:r3(c.r), b:r3(c.b)}))(cropOf(o.x))} : {}),
     ...(keyOn(o.x.key) ? {key: planKey(o.x.key, false)} : {}),
     aspect:+elAspect(o.x).toFixed(5), track: elTrack(o.x), vol:+(o.x.vol || 0), hasAudio: o.x.clip.hasAudio !== false && !isImg(o.x.clip),
     width:o.x.clip.width, height:o.x.clip.height, rotation:o.x.clip.rotation || 0}))
     .concat(dry ? [] : decoPlan(W, H)).concat(dry ? [] : lowerPlan(W, H)).concat(dry ? [] : partPlan(W, H)).concat(wmPlan(W, H))
+    .concat(dry ? [] : markPlan(W, H)).concat(dry ? [] : progPlan(W, H))
     .concat(audios.map(a => ({mode:'audio', image:false, uri:a.x.clip.uri, in:r3(a.x.in), out:r3(a.x.in + (a.end - a.at)), at:r3(a.at), track:a.x.track || 1, vol:+(a.x.vol ?? 1), hasAudio:true, ...(dk && ducks(a.x) ? {duck: true} : {})})));
   const cl = S().enabled !== false && P.cues.length ? computedCues() : [], ctr = trTexts(cl), emo = [];
   const cues = cl.length ? cl.map((x, k) => { const [cx, cy0] = cueXY(x.c), sy = x.c.x == null && window.subSlideY ? subSlideY(x.s, x.e) : null, cy = sy ?? cy0, o = {start:r3(x.s), end:r3(x.e), text:wrapText(x.text), x:cx, y:cy};
@@ -5612,7 +5633,7 @@ function buildPlan(dry){   // dry: nur nachsehen (z. B. für das Titelbild) – 
   const media = P.sources.map(s => ({uri:s.uri, name:s.name, duration:s.duration, width:dispSize(s)[0], height:dispSize(s)[1], fps:s.fps, hasAudio:s.hasAudio !== false, hasVideo:hasVid(s), kind:s.kind || 'video'}));
   return {format:exFmt, name: ($('#exName').value || P.name).replace(/[\\/:*?"<>|]/g, '_'), width:W, height:H, fps:primary().fps || 30, total:r3(total),
     segments:segs, overlays:ovs, subs, burn: P.settings.burn !== false, quality: $('#exQuality').value, audioFormat: $('#exAudioFmt').value,
-    capcutInstall: $('#exCapcutInstall').checked, sources:media, project:P.id, ...(exFmt === 'video' && gpuUse() ? {gpu: true} : {}), ...(dk ? {duck: dk} : {}), ...(jn ? {trans: jn} : {})};
+    capcutInstall: $('#exCapcutInstall').checked, sources:media, project:P.id, ...(exFmt === 'video' && gpuUse() ? {gpu: true} : {}), ...(dk ? {duck: dk} : {}), ...(jn ? {trans: jn} : {}), ...(bl.length ? {blurs: bl} : {})};
 }
 // ───────── Transkript als Text oder Word-Datei ─────────
 function transcriptParas(o = {}){
@@ -5708,11 +5729,19 @@ function renderExport(){
     (n.insert ? ` · ${n.insert} Einschub` : '') + (n.broll ? ` · ${n.broll} B-Roll` : '') + (n.pip ? ` · ${n.pip} Einblendung${n.pip > 1 ? 'en' : ''}` : '') + (n.zoom ? ` · ${n.zoom} Zoom` : '') + (n.fx ? ` · ${n.fx} Anpassungen` : '') + (nTitle ? ` · ${nTitle} Titel` : '') + (nLower ? ` · ${nLower} Bauchbinde${nLower > 1 ? 'n' : ''}` : '') + (tlineOn() ? ' · Textzeile' : '') + (nSrc ? ` · ${nSrc} Quellenzeile${nSrc > 1 ? 'n' : ''}` : '') +
     (S().enabled !== false && P.cues.length ? ` · ${computedCues().length} Untertitel` : '') + (exFmt !== 'audio' && partOn() ? ` · „${partText()}“` : '') + (exFmt === 'video' && hookVars().length ? ` · ${hookVars().length} Hook-Varianten` : '') +
     (nJoin => exFmt === 'video' && nJoin ? ` · ${nJoin} ${nJoin > 1 ? 'Übergänge' : 'Übergang'}` : '')(new Set(joinParts.map(p => p.x)).size) +
-    (voiceExport() ? ' · Stimme aufbereitet' : '') + (duckPlan() ? ' · Musik weicht der Sprache' : '');
+    (voiceExport() ? ' · Stimme aufbereitet' : '') + (duckPlan() ? ' · Musik weicht der Sprache' : '') +
+    (exFmt !== 'audio' && n.shape ? ` · ${n.shape} ${n.shape > 1 ? 'Formen' : 'Form'}` : '') + (exFmt !== 'audio' && n.blur ? ` · ${n.blur} ${n.blur > 1 ? 'Bereiche' : 'Bereich'} unkenntlich` : '') + (exFmt === 'video' && progOn() ? ' · Fortschrittsbalken' : '');
   // Projektformate (CapCut, Schnittprojekt) übernehmen Schnitte und Spuren, aber weder Übergänge noch die Bearbeitung des Tons
   const lost = exFmt === 'video' || exFmt === 'audio' ? [] : [joinParts.length ? 'Übergänge' : '', voiceOn() ? '„Stimme aufbereiten“' : '', duckOn() && audios.some(a => ducks(a.x) && (a.x.vol ?? 1) > 0) ? '„Musik weicht der Sprache“' : ''].filter(Boolean);
   $('#exToneNote').textContent = lost.length ? `${lost.length > 1 ? lost.slice(0, -1).join(', ') + ' und ' + lost[lost.length - 1] : lost[0]} ${lost.length > 1 || lost[0] === 'Übergänge' ? 'stecken' : 'steckt'} nur in den Exporten „${FMT_LBL.video || 'Video'}“ und „${FMT_LBL.audio || 'Ton'}“. In diesem Format bleiben die Schnitte hart und der Ton, wie er aufgenommen ist.` : '';
   $('#exToneNote').classList.toggle('hidden', !lost.length);
+  // Unkenntlich gemachte Bereiche und der Fortschrittsbalken stehen nur im fertigen Video – bei Projektformaten deutlich dazusagen
+  const proj = exFmt === 'capcut' || exFmt === 'concat', nb = proj ? blurCount() : 0, bn = $('#exBlurNote');
+  bn.textContent = nb ? `Achtung: ${nb === 1 ? 'Ein verpixelter oder weichgezeichneter Bereich fehlt' : nb + ' verpixelte oder weichgezeichnete Bereiche fehlen'} in diesem Format – im ${FMT_LBL[exFmt]}-Projekt ist das Material an diesen Stellen erkennbar. Nur der Export „Video“ macht sie unkenntlich.` + (progOn() ? ' Auch der Fortschrittsbalken fehlt.' : '')
+    : proj && progOn() ? 'Der Fortschrittsbalken fehlt in diesem Format: Die Länge ändert sich dort noch.' : '';
+  const nmv = exFmt === 'video' ? P.items.filter(x => x.type === 'blur' && markMoves(x)).length : 0;
+  if (nmv) bn.textContent = `${nmv === 1 ? 'Ein unkenntlich gemachter Bereich liegt' : nmv + ' unkenntlich gemachte Bereiche liegen'} an einer Stelle, an der sich das Bild bewegt (Zoom oder Keyframes). Bitte in der Vorschau prüfen, ob ${nmv === 1 ? 'er' : 'sie'} durchgehend ${nmv === 1 ? 'sitzt' : 'sitzen'}.`;
+  bn.classList.toggle('hidden', !bn.textContent); bn.classList.toggle('warn', !!nb || !!nmv);
   paintExBtns(); renderLenLights(); renderChapters(); renderRefsCard(); renderA11y();
 }
 $('#exRes').onchange = renderExport;
@@ -6055,8 +6084,21 @@ window.addEventListener('beforeunload', e => { if (exqActive()){ e.preventDefaul
 async function exPrepare(make){
   const P0 = P; if (!(await askOpenRefs())){ if (P === P0){ setTab('text'); openRefs(); } return null; }
   if (P !== P0) return null;
+  if (!(await askBlurLost()) || P !== P0) return null;
   await lowerReady(); await decoReady(); await partReady(); if (P !== P0) return null;
   return make();
+}
+// Projektformate übernehmen verpixelte und weichgezeichnete Bereiche nicht: vor dem Export nachfragen
+function askBlurLost(){
+  const n = exFmt === 'capcut' || exFmt === 'concat' ? blurCount() : 0; if (!n) return Promise.resolve(true);
+  return new Promise(res => {
+    const box = hcModal(`<h3>${n === 1 ? 'Ein Bereich bleibt' : n + ' Bereiche bleiben'} erkennbar</h3>
+      <p>Verpixeln und Weichzeichnen stecken nur im Export „Video“. Im ${FMT_LBL[exFmt]}-Projekt ist das Material an ${n === 1 ? 'dieser Stelle' : 'diesen Stellen'} unverändert zu sehen. „Abdecken“ wandert als Bild mit.</p>
+      <div class="row wrap" style="margin-top:12px"><button class="btn" id="xbNo">Abbrechen</button><button class="btn primary" id="xbGo" style="margin-left:auto">Trotzdem exportieren</button></div>`);
+    const done = v => { closeHcModal(); res(v); };
+    box.querySelector('#xbNo').onclick = () => done(false); box.querySelector('#xbGo').onclick = () => done(true);
+    box.addEventListener('keydown', e => { if (e.key === 'Escape') done(false); });
+  });
 }
 function exTextFile(plan, fmt){
   const tv = (fmt === 'video' || fmt === 'audio') && textvOn() ? textVersion() : '', tvName = textVersionName();
@@ -6109,10 +6151,12 @@ const PACK = [
 const packNative = e => P.format ? P.format === e.k : (([w, h]) => Math.abs(w / h - FORMATS[e.k][0] / FORMATS[e.k][1]) < 0.012)(baseDims());
 function packWith(e, fn){
   const had = 'frame' in P, keep = {format: P.format, frame: P.frame, lim: outLim, fmt: exFmt};
+  let snap = null;
   try {
-    if (!packNative(e)){ P.format = e.k; const f = P.frameBy && P.frameBy[e.k]; P.frame = clampFrame(f ? {...f} : {sc: coverSc(), tx: 0, ty: 0}); }
+    if (!packNative(e)){ P.format = e.k; const f = P.frameBy && P.frameBy[e.k]; P.frame = clampFrame(f ? {...f} : {sc: coverSc(), tx: 0, ty: 0});
+      snap = marksSnap(); marksFollow(); }   // Formen und Bereiche bleiben auch in dieser Fassung auf ihrer Stelle im Bild
     outLim = e.lim; exFmt = 'video'; return fn();
-  } finally { if (keep.format) P.format = keep.format; else delete P.format; if (had) P.frame = keep.frame; else delete P.frame; outLim = keep.lim; exFmt = keep.fmt; }
+  } finally { if (keep.format) P.format = keep.format; else delete P.format; if (had) P.frame = keep.frame; else delete P.frame; outLim = keep.lim; exFmt = keep.fmt; marksBack(snap); }
 }
 const packSize = e => packWith(e, () => outSize());
 const packName = e => `${(P.name || 'Video').replace(/[\\/:*?"<>|]/g, '_').slice(0, 70)}_${e.id}_${e.k.replace(':', 'x')}`;
@@ -6186,7 +6230,7 @@ function autoSet(a){
 // Stil des offenen Projekts als Vorlage
 function houseOf(){
   return {sub: jc(P.sub_style), wm: jc(P.watermark), format: P.format || null, safe: P.settings.safe || '', burn: P.settings.burn !== false, level: P.settings.level !== false,
-    textline: jc(P.textline), srcStyle: jc(P.srcStyle), lower: jc(P.lower), part: jc(P.partStyle), audio: jc(P.audio), slideProfile: jc(P.slideProfile), auto: autoVals()};
+    textline: jc(P.textline), srcStyle: jc(P.srcStyle), lower: jc(P.lower), part: jc(P.partStyle), audio: jc(P.audio), progress: jc(P.progress), slideProfile: jc(P.slideProfile), auto: autoVals()};
 }
 // Vorlage in ein Projekt schreiben (auch in ein gerade angelegtes, noch ungeöffnetes). Alles, was die Vorlage abdeckt, wird ersetzt.
 function houseInto(p, st){
@@ -6195,6 +6239,7 @@ function houseInto(p, st){
   set('watermark', st.wm); set('textline', st.textline); set('srcStyle', st.srcStyle); set('lower', st.lower); set('slideProfile', st.slideProfile);
   if ('part' in st) set('partStyle', st.part);   // Vorlagen aus früheren Fassungen kennen die Kennzeichnung der Reihe noch nicht und lassen sie, wie sie ist
   if ('audio' in st) set('audio', st.audio);   // ebenso die Einstellungen zum Ton (ab 2.34)
+  if ('progress' in st) set('progress', st.progress);   // und der Fortschrittsbalken (ab 2.35)
   if ((p.format || null) !== (st.format || null)){ if (st.format && FORMATS[st.format]) p.format = st.format; else delete p.format; delete p.frame; p.frameNew = true; }
   p.settings ||= {pad: 0.06}; p.settings.safe = st.safe || ''; p.settings.burn = st.burn !== false; p.settings.level = st.level !== false;
 }
@@ -6207,6 +6252,7 @@ function houseSummary(st){
   if (st.slideProfile && st.slideProfile.name) a.push('Folien „' + st.slideProfile.name + '“');
   if (st.audio && st.audio.duck && st.audio.duck.on) a.push('Musik weicht der Sprache');
   if (st.audio && st.audio.voice && st.audio.voice.on) a.push('Stimme aufbereiten');
+  if (st.progress && st.progress.on !== false) a.push('Fortschrittsbalken');
   return a.join(' · ');
 }
 // Vorlage auf das offene Projekt anwenden
@@ -6956,6 +7002,516 @@ function paintJoinSheet(){
     if (a === 'next' && i >= 0 && i < cs.length - 1) return openJoin(cs[i + 1]);
     if (a === 'play'){ const T = timeline[joinK].o; seekOut(Math.max(0, T - 2), false); startPlay(); stopAt = Math.min(total, T + 2); }
   };
+}
+
+// ───────── Belege im Bild (2.35): Formen und Pfeile (E6), Unkenntlich machen (B6), Fortschrittsbalken (E8), Markieren im Screenshot (B5) ─────────
+// Marken im Bild sind Elemente ohne Datei, die frei im Bild liegen wie eine Einblendung: {id, type, at, dur, x, y, w, ar, kf?}.
+//   x/y Mitte und w Breite als Anteile des Bilds, ar = Breite : Höhe in Pixeln, kf = [{t, x, y, w}] ab Beginn des Elements.
+//   type 'shape': kind rect | ellipse | arrow | marker · color · thick 1…3 · fill · dir 0…7 (Pfeil, im Uhrzeigersinn ab „nach rechts“)
+//   type 'blur':  kind pixel | soft | cover · form rect | ellipse · str 1…3 (stark … leicht) · color (nur cover)
+// Lage, Griffe und Keyframes laufen über dieselben Funktionen wie bei Einblendungen (elVals, setElVals, PipDrag, toggleKeyframe).
+// Reihenfolge im Bild, in Vorschau und allen Exporten gleich: Videospuren, Rahmen, Kennzeichnung, Bauchbinde, Wasserzeichen
+// → unkenntlich gemachte Bereiche → Formen → Fortschrittsbalken → Titel und Untertitel.
+const isMark = it => !!it && (it.type === 'shape' || it.type === 'blur');
+let marks = [];
+// ── Marken bleiben am Bild ──
+// Lage und Größe einer Marke gelten für einen Bildausschnitt: das Format der Leinwand und den Zuschnitt des Hauptbilds darin.
+// Ändert er sich – anderes Format, verschobener Ausschnitt, ein Clip im Hochformat, ein Export-Paket –, rücken Formen und Bereiche
+// mit und bleiben auf derselben Stelle des Hauptbilds. Sonst läge ein verpixelter Bereich nach dem Wechsel neben dem Gesicht.
+// it.fr = [Breite und Höhe des Hauptbilds als Anteil der Leinwand, Versatz seiner Mitte x, y] – der Ausschnitt, für den die Lage stimmt.
+const r5 = v => Math.round(v * 1e5) / 1e5;
+function markFrame(){ const [wf, hf] = fitFrac(), F = (P && P.frame) || {}, sc = F.sc || 1; return [r5(wf * sc), r5(hf * sc), r5(F.tx || 0), r5(F.ty || 0)]; }
+function marksFollow(){
+  if (!P || !P.items) return 0;
+  let L = null, n = 0;
+  for (const it of P.items){ if (!isMark(it)) continue; L ||= markFrame(); const f = it.fr;
+    if (!Array.isArray(f) || f.length !== 4 || !(f[0] > 0) || !(f[1] > 0)){ it.fr = L.slice(); continue; }
+    if (f.every((v, i) => Math.abs(v - L[i]) < 2e-5)) continue;
+    const mv = o => { o.x = r5(0.5 + L[2] + (o.x - 0.5 - f[2]) / f[0] * L[0]); o.y = r5(0.5 + L[3] + (o.y - 0.5 - f[3]) / f[1] * L[1]); o.w = r5(clamp(o.w * L[0] / f[0], 0.004, 40)); };
+    mv(it); for (const k of it.kf || []) mv(k); it.fr = L.slice(); n++; }
+  return n;
+}
+// Für einen vorübergehenden Wechsel des Formats (Export-Pakete): Lage merken und danach genau so zurückgeben
+const marksSnap = () => P.items.filter(isMark).map(it => ({it, x: it.x, y: it.y, w: it.w, fr: it.fr, kf: it.kf ? it.kf.map(k => ({...k})) : null}));
+function marksBack(snap){ for (const s of snap || []){ s.it.x = s.x; s.it.y = s.y; s.it.w = s.w; if (s.fr) s.it.fr = s.fr; else delete s.it.fr; if (s.kf) s.it.kf = s.kf; else delete s.it.kf; } }
+// Bewegt sich das Hauptbild, während die Marke zu sehen ist (Zoom, Keyframes der Hauptspur)? Dann wandert der Bildinhalt unter ihr.
+function markMoves(it){
+  const a = ovOf(it); if (!a) return false;
+  const hits = (s, e) => e > a.at + 0.05 && s < a.end - 0.05;
+  if (window.itemOutRange && P.items.some(z => { if (z.type !== 'zoom') return false; const [s, e] = itemOutRange(z); return hits(s, e); })) return true;
+  return timeline.some(g => g.kind === 'main' && mainKf(g) && hits(g.o, g.o + segDur(g)));
+}
+function computeMarks(){
+  marksFollow();
+  marks = P.items.filter(isMark).map(x => { const at = srcToOut(snapSrc(x.at)); return {x, at, end: Math.min(total, at + Math.max(0.1, +x.dur || 0))}; }).filter(m => m.end - m.at > 0.05);
+}
+const markAr = it => Math.max(0.02, +it.ar || 1);
+// Bahnen der Zeile „Formen“ in der Zeitleiste: Was sich zeitlich überschneidet, liegt untereinander
+function markLanes(){
+  const ends = [], map = new Map();
+  for (const m of [...marks].sort((a, b) => a.at - b.at || a.end - b.end)){ let k = ends.findIndex(e => e <= m.at + 0.01); if (k < 0) k = ends.length; ends[k] = m.end; map.set(m.x.id, k); }
+  return {map, n: ends.length};
+}
+// Spuren für den Export: list von unten nach oben. Ein Eintrag liegt nie unter einem früheren, mit dem er sich zeitlich überschneidet;
+// Einträge derselben Spur überschneiden sich nie (Android zeigt je Spur ein Bild zur Zeit).
+function markTracks(list){
+  const out = [];
+  list.forEach((m, i) => { let k = 0; for (let j = 0; j < i; j++) if (list[j].at < m.end - 1e-3 && list[j].end > m.at + 1e-3) k = Math.max(k, out[j] + 1); out.push(k); });
+  return out;
+}
+// Keyframes, die in die sichtbare Dauer fallen; größte Breite über die Zeit (in dieser Größe wird gezeichnet)
+const markKf = (it, d) => kfPlan(it.kf, d);
+const markMaxW = it => Math.max(+it.w || 0.01, ...(it.kf || []).map(k => +k.w || 0));
+
+// ── Formen und Pfeile (E6) ──
+const SHAPE_KINDS = [['rect', 'Rahmen'], ['ellipse', 'Kreis'], ['arrow', 'Pfeil'], ['marker', 'Textmarker']];
+const SHAPE_COLS = ['#E5402A', '#FFE14D', '#FFFFFF', '#131312', '#3E8A55'];
+const SHAPE_T = {1: 0.005, 2: 0.009, 3: 0.016};   // Strichstärke als Anteil der kürzeren Bildseite
+const SHAPE_DIRS = [[1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [-1, -1], [0, -1], [1, -1]], SHAPE_ARROWS = ['→', '↘', '↓', '↙', '←', '↖', '↑', '↗'];
+const SHAPE_NAME = {rect: 'Rahmen', ellipse: 'Kreis', arrow: 'Pfeil', marker: 'Textmarker'};
+const BLUR_NAME = {pixel: 'Verpixelt', soft: 'Weichgezeichnet', cover: 'Abgedeckt'};
+const markName = it => it.type === 'blur' ? (BLUR_NAME[it.kind] || BLUR_NAME.pixel) : (SHAPE_NAME[it.kind] || 'Form');
+// Was das Aussehen bestimmt (für Vorschau und Export dieselbe Angabe); „Abdecken“ ist eine gefüllte Fläche
+const shapeSpec = it => it.type === 'blur' ? {kind: it.form === 'ellipse' ? 'ellipse' : 'rect', fill: true, color: it.color || '#000000', thick: 2, dir: 0}
+  : {kind: SHAPE_NAME[it.kind] ? it.kind : 'rect', fill: !!it.fill, color: it.color || SHAPE_COLS[0], thick: SHAPE_T[it.thick] ? +it.thick : 2, dir: ((+it.dir || 0) % 8 + 8) % 8};
+// Zeichnen: w × h = Fläche der Form in Pixeln, u = kürzere Bildseite in Pixeln (bestimmt die Strichstärke). Alles bleibt in der Fläche.
+function shapeDraw(cv, w, h, u, s){
+  w = Math.max(2, Math.round(w)); h = Math.max(2, Math.round(h)); cv.width = w; cv.height = h;
+  const ctx = cv.getContext('2d'), t = Math.max(1.5, Math.min(u * SHAPE_T[s.thick], Math.min(w, h) / 2));
+  ctx.clearRect(0, 0, w, h); ctx.strokeStyle = ctx.fillStyle = s.color; ctx.lineWidth = t; ctx.lineJoin = 'miter'; ctx.lineCap = 'round';
+  if (s.kind === 'marker'){ const r = Math.min(h * 0.22, w * 0.1); ctx.globalAlpha = 0.45; ctx.beginPath(); ctx.moveTo(r, 0); ctx.arcTo(w, 0, w, h, r); ctx.arcTo(w, h, 0, h, r); ctx.arcTo(0, h, 0, 0, r); ctx.arcTo(0, 0, w, 0, r); ctx.closePath(); ctx.fill(); ctx.globalAlpha = 1; return; }
+  if (s.kind === 'ellipse'){ const q = s.fill ? 0 : t / 2; ctx.beginPath(); ctx.ellipse(w / 2, h / 2, Math.max(0.5, w / 2 - q), Math.max(0.5, h / 2 - q), 0, 0, Math.PI * 2); if (s.fill) ctx.fill(); else ctx.stroke(); return; }
+  if (s.kind === 'arrow'){
+    const [sx, sy] = SHAPE_DIRS[s.dir], diag = sx && sy, len0 = diag ? Math.hypot(w, h) : sx ? w : h;
+    const hl = clamp(t * 4.5, 5, len0 * 0.45), hw = Math.min(hl * 0.62, (diag ? Math.min(w, h) : sx ? h : w) / 2 - 0.5), ins = diag ? Math.max(t / 2, hw) : t / 2;
+    // Schaft von a nach b; die Spitze liegt bei b
+    const a = [sx > 0 ? t / 2 : sx < 0 ? w - t / 2 : w / 2, sy > 0 ? t / 2 : sy < 0 ? h - t / 2 : h / 2];
+    const b = [sx > 0 ? w - ins : sx < 0 ? ins : w / 2, sy > 0 ? h - ins : sy < 0 ? ins : h / 2];
+    const dx = b[0] - a[0], dy = b[1] - a[1], L = Math.max(1e-3, Math.hypot(dx, dy)), ux = dx / L, uy = dy / L, hb = Math.min(hl, L * 0.9), fx = b[0] - ux * hb, fy = b[1] - uy * hb;
+    ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(fx + ux * t * 0.4, fy + uy * t * 0.4); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(b[0], b[1]); ctx.lineTo(fx - uy * hw, fy + ux * hw); ctx.lineTo(fx + uy * hw, fy - ux * hw); ctx.closePath(); ctx.fill(); return;
+  }
+  if (s.fill) ctx.fillRect(0, 0, w, h); else ctx.strokeRect(t / 2, t / 2, w - t, h - t);
+}
+const shapeKey = (s, w, h, u) => [s.kind, s.color, s.thick, s.fill ? 1 : 0, s.dir, Math.round(w), Math.round(h), Math.round(u)].join('|');
+// Bild einer Form für den Export (und das Titelbild): in der größten Größe, höchstens 4096 Pixel Kantenlänge
+const shapeImgs = new Map();
+function shapeImage(s, pw, ph, u){
+  const f = Math.min(1, 4096 / Math.max(pw, ph)), w = Math.max(2, Math.round(pw * f)), h = Math.max(2, Math.round(ph * f)), key = shapeKey(s, w, h, u * f);
+  let im = shapeImgs.get(key); if (im) return im;
+  if (shapeImgs.size > 80) shapeImgs.clear();
+  const cv = document.createElement('canvas'); shapeDraw(cv, w, h, u * f, s);
+  im = {key, cv, url: cv.toDataURL('image/png'), w: cv.width, h: cv.height}; shapeImgs.set(key, im); return im;
+}
+
+// ── Unkenntlich machen (B6) ──
+const BLUR_N = {1: 6, 2: 9, 3: 14};   // Felder über die kürzere Seite des Bereichs: stark, mittel, leicht
+const blurFx = it => it.type === 'blur' && it.kind !== 'cover';
+// Feldgröße in Pixeln bei Bildbreite W: gilt für die größte Größe des Bereichs und bleibt über seine Dauer gleich
+function blurCell(it, W){ const w = markMaxW(it) * W; return Math.max(2, Math.min(w, w / markAr(it)) / (BLUR_N[it.str] || BLUR_N[1])); }
+// Bereich einer Leinwand verpixeln oder weichzeichnen (Titelbild; dieselbe Rechnung wie im Browser-Export):
+// Fenster win = [x, y, w, h] in Pixeln, darin der Bereich reg = [x, y, w, h]; das Raster ist am Fenster verankert.
+let fxTmp = null;
+function regionFx(ctx, src, win, reg, cell, soft, ellipse){
+  const W = src.width, H = src.height;
+  let [wx, wy, ww, wh] = win; ww = Math.min(W, Math.max(2, Math.round(ww))); wh = Math.min(H, Math.max(2, Math.round(wh)));
+  wx = clamp(Math.round(wx), 0, W - ww); wy = clamp(Math.round(wy), 0, H - wh);
+  const nx = Math.max(1, Math.round(ww / cell)), ny = Math.max(1, Math.round(wh / cell));
+  fxTmp ||= [document.createElement('canvas'), document.createElement('canvas')];
+  // in Schritten halbieren: so mittelt jeder Browser sauber, auch wenn er beim starken Verkleinern nur wenige Punkte liest
+  let cur = src, sx = wx, sy = wy, sw = ww, sh = wh, k = 0;
+  for (;;){
+    const tw = Math.max(nx, Math.ceil(sw / 2)), th = Math.max(ny, Math.ceil(sh / 2)), c = fxTmp[k % 2];
+    c.width = tw; c.height = th; const x = c.getContext('2d'); x.imageSmoothingEnabled = true; x.imageSmoothingQuality = 'high'; x.drawImage(cur, sx, sy, sw, sh, 0, 0, tw, th);
+    cur = c; sx = sy = 0; sw = tw; sh = th; k++;
+    if (tw <= nx && th <= ny) break;
+  }
+  ctx.save(); ctx.beginPath();
+  if (ellipse) ctx.ellipse(reg[0] + reg[2] / 2, reg[1] + reg[3] / 2, reg[2] / 2, reg[3] / 2, 0, 0, Math.PI * 2); else ctx.rect(reg[0], reg[1], reg[2], reg[3]);
+  ctx.clip(); ctx.imageSmoothingEnabled = !!soft; if (soft) ctx.imageSmoothingQuality = 'low';
+  ctx.drawImage(cur, 0, 0, sw, sh, wx, wy, ww, wh); ctx.restore(); ctx.imageSmoothingEnabled = true;
+}
+// Fenster und Bereich eines unkenntlich gemachten Elements zur Zeit rel in Pixeln der Größe W × H
+function blurBoxes(it, rel, W, H){
+  const v = elVals(it, rel) || it, ar = markAr(it), wm = markMaxW(it) * W, rw = v.w * W, rh = rw / ar;
+  return {win: [v.x * W - wm / 2, v.y * H - wm / ar / 2, wm, wm / ar], reg: [v.x * W - rw / 2, v.y * H - rh / 2, rw, rh]};
+}
+
+// ── Vorschau: Formen als Leinwand je Element, unkenntlich gemachte Bereiche als winzige Leinwand, die gestreckt wird ──
+function markCanvas(box, it){
+  let cv = [...box.children].find(el => el.dataset.mk === it.id);
+  if (!cv){ cv = document.createElement('canvas'); cv.dataset.mk = it.id; cv.className = 'mk'; box.append(cv); }
+  return cv;
+}
+function placeMarks(o, W, H){
+  const act = marks.filter(m => o >= m.at - 1e-6 && o < m.end), sb = $('#shapeOv'), bb = $('#blurOv'), want = new Set(act.map(m => m.x.id));
+  for (const box of [sb, bb]) for (const el of [...box.children]) if (!want.has(el.dataset.mk) || (P.items.find(x => x.id === el.dataset.mk) || {}).type !== (box === sb ? 'shape' : 'blur')) el.remove();
+  const d = Math.min(2, window.devicePixelRatio || 1), u = Math.min(W, H), selId = selOvlId();
+  for (const m of act){
+    const it = m.x, v = PipDrag.on && PipDrag.it === it ? PipDrag : elVals(it, o - m.at), r = elRect(it, v, W, H); if (!r) continue;
+    const cv = markCanvas(it.type === 'shape' ? sb : bb, it), s = shapeSpec(it);
+    if (it.type === 'shape' || it.kind === 'cover'){
+      // in der größten Größe zeichnen und strecken: so skaliert der Strich mit, wie im Export
+      const f = it.kf && it.kf.length ? Math.max(1, markMaxW(it) / Math.max(1e-6, v.w)) : 1, key = shapeKey(s, r.w * f * d, r.h * f * d, u * d);
+      if (cv.dataset.k !== key){ shapeDraw(cv, r.w * f * d, r.h * f * d, u * d, s); cv.dataset.k = key; }
+      cv.style.borderRadius = ''; cv.style.imageRendering = ''; cv._r = null;
+    } else {
+      const cell = blurCell(it, W), nx = Math.max(1, Math.round(r.w / cell)), ny = Math.max(1, Math.round(r.h / cell)), key = 'fx|' + nx + '|' + ny;
+      if (cv.dataset.k !== key){ cv.width = nx; cv.height = ny; cv.dataset.k = key; }
+      cv.style.borderRadius = it.form === 'ellipse' ? '50%' : ''; cv.style.imageRendering = it.kind === 'soft' ? '' : 'pixelated';
+      cv._r = r;
+    }
+    cv.classList.toggle('fx', blurFx(it)); cv.classList.toggle('sel', selId === it.id);
+    Object.assign(cv.style, {left: (r.cx - r.w / 2).toFixed(1) + 'px', top: (r.cy - r.h / 2).toFixed(1) + 'px', width: r.w.toFixed(1) + 'px', height: r.h.toFixed(1) + 'px'});
+  }
+  // Stapel wie in der Liste der Elemente (später angelegt = weiter oben)
+  for (const box of [sb, bb]){ const ids = act.filter(m => (m.x.type === 'shape') === (box === sb)).map(m => m.x.id); ids.forEach((id, n) => { const el = [...box.children].find(c => c.dataset.mk === id); if (el && box.children[n] !== el) box.insertBefore(el, box.children[n] || null); }); }
+  blurLive = [...bb.children].some(c => c.classList.contains('fx'));
+  if (blurLive) blurPaint();
+  return act;
+}
+// Alles Bildmaterial der Bühne, das unter den Bereichen liegt, in Malreihenfolge (Stapelwert, sonst Reihenfolge im Dokument)
+function stageStack(){
+  const st = $('#stage'), out = [];
+  for (const el of st.querySelectorAll('video, img, canvas')){
+    if (el.id === 'slStage' || el.closest('#blurOv, #shapeOv, #progOv, #pipBox, #cropBox')) continue;
+    const nw = el.videoWidth || el.naturalWidth || (el.tagName === 'CANVAS' ? el.width : 0), nh = el.videoHeight || el.naturalHeight || (el.tagName === 'CANVAS' ? el.height : 0); if (!nw || !nh) continue;
+    if ((el.tagName === 'VIDEO' && el.readyState < 2) || (el.tagName === 'IMG' && !el.complete)) continue;
+    let op = 1, top = el, gone = false;
+    for (let n = el; n && n !== st; n = n.parentElement){ const cs = getComputedStyle(n); if (cs.display === 'none' || cs.visibility === 'hidden'){ gone = true; break; } op *= parseFloat(cs.opacity); top = n; }
+    if (gone || !(op > 0.01)) continue;
+    const cs = getComputedStyle(el);
+    out.push({el, z: parseInt(getComputedStyle(top).zIndex) || 0, op, fit: cs.objectFit, flt: cs.filter, nw, nh});
+  }
+  return out.sort((a, b) => a.z - b.z);
+}
+// Ein Medium in die Leinwand eines Bereichs zeichnen. R = Bereich in Bildschirmpunkten, cw × ch = Größe der Leinwand
+function stackDraw(ctx, q, R, cw, ch){
+  const b = q.el.getBoundingClientRect(); if (!(b.width > 0) || !(b.height > 0)) return;
+  let ex = b.left, ey = b.top, ew = b.width, eh = b.height, sx = 0, sy = 0, sw = q.nw, sh = q.nh;
+  if (q.fit === 'contain'){ const f = Math.min(ew / sw, eh / sh), nw = sw * f, nh = sh * f; ex += (ew - nw) / 2; ey += (eh - nh) / 2; ew = nw; eh = nh; }
+  else if (q.fit === 'cover'){ const f = Math.max(ew / sw, eh / sh), vw = ew / f, vh = eh / f; sx = (sw - vw) / 2; sy = (sh - vh) / 2; sw = vw; sh = vh; }
+  const m = /inset\(([\d.]+)% ([\d.]+)% ([\d.]+)% ([\d.]+)%/.exec(q.el.style.clipPath || '');   // Zuschnitt frei liegender Elemente
+  if (m){ const ct = m[1] / 100, cr = m[2] / 100, cb = m[3] / 100, cl = m[4] / 100; sx += sw * cl; sy += sh * ct; sw *= 1 - cl - cr; sh *= 1 - ct - cb; ex += ew * cl; ey += eh * ct; ew *= 1 - cl - cr; eh *= 1 - ct - cb; }
+  const x0 = Math.max(ex, R.l), y0 = Math.max(ey, R.t), x1 = Math.min(ex + ew, R.l + R.w), y1 = Math.min(ey + eh, R.t + R.h); if (x1 - x0 < 0.25 || y1 - y0 < 0.25) return;
+  const fx = sw / ew, fy = sh / eh;
+  ctx.globalAlpha = Math.min(1, q.op); if (q.flt && q.flt !== 'none' && 'filter' in ctx) ctx.filter = q.flt;
+  try { ctx.drawImage(q.el, sx + (x0 - ex) * fx, sy + (y0 - ey) * fy, (x1 - x0) * fx, (y1 - y0) * fy, (x0 - R.l) / R.w * cw, (y0 - R.t) / R.h * ch, (x1 - x0) / R.w * cw, (y1 - y0) / R.h * ch); } catch(_){}
+  ctx.globalAlpha = 1; if ('filter' in ctx) ctx.filter = 'none';
+}
+// Bereiche neu füllen: nach jedem Bild der Vorschau (die Videobilder kommen nach einem Sprung erst etwas später an)
+let blurLive = false;
+function blurPaint(){
+  const st = $('#stage'), S0 = st.getBoundingClientRect(), list = [...$('#blurOv').children].filter(c => c.classList.contains('fx') && c._r); if (!list.length) return;
+  const stack = stageStack();
+  for (const cv of list){
+    const r = cv._r, R = {l: S0.left + r.cx - r.w / 2, t: S0.top + r.cy - r.h / 2, w: r.w, h: r.h}, ctx = cv.getContext('2d');
+    ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high'; ctx.fillStyle = '#000'; ctx.fillRect(0, 0, cv.width, cv.height);
+    for (const q of stack) stackDraw(ctx, q, R, cv.width, cv.height);
+  }
+}
+// Titelbild: Bereiche und Formen an der Abspiellinie in eine fertige Leinwand der Größe W × H einrechnen
+function coverMarks(cv){
+  const W = cv.width, H = cv.height, ctx = cv.getContext('2d'), act = marks.filter(m => outPos >= m.at - 1e-6 && outPos < m.end);
+  for (const m of act){ const it = m.x; if (!blurFx(it)) continue; const b = blurBoxes(it, outPos - m.at, W, H); regionFx(ctx, cv, b.win, b.reg, blurCell(it, W), it.kind === 'soft', it.form === 'ellipse'); }
+  for (const m of [...act.filter(q => q.x.type === 'blur' && q.x.kind === 'cover'), ...act.filter(q => q.x.type === 'shape')]){
+    const it = m.x, b = blurBoxes(it, outPos - m.at, W, H), f = markMaxW(it) * W / Math.max(1e-6, b.reg[2]), im = shapeImage(shapeSpec(it), b.reg[2] * f, b.reg[3] * f, Math.min(W, H));
+    ctx.drawImage(im.cv, b.reg[0], b.reg[1], b.reg[2], b.reg[3]);
+  }
+}
+
+// ── Exportplan ──
+// Formen und abgedeckte Bereiche: je ein Bild über allem (Spur 100 + Bahn), mit Lage und Keyframes wie eine Einblendung
+function markPlan(W, H){
+  const out = []; if (!TS.saveImage) return out;
+  const list = [...marks.filter(m => m.x.type === 'blur' && m.x.kind === 'cover'), ...marks.filter(m => m.x.type === 'shape')], trk = markTracks(list);
+  list.forEach((m, i) => {
+    const it = m.x, d = m.end - m.at, kf = markKf(it, d), v0 = kf.length ? kf[0] : it, pw = markMaxW(it) * W;
+    const im = shapeImage(shapeSpec(it), pw, pw / markAr(it), Math.min(W, H)), f = J(TS.saveImage(`form-${hashStr(im.key)}.png`, im.url, im.w, im.h, P.id)); if (!f || !f.uri) return;
+    out.push({mode: 'pip', image: true, uri: f.uri, in: 0, out: r3(d), at: r3(m.at), x: r3(v0.x), y: r3(v0.y), w: r3(v0.w), aspect: +(im.w / im.h).toFixed(5),
+      ...(kf.length >= 2 ? {kf: kf.map(k => ({t: k.t, x: k.x, y: k.y, w: k.w}))} : {}),
+      track: 100 + Math.min(40, trk[i]), vol: 0, hasAudio: false, width: im.w, height: im.h, rotation: 0, top: true, [it.type === 'blur' ? 'cover' : 'shape']: true});
+  });
+  return out;
+}
+// Maske eines Bereichs für den Windows-Export: weiße Fläche (Rechteck oder Ellipse) auf Schwarz
+function blurMask(form, ar){
+  if (!TS.saveImage) return null;
+  const L = 256, w = ar >= 1 ? L : Math.max(8, Math.round(L * ar)), h = ar >= 1 ? Math.max(8, Math.round(L / ar)) : L, cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+  const ctx = cv.getContext('2d'); ctx.fillStyle = '#000'; ctx.fillRect(0, 0, w, h); ctx.fillStyle = '#fff';
+  if (form === 'ellipse'){ ctx.beginPath(); ctx.ellipse(w / 2, h / 2, w / 2, h / 2, 0, 0, Math.PI * 2); ctx.fill(); } else ctx.fillRect(0, 0, w, h);
+  const m = J(TS.saveImage(`maske-${form}-${w}x${h}.png`, cv.toDataURL('image/png'), w, h, P.id)); return m && m.uri ? m.uri : null;
+}
+// Verpixelte und weichgezeichnete Bereiche: plan.blurs = [{at, d, x, y, w, aspect, kf?, form, kind, cell, mask?}], cell = Feldgröße als Anteil der Bildbreite
+function blurPlan(W, H, dry){
+  const out = [];
+  for (const m of marks){ const it = m.x; if (!blurFx(it)) continue;
+    const d = m.end - m.at, kf = markKf(it, d), v0 = kf.length ? kf[0] : it, form = it.form === 'ellipse' ? 'ellipse' : 'rect', ar = markAr(it);
+    const o = {at: r3(m.at), d: r3(d), x: r3(v0.x), y: r3(v0.y), w: r3(v0.w), wmax: r3(Math.max(v0.w, ...kf.map(k => k.w))), aspect: +ar.toFixed(5), form, kind: it.kind === 'soft' ? 'soft' : 'pixel', cell: +(blurCell(it, W) / W).toFixed(5)};
+    if (kf.length >= 2) o.kf = kf.map(k => ({t: k.t, x: k.x, y: k.y, w: k.w}));
+    const mk = dry || CAP.platform !== 'desktop' ? null : blurMask(form, ar); if (mk) o.mask = mk;   // die Maske braucht nur der Windows-Export (ffmpeg); Android und Browser schneiden die Form selbst aus
+    out.push(o); }
+  return out;
+}
+const blurCount = () => (P ? P.items.filter(blurFx).length : 0);
+
+// ── Anlegen und Einstellen ──
+const SHAPE_NEW = {rect: [0.34, 1.6], ellipse: [0.26, 1], arrow: [0.3, 3.2], marker: [0.42, 7]};   // Breite als Anteil der kürzeren Bildseite, Seitenverhältnis
+const markPrefs = () => { try { return JSON.parse(localStorage.getItem('hc-mark')) || {}; } catch(_){ return {}; } };
+function markRemember(it){ try { const p = markPrefs(); if (it.type === 'shape') Object.assign(p, {kind: it.kind, color: it.color, thick: it.thick}); else Object.assign(p, {bk: it.kind, bf: it.form, bs: it.str}); localStorage.setItem('hc-mark', JSON.stringify(p)); } catch(_){} }
+function addMarkItem(type, kind){
+  if (!P || !(total > 0)) return;
+  if (playing) pausePlay();
+  const [W, H] = outSize(), mn = Math.min(W, H), o = clamp(outPos, 0, Math.max(0, total - 0.2)), p = markPrefs(), dur = r3(Math.max(0.3, Math.min(type === 'blur' ? 4 : 3, total - o)));
+  let it;
+  if (type === 'blur') it = {id: newId(), type: 'blur', kind: BLUR_NAME[p.bk] ? p.bk : 'pixel', form: p.bf === 'rect' ? 'rect' : 'ellipse', str: BLUR_N[p.bs] ? p.bs : 1, at: r3(outToSrcT(o)), dur, x: 0.5, y: 0.4, w: r3(0.24 * mn / W), ar: 0.8, fr: markFrame()};
+  else { const k = SHAPE_NAME[kind] ? kind : SHAPE_NAME[p.kind] ? p.kind : 'rect', [w, ar] = SHAPE_NEW[k];
+    it = {id: newId(), type: 'shape', kind: k, color: k === 'marker' ? '#FFE14D' : (/^#[0-9a-f]{6}$/i.test(p.color || '') && p.color.toUpperCase() !== '#FFE14D' ? p.color : SHAPE_COLS[0]), thick: SHAPE_T[p.thick] ? p.thick : 2, at: r3(outToSrcT(o)), dur, x: 0.5, y: 0.5, w: r3(w * mn / W), ar, fr: markFrame()}; }
+  commit(() => { P.items.push(it); }, true);
+  if (window.select) select({kind: 'mark', id: it.id}); seekOut(outPos, false);
+  toast(type === 'blur' ? 'Bereich angelegt – im Bild an die Stelle ziehen, an der Ecke die Größe ändern' : `${SHAPE_NAME[it.kind]} angelegt – im Bild ziehen, an der Ecke die Größe ändern`);
+  return it;
+}
+// Pfeil in eine andere Richtung drehen. Bleibt die Lage (waagerecht, senkrecht, schräg), ändert sich nur die Spitze; sonst behält
+// der Pfeil seine Länge und die Fläche bekommt die Form der neuen Lage. Keyframes werden im selben Verhältnis mitgenommen.
+function arrowTurn(it, dir){
+  const cls = d => d % 2 ? 'd' : d === 2 || d === 6 ? 'v' : 'h', c0 = cls(((+it.dir || 0) % 8 + 8) % 8), c1 = cls(dir); it.dir = dir; if (c0 === c1) return;
+  const [W] = outSize(), a0 = markAr(it), pw = it.w * W, ph = pw / a0, L = c0 === 'd' ? Math.hypot(pw, ph) : c0 === 'h' ? pw : ph;
+  const a1 = c1 === 'h' ? 3.2 : c1 === 'v' ? 1 / 3.2 : 1.3, nw = c1 === 'h' ? L : c1 === 'v' ? L / 3.2 : L / Math.hypot(1, 1 / 1.3), f = nw / Math.max(1, pw);
+  it.ar = +a1.toFixed(4); it.w = r3(clamp(it.w * f, 0.02, 20)); for (const k of it.kf || []) k.w = r3(clamp(k.w * f, 0.02, 20));
+}
+const markSheetOpen = () => !$('#sheet').classList.contains('hidden') && !!$('#mkForm');
+function openMark(id){
+  const it = P.items.find(x => x.id === id); if (!isMark(it)) return; sheetItem = it;
+  if (playing) pausePlay();
+  { const a = ovOf(it); if (a && !(outPos >= a.at && outPos < a.end)) seekOut(Math.min(a.at + 0.01, Math.max(0, total - 0.01)), false); }
+  const body = $('#sheetBody'), sw = (list, id) => `<div class="swatches" id="${id}">${list.map(c => `<button data-c="${c}" style="background:${c}" title="${c}"></button>`).join('')}<input type="color" data-c="own" title="Eigene Farbe"></div>`;
+  const tail = `<div class="field"><span>Dauer</span><div class="nudge"><button data-d="-0.5">−0,5</button><button data-d="-0.1">−0,1</button><span class="val" id="mkDur"></span><button data-d="0.1">+0,1</button><button data-d="0.5">+0,5</button></div></div>
+    <p class="muted small" id="mkKf"></p>
+    <div class="row" style="margin-top:12px"><button class="btn" id="mkPlay">▶ Ansehen</button><button class="btn danger" id="mkDel">Entfernen</button><button class="btn primary" id="mkOk" style="margin-left:auto">Fertig</button></div>`;
+  body.innerHTML = it.type === 'shape' ? `<h3>Form</h3><div id="mkForm">
+      <div class="field"><span>Art</span><div class="seg-ctl" id="mkKind">${SHAPE_KINDS.map(([k, n]) => `<button data-v="${k}">${n}</button>`).join('')}</div></div>
+      <div class="field"><span>Farbe</span>${sw(SHAPE_COLS, 'mkCol')}</div>
+      <div class="field" id="mkThickF"><span>Strich</span><div class="seg-ctl" id="mkThick"><button data-v="1">dünn</button><button data-v="2">mittel</button><button data-v="3">kräftig</button></div></div>
+      <div class="field" id="mkFillF"><label class="row"><input type="checkbox" id="mkFill"> Gefüllt</label></div>
+      <div class="field" id="mkDirF"><span>Richtung</span><div class="seg-ctl dirs" id="mkDir">${SHAPE_ARROWS.map((a, k) => `<button data-v="${k}">${a}</button>`).join('')}</div></div>
+      ${tail}</div>`
+    : `<h3>Unkenntlich machen</h3><div id="mkForm">
+      <div class="field"><span>Art</span><div class="seg-ctl" id="mkKind"><button data-v="pixel">Verpixeln</button><button data-v="soft">Weichzeichnen</button><button data-v="cover">Abdecken</button></div></div>
+      <div class="field"><span>Form</span><div class="seg-ctl" id="mkShape"><button data-v="ellipse">Ellipse</button><button data-v="rect">Rechteck</button></div></div>
+      <div class="field" id="mkStrF"><span>Stärke</span><div class="seg-ctl" id="mkStr"><button data-v="1">stark</button><button data-v="2">mittel</button><button data-v="3">leicht</button></div></div>
+      <div class="field" id="mkColF"><span>Farbe</span>${sw(['#000000', '#131312', '#FFFFFF', '#E5402A'], 'mkCol')}</div>
+      <p class="muted small" id="mkWarn"></p>
+      ${tail}</div>`;
+  openSheet(true);
+  const live = () => { paintMarkSheet(); updateOverlay(outPos); if (tlOn() && window.renderTimeline) renderTimeline(); };
+  body.onclick = e => {
+    const b = e.target.closest('button'); if (!b) return;
+    const seg = b.closest('.seg-ctl'), v = b.dataset.v;
+    if (seg){ commit(() => {
+        if (seg.id === 'mkKind' && it.type === 'shape'){ const was = it.kind; it.kind = v; if (was !== v){ const [, ar] = SHAPE_NEW[v]; it.ar = ar; if (v === 'marker'){ it.color = '#FFE14D'; delete it.fill; } else if (was === 'marker') it.color = SHAPE_COLS[0]; if (v === 'arrow') delete it.fill; } }
+        else if (seg.id === 'mkKind') it.kind = v;
+        else if (seg.id === 'mkThick') it.thick = +v;
+        else if (seg.id === 'mkDir') arrowTurn(it, +v);
+        else if (seg.id === 'mkShape') it.form = v;
+        else if (seg.id === 'mkStr') it.str = +v;
+      }, false); markRemember(it); live(); return; }
+    if (b.dataset.c && b.dataset.c !== 'own'){ commit(() => { it.color = b.dataset.c; }, false); markRemember(it); live(); return; }
+    if (b.dataset.d){ commit(() => { it.dur = r3(clamp((+it.dur || 0) + +b.dataset.d, 0.2, 3600)); }, false); live(); return; }
+    if (b.id === 'mkPlay'){ const a = ovOf(it); if (a){ seekOut(Math.max(0, a.at - 1), false); startPlay(); stopAt = a.end + 0.6; } return; }
+    if (b.id === 'mkDel'){ commit(() => { P.items = P.items.filter(x => x !== it); }, true); closeSheet(); if (window.select) select(null); seekOut(outPos, false); return; }
+    if (b.id === 'mkOk') closeSheet();
+  };
+  const ci = body.querySelector('input[type=color]'); if (ci) ci.oninput = () => { commitBurst('mkcol' + it.id, () => { it.color = ci.value.toUpperCase(); }); markRemember(it); paintMarkSheet(); updateOverlay(outPos); };
+  const cf = $('#mkFill'); if (cf) cf.onchange = () => { commit(() => { if (cf.checked) it.fill = true; else delete it.fill; }, false); live(); };
+  paintMarkSheet();
+}
+function paintMarkSheet(){
+  const it = sheetItem; if (!isMark(it) || !$('#mkForm')) return;
+  if (!P.items.includes(it)){ closeSheet(); return; }
+  const s = shapeSpec(it), col = (it.type === 'shape' ? s.color : it.color || '#000000').toUpperCase();
+  $$('#mkForm .seg-ctl button').forEach(b => { const id = b.parentElement.id, v = b.dataset.v;
+    b.classList.toggle('on', (id === 'mkKind' && it.kind === v) || (id === 'mkThick' && s.thick === +v) || (id === 'mkDir' && s.dir === +v) || (id === 'mkShape' && (it.form === 'rect' ? 'rect' : 'ellipse') === v) || (id === 'mkStr' && (BLUR_N[it.str] ? +it.str : 1) === +v)); });
+  $$('#mkCol button').forEach(b => b.classList.toggle('on', b.dataset.c.toUpperCase() === col));
+  const ci = $('#mkCol input'); if (ci && document.activeElement !== ci) ci.value = col.toLowerCase();
+  const hide = (id, on) => { const el = $('#' + id); if (el) el.classList.toggle('hidden', on); };
+  if (it.type === 'shape'){ hide('mkThickF', it.kind === 'marker' || !!it.fill); hide('mkFillF', it.kind === 'arrow' || it.kind === 'marker'); hide('mkDirF', it.kind !== 'arrow'); const cf = $('#mkFill'); if (cf) cf.checked = !!it.fill; }
+  else { hide('mkStrF', it.kind === 'cover'); hide('mkColF', it.kind !== 'cover');
+    $('#mkWarn').textContent = (markMoves(it) ? 'Achtung: An dieser Stelle bewegt sich das Bild (Zoom oder Keyframes der Hauptspur). Prüfe in der Vorschau, ob der Bereich die Stelle durchgehend verdeckt, und führe ihn mit Keyframes nach. ' : '') + (it.kind === 'cover' ? 'Abgedeckte Flächen lassen sich aus dem fertigen Video durch nichts zurückholen – die sicherste Wahl für Gesichter, Namen und Kennzeichen.'
+      : it.str === 3 || it.str === '3' ? 'Leichtes Verpixeln oder Weichzeichnen lässt Gesichter und größere Schrift oft noch erkennen. Für Unbeteiligte lieber „stark“ oder „Abdecken“ wählen.'
+      : 'Der Bereich deckt alles Bildmaterial darunter ab – auch B-Roll und Einblendungen. Titel, Untertitel und Formen bleiben scharf.'); }
+  $('#mkDur').textContent = (+it.dur || 0).toFixed(1).replace('.', ',') + ' s';
+  const n = (it.kf || []).length;
+  $('#mkKf').textContent = n ? `${n} Keyframe${n === 1 ? '' : 's'}: An jeder dieser Stellen liegt ${it.type === 'blur' ? 'der Bereich' : 'die Form'} so, wie du ${it.type === 'blur' ? 'ihn' : 'sie'} dort hingezogen hast; dazwischen wandert ${it.type === 'blur' ? 'er' : 'sie'} gleichmäßig.`
+    : (it.type === 'blur' ? 'Bewegt sich, was verdeckt werden soll? „Keyframe“ (Taste M) am Anfang setzen, dann die Abspiellinie ein Stück weiter stellen und den Bereich im Bild nachziehen – so folgt er.'
+      : 'Mit „Keyframe“ (Taste M) bewegt sich die Form über die Zeit: Abspiellinie versetzen und die Form im Bild an die neue Stelle ziehen.');
+}
+// Auswahl im Bild: Form oder Bereich antippen wählt aus und greift gleich zu
+function markPointer(e){
+  const el = e.target.closest('[data-mk]'); if (!el || !P || !studioOn() || keyPick || Crop.it || pinMode) return;
+  const it = P.items.find(x => x.id === el.dataset.mk); if (!it) return;
+  e.preventDefault(); e.stopPropagation(); if (playing) pausePlay();
+  if (!(typeof TL !== 'undefined' && TL.sel && TL.sel.id === it.id) && window.select) select({kind: 'mark', id: it.id});
+  updateOverlay(outPos);
+  if (curPip === it) pipDragStart(e, 'move');
+}
+for (const id of ['shapeOv', 'blurOv']){ const box = $('#' + id); box.addEventListener('pointerdown', markPointer); box.addEventListener('click', e => e.stopPropagation());
+  box.addEventListener('dblclick', e => { const el = e.target.closest('[data-mk]'); if (el){ e.stopPropagation(); openMark(el.dataset.mk); } }); }
+
+// ── Fortschrittsbalken (E8) ──
+// P.progress = {on, pos: 'u' | 'o', size: 1…3, color: '' (Akzentfarbe des Designprofils) oder '#rrggbb', bg: dunkle Grundlinie}.
+// Im Export eine Bild-Einblendung über allem, die über die ganze Länge von links ins Bild fährt (zwei Keyframes) – so brauchen
+// die drei Export-Wege keinen eigenen Weg dafür. In Projekt-Exporten (CapCut, Concat) fehlt er: Dort ändert sich die Länge noch.
+const PROG_DEF = {on: true, pos: 'u', size: 2, color: '', bg: true}, PROG_T = {1: 0.006, 2: 0.01, 3: 0.016};
+const progSet = () => ({...PROG_DEF, ...((P && P.progress) || {})});
+const progOn = () => !!(P && P.progress && P.progress.on !== false && total > 0);
+const progColor = () => { const c = progSet().color; return /^#[0-9a-f]{6}$/i.test(c || '') ? c.toUpperCase() : slColors(slProfile(), true).acc.toUpperCase(); };
+// Höhe in Pixeln (gerade Zahl) und Oberkante bei Ausgabegröße W × H
+function progGeom(W, H){ const p = progSet(), th = Math.max(2, Math.round(Math.min(W, H) * (PROG_T[p.size] || PROG_T[2]) / 2) * 2); return {th, y: p.pos === 'o' ? 0 : H - th, p}; }
+function placeProgress(W, H, o){
+  const box = $('#progOv'); if (!progOn()){ if (!box.classList.contains('hidden')) box.classList.add('hidden'); return; }
+  const [OW, OH] = outSize(), g = progGeom(OW, OH), th = Math.max(1.5, g.th * W / OW);
+  box.classList.remove('hidden'); box.classList.toggle('top', g.p.pos === 'o'); box.style.height = th.toFixed(1) + 'px'; box.style.background = g.p.bg ? 'rgba(0,0,0,.35)' : 'transparent';
+  const bar = box.firstElementChild, col = progColor(); if (bar.dataset.c !== col){ bar.style.background = col; bar.dataset.c = col; }
+  bar.style.transform = `scaleX(${clamp(o / total, 0, 1).toFixed(4)})`;
+}
+const viewProgress = () => { const st = $('#stage'); placeProgress(st.clientWidth, st.clientHeight, outPos); };
+function progPlan(W, H){
+  if (!progOn() || !TS.saveImage || exFmt !== 'video') return [];
+  const g = progGeom(W, H), y = +((g.y + g.th / 2) / H).toFixed(5), out = [], col = progColor();
+  const img = c => { const cv = document.createElement('canvas'); cv.width = W; cv.height = g.th; const x = cv.getContext('2d'); x.fillStyle = c; x.fillRect(0, 0, W, g.th);
+    const m = J(TS.saveImage(`balken-${c.slice(1).toLowerCase()}-${W}x${g.th}.png`, cv.toDataURL('image/png'), W, g.th, P.id)); return m && m.uri; };
+  const base = {mode: 'pip', image: true, in: 0, out: r3(total), at: 0, w: 1, aspect: +(W / g.th).toFixed(5), vol: 0, hasAudio: false, width: W, height: g.th, rotation: 0, top: true, progress: true};
+  if (g.p.bg){ const u = img('#000000'); if (u) out.push({...base, uri: u, x: 0.5, y, track: 150, opacity: 0.35}); }
+  const u = img(col); if (u) out.push({...base, uri: u, x: -0.5, y, track: 151, kf: [{t: 0, x: -0.5, y, w: 1}, {t: r3(total), x: 0.5, y, w: 1}]});
+  return out;
+}
+function progEdit(fn){ commit(() => { P.progress = {...progSet()}; fn(P.progress); }, false); viewProgress(); paintProgSheet(); if (tab === 'export') renderExport(); }
+const progSheetOpen = () => !$('#sheet').classList.contains('hidden') && !!$('#pgForm');
+function openProgress(){
+  if (!P) return; sheetItem = null;
+  const body = $('#sheetBody');
+  body.innerHTML = `<h3>Fortschrittsbalken</h3><div id="pgForm">
+    <p class="muted small">Eine schmale Leiste am Bildrand zeigt, wie weit das Video ist. Sie gilt für das ganze Video und steht im fertigen Video; in CapCut- und Concat-Projekten fehlt sie, weil sich die Länge dort noch ändert.</p>
+    <div class="field"><label class="row"><input type="checkbox" id="pgOn"> Fortschrittsbalken zeigen</label></div>
+    <div class="field"><span>Lage</span><div class="seg-ctl" id="pgPos"><button data-v="u">Unten</button><button data-v="o">Oben</button></div></div>
+    <div class="field"><span>Höhe</span><div class="seg-ctl" id="pgSize"><button data-v="1">schmal</button><button data-v="2">mittel</button><button data-v="3">kräftig</button></div></div>
+    <div class="field"><span>Farbe</span><div class="swatches" id="pgCol"><button data-c="" class="auto" title="Akzentfarbe des Designprofils">A</button>${['#E5402A', '#FFFFFF', '#FFE14D', '#3E8A55'].map(c => `<button data-c="${c}" style="background:${c}" title="${c}"></button>`).join('')}<input type="color" title="Eigene Farbe"></div></div>
+    <div class="field"><label class="row"><input type="checkbox" id="pgBg"> Dunkle Grundlinie über die ganze Breite</label></div>
+    <div class="row" style="margin-top:12px"><button class="btn danger" id="pgDel">Entfernen</button><button class="btn primary" id="pgOk" style="margin-left:auto">Fertig</button></div></div>`;
+  openSheet(true);
+  if (!P.progress) progEdit(() => {}); else paintProgSheet();
+  body.onclick = e => {
+    const b = e.target.closest('button'); if (!b) return;
+    const seg = b.closest('.seg-ctl');
+    if (seg){ progEdit(p => { if (seg.id === 'pgPos') p.pos = b.dataset.v; else p.size = +b.dataset.v; p.on = true; }); return; }
+    if (b.dataset.c != null){ progEdit(p => { p.color = b.dataset.c; p.on = true; }); return; }
+    if (b.id === 'pgDel'){ commit(() => { delete P.progress; }, false); viewProgress(); closeSheet(); toast('Fortschrittsbalken entfernt'); if (tab === 'export') renderExport(); return; }
+    if (b.id === 'pgOk') closeSheet();
+  };
+  $('#pgOn').onchange = e => progEdit(p => { p.on = e.target.checked; });
+  $('#pgBg').onchange = e => progEdit(p => { p.bg = e.target.checked; });
+  const ci = body.querySelector('input[type=color]'); ci.oninput = () => { commitBurst('pgcol', () => { P.progress = {...progSet(), color: ci.value.toUpperCase(), on: true}; }); viewProgress(); paintProgSheet(); };
+}
+function paintProgSheet(){
+  if (!$('#pgForm')) return; const p = progSet(), on = !!P.progress && p.on !== false;
+  $('#pgOn').checked = on; $('#pgBg').checked = !!p.bg;
+  $$('#pgForm .seg-ctl button').forEach(b => b.classList.toggle('on', b.parentElement.id === 'pgPos' ? p.pos === b.dataset.v : +p.size === +b.dataset.v));
+  const own = /^#[0-9a-f]{6}$/i.test(p.color || '') ? p.color.toUpperCase() : '';
+  $$('#pgCol button').forEach(b => b.classList.toggle('on', b.dataset.c.toUpperCase() === own)); { const a = $('#pgCol .auto'); if (a) a.style.background = slColors(slProfile(), true).acc; }
+  const ci = $('#pgCol input'); if (ci && document.activeElement !== ci) ci.value = progColor().toLowerCase();
+}
+
+// ── Markieren im Screenshot (B5) ──
+// Ein Bild auf einer Videospur bekommt it.mark = {orig: Datei ohne Markierung, rects: [[x, y, w, h], …] als Anteile des Bilds,
+// color, dim: Abdunklung des Rests (0 = aus), zoom: langsam heranfahren, base: Lage vor dem Heranfahren (null = bildfüllend)}.
+// it.clip ist dann das gebackene Bild: die Stellen wie mit einem Textmarker hinterlegt, der Rest abgedunkelt. Das Heranfahren sind
+// zwei Keyframes des Elements – Vorschau und alle Exporte behandeln es wie jede bewegte Einblendung.
+const MARK_COLS = ['#FFE14D', '#9BE86E', '#FF9EC4', '#7FD3FF'], MARK_DEF = {color: '#FFE14D', dim: 0.5, zoom: true};
+const canMark = it => !!it && (it.type === 'broll' || it.type === 'pip') && !it.slide && !!it.clip && (isImg(it.clip) || !!it.mark);
+async function markBake(orig, mk){
+  if (!TS.saveImage) throw new Error('Markieren geht in dieser Version noch nicht');
+  const im = await slImg(orig.uri); if (!im) throw new Error('Das Bild lässt sich nicht laden');
+  const iw = im.naturalWidth || im.width, ih = im.naturalHeight || im.height, f = Math.min(1, 4096 / Math.max(iw, ih)), w = Math.max(2, Math.round(iw * f)), h = Math.max(2, Math.round(ih * f));
+  const cv = document.createElement('canvas'); cv.width = w; cv.height = h; const ctx = cv.getContext('2d'); ctx.drawImage(im, 0, 0, w, h);
+  const rs = mk.rects.map(([x, y, rw, rh]) => [Math.round(x * w), Math.round(y * h), Math.max(1, Math.round(rw * w)), Math.max(1, Math.round(rh * h))]);
+  if (mk.dim > 0){ const d = document.createElement('canvas'); d.width = w; d.height = h; const dx = d.getContext('2d'); dx.fillStyle = `rgba(0,0,0,${clamp(+mk.dim, 0, 0.85)})`; dx.fillRect(0, 0, w, h); for (const r of rs) dx.clearRect(...r); ctx.drawImage(d, 0, 0); }
+  ctx.globalCompositeOperation = 'multiply'; ctx.fillStyle = mk.color; for (const r of rs) ctx.fillRect(...r); ctx.globalCompositeOperation = 'source-over';
+  const m = J(TS.saveImage(`markiert-${hashStr(JSON.stringify([orig.uri, w, h, mk.rects, mk.color, mk.dim]))}.png`, cv.toDataURL('image/png'), w, h, P.id));
+  if (!m || !m.uri) throw new Error('Das markierte Bild ließ sich nicht speichern');
+  m.name = String(orig.name || 'Bild').replace(/\.[a-z0-9]{2,5}$/i, '') + ' (markiert).png'; return m;
+}
+// Heranfahren: von der Ausgangslage so weit auf die markierten Stellen zu, dass sie groß und mittig im Bild stehen (höchstens dreifach).
+// Füllt das Bild die Fläche vorher, bleibt sie auch am Ende gefüllt.
+function markZoom(it, mk){
+  const [W, H] = outSize(), c = cropOf(it), a = elAspect(it), b = mk.base || coverVals(it), hh = b.w * W / a / H, d = Math.max(0.2, it.out - it.in);
+  let x0 = 1, y0 = 1, x1 = 0, y1 = 0;
+  for (const [x, y, w, h] of mk.rects){ x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x + w); y1 = Math.max(y1, y + h); }
+  // in Anteile des sichtbaren (zugeschnittenen) Bilds umrechnen
+  const cw = Math.max(0.02, 1 - c.l - c.r), ch = Math.max(0.02, 1 - c.t - c.b), n = (v, o, s) => clamp((v - o) / s, 0, 1);
+  x0 = n(x0, c.l, cw); x1 = n(x1, c.l, cw); y0 = n(y0, c.t, ch); y1 = n(y1, c.t, ch);
+  const bw = Math.max(0.02, x1 - x0), bh = Math.max(0.02, y1 - y0), z = clamp(Math.min(0.7 / (bw * b.w), 0.5 / (bh * hh)), 1.12, 3), w1 = b.w * z, hh1 = hh * z;
+  let nx = 0.5 - ((x0 + x1) / 2 - 0.5) * w1, ny = 0.5 - ((y0 + y1) / 2 - 0.5) * hh1;
+  if (b.x - b.w / 2 <= 0.002 && b.x + b.w / 2 >= 0.998) nx = clamp(nx, 1 - w1 / 2, w1 / 2);
+  if (b.y - hh / 2 <= 0.002 && b.y + hh / 2 >= 0.998) ny = clamp(ny, 1 - hh1 / 2, hh1 / 2);
+  const t0 = r3(Math.min(0.3, d * 0.1)), t1 = r3(clamp(d * 0.75, t0 + 0.4, Math.max(t0 + 0.4, d - 0.15)));
+  return [{t: t0, x: r3(b.x), y: r3(b.y), w: r3(b.w)}, {t: t1, x: r3(nx), y: r3(ny), w: r3(w1)}];
+}
+// Markierung und Heranfahren auf das Element anwenden (in einem Rückgängig-Schritt); m = gebackenes Bild oder null (Markierung entfernen)
+function markApply(it, mk, m){
+  const old = it.mark || null, base = old ? old.base : (it.w != null ? {x: it.x, y: it.y, w: it.w} : null);
+  if (old && old.zoom){ delete it.kf; if (base) Object.assign(it, base); else { delete it.w; delete it.x; delete it.y; } }   // früheres Heranfahren zurücknehmen
+  if (!m){ if (old){ it.clip = clone(old.orig); delete it.mark; } return; }
+  it.clip = clipOfSource(m); it.mark = {orig: clone(mk.orig), rects: mk.rects.map(r => r.map(v => +(+v).toFixed(4))), color: mk.color, dim: mk.dim, zoom: !!mk.zoom, base: base ? {...base} : null};
+  if (mk.zoom){ const kf = markZoom(it, it.mark); if (it.w == null){ const v = coverVals(it); it.x = r3(v.x); it.y = r3(v.y); it.w = r3(v.w); } it.kf = kf; }
+}
+function openMarker(id){
+  const it = P.items.find(x => x.id === id); if (!canMark(it)) return;
+  if (playing) pausePlay(); closeSheet();
+  const orig = it.mark ? it.mark.orig : it.clip, st = {orig, rects: (it.mark ? it.mark.rects : []).map(r => [...r]), color: (it.mark || MARK_DEF).color, dim: it.mark ? it.mark.dim : MARK_DEF.dim, zoom: it.mark ? !!it.mark.zoom : MARK_DEF.zoom};
+  const el = document.createElement('div'); el.className = 'mkx'; el.id = 'mkx';
+  el.innerHTML = `<div class="mkx-top"><b>Stellen markieren</b><span>${FINE ? 'Mit der Maus' : 'Mit dem Finger'} ein Rechteck über die Stelle ziehen. Eine Markierung antippen entfernt sie.</span></div>
+    <div class="mkx-stage"><div class="mkx-img" id="mkxImg"><img alt="" draggable="false"><canvas></canvas><div class="mkx-rects"></div></div></div>
+    <div class="mkx-bar"><div class="swatches" id="mkxCol">${MARK_COLS.map(c => `<button data-c="${c}" style="background:${c}" title="${c}"></button>`).join('')}</div>
+      <label class="row"><input type="checkbox" id="mkxDim"> Rest abdunkeln</label><label class="row"><input type="checkbox" id="mkxZoom"> Langsam heranfahren</label>
+      <span class="mkx-sp"></span><button class="btn danger" id="mkxClear">Markierung entfernen</button><button class="btn" id="mkxCancel">Abbrechen</button><button class="btn primary" id="mkxOk">Fertig</button></div>`;
+  document.body.append(el);
+  const box = $('#mkxImg'), img = box.querySelector('img'), dimCv = box.querySelector('canvas'), rbox = box.querySelector('.mkx-rects');
+  const fit = () => { const S0 = box.parentElement.getBoundingClientRect(), iw = img.naturalWidth || 16, ih = img.naturalHeight || 9, f = Math.min((S0.width - 16) / iw, (S0.height - 16) / ih); box.style.width = Math.max(40, iw * f) + 'px'; box.style.height = Math.max(40, ih * f) + 'px'; paint(); };
+  const paint = () => {
+    const w = box.clientWidth, h = box.clientHeight; dimCv.width = Math.max(2, w); dimCv.height = Math.max(2, h); const ctx = dimCv.getContext('2d');
+    if (st.dim > 0 && st.rects.length){ ctx.fillStyle = `rgba(0,0,0,${st.dim})`; ctx.fillRect(0, 0, w, h); for (const [x, y, rw, rh] of st.rects) ctx.clearRect(x * w, y * h, rw * w, rh * h); }
+    rbox.innerHTML = st.rects.map(([x, y, rw, rh], k) => `<i class="mkx-r" data-k="${k}" style="left:${(x * 100).toFixed(3)}%;top:${(y * 100).toFixed(3)}%;width:${(rw * 100).toFixed(3)}%;height:${(rh * 100).toFixed(3)}%;background:${st.color}"></i>`).join('') + (drag && drag.w ? `<i class="mkx-r new" style="left:${(drag.x * 100).toFixed(3)}%;top:${(drag.y * 100).toFixed(3)}%;width:${(drag.w * 100).toFixed(3)}%;height:${(drag.h * 100).toFixed(3)}%;background:${st.color}"></i>` : '');
+    $$('#mkxCol button').forEach(b => b.classList.toggle('on', b.dataset.c === st.color)); $('#mkxDim').checked = st.dim > 0; $('#mkxZoom').checked = st.zoom;
+    $('#mkxClear').classList.toggle('hidden', !it.mark);
+  };
+  let drag = null;
+  const pos = e => { const r = box.getBoundingClientRect(); return [clamp((e.clientX - r.left) / r.width, 0, 1), clamp((e.clientY - r.top) / r.height, 0, 1)]; };
+  box.addEventListener('pointerdown', e => { e.preventDefault(); box.setPointerCapture(e.pointerId); const [x, y] = pos(e), hit = e.target.closest('.mkx-r:not(.new)'); drag = {x0: x, y0: y, x, y, w: 0, h: 0, hit: hit ? +hit.dataset.k : -1}; });
+  box.addEventListener('pointermove', e => { if (!drag) return; const [x, y] = pos(e); drag.x = Math.min(x, drag.x0); drag.y = Math.min(y, drag.y0); drag.w = Math.abs(x - drag.x0); drag.h = Math.abs(y - drag.y0); if (drag.w > 0.012 || drag.h > 0.012) paint(); });
+  const up = () => { const g = drag; drag = null; if (!g) return;
+    if (g.w > 0.012 && g.h > 0.008){ if (st.rects.length < 12) st.rects.push([g.x, g.y, g.w, g.h]); else toast('Höchstens zwölf Stellen je Bild'); }
+    else if (g.hit >= 0) st.rects.splice(g.hit, 1);
+    paint(); };
+  box.addEventListener('pointerup', up); box.addEventListener('pointercancel', () => { drag = null; paint(); });
+  const close = () => { window.removeEventListener('resize', fit); el.remove(); };
+  el.querySelector('.mkx-bar').onclick = async e => {
+    const b = e.target.closest('button'); if (!b) return;
+    if (b.dataset.c){ st.color = b.dataset.c; paint(); return; }
+    if (b.id === 'mkxCancel'){ close(); return; }
+    if (b.id === 'mkxClear' || (b.id === 'mkxOk' && !st.rects.length)){
+      if (it.mark){ commit(() => markApply(it, null, null), true); seekOut(outPos, false); toast('Markierung entfernt'); } close(); return; }
+    if (b.id === 'mkxOk'){
+      b.disabled = true;
+      try { const m = await markBake(st.orig, st); commit(() => markApply(it, st, m), true); seekOut(outPos, false);
+        toast(st.zoom ? 'Markiert – das Bild fährt langsam auf die Stelle zu' : 'Markiert'); close(); }
+      catch(err){ b.disabled = false; toast(err.message || 'Markieren fehlgeschlagen'); }
+    }
+  };
+  $('#mkxDim').onchange = e => { st.dim = e.target.checked ? MARK_DEF.dim : 0; paint(); };
+  $('#mkxZoom').onchange = e => { st.zoom = e.target.checked; };
+  window.addEventListener('resize', fit);
+  img.onload = fit; img.onerror = () => { toast('Das Bild lässt sich nicht laden'); close(); }; img.src = MEDIA(orig.uri);
 }
 
 // ───────── Clips in Serie (2.33): Vormerken und Clip-Reihe (F2), Zusammenschnitt (F3), Vorschläge (F1), Hook-Varianten (F4), „Teil 1/3“ (F5), Suche über alle Projekte (C9) ─────────

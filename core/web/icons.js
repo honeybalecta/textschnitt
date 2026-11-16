@@ -74,6 +74,14 @@
     '❓': '<circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.6 2.2c-.7.4-1.1 1-1.1 1.8M12 17h.01"/>',
     '⧓': '<path d="M4 6v12l8-6zM20 6v12l-8-6z"/>',
     '▤': '<rect x="9" y="3" width="11" height="15" rx="2"/><path d="M5 7.5V19a2 2 0 0 0 2 2h8.5"/><path d="M12.5 10.5h4M14.5 8.5v4"/>',
+    '→': '<path d="M5 12h14M12 5l7 7-7 7"/>', '←': '<path d="M19 12H5M12 5l-7 7 7 7"/>',
+    '⬭': '<rect x="3" y="3" width="11" height="11" rx="1.5"/><circle cx="15.5" cy="15.5" r="5.5"/>',
+    '▦': '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18M15 3v18M3 9h18M3 15h18"/>',
+    '▬': '<rect x="2" y="9.5" width="20" height="5" rx="2.5"/><rect x="2" y="9.5" width="11" height="5" rx="2.5" fill="currentColor" stroke="none"/>',
+    '🖍': '<path d="M9 14 16 4l4 3-7 10z"/><path d="M9 14l-2 4 5-1M4 21h9"/>',
+    '⏭': '<path d="M5 5l9 7-9 7z"/><path d="M19 5v14"/>',
+    '☰': '<path d="M4 6h16M4 12h11M4 18h6"/>',
+    '↥': '<path d="M12 21V8M6 13l6-6 6 6M5 3h14"/>', '↧': '<path d="M12 3v13M6 11l6 6 6-6M5 21h14"/>',
     'safe': '<rect x="6" y="2.5" width="12" height="19" rx="2"/><path d="M9 6.5h4M9 10h6v5H9zM9 18h6" stroke-dasharray="1.6 1.6"/>',
   };
   const svg = d => `<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;

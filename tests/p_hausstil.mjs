@@ -35,7 +35,7 @@ await openSheetHouse();
 chk('das Blatt zeigt Hausstil, Bausteine und Endkarte; zu Beginn ist alles leer', await ev(() => [...document.querySelectorAll('#sheetBody h4')].map(h => h.textContent).join('|') === 'Hausstil|Bausteine|Endkarte' && /Noch keine Vorlage/.test(document.querySelector('#hsList').textContent) && /Noch keine Bausteine/.test(document.querySelector('#bkList').textContent)));
 await page.click('#hsSave'); await name('Statement');
 let st = await ev(() => ({ list: houseList.map(h => [h.name, Object.keys(h.st).sort().join(',')]), stored: localStorage.getItem('hc-house') === JSON.stringify(houseList), st: houseList[0].st }));
-chk('„Stil dieses Projekts als Vorlage speichern“ legt die Vorlage im Gerät ab', st.list.length === 1 && st.list[0][0] === 'Statement' && st.stored && st.list[0][1] === 'audio,auto,burn,format,level,lower,part,safe,slideProfile,srcStyle,sub,textline,wm', st.list);
+chk('„Stil dieses Projekts als Vorlage speichern“ legt die Vorlage im Gerät ab', st.list.length === 1 && st.list[0][0] === 'Statement' && st.stored && st.list[0][1] === 'audio,auto,burn,format,level,lower,part,progress,safe,slideProfile,srcStyle,sub,textline,wm', st.list);
 chk('die Vorlage hält Untertitel-Stil, Wasserzeichen, Format, Schutzzonen, Lautstärke und Aufräum-Optionen', st.st.sub.color === '#EDE7DA' && st.st.sub.chars === 18 && st.st.wm.pos === 'ol' && /logo\.png$/.test(st.st.wm.clip.uri) && st.st.format === '9:16' && st.st.safe === 'tiktok'
   && st.st.level === false && st.st.burn === false && st.st.textline.text === '@honeybalecta' && st.st.lower.dur === 5 && st.st.auto.autoFillers === true && st.st.auto.autoPauseLen === '0.3', st.st);
 let r = await rows('#hsList');

@@ -333,9 +333,12 @@ const boxes = {};
 for (const k of [0, 1]) { await open(ser.clips[k].id); boxes[k] = await ev(() => { const [W, H] = outSize(), b = partBox(W, H); P.settings.burn = false; P.settings.level = false; saveNow(); return { W, H, b, total }; }); }
 await open(idS); await ev(() => { setTab('text'); seekOut(33, false); commit(() => { P.settings.level = false; }, false); openClips('series'); }); await sleep(300);
 const before = await ev(() => ({ undo: undo.length, snap: snapshot(), pos: outPos }));
+// Das Fenster mit dem Fortschritt steht nur, solange die Clips vorbereitet werden: in der Seite ablesen, sobald es erscheint
+// (auf einem schnellen Rechner war es sonst schon wieder zu, bevor die Prüfung nachsah)
+const modalP = ev(() => new Promise(res => { const t0 = Date.now(); (function look(){ const m = document.querySelector('#hcModal #bxMsg');
+  if (exBatch && m) return res(document.querySelector('#hcModal').textContent.replace(/\s+/g, ' ')); if (Date.now() - t0 > 15000) return res(''); requestAnimationFrame(look); })(); }));
 await page.click('.cl-ser [data-a="sexp"]');
-await page.waitForFunction(() => exBatch && document.querySelector('#hcModal #bxMsg'), null, { timeout: 15000 }).catch(() => {});
-const modal = await ev(() => document.querySelector('#hcModal') ? document.querySelector('#hcModal').textContent.replace(/\s+/g, ' ') : '');
+const modal = await modalP;
 await page.waitForFunction(() => !exBatch, null, { timeout: 180000 }); await sleep(600);
 st = await ev(() => ({ id: P && P.id, tab, pos: outPos, undo: undo.length, snap: snapshot(), q: EXQ.map(x => [x.name, x.status, x.info, x.proj]), sheet: !!document.querySelector('#queueSheetList') && !document.querySelector('#sheet').classList.contains('hidden'), modal: !!document.querySelector('#hcModal'), toast: document.querySelector('#toast').textContent }));
 chk('„Alle exportieren“ öffnet jeden Clip kurz und zeigt den Fortschritt', /„Reihe 1“ exportieren/.test(modal) && /Clip \d von 3|Wird vorbereitet/.test(modal) && /Abbrechen/.test(modal), modal.slice(0, 160));

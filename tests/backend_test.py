@@ -2,7 +2,8 @@
 """Prüfungen des Backends ohne Browser: sicheres Speichern, frühere Fassungen, Papierkorb, Speicher verwalten,
 alle Projekte sichern und einspielen, Projekt weitergeben, Vorschaubild der Projektliste, Textzeile und Untertitel im Export,
 Quellenzeilen und Textfassung, Schrift im Export (Größe und Umbruch wie in der Vorschau), Hinweis aus dem eigenen Wörterbuch für Whisper,
-Ton (Verlauf für „Musik weicht der Sprache“, „Stimme aufbereiten“) und Übergänge im Export, Hinweis auf neue Versionen, Fehlerbericht.
+Ton (Verlauf für „Musik weicht der Sprache“, „Stimme aufbereiten“) und Übergänge im Export, Belege im Bild (unkenntlich gemachte
+Bereiche, Formen und Fortschrittsbalken im Export), Hinweis auf neue Versionen, Fehlerbericht.
 Läuft in einem frischen Datenordner; nichts verlässt den Rechner (GitHub ist nachgestellt).
 Aufruf: python3 tests/backend_test.py            alles
         python3 tests/backend_test.py ton_234    nur ein Teil (Name der Funktion)"""
@@ -1022,6 +1023,163 @@ def ton_234():
     chk("Selbsttest der App: Absenkung, aufbereitete Stimme und Übergang im fertigen Video nachgemessen", st.get("ok") is True, st)
 
 
+def belege_235():
+    """2.35: unkenntlich gemachte Bereiche (plan["blurs"]) im Export – am Schachbrett-Muster ausgemessen: Rechteck verpixelt, Ellipse
+    weichgezeichnet mit Keyframes, Lage am Bildrand, Reihenfolge (Einblendungen darunter, Formen und Fortschrittsbalken darüber),
+    Stückelung langer Exporte, CapCut und Concat. Dieselben Erwartungen wie im Browser-Export (p_browser.mjs)."""
+    import numpy as np
+    vd = TMP / "belege"
+    vd.mkdir(parents=True, exist_ok=True)
+    W, H, FPS = 640, 360, 30
+
+    def ff(*a):
+        subprocess.run([T.FFMPEG, "-v", "error", "-y", *a], check=True, capture_output=True)
+    video = vd / "karo.mp4"   # Schachbrett aus 4 Pixel großen Feldern, 6 s
+    ff("-f", "lavfi", "-i", f"color=c=black:s={W}x{H}:r={FPS}:d=6,format=gray,geq=lum='16+219*mod(floor(X/4)+floor(Y/4)\\,2)'", "-pix_fmt", "yuv420p", "-c:v", "libx264", "-crf", "10", "-g", "15", str(video))
+    for name, col, size in (("rot", "red", "32x32"), ("gruen", "lime", "32x32"), ("balken", "0xE5402A", "640x4"), ("weiss", "white", "64x64")):
+        ff("-f", "lavfi", "-i", f"color=c={col}:s={size}", "-frames:v", "1", str(vd / f"{name}.png"))
+    ff("-f", "lavfi", "-i", "color=c=black:s=128x128,format=gray,geq=lum='255*lte(pow((X+0.5-64)/64\\,2)+pow((Y+0.5-64)/64\\,2)\\,1)'", "-frames:v", "1", str(vd / "ellipse.png"))
+    uri = lambda n: str(vd / f"{n}.png")
+
+    def seg(a, b, **kw):
+        return {"kind": "main", "src": 0, "uri": str(video), "in": a, "out": b, "zooms": [], "hasAudio": False, "hasVideo": True, "speed": 1, "vol": 1,
+                "bright": 0, "contrast": 0, "sat": 0, "gray": False, "tx": 0, "ty": 0, "sc": 1, **kw}
+
+    def plan(name, segs=None, fmt="video", **kw):
+        segs = segs or [seg(0, 2)]
+        return {"format": fmt, "name": name, "width": W, "height": H, "fps": FPS, "total": round(sum(s["out"] - s["in"] for s in segs), 3), "quality": "hoch", "burn": False,
+                "audioFormat": "wav", "overlays": [], "segments": segs,
+                "sources": [{"uri": str(video), "name": "karo.mp4", "duration": 6, "width": W, "height": H, "fps": FPS, "hasAudio": False, "hasVideo": True}], **kw}
+
+    def gray(file):   # alle Bilder als Graustufen
+        raw = subprocess.run([T.FFMPEG, "-v", "error", "-i", str(file), "-an", "-f", "rawvideo", "-pix_fmt", "gray", "-"], capture_output=True, check=True).stdout
+        return np.frombuffer(raw, np.uint8).reshape(-1, H, W).astype(int)
+
+    def rgb(file, n):   # ein Bild in Farbe
+        raw = subprocess.run([T.FFMPEG, "-v", "error", "-i", str(file), "-an", "-vf", f"select=eq(n\\,{n})", "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], capture_output=True, check=True).stdout
+        return np.frombuffer(raw, np.uint8).reshape(H, W, 3).astype(int)
+
+    def box(g):   # Rahmen um alles, was nicht mehr Schachbrett ist (Mittelwerte); einzelne Ausreißer der Kompression zählen nicht
+        m = (g > 70) & (g < 180)
+        xs, ys = np.nonzero(m.sum(axis=0) >= 3)[0], np.nonzero(m.sum(axis=1) >= 3)[0]
+        return [int(xs[0]), int(ys[0]), int(xs[-1]), int(ys[-1]), int(m.sum())] if len(xs) and len(ys) else None
+
+    def near(b, want, tol=2):
+        return b is not None and all(abs(b[i] - want[i]) <= tol for i in range(4))
+    rect = {"at": 0.5, "d": 1, "x": 0.25, "y": 0.5, "w": 0.2, "wmax": 0.2, "aspect": 1, "form": "rect", "kind": "pixel", "cell": 0.025}
+    ell = {"at": 0.5, "d": 1, "x": 0.7, "y": 0.5, "w": 0.1, "wmax": 0.2, "aspect": 1, "form": "ellipse", "kind": "soft", "cell": 0.025, "mask": uri("ellipse"),
+           "kf": [{"t": 0, "x": 0.7, "y": 0.5, "w": 0.1}, {"t": 1, "x": 0.8, "y": 0.5, "w": 0.2}]}
+
+    # ── Filtergraph ──
+    inp, graph = T.build_graph(plan("g1", blurs=[rect]), True, None)
+    chk("Filtergraph: Ein festes Rechteck braucht keine Maske – ausschneiden, auf 8 × 8 Felder mitteln, hart vergrößern, zurücklegen",
+        inp.count("-i") == 1 and "crop=128:128" in graph and "scale=8:8:flags=area" in graph and "flags=neighbor" in graph and "alphamerge" not in graph and "enable='between(t,0.5000,1.5000)'" in graph)
+    inp, graph = T.build_graph(plan("g2", blurs=[ell]), True, None)
+    chk("Filtergraph: Die Ellipse mit Keyframes bekommt ihre Maske als eigene Eingabe, weich vergrößert", inp.count("-i") == 2 and "alphamerge" in graph and "flags=bilinear" in graph and "eval=frame" in graph)
+    inp, graph = T.build_graph(plan("g3", blurs=[{**ell, "mask": str(vd / "fehlt.png")}]), True, None)
+    chk("Filtergraph: Fehlt die Maskendatei, wird das ganze Fenster unkenntlich (lieber mehr als weniger)", inp.count("-i") == 1 and "alphamerge" not in graph and "crop=128:128" in graph)
+    img = lambda u, x, y, w, **kw: {"mode": "pip", "image": True, "uri": uri(u), "at": 0, "in": 0, "out": 2, "x": x, "y": y, "w": w, "aspect": 1, "track": 5, "vol": 0,
+                                    "hasAudio": False, "width": 32, "height": 32, "rotation": 0, **kw}
+    ovs = [img("gruen", 0.2, 0.5, 0.04), img("rot", 0.25, 0.5, 0.05, track=100, top=True),
+           img("balken", 0.5, 358 / 360, 1, aspect=160, track=150, top=True, opacity=0.35, width=640, height=4),
+           img("balken", 0.5, 358 / 360, 1, aspect=160, track=151, top=True, width=640, height=4, kf=[{"t": 0, "x": -0.5, "y": 358 / 360, "w": 1}, {"t": 2, "x": 0.5, "y": 358 / 360, "w": 1}])]
+    inp, graph = T.build_graph(plan("g4", blurs=[rect], overlays=ovs), True, None)
+    pos = [graph.find("[o0]overlay"), graph.find("split[bva0]"), graph.find("[o1]overlay")]
+    chk("Filtergraph: Einblendungen darunter, dann die Bereiche, dann Formen und Fortschrittsbalken (top)", -1 < pos[0] < pos[1] < pos[2], pos)
+    inp, graph = T.build_graph(plan("g5", blurs=[rect], overlays=ovs[:1]), True, None)
+    chk("Filtergraph: Ohne Formen kommen die Bereiche am Ende der Bildkette", -1 < graph.find("[o0]overlay") < graph.find("split[bva0]"))
+    inp, graph = T.build_graph(plan("g6", blurs=[rect]), False, None)
+    chk("Nur Ton: Bereiche spielen keine Rolle", "crop" not in graph and "split" not in graph)
+
+    # ── gemessen am fertigen Video ──
+    g0 = gray(T.export_job(job(), plan("belege_ohne"))["playable"])
+    chk("Schachbrett ohne Bereiche: 60 Bilder, nichts gemittelt", len(g0) == 60 and box(g0[30]) is None, [len(g0), box(g0[30])])
+    g1 = gray(T.export_job(job(), plan("belege_rechteck", blurs=[rect]))["playable"])
+    b = box(g1[30])
+    chk("verpixeltes Rechteck: genau der Bereich [96, 224) × [116, 244) ist betroffen, davor und danach nichts",
+        near(b, [96, 116, 223, 243], 1) and abs(b[4] - 128 * 128) < 500 and box(g1[6]) is None and box(g1[51]) is None, [b, box(g1[6]), box(g1[51])])
+    inner = g1[30][120:240, 100:220]
+    chk("verpixeltes Rechteck: Die Felder mitteln das Schachbrett zu gleichmäßigem Grau, ohne Farbstich", 118 <= inner.mean() <= 134 and inner.max() - inner.min() <= 16, [round(float(inner.mean()), 1), int(inner.min()), int(inner.max())])
+    c1 = rgb(T.export_job(job(), plan("belege_rechteck", blurs=[rect]))["playable"], 30)[150:210, 130:190].reshape(-1, 3).mean(axis=0)
+    chk("verpixeltes Rechteck: Rot, Grün und Blau bleiben gleich (neutrales Grau)", max(c1) - min(c1) < 4, [round(float(v), 1) for v in c1])
+    g2 = gray(T.export_job(job(), plan("belege_ellipse", blurs=[ell]))["playable"])
+    e0, e1 = box(g2[15]), box(g2[30])
+    chk("weichgezeichnete Ellipse mit Keyframes: Lage und Größe folgen dem Verlauf", near(e0, [416, 148, 479, 211], 3) and near(e1, [432, 132, 527, 227], 3), [e0, e1])
+    chk("Ellipse: Fläche passt zur Ellipse (π/4 des Rahmens), die Ecken ihres Rahmens bleiben Schachbrett",
+        e1 is not None and abs(e1[4] / (96 * 96) - np.pi / 4) < 0.05 and box(g2[30][132:142, 432:442]) is None and box(g2[30][218:228, 518:528]) is None, e1 and round(e1[4] / (96 * 96), 3))
+    chk("Ellipse: vor ihrem Beginn und nach ihrem Ende ist das Bild unberührt", box(g2[10]) is None and box(g2[50]) is None, [box(g2[10]), box(g2[50])])
+    g3 = gray(T.export_job(job(), plan("belege_rand", blurs=[{**rect, "x": 0.02, "y": 0.95, "mask": uri("weiss")}]))["playable"])
+    chk("Bereich am Bildrand (mit Maske): nur der sichtbare Teil ist betroffen", near(box(g3[30]), [0, 278, 76, 359], 2), box(g3[30]))
+    g3b = gray(T.export_job(job(), plan("belege_rand_ohne", blurs=[{**rect, "x": 0.02, "y": 0.95}]))["playable"])
+    chk("Bereich am Bildrand ohne Maske: das ganze Fenster wird unkenntlich", near(box(g3b[30]), [0, 232, 127, 359], 2), box(g3b[30]))
+
+    # ── Reihenfolge ──
+    f4 = T.export_job(job(), plan("belege_folge", blurs=[rect], overlays=ovs))["playable"]
+    c4 = rgb(f4, 30)
+    rot, a, bb, cc = c4[178:184, 157:163].reshape(-1, 3).mean(axis=0), c4[181, 129], c4[190, 140], c4[181, 142]
+    chk("Form über dem Bereich bleibt scharf (Rot in der Mitte)", rot[0] > 225 and rot[1] < 40 and rot[2] < 40, [int(v) for v in rot])
+    chk("Einblendung unter dem Bereich wird mit verpixelt: Mischfarbe, im ganzen Feld gleich",
+        a[1] > a[0] + 40 and a[0] > 10 and a[1] < 245 and max(abs(a - bb).max(), abs(a - cc).max()) <= 14, [a.tolist(), bb.tolist(), cc.tolist()])
+    bal, grund, ueber = c4[357:359, 100:300].reshape(-1, 3).mean(axis=0), c4[357:359, 420:600].reshape(-1, 3).mean(axis=0), c4[346:352, 420:600]
+    chk("Fortschrittsbalken: zur Hälfte der Zeit ist die linke Bildhälfte gefüllt, rechts liegt die Grundlinie über dem Bild",
+        abs(bal[0] - 229) < 14 and abs(bal[1] - 64) < 16 and abs(bal[2] - 42) < 16 and grund[0] > grund[2] + 15 and abs(grund[0] - 229) > 20 and ueber.max() - ueber.min() > 150,
+        [[int(v) for v in bal], [int(v) for v in grund]])
+    kante = np.nonzero((c4[358, :, 0] > 200) & (c4[358, :, 1] < 110) & (c4[358, :, 2] < 90))[0]
+    chk("Fortschrittsbalken: Seine Kante steht in der Bildmitte", len(kante) > 0 and abs(int(kante[-1]) - 319) <= 3, int(kante[-1]) if len(kante) else None)
+    c5 = rgb(T.export_job(job(), plan("belege_weich", blurs=[{**rect, "kind": "soft"}], overlays=ovs))["playable"], 30)
+    chk("weichgezeichnet: dieselbe Stelle verläuft, die Form darüber bleibt scharf",
+        c5[178:184, 157:163, 0].mean() > 225 and c5[178:184, 157:163, 1].mean() < 40 and abs(c5[181, 129] - c5[181, 142]).max() > 20, [c5[181, 129].tolist(), c5[181, 142].tolist()])
+
+    # ── Stückelung: acht Abschnitte zu je 0,5 s, das erste Stück endet bei 3,0 s ──
+    segs8 = [seg(m * 0.5, m * 0.5 + 0.5) for m in range(8)]
+    wander = {"at": 2.5, "d": 1, "x": 0.3, "y": 0.5, "w": 0.1, "wmax": 0.1, "aspect": 1, "form": "rect", "kind": "pixel", "cell": 0.025,
+              "kf": [{"t": 0, "x": 0.3, "y": 0.5, "w": 0.1}, {"t": 1, "x": 0.7, "y": 0.5, "w": 0.1}]}
+    lauf = img("balken", 0.5, 358 / 360, 1, aspect=160, track=151, top=True, width=640, height=4, out=4, kf=[{"t": 0, "x": -0.5, "y": 358 / 360, "w": 1}, {"t": 4, "x": 0.5, "y": 358 / 360, "w": 1}])
+    sub = T.shift_plan(plan("teil", segs8, blurs=[wander], overlays=[lauf]), segs8[6:], 3.0, 1.0)
+    chk("Stückelung: Der Bereich wird wie eine Einblendung zugeschnitten, seine Keyframes rücken mit",
+        len(sub["blurs"]) == 1 and sub["blurs"][0]["at"] == 0 and abs(sub["blurs"][0]["d"] - 0.5) < 1e-9 and [round(k["t"], 3) for k in sub["blurs"][0]["kf"]] == [-0.5, 0.5]
+        and len(T.shift_plan(plan("teil", segs8, blurs=[wander]), segs8[:2], 0.0, 1.0)["blurs"]) == 0, sub["blurs"])
+    f8 = T.export_job(job(), plan("belege_stuecke", segs8, blurs=[wander], overlays=[lauf]))["playable"]
+    g8 = gray(f8)
+    b87, b93 = box(g8[87][:340]), box(g8[93][:340])
+    chk("Stückelung: 120 Bilder; der Bereich wandert über die Grenze der Stücke hinweg gleichmäßig weiter",
+        len(g8) == 120 and near(b87, [262, 148, 325, 211], 2) and near(b93, [312, 148, 375, 211], 2) and box(g8[70][:340]) is None and box(g8[110][:340]) is None, [len(g8), b87, b93])
+    k8 = []
+    for n in (87, 93):
+        row = rgb(f8, n)[358]
+        hit = np.nonzero((row[:, 0] > 200) & (row[:, 1] < 110) & (row[:, 2] < 90))[0]
+        k8.append(int(hit[-1]) if len(hit) else None)
+    chk("Stückelung: Der Fortschrittsbalken läuft über die Grenze der Stücke hinweg weiter", k8[0] is not None and k8[1] is not None and abs(k8[0] - 463) <= 4 and abs(k8[1] - 495) <= 4, k8)
+
+    # ── CapCut und Concat: Formen gehen als Bilder mit, Bereiche bleiben dem Video-Export vorbehalten ──
+    T.capcut_drafts_dir = lambda: None
+    cc = T.export_job(job(), plan("belege_capcut", fmt="capcut", blurs=[rect], overlays=ovs[:2]))
+    doc = json.loads(next(Path(f) for f in cc["files"] if Path(f).is_dir()).joinpath("draft_content.json").read_text(encoding="utf-8")) if cc.get("files") else {}
+    names = [t.get("name") for t in doc.get("tracks", []) if t.get("type") == "video"]
+    chk("CapCut: Die Form liegt als Bild auf einer eigenen Spur „Formen 1“ über den übrigen Spuren", names[-1:] == ["Formen 1"] and "Video 6" in names, names)
+    try:
+        cz = T.export_job(job(), plan("belege_concat", fmt="concat", blurs=[rect], overlays=ovs[:2]))
+        okc = bool(cz.get("files"))
+    except Exception as e:   # noqa: BLE001
+        okc, cz = False, {"fehler": str(e)[:200]}
+    chk("Concat: Der Export läuft mit Formen und Bereichen im Plan durch", okc, cz.get("fehler", ""))
+    # die Probe, die auch der Selbsttest der gebauten Windows-App fährt
+    st = T.belege_selftest()
+    chk("Selbsttest der App: Rechteck, Ellipse und Form im fertigen Video nachgemessen", st.get("ok") is True, st)
+    # Speicher verwalten: frühere Bilder markierter Screenshots und früherer Schritte lassen sich freigeben; was ein Projekt verwendet, bleibt
+    fo = D / "folien" / "pb"
+    for name in ("markiert-alt.png", "markiert-neu.png", "folie-b1-1-s1.png", "folie-b1-2-s1.png", "folie-b1-2.png", "form-abc.png", "balken-ffe14d-640x6.png", "maske-ellipse-205x256.png"):
+        mk(fo / name, b"x" * 4000)
+    pb = {"id": "pb", "name": "Belege", "sources": [], "items": [{"type": "broll", "clip": {"uri": str(fo / "markiert-neu.png")}, "mark": {"orig": {"uri": str(vd / "weiss.png")}}},
+                                                               {"type": "broll", "slide": "b1", "clip": {"uri": str(fo / "folie-b1-2.png")}, "build": [{"t": 0, "clip": {"uri": str(fo / "folie-b1-2-s1.png")}}, {"t": 2, "clip": {"uri": str(fo / "folie-b1-2.png")}}]}]}
+    mk(T.PROJ_DIR / "pb.json", json.dumps(pb))
+    T.storage_clear("slides")
+    left = sorted(x.name for x in fo.glob("*.png"))
+    chk("Speicher verwalten: Frühere markierte Bilder und frühere Schritt-Bilder werden freigegeben; benutzte Bilder, Formen, Balken und Masken bleiben",
+        left == ["balken-ffe14d-640x6.png", "folie-b1-2-s1.png", "folie-b1-2.png", "form-abc.png", "markiert-neu.png", "maske-ellipse-205x256.png"], left)
+    (T.PROJ_DIR / "pb.json").unlink()
+
+
 def bericht_und_protokoll():
     logged = []
     T.log = lambda msg: logged.append(msg)
@@ -1042,7 +1200,7 @@ def bericht_und_protokoll():
 if MODE == "umzug":
     umzug()
     sys.exit(1 if BAD else 0)
-PARTS = (speichern_und_fassungen, speicher, sicherung, projektpakete, kleine_helfer, quellen_und_belege, schrift_im_export, transkript, export_231, untertitel_effekte, ton_234, neue_versionen, bericht_und_protokoll)
+PARTS = (speichern_und_fassungen, speicher, sicherung, projektpakete, kleine_helfer, quellen_und_belege, schrift_im_export, transkript, export_231, untertitel_effekte, ton_234, belege_235, neue_versionen, bericht_und_protokoll)
 for part in [p for p in PARTS if p.__name__ == MODE] or PARTS:
     print(f"── {part.__name__.replace('_', ' ')} ──", flush=True)
     part()

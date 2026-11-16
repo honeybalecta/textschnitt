@@ -242,7 +242,9 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
         val ovs = plan.optJSONArray("overlays") ?: JSONArray()
         val total = plan.getDouble("total")
         val allOv = (0 until ovs.length()).map { ovs.getJSONObject(it) }
-        val byTrack = allOv.filter { it.optString("mode") != "audio" }.groupBy { it.optInt("track", 1) }
+        // Bilder über allem (top: Formen, abgedeckte Bereiche, Fortschrittsbalken) liegen als Overlay auf dem fertigen Bild, nicht als Spur
+        val isTop = { o: JSONObject -> o.optBoolean("top") && o.optBoolean("image") }
+        val byTrack = allOv.filter { it.optString("mode") != "audio" && !isTop(it) }.groupBy { it.optInt("track", 1) }
         // Tonspuren (Musik, Geräusche): je Spur eine reine Ton-Sequenz hinter der Hauptspur
         val audSeqs = ArrayList<EditedMediaItemSequence>()
         for ((_, l0) in allOv.filter { it.optString("mode") == "audio" }.groupBy { it.optInt("track", 1) }) {
@@ -294,7 +296,7 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
                     pre = if (key != null) listOf(ChromaKeyEffect(key, false)) else emptyList()))
                 spans.add(OvSpan(at, at + dur, o.getString("mode"), o.optString("corner", "or"), o.optDouble("size", 0.33).toFloat(),
                     free, o.optDouble("x", 0.5).toFloat(), o.optDouble("y", 0.5).toFloat(), o.optDouble("w", 1.0).toFloat(), (baseW * texR).toFloat(), kf,
-                    o.optDouble("opacity", 1.0).toFloat().coerceIn(0f, 1f)))
+                    o.optDouble("opacity", 1.0).toFloat().coerceIn(0f, 1f), asp = aspect.toFloat()))
                 cursor = at + dur
             }
             if (spans.isEmpty()) continue
@@ -333,18 +335,25 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
         val composition = if (seqs.isEmpty()) Composition.Builder(listOf(mainSeq) + audSeqs)
             else Composition.Builder(seqs + mainSeq + audSeqs).setVideoCompositorSettings(OvSettings(w, h, trackSpans))
 
-        // Untertitel, Titel und Textzeile. Ist „Untertitel einbrennen“ aus, bleiben nur Titel und Textzeile im Bild.
+        // Auf dem fertig zusammengesetzten Bild, in dieser Reihenfolge: unkenntlich gemachte Bereiche (plan.blurs), Bilder über
+        // allem (Formen, abgedeckte Bereiche, Fortschrittsbalken), zuletzt Untertitel, Titel und Textzeile.
+        val topFx = ArrayList<Effect>()
+        val regions = RegionBlurEffect.parse(plan.optJSONArray("blurs"), w)
+        // je Durchgang höchstens vier Bereiche zugleich; mehr laufen in weiteren Durchgängen
+        for (c in OvGeom.chunks(regions.size, 4)) topFx.add(RegionBlurEffect(regions.subList(c[0], c[1]), w, h))
+        val layers = ArrayList<TextureOverlay>(TopOverlay.lanes(allOv, w, h, total))
+        // Ist „Untertitel einbrennen“ aus, bleiben nur Titel und Textzeile im Bild.
         val subs = plan.optJSONObject("subs")
         if (subs != null) {
             val all = subs.getJSONArray("cues")
             val cues = if (plan.optBoolean("burn", true)) all else JSONArray().also { only ->
                 for (i in 0 until all.length()) { val c = all.getJSONObject(i); if (c.optBoolean("title")) only.put(c) }
             }
-            if (cues.length() > 0) {
-                val overlay: TextureOverlay = SubtitleOverlay(ctx, w, h, cues, subs.getJSONObject("style"), subs.optJSONObject("fonts"))
-                composition.setEffects(Effects(listOf(), listOf(OverlayEffect(listOf(overlay)))))
-            }
+            if (cues.length() > 0) layers.add(SubtitleOverlay(ctx, w, h, cues, subs.getJSONObject("style"), subs.optJSONObject("fonts")))
         }
+        // eine Overlay-Stufe nimmt nur wenige Bilder auf einmal (Textureinheiten des Geräts): in Gruppen zu sechs
+        for (c in OvGeom.chunks(layers.size, 6)) topFx.add(OverlayEffect(layers.subList(c[0], c[1]).toList()))
+        if (topFx.isNotEmpty()) composition.setEffects(Effects(listOf(), topFx))
 
         // Handyvideos sind oft HDR (HLG/HDR10). Bild-Overlays (Untertitel, Fotos) gehen in HDR nicht –
         // deshalb wird beim Export nach SDR umgerechnet; das ist auch das Format, das überall abspielbar ist.
@@ -430,7 +439,8 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
     data class OvSpan(val a: Double, val b: Double, val mode: String, val corner: String, val size: Float,
                       val free: Boolean = false, val x: Float = 0.5f, val y: Float = 0.5f, val wf: Float = 1f, val baseW: Float = 1f,
                       val kf: List<FloatArray> = emptyList(), val alpha: Float = 1f,
-                      val r0: Double = 0.0, val r1: Double = 0.0, val a0: Float = 1f, val a1: Float = 1f)   // Übergang: Deckkraft a0 → a1 von r0 bis r1
+                      val r0: Double = 0.0, val r1: Double = 0.0, val a0: Float = 1f, val a1: Float = 1f,   // Übergang: Deckkraft a0 → a1 von r0 bis r1
+                      val asp: Float = 16f / 9f)   // Seitenverhältnis eines frei liegenden Elements (für seine Höhe im Bild)
 
     class OvSettings(private val w: Int, private val h: Int, private val tracks: List<List<OvSpan>>) : VideoCompositorSettings {
         private val hidden = StaticOverlaySettings.Builder().setAlphaScale(0f).build()
@@ -461,8 +471,12 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
                     }
                 }
                 val sc = wf / s.baseW
+                // Die Mitte darf außerhalb des Bilds liegen (große oder herangefahrene Elemente): Media3 nimmt für die Anker nur −1 … 1
+                // an und brach den Export sonst ab. Dann sitzt der Anker an der Stelle des Elements, die auf dem Bildrand liegt.
+                val ax = OvGeom.anchor(x * 2 - 1, wf) ?: return hidden
+                val ay = OvGeom.anchor(1 - y * 2, wf * w / (maxOf(0.05f, s.asp) * h)) ?: return hidden
                 return StaticOverlaySettings.Builder().setScale(sc, sc).setAlphaScale(s.alpha)
-                    .setOverlayFrameAnchor(0f, 0f).setBackgroundFrameAnchor(x * 2 - 1, 1 - y * 2).build()
+                    .setOverlayFrameAnchor(ax[0], ay[0]).setBackgroundFrameAnchor(ax[1], ay[1]).build()
             }
             if (s.mode != "pip") return full
             val m = 0.06f // Rand in NDC

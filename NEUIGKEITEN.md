@@ -2,6 +2,16 @@
 
 Was sich mit jeder Version von HoneyCut ändert. Die Windows-App zeigt diese Stichpunkte an, sobald eine neuere Version bereitsteht.
 
+## 2.35.0 · Belege im Bild
+- Formen und Pfeile: Rahmen, Kreis, Pfeil und Textmarker über dem Bild – im Bild verschieben, an der Ecke in der Größe ändern, mit Keyframes (Taste M) über die Zeit bewegen
+- Unkenntlich machen: Gesichter, Kennzeichen oder Namen verpixeln, weichzeichnen oder abdecken, als Ellipse oder Rechteck. Mit Keyframes folgt der Bereich dem, was er verdeckt. Wechselt das Format oder der Bildausschnitt – auch bei Clips im Hochformat und im Export-Paket –, bleibt er auf derselben Stelle des Bilds
+- Markieren im Screenshot: in einem eingefügten Artikel oder Beitrag Stellen farbig hinterlegen, den Rest abdunkeln und langsam darauf zufahren
+- Folien bauen sich Schritt für Schritt auf: Stichpunkte erscheinen nacheinander, passend zum gesprochenen Satz; mit HoneyDeck 1.3.0 auch Ablauf, Zeitstrahl, Piktogramme, Richtig/Falsch, Kennzahlen und Balken. Die Zeiten lassen sich im Studio verschieben, N schaltet zum nächsten Schritt
+- Fortschrittsbalken: eine dünne Leiste am Bildrand zeigt, wie weit das Video ist – in der Akzentfarbe des Designs oder einer eigenen Farbe; gehört zum Hausstil
+- Formen, Bereiche und Balken gelten in der Vorschau und im Video-Export unter Windows, Android und im Browser. CapCut- und Concat-Projekte übernehmen Formen und abgedeckte Flächen als Bilder; Verpixeln und Weichzeichnen stecken nur im Export „Video“, und HoneyCut fragt vor einem Projekt-Export nach
+- Behoben: Einblendungen mit Keyframes saßen im Windows-Export bis zu zwei Pixel versetzt. Lag ein Keyframe hinter dem Ende eines Elements, bewegte es sich im Export anders als in der Vorschau. Android: Der Export brach ab, wenn die Mitte einer frei liegenden Einblendung außerhalb des Bilds lag (große Screenshots, herangefahrene Bilder)
+- Zeitleiste: Am ausgewählten Element liegen die Griffe zum Kürzen über den Keyframe-Marken
+
 ## 2.34.0 · Ton
 - Musik weicht der Sprache: Tonspuren werden leiser, sobald gesprochen wird, und kommen in Pausen ab zwei Sekunden zurück. Ein Schalter je Projekt unter „Lautstärke“, in drei Stärken; einzelne Tonspuren lassen sich ausnehmen oder selbst als Sprache einstellen
 - Stimme aufbereiten: ein Schalter gegen Brummen, Rauschen und Raumhall, der zugleich leise und laute Stellen angleicht – zu hören in der Vorschau und im Export, gerechnet auf dem eigenen Gerät
