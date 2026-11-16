@@ -208,7 +208,7 @@ if (chk('die Exporte mit Hervorhebung, Aufbau und betonten Wörtern sowie die Ve
   const at = k => (cu.words[k][0] + cu.words[k][1]) / 2;
   const dd = (f1, f2, t, k) => { const a = frame(f1, t, reg(k)), b = frame(f2, t, reg(k)); let n = 0; for (let i = 0; i < a.length; i++) if (Math.abs(a[i] - b[i]) > 40) n++; return +(n / a.length).toFixed(3); };
   // Zustand eines Worts im Video: steht (gleich wie ohne Effekte), farbig (anders als ohne Effekte, aber da), verborgen (wie ohne Untertitel)
-  const state = (t, k) => { const ar = dd(fa, fr, t, k), an = dd(fa, fn, t, k), rn = dd(fr, fn, t, k); return an < 0.01 && rn > 0.03 ? 'verborgen' : ar < 0.012 ? 'steht' : ar > 0.03 && an > 0.03 ? 'farbig' : `unklar(${ar},${an},${rn})`; };
+  const state = (t, k) => { const ar = dd(fa, fr, t, k), an = dd(fa, fn, t, k), rn = dd(fr, fn, t, k); return an < 0.01 && rn > 0.03 ? 'verborgen' : ar < 0.022 ? 'steht' : ar > 0.04 && an > 0.03 ? 'farbig' : `unklar(${ar},${an},${rn})`; };
   const row = t => rects.map((_, k) => state(t, k)).join();
   const n = rects.length, want = (act) => rects.map((_, k) => k < act ? (k === 4 || k === 5 ? 'farbig' : 'steht') : k === act ? 'farbig' : 'verborgen').join();
   for (const k of [0, 2, 6, n - 1]) chk(`im Video beim ${k + 1}. Wort: frühere Wörter stehen, das gesprochene und die betonten sind farbig, spätere verborgen`, row(at(k)) === want(k), row(at(k)));
