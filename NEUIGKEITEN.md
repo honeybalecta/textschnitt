@@ -2,6 +2,14 @@
 
 Was sich mit jeder Version von HoneyCut ändert. Die Windows-App zeigt diese Stichpunkte an, sobald eine neuere Version bereitsteht.
 
+## 2.30.0 · Hausstil und Bausteine
+- Hausstil als Vorlage: Untertitel-Stil, Wasserzeichen, Format, Schutzzonen, Lautstärke, Textzeile, Bauchbinden, Designprofil und Aufräum-Optionen unter einem Namen speichern. Mit dem Stern starten neue Projekte in diesem Stil; mehrere Vorlagen sind möglich
+- Bausteine: Intro, „Folgen“-Aufruf oder Spendenhinweis einmal ablegen und mit einem Klick vorn oder hinten anfügen
+- Endkarte: Schlussbild mit Aufruf und Kanalnamen im Designprofil der Folien, im Format des Projekts
+- Splitscreen für Reaktionen: Eine Einblendung füllt mit einem Klick die obere, untere, linke oder rechte Bildhälfte, das Hauptvideo die andere
+- Bild-im-Bild mit Rahmen und Namensschild
+- Alles zusammen liegt hinter dem Paletten-Symbol in der Kopfzeile, im Projekt und auf der Startseite
+
 ## 2.29.0 · Transkript
 - Eigenes Wörterbuch: Namen und Fachbegriffe hinterlegen. Whisper bekommt sie als Hinweis, und bekannte Fehlschreibungen ersetzt HoneyCut nach jeder Transkription von selbst
 - Beim Korrigieren eines Worts merkt sich „Künftig immer so schreiben“ die Korrektur im Wörterbuch und wendet sie gleich im ganzen Text an

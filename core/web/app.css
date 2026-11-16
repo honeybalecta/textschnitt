@@ -1123,3 +1123,22 @@ label.col input{width:100%}
 .dc-add #dcTerm{grid-column:1 / -1}
 .dict-row{justify-content:space-between;gap:10px}
 .dict-row span{flex:1;min-width:0}
+
+/* 2.30: Hausstil und Bausteine */
+.hs-sec{border-top:1px solid var(--line);padding-top:10px;margin-top:12px}
+.hs-sec h4{font-size:14px;margin:0 0 4px}
+.hs-list{margin:8px 0}
+.hs-row{display:flex;align-items:center;gap:6px;border-top:1px solid var(--line);padding:6px 0;flex-wrap:wrap}
+.hs-row:first-child{border-top:0}
+.hs-n{flex:1 1 120px;min-width:0;display:flex;flex-direction:column;gap:1px}
+.hs-n b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hs-row .mini,.hs-row .btn{flex:none}
+.hs-row .mini.on{border-color:var(--rot);color:var(--rot);background:rgba(229,64,42,.14)}
+.ec-grid{display:grid;grid-template-columns:auto minmax(0,1fr);gap:12px;align-items:start;margin:8px 0}
+.ec-prev{display:block;max-width:110px;max-height:150px;width:auto;height:auto;border-radius:6px;border:1px solid var(--line);background:#000}
+.ec-form .field{margin:0 0 8px}
+.ec-form textarea,.ec-form input[type=text]{width:100%;min-width:0;font-size:15px}
+.deco-ov{position:absolute;inset:0;z-index:3;pointer-events:none}
+.deco-ov canvas{position:absolute;display:block;max-width:none}
+.deco-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.deco-row input[type=text]{flex:1 1 150px;min-width:0;min-height:var(--ctl-sm)}

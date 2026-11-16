@@ -460,6 +460,8 @@ function createProject(list){
   const name = first.name.replace(/\.[^.]+$/, '') + (list.length > 1 ? ` + ${list.length - 1}` : '');
   const p = {id:newId(), name, created:Date.now(), updated:Date.now(), sources:list.map(cleanSrc),
              tokens:[], deleted:[], trims:{}, adj:{}, dels:[], splits:[], settings:{pad:0.06, burn:true}, cues:[], sub_style:{...DEF_STYLE}, items:[]};
+  // Hausstil für neue Projekte (A3)
+  const hd = houseList.find(h => h.id === houseDef); if (hd){ houseInto(p, hd.st); p.house = hd.id; autoSet(hd.st.auto); }
   // Altes Desktop-Projekt neben dem Video? Dann Transkript übernehmen.
   const lg = list.length === 1 && first.legacy;
   if (lg && lg.tokens && lg.tokens.length){
@@ -467,7 +469,7 @@ function createProject(list){
     if (lg.cues) p.cues = lg.cues; if (lg.sub_style) p.sub_style = {...DEF_STYLE, ...lg.sub_style}; p.sources[0].tr = true;
   }
   TS.saveProject(p.id, JSON.stringify(p)); openProject(p.id);
-  if (lg && lg.tokens && lg.tokens.length) toast('Vorhandenes Transkript übernommen');
+  if (lg && lg.tokens && lg.tokens.length) toast('Vorhandenes Transkript übernommen'); else if (hd) toast(`Hausstil „${hd.name}“ übernommen`);
 }
 function cleanSrc(m){ const s = {...m}; delete s.legacy; s.tr = false; return s; }
 
@@ -490,6 +492,7 @@ function openProjectNow(id, keep){
   P.checks = P.checks.filter(c => c && Array.isArray(c.ids) && (c.ids.length || (c.tr || []).length || (c.v || []).length) && chkSpan(c)[1] < tokens.length);
   deleted = new Set(P.deleted || []); undo = []; redo = [];
   layoutSources(); vSi = -1; vPending = null; cueCache.at = -1; subShown = null;
+  if (P.frameNew){ delete P.frameNew; if (P.format && !P.frame) P.frame = clampFrame({sc: coverSc(), tx: 0, ty: 0}); }   // neues Projekt mit Hausstil: Format füllt die Leinwand
   $('#home').classList.add('hidden'); $('#proj').classList.remove('hidden');
   projNameEl.textContent = P.name; $('#exName').value = P.name + '_geschnitten';
   const [ow, oh] = baseDims(); $('#exRes').options[0].textContent = `Original (${ow}×${oh})`;
@@ -709,7 +712,7 @@ setTimeout(() => { if (!$('#home').classList.contains('hidden')) renderUpdateBan
 // ── Alle Projekte sichern, Sicherung einspielen (Desktop) ──
 // Gesichert werden die Projekte samt Folienbildern und Schriften, dazu die eigenen Designprofile, Farbfavoriten, Füllwörter und
 // Untertitel-Looks, dazu das eigene Wörterbuch – ohne die Videos.
-const PREF_KEYS = ['hc-slide-profiles', 'hc-colfav', 'hc-fillers', 'hc-sub-looks', 'hc-dict'];
+const PREF_KEYS = ['hc-slide-profiles', 'hc-colfav', 'hc-fillers', 'hc-sub-looks', 'hc-dict', 'hc-house', 'hc-blocks'];
 function uiPrefs(){ const o = {}; for (const k of PREF_KEYS){ try { const v = JSON.parse(localStorage.getItem(k)); if (Array.isArray(v) && v.length) o[k] = v; } catch(_){} } return o; }
 function mergePrefs(pr){
   let n = 0; if (!pr || typeof pr !== 'object') return 0;
@@ -720,6 +723,8 @@ function mergePrefs(pr){
     if (add.length){ ownFill = ownFill.concat(add).slice(0, 200); saveOwnFill(); n += add.length; } } catch(_){}
   try { n += mergeLooks(pr['hc-sub-looks']); } catch(_){}
   try { n += mergeDict(pr['hc-dict']); } catch(_){}
+  try { n += mergeHouse(pr['hc-house']); } catch(_){}
+  try { n += mergeBlocks(pr['hc-blocks']); } catch(_){}
   return n;
 }
 const plural = (k, one, many) => `${k} ${k === 1 ? one : many}`;
@@ -2226,7 +2231,7 @@ function updateOverlay(o){
     syncMedia(el, it.in + (o - a.at));
     if (playing && el.paused) el.play().catch(() => {}); if (!playing && !el.paused) el.pause();
   });
-  updateAudio(o); placeWatermark(W, H); placeTextline(W, H); placeSrcLine(W, H, o); placeLower(W, H, o);
+  updateAudio(o); placeDeco(act, o, W, H); placeWatermark(W, H); placeTextline(W, H); placeSrcLine(W, H, o); placeLower(W, H, o);
   // Griffe: am ausgewählten Element, sonst am obersten
   const sel = selOvlId(), mainSel = typeof TL !== 'undefined' && TL.sel && TL.sel.kind === 'main', tgt = act.find(a => a.x.id === sel) || (mainSel ? null : act[act.length - 1]) || null;   // Hauptclip ausgewählt: Rahmen am Hauptbild
   curPip = tgt ? tgt.x : null; pipTarget = tgt;
@@ -5402,6 +5407,9 @@ function openItem(id){
       <div class="field volopt"><span>Lautstärke <b id="cVolV"></b></span><input type="range" id="cVol" min="0" max="200" step="5"></div>
       <div class="field pipopt"><span>Größe <b id="cSizeV"></b></span><input type="range" id="cSize" min="5" max="500" step="1"></div>
       <div class="field pipopt"><span>Platzieren</span><div class="seg-ctl" id="cCorner"><button data-v="ol">↖</button><button data-v="or">↗</button><button data-v="mm">Mitte</button><button data-v="ul">↙</button><button data-v="ur">↘</button><button data-v="full">Vollbild</button></div></div>
+      <div class="field pipopt"><span>Splitscreen: Einblendung in die Hälfte</span><div class="seg-ctl" id="cSplit"><button data-v="o">Oben</button><button data-v="u">Unten</button><button data-v="l">Links</button><button data-v="r">Rechts</button><button data-v="">Aus</button></div></div>
+      <div class="field pipopt"><span>Bild-im-Bild</span><div class="deco-row"><label class="row"><input type="checkbox" id="cFrame"> Rahmen</label><input type="text" id="cTag" maxlength="40" placeholder="Namensschild, z. B. @kanal" autocomplete="off" autocapitalize="off" spellcheck="false" dir="auto"></div></div>
+      <p class="muted small pipopt">Splitscreen gilt für das ganze Video: Das Hauptvideo rückt in die andere Hälfte. Rahmen und Namensschild folgen dem Designprofil der Folien und erscheinen bei Einblendungen ohne Keyframes.</p>
       <p class="muted small pipopt">Im Bild ziehen verschiebt, die Ecke unten rechts ändert die Größe${FINE ? ' (auch mit dem Mausrad)' : ''}. Mit Keyframes (Taste M) bewegt sich das Element über die Zeit.</p>`);
   }
   if (it.type !== 'zoom' && it.type !== 'audio') keyBlock(body, {it, get: () => it.key || null, set: k => { it.key = k; }, el: () => layers.get(it.id) || $('#cPrev'),
@@ -5425,7 +5433,9 @@ function openItem(id){
     if (seg){ const v = b.dataset.v;
       commit(() => { if (seg.id === 'zKind') it.kind = v; if (seg.id === 'cMode'){ it.type = v; if (v === 'insert') it.out = Math.max(it.out, Math.min(it.clip.duration, it.in + 1)); }
         if (seg.id === 'cMode' && v === 'pip') pipFree(it);
-        if (seg.id === 'cCorner'){ if (v === 'full'){ delete it.w; delete it.x; delete it.y; delete it.kf; it.type = 'broll'; } else pipCorner(it, v); } }, false); if (seg.id !== 'zKind') seekOut(outPos, false); h.textContent = TYPE_LBL[it.type]; paintItem(); return; }
+        if (seg.id === 'cSplit'){ if (v) splitApply(it, v); else splitEnd(it); }
+        if (seg.id === 'cCorner'){ if (v === 'full'){ delete it.w; delete it.x; delete it.y; delete it.kf; it.type = 'broll'; } else pipCorner(it, v); } }, false); if (seg.id === 'cSplit'){ applyMainTransform(); if (tab === 'clip' && window.renderClip) renderClip(); }
+      if (seg.id !== 'zKind') seekOut(outPos, false); h.textContent = TYPE_LBL[it.type]; paintItem(); return; }
     if (b.dataset.z){ commit(() => it.dur = clamp(+(it.dur + +b.dataset.z).toFixed(2), 0.2, 60), false); }
     else if (b.dataset.at){ commit(() => { const p0 = objStart(it); it.at = clamp(r3(it.at + +b.dataset.at), 0, srcTotal); groupShift(it, objStart(it) - p0); }, false); seekOut(srcToOut(snapSrc(it.at)), false); }
     else if (b.dataset.cin){ commit(() => it.in = clamp(r3(it.in + +b.dataset.cin), 0, it.out - 0.1), false); $('#cPrev').currentTime = it.in; }
@@ -5437,6 +5447,11 @@ function openItem(id){
     else if (b.id === 'itOk'){ closeSheet(); return; }
     paintItem();
   };
+  const cf = $('#cFrame'), ct = $('#cTag');
+  if (cf){ const setDeco = fn => { const d = {...(it.deco || {})}; fn(d); if (d.frame || String(d.name || '').trim()) it.deco = d; else delete it.deco; };
+    cf.checked = !!(it.deco && it.deco.frame); ct.value = (it.deco && it.deco.name) || '';
+    cf.onchange = () => { commit(() => setDeco(d => { d.frame = cf.checked; }), false); seekOut(outPos, false); };
+    ct.oninput = () => { commitBurst('deco' + it.id, () => setDeco(d => { d.name = ct.value.slice(0, 40); })); updateOverlay(outPos); }; }
   const zs = $('#zStr');
   if (zs){ zs.oninput = () => { it.strength = +zs.value; paintItem(); };
            zs.onpointerdown = () => { zs._b = snapshot(); };
@@ -5445,7 +5460,7 @@ function openItem(id){
 function paintItem(){
   const it = sheetItem; if (!it) return;
   $$('#sheet .seg-ctl button').forEach(b => { const id = b.parentElement.id; const v = b.dataset.v;
-    b.classList.toggle('on', (id === 'zKind' && it.kind === v) || (id === 'cMode' && it.type === v) || (id === 'cCorner' && it.w == null && it.corner === v)); });
+    b.classList.toggle('on', (id === 'zKind' && it.kind === v) || (id === 'cMode' && it.type === v) || (id === 'cCorner' && it.w == null && it.corner === v) || (id === 'cSplit' && splitOf(it) === v)); });
   if (it.type === 'zoom'){ $('#zStr').value = it.strength; $('#zStrV').textContent = it.strength.toFixed(2).replace('.', ',') + '×'; $('#zDur').textContent = it.dur.toFixed(1).replace('.', ',') + ' s'; $('#zAt').textContent = fmtS(srcToOut(snapSrc(it.at)));
     const pin = $('#pin'); pin.classList.remove('hidden'); pin.style.left = it.cx * 100 + '%'; pin.style.top = it.cy * 100 + '%'; }
   else { $('#cName').textContent = isImg(it.clip) ? `${it.clip.name} · Foto, Länge frei wählbar` : `${it.clip.name} · ${fmtS(it.clip.duration)}`; $('#cIn').textContent = fmtS(it.in); $('#cOut').textContent = fmtS(it.out); $('#cAt').textContent = fmtS(srcToOut(snapSrc(it.at)));
@@ -5459,7 +5474,7 @@ function paintItem(){
 function updateZoomPreview(){ if (sheetItem && sheetItem.type === 'zoom' && !playing){ const z = sheetItem, s = z.kind === 'in' ? 1 : z.strength; V.style.transformOrigin = '50% 50%'; V.style.transform = `translate(${(-(z.cx - 0.5) * (s - 1) * 100).toFixed(3)}%, ${(-(z.cy - 0.5) * (s - 1) * 100).toFixed(3)}%) scale(${s})`; } }
 let sheetOnClose = null;   // einmaliger Rückruf, wenn das Blatt schließt (z. B. Leinwand-Modus beenden)
 function closeSheet(){ if (sheetOnClose){ const f = sheetOnClose; sheetOnClose = null; try { f(); } catch(_){} } $('#sheet').classList.add('hidden'); $('#sheetBack').classList.add('hidden'); $('#pin').classList.add('hidden'); $('#stageHint').classList.add('hidden');
-  const pv = $('#cPrev'); if (pv && pv.pause){ pv.pause(); pv.removeAttribute('src'); } sheetItem = null; pinMode = false; updateZoom(); if (window.renderStudio) renderStudio(); }
+  const pv = $('#cPrev'); if (pv && pv.pause){ pv.pause(); pv.removeAttribute('src'); } sheetItem = null; pinMode = false; if (!P) return; updateZoom(); if (window.renderStudio) renderStudio(); }
 $('#sheetBack').onclick = closeSheet;
 $('#stage').addEventListener('click', e => {
   if (!pinMode || !sheetItem) { if (!sheetItem) togglePlay(); return; }
@@ -5536,7 +5551,7 @@ function buildPlan(dry){   // dry: nur nachsehen (z. B. für das Titelbild) – 
     ...(keyOn(o.x.key) ? {key: planKey(o.x.key, false)} : {}),
     aspect:+elAspect(o.x).toFixed(5), track: elTrack(o.x), vol:+(o.x.vol || 0), hasAudio: o.x.clip.hasAudio !== false && !isImg(o.x.clip),
     width:o.x.clip.width, height:o.x.clip.height, rotation:o.x.clip.rotation || 0}))
-    .concat(dry ? [] : lowerPlan(W, H)).concat(wmPlan(W, H))
+    .concat(dry ? [] : decoPlan(W, H)).concat(dry ? [] : lowerPlan(W, H)).concat(wmPlan(W, H))
     .concat(audios.map(a => ({mode:'audio', image:false, uri:a.x.clip.uri, in:r3(a.x.in), out:r3(a.x.in + (a.end - a.at)), at:r3(a.at), track:a.x.track || 1, vol:+(a.x.vol ?? 1), hasAudio:true})));
   const cl = S().enabled !== false && P.cues.length ? computedCues() : [], ctr = trTexts(cl);
   const cues = cl.length ? cl.map((x, k) => { const [cx, cy0] = cueXY(x.c), sy = x.c.x == null && window.subSlideY ? subSlideY(x.s, x.e) : null, cy = sy ?? cy0, o = {start:r3(x.s), end:r3(x.e), text:wrapText(x.text), x:cx, y:cy};
@@ -5686,7 +5701,7 @@ $('#exBtn').onclick = async () => {
   if (!timeline.length || $('#exBtn').disabled) return; saveNow(); pausePlay();
   const P0 = P; if (!(await askOpenRefs())){ if (P === P0){ setTab('text'); openRefs(); } return; }
   if (P !== P0) return;
-  await lowerReady();
+  await lowerReady(); await decoReady();
   const plan = buildPlan(); exResult = null;
   // Textfassung: Unter Windows legt das Backend sie neben das Video, sonst speichert die App sie nach dem Export
   const tv = (exFmt === 'video' || exFmt === 'audio') && textvOn() ? textVersion() : '', tvName = textVersionName();
@@ -5765,6 +5780,289 @@ function renderModels(){
           j => { TS.keepAwake(false); b.disabled = false; toast('Download fehlgeschlagen: ' + (j.error || '')); }); }; }
     box.append(el);
   }
+}
+
+// ───────── Hausstil und Bausteine (2.30) ─────────
+// Hausstil (A3): Vorlagen im Gerät – [{id, name, st}] unter hc-house; st hält Untertitel-Stil, Wasserzeichen, Format der Leinwand,
+// Schutzzonen, Lautstärke-Angleichung, Textzeile, Quellenzeile, Bauchbinden-Stil, Designprofil der Folien und die Aufräum-Optionen.
+// hc-house-def nennt die Vorlage, mit der neue Projekte starten.
+// Bausteine (A4): wiederkehrende Clips und Bilder – [{id, name, clip}] unter hc-blocks; angefügt werden sie als Einschub vor dem ersten
+// bzw. hinter dem letzten Stück. Endkarte (F7): ein gezeichnetes Schlussbild im Designprofil der Folien, als Bild-Einschub am Ende.
+const HOUSE_KEY = 'hc-house', HOUSE_DEF_KEY = 'hc-house-def', BLOCK_KEY = 'hc-blocks', ENDCARD_KEY = 'hc-endcard';
+const lsList = k => { try { const v = JSON.parse(localStorage.getItem(k)); return Array.isArray(v) ? v : []; } catch(_){ return []; } };
+const jc = o => o == null ? null : JSON.parse(JSON.stringify(o));
+const validHouse = h => !!(h && h.id && typeof h.name === 'string' && h.name.trim() && h.st && typeof h.st === 'object');
+const validBlock = b => !!(b && b.id && typeof b.name === 'string' && b.name.trim() && b.clip && b.clip.uri);
+let houseList = lsList(HOUSE_KEY).filter(validHouse), blockList = lsList(BLOCK_KEY).filter(validBlock);
+let houseDef = (() => { try { return localStorage.getItem(HOUSE_DEF_KEY) || ''; } catch(_){ return ''; } })();
+function saveHouse(){ try { localStorage.setItem(HOUSE_KEY, JSON.stringify(houseList)); if (houseDef && houseList.some(h => h.id === houseDef)) localStorage.setItem(HOUSE_DEF_KEY, houseDef); else { houseDef = ''; localStorage.removeItem(HOUSE_DEF_KEY); } } catch(_){ toast('Speichern im Gerät fehlgeschlagen'); } }
+function saveBlocks(){ try { localStorage.setItem(BLOCK_KEY, JSON.stringify(blockList)); } catch(_){ toast('Speichern im Gerät fehlgeschlagen'); } }
+const autoVals = () => Object.fromEntries(AUTO_KEYS.map(k => [k, $('#' + k).type === 'checkbox' ? $('#' + k).checked : $('#' + k).value]));
+function autoSet(a){
+  if (!a) return; AUTO_KEYS.forEach(k => { const el = $('#' + k); if (!el || a[k] == null) return; if (el.type === 'checkbox') el.checked = !!a[k]; else el.value = a[k]; });
+  try { localStorage.setItem('ts-auto2', JSON.stringify(autoVals())); } catch(_){}
+}
+// Stil des offenen Projekts als Vorlage
+function houseOf(){
+  return {sub: jc(P.sub_style), wm: jc(P.watermark), format: P.format || null, safe: P.settings.safe || '', burn: P.settings.burn !== false, level: P.settings.level !== false,
+    textline: jc(P.textline), srcStyle: jc(P.srcStyle), lower: jc(P.lower), slideProfile: jc(P.slideProfile), auto: autoVals()};
+}
+// Vorlage in ein Projekt schreiben (auch in ein gerade angelegtes, noch ungeöffnetes). Alles, was die Vorlage abdeckt, wird ersetzt.
+function houseInto(p, st){
+  const set = (k, v) => { if (v) p[k] = jc(v); else delete p[k]; };
+  if (st.sub) p.sub_style = {...DEF_STYLE, ...jc(st.sub)};
+  set('watermark', st.wm); set('textline', st.textline); set('srcStyle', st.srcStyle); set('lower', st.lower); set('slideProfile', st.slideProfile);
+  if ((p.format || null) !== (st.format || null)){ if (st.format && FORMATS[st.format]) p.format = st.format; else delete p.format; delete p.frame; p.frameNew = true; }
+  p.settings ||= {pad: 0.06}; p.settings.safe = st.safe || ''; p.settings.burn = st.burn !== false; p.settings.level = st.level !== false;
+}
+function houseSummary(st){
+  const a = []; a.push(st.format || 'Originalformat');
+  if (st.sub && st.sub.enabled === false) a.push('ohne Untertitel'); else if (st.sub) a.push('Untertitel');
+  if (st.wm && st.wm.clip && st.wm.on !== false) a.push('Wasserzeichen');
+  if (st.textline && st.textline.on !== false && String(st.textline.text || '').trim()) a.push('Textzeile');
+  if (st.safe) a.push('Schutzzonen');
+  if (st.slideProfile && st.slideProfile.name) a.push('Folien „' + st.slideProfile.name + '“');
+  return a.join(' · ');
+}
+// Vorlage auf das offene Projekt anwenden
+function houseApply(h){
+  if (!P || !h) return;
+  const fm0 = P.format || null, regen = !!h.st.sub && tokens.length > 0 && LOOK_SPLIT.some(k => ({...DEF_STYLE, ...h.st.sub})[k] !== S()[k]), n = regen ? manualCount() : 0;
+  if (n && !confirm(`${n} Untertitel wurden von Hand bearbeitet. Diese Vorlage teilt die Untertitel neu auf; dabei gehen diese Änderungen verloren. Fortfahren?`)) return false;
+  commit(() => { houseInto(P, h.st); P.house = h.id; if (P.frameNew){ delete P.frameNew; P.frame = P.format ? clampFrame({sc: coverSc(), tx: 0, ty: 0}) : null; } if (regen) genCues(); }, true);
+  autoSet(h.st.auto);
+  syncStyleInputs(); styleOverlay(); syncSafe(); renderExportForm(); viewTextline(); renderLooks();
+  $('.clip-tab').classList.toggle('hidden', !P.clipOf && !P.format);
+  frameRestored(fm0 !== (P.format || null));
+  if (window.slSyncAll) slSyncAll(); if (window.renderClip && tab === 'clip') renderClip();
+  cueCache.at = -1; seekOut(outPos, false); toast(`Hausstil „${h.name}“ angewendet`); return true;
+}
+async function houseSave(){
+  if (!P) return;
+  const cur = houseList.find(h => h.id === P.house), name = await askName('Hausstil als Vorlage speichern', cur ? cur.name : ''); if (!name) return;
+  const ex = houseList.find(h => h.name.toLowerCase() === name.toLowerCase());
+  if (ex && !confirm(`Vorlage „${ex.name}“ mit dem Stil dieses Projekts überschreiben?`)) return;
+  const h = ex || {id: newId(), name: name.slice(0, 40)}; h.st = houseOf(); if (!ex) houseList.push(h);
+  saveHouse(); paintHouse(); toast(`Vorlage „${h.name}“ gespeichert`);
+}
+function mergeHouse(list){
+  let n = 0; if (!Array.isArray(list)) return 0;
+  for (const h of list){ if (!validHouse(h) || houseList.some(x => x.id === h.id || (x.name.toLowerCase() === h.name.trim().toLowerCase() && JSON.stringify(x.st) === JSON.stringify(h.st)))) continue;
+    houseList.push({id: String(h.id), name: h.name.trim().slice(0, 40), st: jc(h.st)}); n++; }
+  if (n) saveHouse(); return n;
+}
+function mergeBlocks(list){
+  let n = 0; if (!Array.isArray(list)) return 0;
+  for (const b of list){ if (!validBlock(b) || blockList.some(x => x.id === b.id || x.clip.uri === b.clip.uri)) continue; blockList.push({id: String(b.id), name: b.name.trim().slice(0, 40), clip: jc(b.clip)}); n++; }
+  if (n) saveBlocks(); return n;
+}
+
+// ── Bausteine ──
+const blockDur = c => c.kind === 'image' ? 'Bild' : fmtS(c.duration || 0);
+async function blockNew(){
+  const m = await pickMedia('clip'); if (!m) return;
+  if (m.kind === 'audio' || m.hasVideo === false) return toast('Bausteine sind Videos oder Bilder');
+  if (blockList.some(b => b.clip.uri === m.uri)) return toast('Diese Datei liegt schon bei den Bausteinen');
+  const name = await askName('Name des Bausteins', String(m.name || 'Baustein').replace(/\.[^.]+$/, '').slice(0, 40)); if (!name) return;
+  const clip = {...m}; delete clip.legacy; delete clip.tr; delete clip.env; delete clip._env;
+  blockList.push({id: newId(), name: name.slice(0, 40), clip}); saveBlocks(); paintHouse();
+}
+// Clip oder Bild als Einschub ganz vorn bzw. ganz hinten anfügen; extra kommt mit ans Element (z. B. die Angaben der Endkarte)
+function blockAdd(clip, where, label, dur, extra){
+  if (!P) return null;
+  const mains = timeline.filter(g => g.kind === 'main'); if (!mains.length){ toast('Das Projekt hat noch kein Video'); return null; }
+  const front = where === 'front', img = clip.kind === 'image';
+  const at = front ? Math.ceil(mains[0].in * 1000) / 1000 + 0.001 : Math.floor(mains[mains.length - 1].out * 1000) / 1000;
+  const c = jc(clip); if (!img && !(c.duration > 0)) c.duration = 4;
+  const it = {id: newId(), type: 'insert', at: r3(at), clip: c, in: 0, out: r3(img ? clamp(+dur || 4, 0.5, 60) : c.duration), corner: 'or', size: 0.4, block: label, ...(extra || {})};
+  commit(() => { if (front) P.items.unshift(it); else P.items.push(it); }, true);
+  if (window.TL){ TL.sel = {kind: 'insert', itemId: it.id, i: 0}; if (window.renderTimeline) renderTimeline(); }
+  if (window.renderBin) renderBin();
+  const seg = timeline.find(g => g.kind === 'insert' && g.item === it); seekOut(seg ? seg.o : 0, false);
+  if (TS.prepare){ saveNow(); Promise.resolve(TS.prepare(P.id)).then(() => { if (P) seekOut(outPos, false); }); }   // Browser: Zugriff auf die Datei des Bausteins sicherstellen
+  return it;
+}
+function blockUse(b, where){ if (blockAdd(b.clip, where, b.name)) toast(`Baustein „${b.name}“ ${where === 'front' ? 'vorn' : 'hinten'} angefügt`); }
+
+// ── Endkarte ──
+const houseStyleKey = () => { const pr = slProfile(); return JSON.stringify([pr.colors, pr.fonts, pr.theme, pr.bar]); };
+const ENDCARD_DEF = {call: 'Folge für mehr', name: '', dur: 4};
+function endcardVals(){ let o = null; try { o = JSON.parse(localStorage.getItem(ENDCARD_KEY)); } catch(_){} return {...ENDCARD_DEF, ...(o && typeof o === 'object' ? o : {})}; }
+const endcardItem = () => P ? P.items.find(x => x.type === 'insert' && x.endcard) : null;
+function wrapLines(ctx, text, maxW){
+  const out = [];
+  for (const para of String(text).split('\n')){ let line = '';
+    for (const w of para.split(/\s+/).filter(Boolean)){ const t = line ? line + ' ' + w : w; if (line && ctx.measureText(t).width > maxW){ out.push(line); line = w; } else line = t; }
+    if (line) out.push(line); }
+  return out;
+}
+// Schlussbild zeichnen: Aufruf groß, darunter der Kanalname, darüber ein Balken in der Akzentfarbe
+function endcardDraw(cv, o, W, H){
+  const pr = slProfile(), C = slColors(pr, pr.theme !== 'hell'), u = Math.min(W, H), ctx = cv.getContext('2d');
+  cv.width = W; cv.height = H; ctx.fillStyle = C.bg; ctx.fillRect(0, 0, W, H);
+  const headF = slFontFn(pr.fonts.head, 800), bodyF = slFontFn(pr.fonts.body, 600), maxW = W * 0.8, call = String(o.call || '').trim(), name = String(o.name || '').trim();
+  let hs = u * 0.1, lines = [];
+  for (let k = 0; k < 12; k++){ ctx.font = headF(hs); lines = wrapLines(ctx, call, maxW); if (lines.length <= 4 && lines.every(l => ctx.measureText(l).width <= maxW)) break; hs *= 0.9; }
+  let ns = u * 0.05; ctx.font = bodyF(ns); if (name && ctx.measureText(name).width > maxW){ ns *= Math.max(0.4, maxW / ctx.measureText(name).width); }
+  const lh = hs * 1.16, barW = u * 0.14, barH = Math.max(3, Math.round(u * 0.012)), gapBar = lines.length ? hs * 0.55 : 0, gapName = name && lines.length ? hs * 0.6 : 0;
+  const blockH = barH + gapBar + lines.length * lh + (name ? gapName + ns * 1.2 : 0); let y = (H - blockH) / 2;
+  ctx.fillStyle = C.acc; ctx.fillRect((W - barW) / 2, y, barW, barH); y += barH + gapBar;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = C.fg; ctx.font = headF(hs);
+  for (const l of lines){ ctx.fillText(l, W / 2, y + lh / 2); y += lh; }
+  if (name){ y += gapName; ctx.fillStyle = C.acc; ctx.font = bodyF(ns); ctx.fillText(name, W / 2, y + ns * 0.6); }
+}
+async function endcardMake(o){
+  if (!P || !TS.saveImage) return;
+  if (!String(o.call || '').trim() && !String(o.name || '').trim()) return toast('Bitte einen Aufruf oder den Kanalnamen eintragen');
+  try { await slFonts(slProfile()); } catch(_){}
+  const [W, H] = outSize(), cv = document.createElement('canvas'); endcardDraw(cv, o, W, H);
+  const url = cv.toDataURL('image/png'), m = J(TS.saveImage(`endkarte-${hashStr(JSON.stringify([o.call, o.name, W, H, houseStyleKey()]))}.png`, url, W, H, P.id)); if (!m || !m.uri) return toast('Die Endkarte konnte nicht gespeichert werden');
+  const dur = clamp(+o.dur || 4, 1, 30), ec = {call: String(o.call || '').trim(), name: String(o.name || '').trim()};
+  try { localStorage.setItem(ENDCARD_KEY, JSON.stringify({...ec, dur})); } catch(_){}
+  const old = endcardItem();
+  if (old){ commit(() => { old.clip = jc(m); old.out = r3(old.in + dur); old.endcard = ec; }, true); seekOut(outPos, false); toast('Endkarte aktualisiert'); }
+  else if (blockAdd(m, 'back', 'Endkarte', dur, {endcard: ec})) toast('Endkarte hinten angefügt');
+  paintHouse();
+}
+
+// ── Blatt „Hausstil und Bausteine“ (im Projekt und auf der Startseite) ──
+const houseSheetOpen = () => !$('#sheet').classList.contains('hidden') && !!$('#hsList');
+function openHouse(){
+  const body = $('#sheetBody'), inP = !!P && !$('#proj').classList.contains('hidden'), ec = endcardVals(), old = inP ? endcardItem() : null;
+  if (old && old.endcard){ ec.call = old.endcard.call; ec.name = old.endcard.name; ec.dur = r3(old.out - old.in); }
+  sheetItem = null;
+  body.innerHTML = `<h3>Hausstil und Bausteine</h3>
+    <div class="hs-sec"><h4>Hausstil</h4>
+      <p class="muted small">Eine Vorlage merkt sich Untertitel-Stil, Wasserzeichen, Format der Leinwand, Schutzzonen, Lautstärke-Angleichung, Textzeile, Quellenzeile, Bauchbinden, das Designprofil der Folien und die Aufräum-Optionen. Mit dem Stern starten neue Projekte in diesem Stil.</p>
+      <div class="hs-list" id="hsList"></div>
+      ${inP ? '<div class="row"><button class="btn" id="hsSave">＋ Stil dieses Projekts als Vorlage speichern</button></div>' : '<p class="muted small">Neue Vorlagen speicherst du in einem geöffneten Projekt über dasselbe Symbol.</p>'}
+    </div>
+    <div class="hs-sec"><h4>Bausteine</h4>
+      <p class="muted small">Intro, „Folgen“-Aufruf, Spendenhinweis: einmal ablegen${inP ? ', mit einem Klick vorn oder hinten anfügen' : ', im Projekt mit einem Klick vorn oder hinten anfügen'}. Die Dateien bleiben an ihrem Ort auf diesem Gerät.</p>
+      <div class="hs-list" id="bkList"></div>
+      <div class="row"><button class="btn" id="bkAdd">＋ Clip oder Bild ablegen</button></div>
+    </div>
+    ${inP && TS.saveImage ? `<div class="hs-sec"><h4>Endkarte</h4>
+      <p class="muted small">Schlussbild mit Aufruf und Kanalnamen im Designprofil deiner Folien. Es entsteht im aktuellen Format und hängt sich hinten an.</p>
+      <div class="ec-grid"><canvas id="ecPrev" class="ec-prev"></canvas>
+        <div class="ec-form"><label class="field"><span>Aufruf</span><textarea id="ecCall" rows="2" maxlength="120" dir="auto"></textarea></label>
+          <label class="field"><span>Kanalname</span><input type="text" id="ecName" maxlength="60" placeholder="@deinkanal" autocomplete="off" autocapitalize="off" spellcheck="false" dir="auto"></label>
+          <label class="field"><span>Dauer <b id="ecDurV"></b></span><input type="range" id="ecDur" min="1" max="10" step="0.5"></label></div></div>
+      <div class="row"><button class="btn" id="ecAdd"></button></div>
+    </div>` : ''}
+    <div class="row" style="margin-top:12px"><button class="btn primary" id="hsOk" style="margin-left:auto">Fertig</button></div>`;
+  if ($('#ecCall')){ $('#ecCall').value = ec.call; $('#ecName').value = ec.name; $('#ecDur').value = clamp(+ec.dur || 4, 1, 10);
+    const paintEc = () => { const [W, H] = outSize(), k = 220 / Math.max(W, H), o = {call: $('#ecCall').value, name: $('#ecName').value};
+      endcardDraw($('#ecPrev'), o, Math.round(W * k * 2), Math.round(H * k * 2)); $('#ecPrev').style.aspectRatio = `${W} / ${H}`;
+      $('#ecDurV').textContent = (+$('#ecDur').value).toFixed(1).replace('.', ',') + ' s'; };
+    ['ecCall', 'ecName', 'ecDur'].forEach(id => $('#' + id).addEventListener('input', paintEc)); paintEc();
+    slFonts(slProfile()).then(() => { if ($('#ecPrev')) paintEc(); }).catch(() => {}); }
+  body.onclick = e => {
+    const b = e.target.closest('button'); if (!b) return;
+    const hid = b.closest('[data-h]') && b.closest('[data-h]').dataset.h, bid = b.closest('[data-b]') && b.closest('[data-b]').dataset.b;
+    const h = hid && houseList.find(x => x.id === hid), bk = bid && blockList.find(x => x.id === bid);
+    if (b.id === 'hsOk') return closeSheet();
+    if (b.id === 'hsSave') return void houseSave();
+    if (b.id === 'bkAdd') return void blockNew();
+    if (b.id === 'ecAdd') return void endcardMake({call: $('#ecCall').value, name: $('#ecName').value, dur: +$('#ecDur').value});
+    if (h){
+      if (b.dataset.a === 'use'){ if (confirm(`Hausstil „${h.name}“ auf dieses Projekt anwenden? Untertitel-Stil, Wasserzeichen, Format und die weiteren Angaben der Vorlage ersetzen die bisherigen.`)){ houseApply(h); paintHouse(); } }
+      else if (b.dataset.a === 'def'){ houseDef = houseDef === h.id ? '' : h.id; saveHouse(); paintHouse(); toast(houseDef ? `Neue Projekte starten mit „${h.name}“` : 'Neue Projekte starten ohne Vorlage'); }
+      else if (b.dataset.a === 'ren'){ askName('Vorlage umbenennen', h.name).then(n => { if (n){ h.name = n.slice(0, 40); saveHouse(); paintHouse(); } }); }
+      else if (b.dataset.a === 'del'){ if (confirm(`Vorlage „${h.name}“ löschen? Projekte behalten ihren Stil.`)){ houseList = houseList.filter(x => x !== h); saveHouse(); paintHouse(); } }
+    } else if (bk){
+      if (b.dataset.a === 'front' || b.dataset.a === 'back'){ blockUse(bk, b.dataset.a); paintHouse(); }
+      else if (b.dataset.a === 'ren'){ askName('Baustein umbenennen', bk.name).then(n => { if (n){ bk.name = n.slice(0, 40); saveBlocks(); paintHouse(); } }); }
+      else if (b.dataset.a === 'del'){ if (confirm(`Baustein „${bk.name}“ entfernen? Die Datei und Projekte, die ihn verwenden, bleiben unberührt.`)){ blockList = blockList.filter(x => x !== bk); saveBlocks(); paintHouse(); } }
+    }
+  };
+  paintHouse(); openSheet(false);
+}
+function paintHouse(){
+  if (!$('#hsList')) return; const inP = !!P && !$('#proj').classList.contains('hidden');
+  $('#hsList').innerHTML = houseList.length ? houseList.map(h => `<div class="hs-row" data-h="${esc(h.id)}"><div class="hs-n"><b dir="auto">${esc(h.name)}</b><span class="muted small">${esc(houseSummary(h.st))}${houseDef === h.id ? ' · für neue Projekte' : ''}</span></div>
+      ${inP ? '<button type="button" class="btn small" data-a="use">Anwenden</button>' : ''}<button type="button" class="mini${houseDef === h.id ? ' on' : ''}" data-a="def" title="${houseDef === h.id ? 'Neue Projekte starten mit dieser Vorlage – antippen zum Abwählen' : 'Neue Projekte mit dieser Vorlage starten'}" aria-pressed="${houseDef === h.id}">★</button><button type="button" class="mini" data-a="ren" title="Umbenennen">✎</button><button type="button" class="mini" data-a="del" title="Löschen">×</button></div>`).join('')
+    : '<p class="muted small">Noch keine Vorlage.</p>';
+  $('#bkList').innerHTML = blockList.length ? blockList.map(b => `<div class="hs-row" data-b="${esc(b.id)}"><div class="hs-n"><b dir="auto">${esc(b.name)}</b><span class="muted small">${esc(blockDur(b.clip))}</span></div>
+      ${inP ? '<button type="button" class="btn small" data-a="front" title="Vor dem Video anfügen">Vorn</button><button type="button" class="btn small" data-a="back" title="Hinter dem Video anfügen">Hinten</button>' : ''}<button type="button" class="mini" data-a="ren" title="Umbenennen">✎</button><button type="button" class="mini" data-a="del" title="Entfernen">×</button></div>`).join('')
+    : '<p class="muted small">Noch keine Bausteine.</p>';
+  if ($('#ecAdd')) $('#ecAdd').textContent = endcardItem() ? 'Endkarte aktualisieren' : '＋ Endkarte anfügen';
+}
+$('#houseBtn').onclick = () => { if (P) openHouse(); };
+$('#houseHome').onclick = () => openHouse();
+
+
+// ── Layout-Vorlagen für Reaktionen (B8) ──
+// Splitscreen: Die Einblendung füllt eine Bildhälfte (Zuschnitt auf deren Seitenverhältnis); das Hauptvideo rückt über den Bildausschnitt
+// des ganzen Videos (P.frame) in die andere Hälfte. Das gilt für die ganze Länge.
+const SPLIT = {o: [0.5, 0.25, 1, 0.5], u: [0.5, 0.75, 1, 0.5], l: [0.25, 0.5, 0.5, 1], r: [0.75, 0.5, 0.5, 1]};   // Mitte x, Mitte y, Breite, Höhe
+const SPLIT_OPP = {o: 'u', u: 'o', l: 'r', r: 'l'};
+function splitOf(it){
+  if (!it || it.type !== 'pip' || it.w == null || (it.kf && it.kf.length)) return '';
+  const [W, H] = outSize(), hh = it.w * W / elAspect(it) / H;
+  for (const k in SPLIT){ const [x, y, w, h] = SPLIT[k]; if (Math.abs(it.x - x) < 0.004 && Math.abs(it.y - y) < 0.004 && Math.abs(it.w - w) < 0.004 && Math.abs(hh - h) < 0.01) return k; }
+  return '';
+}
+function splitApply(it, k){
+  const [W, H] = outSize(), [x, y, w, h] = SPLIT[k], ar = (w * W) / (h * H), a0 = clipAspect(it.clip);
+  const cut = +((1 - (a0 > ar ? ar / a0 : a0 / ar)) / 2).toFixed(5);
+  if (!splitOf(it)) it.splitBack = {type: it.type, x: it.x ?? null, y: it.y ?? null, w: it.w ?? null, crop: jc(it.crop), frame: jc(P.frame)};   // Stand vor dem Splitscreen, für „Aus“
+  it.type = 'pip'; delete it.kf; it.crop = a0 > ar ? {l: cut, t: 0, r: cut, b: 0} : {l: 0, t: cut, r: 0, b: cut};
+  it.x = x; it.y = y; it.w = w;
+  const [mx, my, mw, mh] = SPLIT[SPLIT_OPP[k]], [wf, hf] = fitFrac();
+  P.frame = clampFrame({sc: Math.max(mw / wf, mh / hf), tx: mx - 0.5, ty: my - 0.5});
+}
+function splitEnd(it){
+  if (!splitOf(it)) return;
+  const [W, H] = outSize(), b = it.splitBack; delete it.splitBack; delete it.crop;
+  if (b && b.type === 'broll' && b.w == null){ it.type = 'broll'; delete it.w; delete it.x; delete it.y; if (b.crop) it.crop = b.crop; }
+  else if (b && b.w != null){ it.x = b.x; it.y = b.y; it.w = b.w; if (b.crop) it.crop = b.crop; }
+  else { it.size = +Math.min(0.4, 0.45 * H * clipAspect(it.clip) / W).toFixed(3); it.w = it.size; pipCorner(it, 'or'); }
+  P.frame = b ? (b.frame ? clampFrame(b.frame) : null) : P.format ? clampFrame({sc: coverSc(), tx: 0, ty: 0}) : null;
+}
+// Rahmen und Namensschild einer Einblendung: it.deco = {frame, name}. Vorschau und Export zeichnen mit derselben Funktion;
+// im Export liegt das Ergebnis als Bild über dem Element (Spur 60 + Spur des Elements). Bewegte Elemente (Keyframes) bleiben ohne.
+const decoOn = it => !!(it && it.deco && (it.deco.frame || String(it.deco.name || '').trim()) && it.type === 'pip' && !(it.kf && it.kf.length));
+function decoDraw(cv, w, h, u, deco){   // w × h: Größe des Elements in Pixeln, u: kürzere Bildseite; liefert die Rahmenstärke
+  const pr = slProfile(), C = slColors(pr, pr.theme !== 'hell'), b = deco.frame ? Math.max(2, Math.round(u * 0.006)) : 0, name = String(deco.name || '').trim();
+  cv.width = Math.max(2, Math.round(w + 2 * b)); cv.height = Math.max(2, Math.round(h + 2 * b)); const ctx = cv.getContext('2d');
+  if (b){ ctx.strokeStyle = C.acc; ctx.lineWidth = b; ctx.strokeRect(b / 2, b / 2, cv.width - b, cv.height - b); }
+  if (name){
+    const f = slFontFn(pr.fonts.head, 700); let fs = clamp(h * 0.1, u * 0.02, u * 0.036); ctx.font = f(fs); let tw = ctx.measureText(name).width;
+    const room = w * 0.92 - fs * 1.3; if (tw > room){ fs *= Math.max(0.45, room / tw); ctx.font = f(fs); tw = ctx.measureText(name).width; }
+    const px = fs * 0.55, th = fs * 1.7, bar = pr.bar !== false ? Math.round(fs * 0.2) : 0, tx = b, ty = cv.height - b - th;
+    ctx.fillStyle = C.bg; ctx.fillRect(tx, ty, bar + 2 * px + tw, th); if (bar){ ctx.fillStyle = C.acc; ctx.fillRect(tx, ty, bar, th); }
+    ctx.fillStyle = C.fg; ctx.textBaseline = 'middle'; ctx.textAlign = 'left'; ctx.fillText(name, tx + bar + px, ty + th * 0.53);
+  }
+  return b;
+}
+let decoFontTry = '';
+function placeDeco(act, o, W, H){
+  const box = $('#decoOv'), want = new Map();
+  for (const a of act){ const it = a.x; if (!decoOn(it)) continue; const v = PipDrag.on && PipDrag.it === it ? PipDrag : elVals(it, o - a.at), r = elRect(it, v, W, H); if (r) want.set(it.id, {it, r}); }
+  for (const el of [...box.children]) if (!want.has(el.dataset.id)) el.remove();
+  if (!want.size) return;
+  const fk = lowerFontKey(), ok = lowerFontsOk.has(fk);
+  if (!ok && decoFontTry !== fk){ decoFontTry = fk; lowerFonts().then(() => { if (P && !playing) updateOverlay(outPos); }); }
+  const d = Math.min(2, window.devicePixelRatio || 1), u = Math.min(W, H), sk = houseStyleKey() + (ok ? 1 : 0);
+  for (const [id, {it, r}] of want){
+    let cv = [...box.children].find(el => el.dataset.id === id); if (!cv){ cv = document.createElement('canvas'); cv.dataset.id = id; box.append(cv); }
+    const key = [r.w.toFixed(1), r.h.toFixed(1), u, d, it.deco.frame ? 1 : 0, it.deco.name || '', sk].join('|');
+    if (cv.dataset.k !== key){ cv.dataset.b = decoDraw(cv, r.w * d, r.h * d, u * d, it.deco) / d; cv.dataset.k = key; }
+    const b = +cv.dataset.b || 0;
+    Object.assign(cv.style, {left: (r.cx - r.w / 2 - b).toFixed(1) + 'px', top: (r.cy - r.h / 2 - b).toFixed(1) + 'px', width: (r.w + 2 * b).toFixed(1) + 'px', height: (r.h + 2 * b).toFixed(1) + 'px'});
+  }
+}
+const decoReady = () => P && P.items.some(decoOn) ? lowerFonts() : Promise.resolve();
+function decoPlan(W, H){
+  const out = []; if (!TS.saveImage) return out;
+  for (const o of overlays){ const it = o.x; if (!decoOn(it)) continue; const r = elRect(it, elVals(it, 0), W, H); if (!r) continue;
+    const cv = document.createElement('canvas'); decoDraw(cv, r.w, r.h, Math.min(W, H), it.deco);
+    const m = J(TS.saveImage(`rahmen-${hashStr(JSON.stringify([cv.width, cv.height, W, H, it.deco.frame ? 1 : 0, it.deco.name || '', houseStyleKey()]))}.png`, cv.toDataURL('image/png'), cv.width, cv.height, P.id)); if (!m || !m.uri) continue;
+    out.push({mode: 'pip', image: true, uri: m.uri, in: 0, out: r3(o.end - o.at), at: r3(o.at), x: r3(r.cx / W), y: r3(r.cy / H), w: +(cv.width / W).toFixed(4), aspect: +(cv.width / cv.height).toFixed(5),
+      track: 60 + elTrack(it), vol: 0, hasAudio: false, width: cv.width, height: cv.height, rotation: 0, deco: true});
+  }
+  return out;
 }
 
 fillFontSelects(); loadUserFonts();

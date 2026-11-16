@@ -12,6 +12,7 @@
 <section id="home" class="screen">
   <header class="bar">
     <div class="brand"><svg viewBox="22 14 66 72" aria-hidden="true"><defs><clipPath id="tpm"><path d="M35.33 23L77.67 47.5Q82 50 77.67 52.5L35.33 77Q31 79.5 31 74.5L31 25.5Q31 20.5 35.33 23Z"/></clipPath></defs><g clip-path="url(#tpm)"><rect x="29" y="20.70" width="72" height="5.79" rx="2.90" fill="#EDE7DA"/><rect x="29" y="29.50" width="14" height="5.79" rx="2.90" fill="#EDE7DA"/><rect x="46" y="29.50" width="60" height="5.79" rx="2.90" fill="#EDE7DA"/><rect x="29" y="38.30" width="21" height="5.79" rx="2.90" fill="#EDE7DA"/><rect x="53" y="38.30" width="11" height="5.79" rx="2.90" fill="#EDE7DA"/><rect x="67" y="38.30" width="50" height="5.79" rx="2.90" fill="#EDE7DA"/><rect x="29" y="47.10" width="11" height="5.79" rx="2.90" fill="#EDE7DA"/><rect x="43" y="47.10" width="22" height="5.79" rx="2.90" fill="#E5402A"/><rect x="68" y="47.10" width="40" height="5.79" rx="2.90" fill="#EDE7DA"/><rect x="29" y="55.91" width="23" height="5.79" rx="2.90" fill="#EDE7DA"/><rect x="55" y="55.91" width="14" height="5.79" rx="2.90" fill="#EDE7DA"/><rect x="72" y="55.91" width="40" height="5.79" rx="2.90" fill="#EDE7DA"/><rect x="29" y="64.71" width="30" height="5.79" rx="2.90" fill="#EDE7DA"/><rect x="62" y="64.71" width="40" height="5.79" rx="2.90" fill="#EDE7DA"/><rect x="29" y="73.51" width="72" height="5.79" rx="2.90" fill="#EDE7DA"/></g></svg>HoneyCut</div>
+    <button class="icon-btn" id="houseHome" title="Hausstil und Bausteine verwalten">🎨</button>
     <button class="icon-btn" id="modelsBtn" title="Einstellungen: Whisper-Modelle, Speicher, Sicherung" data-ico="gear"></button>
   </header>
   <div class="home-body">
@@ -33,6 +34,7 @@
     <button class="icon-btn" id="backBtn" title="Zurück zur Projektliste">‹</button>
     <div class="title" id="projName"></div>
     <span class="saved" id="saved"></span>
+    <button class="icon-btn" id="houseBtn" title="Hausstil und Bausteine: Vorlagen, Intro und Abspann, Endkarte">🎨</button>
     <button class="icon-btn" id="keysBtn" title="Tastenkürzel">⌨</button>
     <button class="icon-btn" id="undoBtn" title="Rückgängig (Strg+Z)">↶</button>
     <button class="icon-btn" id="redoBtn" title="Wiederholen (Strg+Umschalt+Z)">↷</button>
@@ -57,6 +59,7 @@
       <video id="iv" playsinline preload="auto" class="hidden"></video>
       <img id="oi" class="hidden" alt="">
       <img id="ii" class="hidden" alt="">
+      <div id="decoOv" class="deco-ov"></div>
       <img id="wm" class="wm hidden" alt="">
       <div id="lowerOv" class="lower-ov"></div>
       <div id="tline" class="tline hidden" dir="auto"></div>
