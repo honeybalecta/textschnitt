@@ -55,7 +55,8 @@ addEventListener('unhandledrejection', e => { const r = e && e.reason; hcLog('Fe
 const pending = new Map();
 window.TSApp = {
   onPicked(reqId, json){ const cb = pending.get(reqId); pending.delete(reqId); if (cb) cb(json ? J(json) : null); },
-  onBack(){ if ($('#proj').classList.contains('full')){ setFull(false); return true; }
+  onBack(){ if (exBatch) return true;   // während die Clips einer Reihe eingereiht werden, bleibt das Projekt offen
+            if ($('#proj').classList.contains('full')){ setFull(false); return true; }
             if (!$('#sheet').classList.contains('hidden')) { closeSheet(); return true; }
             if (!$('#mgSheet').classList.contains('hidden')) { closeMg(); return true; }
             if (!$('#modelSheet').classList.contains('hidden')) { closeSettings(); return true; }
@@ -418,7 +419,7 @@ function renderHome(){
   const box = $('#projList'); box.innerHTML = '';
   const words = $('#projFind').value.toLowerCase().split(/\s+/).filter(Boolean), all = homeList;
   $('#homeEmpty').classList.toggle('hidden', all.length > 0);
-  $('#homeFind').classList.toggle('hidden', all.length < 5 && !words.length);
+  $('#homeFind').classList.toggle('hidden', all.length < 2 && !words.length);   // ab zwei Projekten: die Suche findet auch, was in den Videos gesagt wird
   const list = all.filter(p => { const n = String(p.name || '').toLowerCase(); return words.every(w => n.includes(w)); }).sort(HOME_SORT[$('#projSort').value] || HOME_SORT.new);
   if (!list.length && all.length){ const e = document.createElement('p'); e.className = 'muted home-none'; e.textContent = `Kein Projekt passt zu „${$('#projFind').value.trim()}“.`; box.append(e); }
   for (const p of list){
@@ -448,6 +449,7 @@ function renderHome(){
   // Papierkorb (Desktop): gelöschte Projekte lassen sich 30 Tage lang zurückholen
   const nTrash = TS.trashCount ? TS.trashCount() : 0;
   if (nTrash){ const t = document.createElement('button'); t.className = 'btn small trash-link'; t.textContent = `🗑 Papierkorb (${nTrash})`; t.onclick = openTrash; box.append(t); }
+  findLater();   // Treffer aus den Transkripten (C9)
 }
 $('#projFind').addEventListener('input', renderHome);
 $('#projFind').addEventListener('keydown', e => { if (e.key === 'Escape' && $('#projFind').value){ $('#projFind').value = ''; renderHome(); } });
@@ -713,7 +715,7 @@ setTimeout(() => { if (!$('#home').classList.contains('hidden')) renderUpdateBan
 // ── Alle Projekte sichern, Sicherung einspielen (Desktop) ──
 // Gesichert werden die Projekte samt Folienbildern und Schriften, dazu die eigenen Designprofile, Farbfavoriten, Füllwörter und
 // Untertitel-Looks, dazu das eigene Wörterbuch – ohne die Videos.
-const PREF_KEYS = ['hc-slide-profiles', 'hc-colfav', 'hc-fillers', 'hc-sub-looks', 'hc-dict', 'hc-house', 'hc-blocks', 'hc-emoji'];
+const PREF_KEYS = ['hc-slide-profiles', 'hc-colfav', 'hc-fillers', 'hc-sub-looks', 'hc-dict', 'hc-house', 'hc-blocks', 'hc-emoji', 'hc-clipwords'];
 function uiPrefs(){ const o = {}; for (const k of PREF_KEYS){ try { const v = JSON.parse(localStorage.getItem(k)); if (Array.isArray(v) && v.length) o[k] = v; } catch(_){} } return o; }
 function mergePrefs(pr){
   let n = 0; if (!pr || typeof pr !== 'object') return 0;
@@ -727,6 +729,7 @@ function mergePrefs(pr){
   try { n += mergeHouse(pr['hc-house']); } catch(_){}
   try { n += mergeBlocks(pr['hc-blocks']); } catch(_){}
   try { n += mergeEmoji(pr['hc-emoji']); } catch(_){}
+  try { n += mergeClipWords(pr['hc-clipwords']); } catch(_){}
   return n;
 }
 const plural = (k, one, many) => `${k} ${k === 1 ? one : many}`;
@@ -815,7 +818,7 @@ const projNameEl = $('#projName');   // fest gemerkt: Während des Umbenennens s
 projNameEl.title = 'Anklicken zum Umbenennen';
 projNameEl.onclick = () => { if (P) editNameInline(projNameEl, P.name, v => { if (renameProject(P.id, v)) toast('Umbenannt'); }); };
 function closeProject(){
-  pausePlay(); lowEnd(); audStop(); saveThumb();
+  pausePlay(); lowEnd(); audStop(); saveThumb(); partSyncFlush();
   if (!saveNow() && !confirm('Der letzte Stand ließ sich nicht speichern (' + ($('#saved').title || 'Grund unbekannt') + ').\n\nOK: trotzdem schließen – die letzten Änderungen gehen verloren.\nAbbrechen: im Projekt bleiben.')) return;
   clearTimeout(saveRetryT); saveFails = 0; busBye();
   try { localStorage.removeItem(OPEN_KEY); } catch(_){} setFull(false); allLayers(releaseMedia); for (const el of audLayers.values()) releaseMedia(el); audLayers.clear(); busPid = null; P = null; V.removeAttribute('src'); V.load(); vSi = -1; hideOverlay(); showHome(); }
@@ -1014,13 +1017,15 @@ function untouched(){
 }
 // Transkript neu am Ton ausrichten und dabei Wort-Löschungen und Korrekturen übernehmen
 function realign(){
-  const old = tokens, oldDel = deleted, oldEdits = P.edits || {};
+  const old = tokens, oldDel = deleted, oldEdits = P.edits || {}, oldKw = new Set(P.kw || []), kw = [];
   rebuildTokens();
   deleted = new Set(); P.edits = {}; P.trims = {}; P.checks = [];   // die Prüfliste hängt an den Wortnummern
   P.sources.forEach((src, k) => {
     const a = old.filter(t => t.src === k && t.type === 'word'), b = tokens.filter(t => t.src === k && t.type === 'word');
-    a.forEach((t, j) => { if (!b[j]) return; if (oldDel.has(t.i)) deleted.add(b[j].i); if (oldEdits[t.i] != null) P.edits[b[j].i] = oldEdits[t.i]; if (t.spk) b[j].spk = t.spk; if (t.ks) b[j].ks = true; if (t.ok) b[j].ok = 1; });
+    a.forEach((t, j) => { if (!b[j]) return; if (oldDel.has(t.i)) deleted.add(b[j].i); if (oldEdits[t.i] != null) P.edits[b[j].i] = oldEdits[t.i]; if (t.spk) b[j].spk = t.spk; if (t.ks) b[j].ks = true; if (t.ok) b[j].ok = 1;
+      if (oldKw.has(t.i)) kw.push(b[j].i); });   // betonte Wörter ziehen mit: Die Nummern der Wörter verschieben sich, wenn Pausen hinzukommen oder wegfallen
   });
+  if (oldKw.size) P.kw = kw.sort((x, y) => x - y);
   if (deleted.size) tidyPauses([...deleted]).forEach(i => deleted.add(i));
   genCues(); renderTranscript(); changed(); saveNow();
 }
@@ -1100,7 +1105,7 @@ function tokMarks(){ const o = {}; for (const t of tokens) if (t.spk || t.ks || 
 // Zum Stand gehören auch Format, Bildausschnitt und die Lautstärke der Hauptvideos (fm, fr, sv). Sie fehlten: „Rückgängig“
 // nach einem Formatwechsel, nach dem Verschieben des Ausschnitts oder nach „Alle angleichen“ tat nichts bzw. nur die Hälfte.
 function snapshot(){ return JSON.stringify({d:[...deleted], t:P.trims, c:P.cues, i:P.items, a:P.adj, x:P.dels, y:P.splits, s:P.sub_style, e:P.edits, m:P.moves, k:P.speakers, w:tokMarks(), f:P.slides, wm:P.watermark || null, tr:P.trans || null,
-  fm:P.format || null, fr:P.frame || null, sv:P.sources.map(x => x.vol == null ? null : x.vol), mk:P.marks || [], tl:P.textline || null, rf:P.refs || [], ss:P.srcStyle || null, lw:P.lower || null, ck:P.checks || [], kw:P.kw || []}); }
+  fm:P.format || null, fr:P.frame || null, sv:P.sources.map(x => x.vol == null ? null : x.vol), mk:P.marks || [], tl:P.textline || null, rf:P.refs || [], ss:P.srcStyle || null, lw:P.lower || null, cl:P.clipList || [], pt:P.part || null, ps:P.partStyle || null, ck:P.checks || [], kw:P.kw || []}); }
 function restore(s){ const o = JSON.parse(s); deleted = new Set(o.d); P.trims = o.t; P.cues = o.c; P.items = o.i; P.adj = o.a; P.dels = o.x || []; P.splits = o.y || [];
   if (o.s) P.sub_style = o.s; P.edits = o.e || {}; P.moves = o.m || [];
   const fmCh = 'fm' in o && (P.format || null) !== (o.fm || null), frCh = 'fr' in o && JSON.stringify(P.frame || null) !== JSON.stringify(o.fr || null);
@@ -1113,6 +1118,10 @@ function restore(s){ const o = JSON.parse(s); deleted = new Set(o.d); P.trims = 
   if ('rf' in o) P.refs = o.rf || [];
   if ('ss' in o){ if (o.ss) P.srcStyle = o.ss; else delete P.srcStyle; }
   if ('lw' in o){ if (o.lw) P.lower = o.lw; else delete P.lower; }
+  const clCh = 'cl' in o && JSON.stringify(P.clipList || []) !== JSON.stringify(o.cl || []);
+  if ('cl' in o) P.clipList = o.cl || [];
+  const psCh = 'ps' in o && JSON.stringify(P.partStyle || null) !== JSON.stringify(o.ps || null);
+  if ('pt' in o){ if (o.pt) P.part = o.pt; else delete P.part; } if ('ps' in o){ if (o.ps) P.partStyle = o.ps; else delete P.partStyle; }
   if ('ck' in o) P.checks = o.ck || [];
   if ('kw' in o) P.kw = o.kw || [];
   if (o.f) P.slides = o.f; if (o.k) P.speakers = o.k;
@@ -1122,6 +1131,8 @@ function restore(s){ const o = JSON.parse(s); deleted = new Set(o.d); P.trims = 
   if (rfCh) paintRefsBtn(); if (refsSheetOpen()) renderRefsSheet();
   if (lowerSheetOpen()) paintLowerSheet(); if (tab === 'subs') renderSpeakers();
   if (mkCh){ paintMarksBtn(); if (marksSheetOpen()) renderMarksSheet(); }
+  if (clCh){ paintClipsBtn(); if (clipsSheetOpen()) renderClipsSheet(); }
+  partChanged(true); if (psCh) partSyncLater();
   chkChanged();
   if (fmCh || frCh) frameRestored(fmCh); }
 // Format oder Bildausschnitt kamen mit einem früheren Stand zurück: Bühne, Export-Angaben, Clip-Reiter und Folien nachziehen
@@ -1193,9 +1204,9 @@ function changed(rerender = true){
   resyncPlay(anchor);
   if (rerender){ if (tab === 'subs') renderSubs(); if (tlOn() && window.renderStudio) renderStudio(); }
   else if (tab === 'subs') updateSubsList();
-  cueCache.at = -1; if (!playing){ updateSubs(outPos); viewSrcLine(); viewLower(); }   // Quellenzeile und Bauchbinde folgen dem Schnitt
+  cueCache.at = -1; if (!playing){ updateSubs(outPos); viewSrcLine(); viewLower(); viewPart(); }   // Quellenzeile, Bauchbinde und Kennzeichnung der Reihe folgen dem Schnitt
   if (tab === 'export') renderExport(); else if (tab === 'clip') renderLenLights(); else if (tab === 'subs') a11yLater();
-  textLater(); if (refsAll().length || lowerSheetOpen()) refsLater();
+  textLater(); if (refsAll().length || lowerSheetOpen()) refsLater(); if (clipsSheetOpen()) clipsLater();
   clearTimeout(saveT); $('#saved').textContent = '…'; saveT = setTimeout(saveNow, 700);
   if (!applyingRemote && busOn()){ clearTimeout(busT); busT = setTimeout(() => { if (busOn()) busSend({t:'state', snap: snapshot()}); }, 120); }
 }
@@ -1506,7 +1517,7 @@ function zoomAt(src){
 }
 function recompute(noTL){
   computeRanges(); computePieces(); computeOrder(); buildTimeline(); syncLinks(); computeOverlays(); computeAudios(); drawScrub();
-  refMemo = null; lowerMemo = null; lowerRects.clear();   // Quellenzeilen und Bauchbinden folgen dem Schnitt
+  refMemo = null; lowerMemo = null; lowerRects.clear(); clipTokMemo = null;   // Quellenzeilen, Bauchbinden und vorgemerkte Abschnitte folgen dem Schnitt
   if (!noTL && !tlHold && tlOn() && window.renderTimeline) renderTimeline();
   setText($('#tTot'), fmtT(total)); setText($('#sideTot'), fmtT(total));
 }
@@ -2169,7 +2180,7 @@ function safeClamp(x, y, w, h){
 const inSafe = (x, y, w, h) => { const [nx, ny] = safeClamp(x, y, w, h); return Math.abs(nx - x) < 0.004 && Math.abs(ny - y) < 0.004; };
 function setSafe(v){
   if (!P) return; P.settings.safe = v || ''; if (v) try { localStorage.setItem('hc-safe', v); } catch(_){}
-  changed(false); syncSafe(); placeSafe(); placeOverlay(); updateTitles(outPos); viewTextline(); viewSrcLine(); viewLower();
+  changed(false); syncSafe(); placeSafe(); placeOverlay(); updateTitles(outPos); viewTextline(); viewSrcLine(); viewLower(); viewPart();
   toast(!v ? 'Schutzzonen aus' : !safeFits() ? 'Schutzzonen gibt es nur im Hochformat (9:16) – dieses Projekt ist breiter. Ein Clip daraus übernimmt die Einstellung.' : `Schutzzonen: ${safeLabel()} – Untertitel und Titel rasten beim Ziehen in der freien Fläche ein`);
 }
 function syncSafe(){ const v = (P && P.settings.safe) || ''; for (const sel of $$('select.safe-sel')) sel.value = v; }
@@ -2235,7 +2246,7 @@ function updateOverlay(o){
     syncMedia(el, it.in + (o - a.at));
     if (playing && el.paused) el.play().catch(() => {}); if (!playing && !el.paused) el.pause();
   });
-  updateAudio(o); placeDeco(act, o, W, H); placeWatermark(W, H); placeTextline(W, H); placeSrcLine(W, H, o); placeLower(W, H, o);
+  updateAudio(o); placeDeco(act, o, W, H); placeWatermark(W, H); placeTextline(W, H); placeSrcLine(W, H, o); placeLower(W, H, o); placePart(W, H, o);
   // Griffe: am ausgewählten Element, sonst am obersten
   const sel = selOvlId(), mainSel = typeof TL !== 'undefined' && TL.sel && TL.sel.kind === 'main', tgt = act.find(a => a.x.id === sel) || (mainSel ? null : act[act.length - 1]) || null;   // Hauptclip ausgewählt: Rahmen am Hauptbild
   curPip = tgt ? tgt.x : null; pipTarget = tgt;
@@ -2710,7 +2721,7 @@ $('#transCancel').onclick = () => { transCancelled = true; if (transJob) TS.canc
 // ───────── Text ─────────
 let selA = null, selB = null;
 function renderTranscript(){
-  const root = $('#transcript'); root.innerHTML = ''; spans = new Array(tokens.length);
+  const root = $('#transcript'); root.innerHTML = ''; spans = new Array(tokens.length); clipTokMemo = null;
   if (order.length !== tokens.length) computeOrder();
   let para = -1, pEl = null, src = -1, prev = -2, lastSpk = ''; const frag = document.createDocumentFragment(), fset = fillerSet();
   const markAt = new Map(); for (const m of P.marks || []){ const k = tokAtSrc(m.at); if (k < 0) continue; if (!markAt.has(k)) markAt.set(k, []); markAt.get(k).push(m); }
@@ -2743,7 +2754,7 @@ function renderTranscript(){
     prev = i;
   }
   root.append(frag); tokens.forEach(t => paint(t.i));
-  paintFillerCount(fset); paintMarkTimes(); paintMarksBtn(); paintRefsBtn(); paintLowBtn(); paintChkBtn(); lowMark();
+  paintFillerCount(fset); paintMarkTimes(); paintMarksBtn(); paintRefsBtn(); paintClipsBtn(); paintLowBtn(); paintChkBtn(); lowMark();
   const todo = P.sources.filter(s => !s.tr).length;
   $('#textTodo').classList.toggle('hidden', !todo); $('#textTodo b').textContent = todo === 1 ? '1 Video ist' : `${todo} Videos sind`;
   if ($('#findIn').value) runFind();
@@ -2755,6 +2766,7 @@ function paint(i){
   sp.classList.toggle('del', deleted.has(i) || (t.type === 'word' && isSrcDeleted((t.ws + t.we) / 2)));
   sp.classList.toggle('ks', !!t.ks && sp.classList.contains('del'));
   const kwOn = !!(P.kw && P.kw.length && P.kw.includes(i)); if (kwOn !== sp.classList.contains('kw')){ sp.classList.toggle('kw', kwOn); } sp.style.setProperty('--kw', kwOn ? (S().kwColor || KW_DEF) : '');
+  const clOn = clipToks().has(i); if (clOn !== sp.classList.contains('cl')) sp.classList.toggle('cl', clOn);
   const added = t.type !== 'word' && P.edits[i];
   sp.classList.toggle('added', !!added);
   if (added){ sp.textContent = P.edits[i]; return; }
@@ -2877,7 +2889,8 @@ function showSel(){
     const n = ids.filter(i => tokens[i].type === 'word').length;
     $('#selCount').textContent = ids.length === 1 ? '1 Wort' : `${n} Wörter`;
     $('#selInfo').textContent = ids.length === 1 ? (FINE ? 'Zweites Wort anklicken oder ziehen' : 'Zweites Wort antippen') : (FINE ? 'Markierung ziehen = verschieben' : 'Halten + ziehen = verschieben');
-    const g = spans.length ? growStep() : null; $('#selSent span').textContent = !g || g.what === 'para' ? 'Absatz' : 'Satz'; $('#selSent').disabled = !g; }
+    const g = spans.length ? growStep() : null; $('#selSent span').textContent = !g || g.what === 'para' ? 'Absatz' : 'Satz'; $('#selSent').disabled = !g;
+    const cs = clipListAll().length ? secOf(ids) : null; $('#selList span').textContent = cs && clipListAll().some(q => secSame(q, cs)) ? 'Vormerkung weg' : 'Vormerken'; }
 }
 function clearSel(){ selA = selB = null; showSel(); }
 // Anzeigen im Text-Reiter, die dem Schnitt folgen (Zähler der Füllwörter, Zeiten an den Kapiteln): kurz nach einer Änderung auffrischen
@@ -4211,7 +4224,7 @@ const lowerImgs = new Map(), lowerFontsOk = new Set();
 const lowerFontKey = () => JSON.stringify(slProfile().fonts || {});
 function lowerFonts(){   // Schriften des Designprofils laden; sind sie da, wird neu gezeichnet
   const k = lowerFontKey(); if (lowerFontsOk.has(k)) return Promise.resolve();
-  return slFonts(slProfile()).then(() => { lowerFontsOk.add(k); lowerImgs.clear(); if (P) viewLower(); }).catch(() => {});
+  return slFonts(slProfile()).then(() => { lowerFontsOk.add(k); lowerImgs.clear(); partImgs.clear(); if (P){ viewLower(); viewPart(); } }).catch(() => {});
 }
 const lowerReady = () => P && lowerList().length ? lowerFonts() : Promise.resolve();
 function lowerImage(name, role, W, H){
@@ -4257,6 +4270,8 @@ function lowerRect(im, W, H){
   const x = p[1] === 'l' ? mL : p[1] === 'r' ? W - mR - im.w : (W - im.w) / 2;
   let y = top ? mT : H - mB - im.h;
   if (p[0] === 'a'){ const b = subBand(W, H); if (b && b[0] < y + im.h + gap && b[1] > y - gap){ const up = b[0] - gap - im.h; if (up >= mT) y = up; } }
+  const pb = partBox(W, H);   // „Teil 1/3“ in derselben Ecke: die Bauchbinde rückt darunter bzw. darüber
+  if (pb && x < pb.x + pb.w + gap && x + im.w > pb.x - gap && y < pb.y + pb.h + gap && y + im.h > pb.y - gap) y = top ? pb.y + pb.h + gap : pb.y - gap - im.h;
   const r = {x, y}; lowerRects.set(rk, r); return r;
 }
 function placeLower(W, H, o){
@@ -5285,6 +5300,7 @@ function coverDraw(cv, o){
     draw(kl && el.style.opacity === '0' ? kl.canvas : el, box(el), el.classList.contains('free') ? 'fill' : 'cover', m ? {t: +m[1] / 100, r: +m[2] / 100, b: +m[3] / 100, l: +m[4] / 100} : null);
   }
   const lw = $('#lowerOv img'); if (lw && lw.complete && lw.naturalWidth) draw(lw, box(lw), 'fill');
+  const pv = $('#partOv img'); if (pv && pv.complete && pv.naturalWidth) draw(pv, box(pv), 'fill');
   const wm = $('#wm'); if (shown(wm)){ ctx.globalAlpha = clamp(+wm.style.opacity || 1, 0, 1); draw(wm, box(wm), 'fill'); ctx.globalAlpha = 1; }
   // Schrift aus dem Video: Titel, Textzeile, Untertitel – dieselben Angaben wie im Export
   if (o.titles || o.subs){
@@ -5518,7 +5534,6 @@ function paintExportForm(){
   if (CAP.audioFormats){ $$('#exAudioFmt option').forEach(op => op.hidden = op.disabled = !CAP.audioFormats.includes(op.value)); if (!CAP.audioFormats.includes($('#exAudioFmt').value)) $('#exAudioFmt').value = CAP.audioFormats[0]; }
   if (CAP.platform === 'android') $('#exNote').textContent = exFmt === 'audio' ? 'Die Tonspur (M4A) landet im Ordner „Musik/HoneyCut“. Bitte die App während des Exports geöffnet lassen.'
     : 'Das Video landet direkt in deiner Galerie (Ordner „HoneyCut“). Bitte die App während des Exports geöffnet lassen.';
-  $('#exBtn').textContent = {video:'Video exportieren', audio:'Audio exportieren', capcut:'CapCut-Projekt erstellen', concat:'Concat-Projekt erstellen'}[exFmt];
   paintExBtns(); gpuCheck();
   if (P) renderExport();
 }
@@ -5564,7 +5579,7 @@ function buildPlan(dry){   // dry: nur nachsehen (z. B. für das Titelbild) – 
     ...(keyOn(o.x.key) ? {key: planKey(o.x.key, false)} : {}),
     aspect:+elAspect(o.x).toFixed(5), track: elTrack(o.x), vol:+(o.x.vol || 0), hasAudio: o.x.clip.hasAudio !== false && !isImg(o.x.clip),
     width:o.x.clip.width, height:o.x.clip.height, rotation:o.x.clip.rotation || 0}))
-    .concat(dry ? [] : decoPlan(W, H)).concat(dry ? [] : lowerPlan(W, H)).concat(wmPlan(W, H))
+    .concat(dry ? [] : decoPlan(W, H)).concat(dry ? [] : lowerPlan(W, H)).concat(dry ? [] : partPlan(W, H)).concat(wmPlan(W, H))
     .concat(audios.map(a => ({mode:'audio', image:false, uri:a.x.clip.uri, in:r3(a.x.in), out:r3(a.x.in + (a.end - a.at)), at:r3(a.at), track:a.x.track || 1, vol:+(a.x.vol ?? 1), hasAudio:true})));
   const cl = S().enabled !== false && P.cues.length ? computedCues() : [], ctr = trTexts(cl), emo = [];
   const cues = cl.length ? cl.map((x, k) => { const [cx, cy0] = cueXY(x.c), sy = x.c.x == null && window.subSlideY ? subSlideY(x.s, x.e) : null, cy = sy ?? cy0, o = {start:r3(x.s), end:r3(x.e), text:wrapText(x.text), x:cx, y:cy};
@@ -5678,8 +5693,8 @@ function renderExport(){
   const nLower = exFmt === 'audio' ? 0 : lowerList().length, nTitle = P.items.filter(x => x.type === 'title' && !x.lt).length, nSrc = exFmt === 'audio' ? 0 : refCues().length;
   $('#exSummary').textContent = `${fmtT(total)}${exFmt === 'audio' ? '' : ` · ${W}×${H}`} · ${timeline.filter(g => g.kind === 'main').length} Abschnitte` + (P.sources.length > 1 ? ` aus ${P.sources.length} Videos` : '') +
     (n.insert ? ` · ${n.insert} Einschub` : '') + (n.broll ? ` · ${n.broll} B-Roll` : '') + (n.pip ? ` · ${n.pip} Einblendung${n.pip > 1 ? 'en' : ''}` : '') + (n.zoom ? ` · ${n.zoom} Zoom` : '') + (n.fx ? ` · ${n.fx} Anpassungen` : '') + (nTitle ? ` · ${nTitle} Titel` : '') + (nLower ? ` · ${nLower} Bauchbinde${nLower > 1 ? 'n' : ''}` : '') + (tlineOn() ? ' · Textzeile' : '') + (nSrc ? ` · ${nSrc} Quellenzeile${nSrc > 1 ? 'n' : ''}` : '') +
-    (S().enabled !== false && P.cues.length ? ` · ${computedCues().length} Untertitel` : '');
-  renderLenLights(); renderChapters(); renderRefsCard(); renderA11y();
+    (S().enabled !== false && P.cues.length ? ` · ${computedCues().length} Untertitel` : '') + (exFmt !== 'audio' && partOn() ? ` · „${partText()}“` : '') + (exFmt === 'video' && hookVars().length ? ` · ${hookVars().length} Hook-Varianten` : '');
+  paintExBtns(); renderLenLights(); renderChapters(); renderRefsCard(); renderA11y();
 }
 $('#exRes').onchange = renderExport;
 let exJob = null, exResult = null;
@@ -5715,7 +5730,7 @@ async function levelPlan(plan){
 $('#exLevel').onchange = () => { if (P){ P.settings.level = $('#exLevel').checked; changed(false); } };
 $('#exBtn').onclick = async () => {
   if (!timeline.length || $('#exBtn').disabled) return;
-  if (exqRunning()) return void exEnqueue();   // die Warteschlange rechnet gerade: dieser Export reiht sich ein
+  if (exqRunning() || (exFmt === 'video' && hookVars().length)) return void exEnqueue();   // die Warteschlange rechnet gerade, oder es gibt Hook-Varianten (je Variante eine Datei): dieser Export reiht sich ein
   saveNow(); pausePlay();
   const plan = await exPrepare(() => buildPlan()); if (!plan) return; exResult = null;
   // Textfassung: Unter Windows legt das Backend sie neben das Video, sonst speichert die App sie nach dem Export
@@ -6021,7 +6036,7 @@ window.addEventListener('beforeunload', e => { if (exqActive()){ e.preventDefaul
 async function exPrepare(make){
   const P0 = P; if (!(await askOpenRefs())){ if (P === P0){ setTab('text'); openRefs(); } return null; }
   if (P !== P0) return null;
-  await lowerReady(); await decoReady(); if (P !== P0) return null;
+  await lowerReady(); await decoReady(); await partReady(); if (P !== P0) return null;
   return make();
 }
 function exTextFile(plan, fmt){
@@ -6033,17 +6048,22 @@ const planInfo = plan => `${P.name} · ${FMT_LBL[plan.format] || plan.format}${p
 // Aktuellen Export einreihen
 async function exEnqueue(){
   if (!P || !timeline.length) return; saveNow(); pausePlay();
-  const fmt = exFmt, plan = await exPrepare(() => buildPlan()); if (!plan) return;
-  const t = exTextFile(plan, fmt);
-  if ($('#exLevel').checked && fmt !== 'concat'){ try { await levelPlan(plan); } catch(e){ console.warn(e); } }
-  exqAdd({name: plan.name, proj: P.id, info: planInfo(plan), plan, ...t});
-  toast(exqRunning() && exqActive() > 1 || exDirect ? `„${plan.name}“ ist eingereiht` : `„${plan.name}“ wird exportiert – du kannst weiterschneiden`);
+  const fmt = exFmt, P0 = P, plans = await exPrepare(() => videoPlans()); if (!plans) return;
+  const level = $('#exLevel').checked && fmt !== 'concat', busy = !!exqRunning() || exDirect;
+  for (const plan of plans){
+    const info = planInfo(plan), t = plan === plans[0] ? exTextFile(plan, fmt) : {};   // die Textfassung gehört zum Video, nicht zu jeder Variante
+    if (level){ try { await levelPlan(plan); } catch(e){ console.warn(e); } }
+    exqAdd({name: plan.name, proj: P0.id, info, plan, ...t});
+  }
+  const plan = plans[0];
+  toast(plans.length > 1 ? `${plans.length} Hook-Varianten eingereiht – je Variante entsteht eine Datei` : busy ? `„${plan.name}“ ist eingereiht` : `„${plan.name}“ wird exportiert – du kannst weiterschneiden`);
 }
 $('#exQueueBtn').onclick = () => { exEnqueue(); };
 function paintExBtns(){
-  const busy = !!exqRunning();
+  const busy = !!exqRunning(), nv = P && exFmt === 'video' ? hookVars().length : 0;
   $('#exPackBtn').classList.toggle('hidden', exFmt !== 'video');
-  $('#exBtn').title = busy ? 'Ein Export aus der Warteschlange läuft – dieser wird eingereiht' : '';
+  $('#exBtn').textContent = nv ? `${nv} Hook-Varianten exportieren` : {video:'Video exportieren', audio:'Audio exportieren', capcut:'CapCut-Projekt erstellen', concat:'Concat-Projekt erstellen'}[exFmt];
+  $('#exBtn').title = nv ? 'Je Hook-Variante entsteht eine Datei (Hook-A, Hook-B, Hook-C) – sie laufen über die Warteschlange' : busy ? 'Ein Export aus der Warteschlange läuft – dieser wird eingereiht' : '';
 }
 
 // ── Grafikkarte (nur Windows): Das Backend nennt die nutzbare Videoeinheit; der Schalter gilt für dieses Gerät ──
@@ -6110,6 +6130,7 @@ function openPack(){
       return `<label class="pk-row"><input type="checkbox" data-pk="${e.id}"${pr[e.id] ? ' checked' : ''}><span class="pk-n"><b>${e.label}</b><span class="muted small">${e.use} · ${w} × ${h} · ${nat ? 'Format des Projekts' : (P.frameBy && P.frameBy[e.k] ? 'dein Bildausschnitt für dieses Format' : 'das Video füllt das Bild')}</span><span class="muted small pk-file">${esc(packName(e))}.mp4</span></span></label>`; }).join('')}
       <label class="pk-row"><input type="checkbox" id="pkCover"${pr.cover ? ' checked' : ''}><span class="pk-n"><b>Titelbild</b><span class="muted small">das Bild an der Abspiellinie als JPG, mit den Angaben aus „Titelbild“</span></span></label></div>
     ${derived && special ? '<p class="small pk-warn">Folien, Endkarte und Splitscreen sind für das Format des Projekts angelegt. In den anderen Fassungen erscheinen sie eingepasst oder beschnitten.</p>' : ''}
+    ${hookVars().length ? '<p class="muted small">Hook-Varianten: Das Paket nimmt Variante A. Je Variante eine Datei erzeugen „Video exportieren“ und „In die Warteschlange“.</p>' : ''}
     ${derived ? '<p class="muted small">Untertitel, Titel und Einblendungen behalten in jeder Fassung ihre Lage im Bild. Für eine andere Fassung mit eigenem Bildausschnitt das Format im Clip-Reiter einmal wählen und den Ausschnitt setzen; das Paket merkt ihn sich.</p>' : ''}
     <div class="row" style="margin-top:12px"><span class="muted small" id="pkMsg" style="flex:1;min-width:0"></span><button class="btn" id="pkNo">Schließen</button><button class="btn primary" id="pkGo"></button></div>`;
   const sel = () => Object.fromEntries(PACK.map(e => [e.id, body.querySelector(`[data-pk="${e.id}"]`).checked]));
@@ -6146,13 +6167,14 @@ function autoSet(a){
 // Stil des offenen Projekts als Vorlage
 function houseOf(){
   return {sub: jc(P.sub_style), wm: jc(P.watermark), format: P.format || null, safe: P.settings.safe || '', burn: P.settings.burn !== false, level: P.settings.level !== false,
-    textline: jc(P.textline), srcStyle: jc(P.srcStyle), lower: jc(P.lower), slideProfile: jc(P.slideProfile), auto: autoVals()};
+    textline: jc(P.textline), srcStyle: jc(P.srcStyle), lower: jc(P.lower), part: jc(P.partStyle), slideProfile: jc(P.slideProfile), auto: autoVals()};
 }
 // Vorlage in ein Projekt schreiben (auch in ein gerade angelegtes, noch ungeöffnetes). Alles, was die Vorlage abdeckt, wird ersetzt.
 function houseInto(p, st){
   const set = (k, v) => { if (v) p[k] = jc(v); else delete p[k]; };
   if (st.sub) p.sub_style = {...DEF_STYLE, ...jc(st.sub)};
   set('watermark', st.wm); set('textline', st.textline); set('srcStyle', st.srcStyle); set('lower', st.lower); set('slideProfile', st.slideProfile);
+  if ('part' in st) set('partStyle', st.part);   // Vorlagen aus früheren Fassungen kennen die Kennzeichnung der Reihe noch nicht und lassen sie, wie sie ist
   if ((p.format || null) !== (st.format || null)){ if (st.format && FORMATS[st.format]) p.format = st.format; else delete p.format; delete p.frame; p.frameNew = true; }
   p.settings ||= {pad: 0.06}; p.settings.safe = st.safe || ''; p.settings.burn = st.burn !== false; p.settings.level = st.level !== false;
 }
@@ -6171,7 +6193,7 @@ function houseApply(h){
   const fm0 = P.format || null, regen = !!h.st.sub && tokens.length > 0 && LOOK_SPLIT.some(k => ({...DEF_STYLE, ...h.st.sub})[k] !== S()[k]), n = regen ? manualCount() : 0;
   if (n && !confirm(`${n} Untertitel wurden von Hand bearbeitet. Diese Vorlage teilt die Untertitel neu auf; dabei gehen diese Änderungen verloren. Fortfahren?`)) return false;
   commit(() => { houseInto(P, h.st); P.house = h.id; if (P.frameNew){ delete P.frameNew; P.frame = P.format ? clampFrame({sc: coverSc(), tx: 0, ty: 0}) : null; } if (regen) genCues(); }, true);
-  autoSet(h.st.auto);
+  autoSet(h.st.auto); partChanged(); if (P.part && 'part' in h.st) partSyncLater();   // die Kennzeichnung gilt für die ganze Reihe
   syncStyleInputs(); styleOverlay(); syncSafe(); renderExportForm(); viewTextline(); renderLooks();
   $('.clip-tab').classList.toggle('hidden', !P.clipOf && !P.format);
   frameRestored(fm0 !== (P.format || null));
@@ -6274,7 +6296,7 @@ function openHouse(){
   sheetItem = null;
   body.innerHTML = `<h3>Hausstil und Bausteine</h3>
     <div class="hs-sec"><h4>Hausstil</h4>
-      <p class="muted small">Eine Vorlage merkt sich Untertitel-Stil, Wasserzeichen, Format der Leinwand, Schutzzonen, Lautstärke-Angleichung, Textzeile, Quellenzeile, Bauchbinden, das Designprofil der Folien und die Aufräum-Optionen. Mit dem Stern starten neue Projekte in diesem Stil.</p>
+      <p class="muted small">Eine Vorlage merkt sich Untertitel-Stil, Wasserzeichen, Format der Leinwand, Schutzzonen, Lautstärke-Angleichung, Textzeile, Quellenzeile, Bauchbinden, die Kennzeichnung von Clip-Reihen („Teil 1/3“), das Designprofil der Folien und die Aufräum-Optionen. Mit dem Stern starten neue Projekte in diesem Stil.</p>
       <div class="hs-list" id="hsList"></div>
       ${inP ? '<div class="row"><button class="btn" id="hsSave">＋ Stil dieses Projekts als Vorlage speichern</button></div>' : '<p class="muted small">Neue Vorlagen speicherst du in einem geöffneten Projekt über dasselbe Symbol.</p>'}
     </div>
@@ -6406,6 +6428,545 @@ function decoPlan(W, H){
   return out;
 }
 
+// ───────── Clips in Serie (2.33): Vormerken und Clip-Reihe (F2), Zusammenschnitt (F3), Vorschläge (F1), Hook-Varianten (F4), „Teil 1/3“ (F5), Suche über alle Projekte (C9) ─────────
+// P.clipList = [{id, at, end}] – vorgemerkte Abschnitte in Quellzeit: vom Anfang des ersten bis zum Ende des letzten Worts (wie bei den
+// Quellen). Sie folgen dem Schnitt: Was nicht mehr zum Video zählt, zählt auch im Abschnitt nicht mit.
+// P.clipSeries = [{id, name, fmt, made, clips: [{id, d, q}]}] – angelegte Clip-Reihen; sie stehen im Projekt, aus dem sie stammen.
+// Im Clip: P.part = {series, k, n, on, ids} – Teil k von n. P.partStyle = {pos, size, dur, word} – Aussehen der Kennzeichnung (Teil des Hausstils).
+const waitMs = ms => new Promise(r => setTimeout(r, ms));
+const clipListAll = () => (P && P.clipList) || [];
+const seriesAll = () => (P && P.clipSeries) || [];
+const isSaid = i => tokens[i].type !== 'pause' || !!(P.edits && P.edits[i]);
+function secSpan(x){   // Abschnitt als Positionen in der Reihenfolge des Textes: [von, bis]
+  if (!tokens.length) return null; if (order.length !== tokens.length) computeOrder();
+  const a = tokAtSrc(x.at + 0.002), b = tokAtSrc(x.end - 0.002); if (a < 0 || b < 0) return null;
+  return [Math.min(pos[a], pos[b]), Math.max(pos[a], pos[b])];
+}
+const secIds = x => { const r = secSpan(x); return r ? order.slice(r[0], r[1] + 1) : []; };
+const secOut = x => { const r = outRangeOf(secIds(x)); return r && r[1] - r[0] > 0.3 ? r : null; };   // Bereich im geschnittenen Video
+function secQuote(x, n = 9){ const w = secIds(x).filter(i => isSaid(i) && !isCut(i) && tokText(tokens[i])).map(i => tokText(tokens[i])); return w.length > n ? w.slice(0, n).join(' ') + ' …' : w.join(' '); }
+let clipTokMemo = null;
+function clipToks(){ if (clipTokMemo) return clipTokMemo; const s = new Set(); for (const x of clipListAll()) for (const i of secIds(x)) s.add(i); return clipTokMemo = s; }
+function paintClipToks(){
+  clipTokMemo = null; const nw = clipToks(); if (!spans.length) return;
+  for (const sp of $$('#transcript .tk.cl')) if (!nw.has(+sp.dataset.i)) sp.classList.remove('cl');
+  for (const i of nw) if (spans[i]) spans[i].classList.add('cl');
+}
+function paintClipsBtn(){ const n = clipListAll().length, b = $('#clipsBtn'); b.textContent = 'Clips' + (n ? ` (${n})` : ''); b.classList.toggle('on', n > 0); }
+function clipListChanged(){ paintClipToks(); paintClipsBtn(); if (clipsSheetOpen()) renderClipsSheet(); if (spans.length && selA != null) showSel(); }
+// Das offene Blatt folgt dem Schnitt: Längen der Abschnitte und die Vorschläge kurz nach einer Änderung auffrischen (nicht, während im Feld der Schlagwörter getippt wird)
+let clipsLateT = 0;
+function clipsLater(){ clearTimeout(clipsLateT); clipsLateT = setTimeout(() => { if (P && clipsSheetOpen() && clipsView !== 'series' && document.activeElement !== $('#clWords')) renderClipsSheet(); }, 250); }
+function clipListSort(){ const k = x => (secSpan(x) || [1e9])[0]; P.clipList.sort((p, q) => k(p) - k(q)); }
+// Anker eines Abschnitts aus markierten Wörtern (in der Reihenfolge des Textes) – null, wenn nichts Gesprochenes dabei ist
+function secOf(ids){ const said = ids.filter(isSaid); return said.length ? {at: r3(wS(tokens[said[0]])), end: r3(wE(tokens[said[said.length - 1]]))} : null; }
+const secSame = (p, q) => Math.abs(p.at - q.at) < 0.01 && Math.abs(p.end - q.end) < 0.01;
+function clipListAdd(ids, quiet){   // → true, wenn der Abschnitt jetzt vorgemerkt ist
+  const s = secOf(ids); if (!s){ if (!quiet) toast('Erst Wörter markieren'); return false; }
+  if (clipListAll().some(q => secSame(q, s))) return true;
+  if (!outRangeOf(ids.filter(isSaid))){ if (!quiet) toast('Nur weggeschnittene Wörter markiert'); return false; }
+  commit(() => { (P.clipList ||= []).push({id: newId(), ...s}); clipListSort(); }, false);
+  clipListChanged(); return true;
+}
+function clipListDrop(x){ commit(() => { P.clipList = P.clipList.filter(q => q !== x); }, false); clipListChanged(); }
+// „Vormerken“: der markierte Abschnitt, ohne Markierung der Satz an der Abspiellinie. Noch einmal auf demselben Abschnitt nimmt ihn wieder heraus.
+function clipListToggle(){
+  if (!P || !tokens.length || !spans.length) return;
+  let ids = selIds();
+  if (!ids.length){ const k = tokAtOut(outPos); if (k == null || pos[k] == null) return toast('Erst einen Abschnitt im Text markieren'); const r = sentBounds(pos[k], pos[k]); ids = order.slice(r[0], r[1] + 1); }
+  const s = secOf(ids); if (!s) return toast('Erst Wörter markieren');
+  const dup = clipListAll().find(q => secSame(q, s));
+  if (dup){ clipListDrop(dup); return toast('Vormerkung entfernt'); }
+  if (clipListAdd(ids)) clipListNoted();
+}
+function clipListNoted(){ clearSel(); const n = clipListAll().length; toast(n === 1 ? 'Vorgemerkt – weitere Abschnitte markieren, dann „Clips“ öffnen' : `${n} Abschnitte vorgemerkt – „Clips“ macht daraus eine Reihe oder einen Zusammenschnitt`); }
+$('#selList').onclick = clipListToggle;
+function secShow(x){   // Abschnitt im Text markieren und zeigen
+  const r = secSpan(x); if (!r || !spans.length) return;
+  if (tab !== 'text') setTab('text');
+  selA = order[r[0]]; selB = order[r[1]]; showSel();
+  if (spans[selA]) spans[selA].scrollIntoView({block: 'center', behavior: 'smooth'});
+  const o = secOut(x); if (o){ if (playing) pausePlay(); seekOut(Math.min(o[0] + 0.08, Math.max(0, total - 0.01)), false); tlReveal(); }
+}
+function rangePlay(r){   // Bereich des geschnittenen Videos anhören; noch einmal hält an
+  audStop(); if (playing && stopAt != null && Math.abs(stopAt - r[1]) < 0.01 && outPos >= r[0] - 0.05) return pausePlay();
+  if (playing) pausePlay(); seekOut(r[0], false); startPlay(); stopAt = r[1]; tlReveal();
+}
+// ── Blatt „Clips aus diesem Video“: Vorgemerkt · Vorschläge · Reihen ──
+let clipsView = 'list';
+const CL_FMTS = [['9:16', '9:16'], ['4:5', '4:5'], ['1:1', '1:1'], ['16:9', '16:9'], ['', 'Original']];
+const lsGet = (k, d) => { try { const v = localStorage.getItem(k); return v == null ? d : v; } catch(_){ return d; } };
+const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch(_){} };
+const clipFmtGet = () => { const v = lsGet('hc-clipfmt', '9:16'); return v === '' || FORMATS[v] ? v : '9:16'; };
+const clipsSheetOpen = () => !$('#sheet').classList.contains('hidden') && !!$('#clSheet');
+function projMap(){ const m = new Map(); for (const p of J(TS.listProjects() || '[]') || []) m.set(p.id, p); return m; }
+function clRow(q){
+  const {x, r} = q;
+  return `<div class="cl-row${r ? '' : ' cut'}" data-id="${x.id}"><button type="button" class="mini" data-a="play" title="Anhören"${r ? '' : ' disabled'}>▶</button>
+    <button type="button" class="mk-go" title="Im Text zeigen"><span class="mono">${r ? fmtT(r[0]) : '–'}</span><span class="mk-t"><b dir="auto">${esc(secQuote(x) || 'ohne Worte')}</b><i>${r ? fmtD(r[1] - r[0]) + ' s' : 'weggeschnitten – zählt nicht mit'}</i></span></button>
+    <button type="button" class="mini" data-a="drop" title="Vormerkung entfernen">×</button></div>`;
+}
+function clipsListHtml(){
+  const list = clipListAll().map(x => ({x, r: secOut(x)})), ok = list.filter(q => q.r), tot = ok.reduce((s, q) => s + q.r[1] - q.r[0], 0), fmt = clipFmtGet();
+  if (!list.length) return `<p class="muted small">Noch nichts vorgemerkt. ${getComputedStyle($('#selList')).display === 'none' ? 'Im Text einen Abschnitt markieren, „Clip“ wählen und dort „Vormerken“.' : 'Im Text einen Abschnitt markieren und „Vormerken“ wählen (Taste V); ohne Markierung merkt V den Satz an der Abspiellinie vor.'} Aus mehreren Abschnitten wird eine Clip-Reihe (je Abschnitt ein Clip) oder ein Zusammenschnitt (alle in einem Clip). Unter „Vorschläge“ stehen Abschnitte, die sich als Clip eignen könnten.</p>`;
+  return `<p class="muted small">${!ok.length ? 'Die vorgemerkten Abschnitte sind inzwischen weggeschnitten.' : (ok.length === 1 ? 'Ein Abschnitt' : ok.length + ' Abschnitte') + ', zusammen ' + fmtT(tot) + '.'} Antippen zeigt den Abschnitt im Text.</p>
+    <div class="cl-list">${list.map(clRow).join('')}</div>
+    ${ok.length ? `<div class="field"><span>Format der Clips</span><div class="seg-ctl" id="clFmt">${CL_FMTS.map(([v, l]) => `<button type="button" data-fmt="${v}"${v === fmt ? ' class="on"' : ''}>${l}</button>`).join('')}</div></div>` : ''}
+    ${ok.length > 1 ? `<label class="row"><input type="checkbox" id="clPart"${lsGet('hc-clippart', '1') !== '0' ? ' checked' : ''}> „Teil 1/${ok.length}“ in jedem Clip der Reihe einblenden</label>` : ''}
+    <div class="row wrap">${ok.length > 1 ? `<button type="button" class="btn primary" data-a="series" title="Jeder Abschnitt wird ein eigener Clip">Clip-Reihe anlegen (${ok.length} Clips)</button><button type="button" class="btn" data-a="best" title="Alle vorgemerkten Abschnitte in einem Clip, in der Reihenfolge des Videos">Zusammenschnitt (${fmtT(tot)})</button>` : ok.length ? '<button type="button" class="btn primary" data-a="one">Als Clip öffnen</button>' : ''}
+      <button type="button" class="btn small ghost" data-a="clear">Liste leeren</button></div>`;
+}
+function clipsSeriesHtml(){
+  const ser = seriesAll();
+  if (!ser.length) return '<p class="muted small">Noch keine Clip-Reihe. Abschnitte vormerken und „Clip-Reihe anlegen“ wählen: Jeder Abschnitt wird ein eigener Clip, auf Wunsch mit „Teil 1/3“ im Bild. Die Reihe lässt sich hier gemeinsam exportieren.</p>';
+  const pm = projMap();
+  return ser.map(s => { const have = s.clips.filter(c => pm.has(c.id));
+    return `<div class="cl-ser" data-s="${s.id}"><div class="cl-ser-h"><span class="cl-ser-n"><b dir="auto">${esc(s.name)}</b><span class="muted small">${have.length === 1 ? '1 Clip' : have.length + ' Clips'} · ${s.fmt || 'Originalformat'} · ${new Date(s.made).toLocaleDateString('de-DE')}</span></span><button type="button" class="mini" data-a="smenu" title="Umbenennen, neu nummerieren, auflösen, löschen">⋯</button></div>
+      ${have.map(c => `<div class="cl-row" data-c="${c.id}"><button type="button" class="mk-go" data-a="copen" title="Clip öffnen"><span class="mono">${s.clips.indexOf(c) + 1}/${s.clips.length}</span><span class="mk-t"><b dir="auto">${esc(pm.get(c.id).name)}</b><i>${fmtT(c.d)}${c.q ? ' · ' + esc(c.q) : ''}</i></span></button></div>`).join('') || '<p class="muted small">Die Clips dieser Reihe gibt es nicht mehr.</p>'}
+      ${have.length ? '<div class="row wrap"><button type="button" class="btn small primary" data-a="sexp" title="Alle Clips dieser Reihe nacheinander exportieren">Alle exportieren</button></div>' : ''}</div>`; }).join('');
+}
+function renderClipsSheet(){
+  const box = $('#clSheet'); if (!box) return; const top = $('#sheet').scrollTop;
+  const tabs = [['list', `Vorgemerkt (${clipListAll().length})`], ['sug', 'Vorschläge'], ['series', `Reihen (${seriesAll().length})`]];
+  box.innerHTML = `<h3>Clips aus diesem Video</h3><div class="seg-ctl small ck-tabs">${tabs.map(([k, l]) => `<button type="button" data-view="${k}"${k === clipsView ? ' class="on"' : ''}>${l}</button>`).join('')}</div>
+    ${clipsView === 'list' ? clipsListHtml() : clipsView === 'sug' ? clipsSugHtml() : clipsSeriesHtml()}
+    <div class="row" style="margin-top:12px"><button type="button" class="btn" data-a="ok" style="margin-left:auto">Fertig</button></div>`;
+  const w = $('#clWords'); if (w) w.value = clipWords.join(', ');
+  $('#sheet').scrollTop = top;
+}
+function openClips(view){
+  if (!P) return; sheetItem = null; if (view) clipsView = view;
+  if (!tokens.length && clipsView !== 'series') clipsView = seriesAll().length ? 'series' : 'list';
+  const body = $('#sheetBody'); body.innerHTML = '<div id="clSheet"></div>';
+  body.onclick = clipsClick; body.onchange = clipsChange;
+  sheetOnClose = () => { body.onchange = null; };
+  renderClipsSheet(); openSheet(true);
+}
+$('#clipsBtn').onclick = () => openClips();
+function clipsChange(e){
+  if (e.target.id === 'clPart') lsSet('hc-clippart', e.target.checked ? '1' : '0');
+  if (e.target.id === 'clWords'){ clipWordsSet(e.target.value); sugMemo = null; renderClipsSheet(); }
+}
+function clipsClick(e){
+  const v = e.target.closest('[data-view]'); if (v){ clipsView = v.dataset.view; $('#sheet').scrollTop = 0; return renderClipsSheet(); }
+  const f = e.target.closest('[data-fmt]'); if (f){ lsSet('hc-clipfmt', f.dataset.fmt); return renderClipsSheet(); }
+  const a = e.target.closest('[data-a]'), act = a ? a.dataset.a : '', row = e.target.closest('.cl-row');
+  if (act === 'ok') return closeSheet();
+  const x = row && row.dataset.id ? clipListAll().find(q => q.id === row.dataset.id) : null;
+  if (x){ if (act === 'play'){ const r = secOut(x); return r ? rangePlay(r) : null; } if (act === 'drop') return clipListDrop(x); if (e.target.closest('.mk-go')) return secShow(x); return; }
+  const sg = row && row.dataset.k != null ? clipSuggest()[+row.dataset.k] : null;
+  if (sg){ if (act === 'play') return rangePlay([sg.o1, sg.o2]); if (act === 'take'){ if (clipListAdd(sg.ids, true)) toast('Vorgemerkt'); return; } if (e.target.closest('.mk-go')) return secShow(secOf(sg.ids)); return; }
+  if (act === 'takeall'){ let n = 0; for (const q of clipSuggest()) if (!clipListAll().some(p => secSame(p, secOf(q.ids))) && clipListAdd(q.ids, true)) n++; if (n){ clipsView = 'list'; renderClipsSheet(); } return toast(n ? `${n} ${n === 1 ? 'Vorschlag' : 'Vorschläge'} vorgemerkt` : 'Alle Vorschläge sind schon vorgemerkt'); }
+  if (act === 'clear'){ if (!clipListAll().length) return; commit(() => { P.clipList = []; }, false); clipListChanged(); return toast('Liste geleert – „Rückgängig“ holt sie zurück'); }
+  if (act === 'one'){ const q = clipListAll().map(secOut).find(Boolean); if (!q) return; closeSheet(); return clipDialog(q[0], q[1]); }
+  if (act === 'series') return seriesCreate(clipFmtGet(), !$('#clPart') || $('#clPart').checked);
+  if (act === 'best') return bestCreate(clipFmtGet());
+  const sEl = e.target.closest('.cl-ser'), s = sEl && seriesAll().find(q => q.id === sEl.dataset.s);
+  if (!s) return;
+  if (act === 'copen'){ const id = row.dataset.c; closeSheet(); closeProject(); if (!P) openProject(id); return; }
+  if (act === 'sexp') return exportProjects(s.clips.map(c => c.id), `„${s.name}“ exportieren`);
+  if (act === 'smenu'){ const r = a.getBoundingClientRect(); return showMenu(Math.min(r.left, innerWidth - 260), r.bottom + 4, seriesMenu(s)); }
+}
+// ── Clip-Reihe: je vorgemerktem Abschnitt ein Clip-Projekt. Die Clips werden angelegt, ohne sie zu öffnen; Untertitel und
+// Bildausschnitt entstehen beim ersten Öffnen (regen, frameNew). ──
+function uniqueName(base, names){ let name = base, k = 2; while (names.has(name)) name = `${base} (${k++})`; names.add(name); return name; }
+function seriesCreate(fmt, withPart){
+  const secs = clipListAll().map(x => ({x, r: secOut(x)})).filter(q => q.r), n = secs.length; if (n < 2) return toast('Für eine Reihe braucht es mindestens zwei vorgemerkte Abschnitte');
+  if (playing) pausePlay(); if (!saveNow()) return toast('Das Projekt ließ sich nicht speichern – die Reihe wurde nicht angelegt');
+  const names = new Set([...projMap().values()].map(p => p.name)), nr = seriesAll().length + 1, sid = newId(), ids = secs.map(() => newId());
+  const lead = nr > 1 || names.has(`${P.name} – Teil 1`) ? `Reihe ${nr}, ` : '', thumb = lsGet(THUMB_KEY(P.id), ''), clips = [];
+  try {
+    secs.forEach((q, k) => {
+      const c = clipData([q.r], fmt, uniqueName(`${P.name} – ${lead}Teil ${k + 1}`, names));
+      c.id = ids[k]; c.part = {series: sid, k: k + 1, n, on: !!withPart, ids}; if (c.format && !c.frame) c.frameNew = true;
+      TS.saveProject(c.id, JSON.stringify(c)); if (thumb) lsSet(THUMB_KEY(c.id), thumb);
+      clips.push({id: c.id, d: r3(q.r[1] - q.r[0]), q: secQuote(q.x, 7)});
+    });
+  } catch(e){ hcLog('Clip-Reihe anlegen: ' + ((e && e.message) || e)); if (!clips.length) return toast('Die Clips ließen sich nicht anlegen: ' + ((e && e.message) || e)); }
+  (P.clipSeries ||= []).push({id: sid, name: `Reihe ${nr}`, fmt: fmt || '', made: Date.now(), clips}); saveNow();
+  clipsView = 'series'; if (clipsSheetOpen()) renderClipsSheet(); else openClips('series');
+  toast(clips.length < n ? `${clips.length} von ${n} Clips angelegt – der Speicher reichte für die übrigen nicht` : `${n} Clips angelegt – gemeinsam exportieren oder einzeln öffnen und anpassen`);
+}
+// ── Zusammenschnitt: alle vorgemerkten Abschnitte in einem Clip, in der Reihenfolge des Videos ──
+function bestCreate(fmt){
+  const rs = clipListAll().map(secOut).filter(Boolean); if (rs.length < 2) return toast('Für einen Zusammenschnitt braucht es mindestens zwei vorgemerkte Abschnitte');
+  if (playing) pausePlay(); saveNow(); closeSheet();
+  const name = uniqueName(`${P.name} – Best of`, new Set([...projMap().values()].map(p => p.name)));
+  openClip(clipData(rs, fmt, name), 'Zusammenschnitt erstellt – hier Format, Ausschnitt, Untertitel und Hook einstellen');
+}
+// ── Reihe verwalten ──
+function seriesSave(){ saveNow(); if (clipsSheetOpen()) renderClipsSheet(); }
+function projEdit(id, fn){   // ein nicht geöffnetes Projekt ändern; → ob es geklappt hat
+  let p = null; try { p = J(TS.loadProject(id)); } catch(_){}
+  if (!p || typeof p !== 'object') return false;
+  try { fn(p); p.updated = Date.now(); TS.saveProject(id, JSON.stringify(p)); return true; } catch(e){ hcLog('Projekt ändern: ' + ((e && e.message) || e)); return false; }
+}
+function seriesMenu(s){
+  const pm = projMap(), have = s.clips.filter(c => pm.has(c.id));
+  return [{icon: icon('✎'), label: 'Reihe umbenennen', fn: async () => { const name = await askName('Name der Reihe', s.name); if (!name) return; s.name = name.slice(0, 60); seriesSave(); }},
+    ...(have.length > 1 && have.length < s.clips.length ? [{icon: icon('↻'), label: `Neu nummerieren (1 bis ${have.length})`, fn: () => {
+      const ids = have.map(c => c.id), names = new Set([...pm.values()].map(p => p.name)); let n = 0;
+      have.forEach((c, k) => { if (projEdit(c.id, p => { const old = p.part && p.part.k; p.part = {...(p.part || {on: true}), series: s.id, k: k + 1, n: have.length, ids};
+        const nn = old && old !== k + 1 ? String(p.name || '').replace(new RegExp(`Teil ${old}$`), `Teil ${k + 1}`) : p.name; if (nn !== p.name && !names.has(nn)){ names.delete(p.name); names.add(nn); p.name = nn; } })) n++; });   // „… – Teil 3“ heißt danach „… – Teil 2“
+      s.clips = have; seriesSave(); toast(`${n} Clips neu nummeriert`); }}] : []),
+    {icon: icon('⛓'), label: 'Reihe auflösen (Clips bleiben)', fn: () => { if (!confirm(`Reihe „${s.name}“ auflösen?\n\nDie Clips bleiben als eigene Projekte erhalten.`)) return; P.clipSeries = P.clipSeries.filter(q => q !== s); seriesSave(); }},
+    ...(have.length ? [{icon: icon('🗑'), label: 'Reihe mit ihren Clips löschen', cls: 'danger', fn: () => {
+      if (!confirm(`Reihe „${s.name}“ mit ${have.length === 1 ? 'ihrem Clip' : 'ihren ' + have.length + ' Clips'} löschen?` + (TS.trash ? '\n\nDie Clips liegen danach noch 30 Tage im Papierkorb.' : '\n\nDeine Videos bleiben erhalten.'))) return;
+      for (const c of have) try { TS.deleteProject(c.id); } catch(_){}
+      P.clipSeries = P.clipSeries.filter(q => q !== s); seriesSave(); toast('Reihe gelöscht'); }}] : [])];
+}
+// ── Gemeinsam exportieren: Die Clips werden nacheinander geöffnet, ihre Exportpläne gebaut und in die Warteschlange gestellt.
+// Ein Plan trägt alles, was der Export braucht – danach geht es im Ausgangsprojekt weiter, während die Warteschlange rechnet. ──
+let exBatch = false;
+function openProjectWait(id){ return new Promise(res => { Promise.resolve().then(() => openProject(id)).then(() => res(!!(P && P.id === id)), () => res(false)); }); }
+async function exportProjects(ids, title){
+  if (!P || exBatch) return;
+  if (transJob) return toast('Die Transkription läuft noch – danach lässt sich die Reihe exportieren');
+  const pm = projMap(); ids = ids.filter(id => pm.has(id)); if (!ids.length) return toast('Diese Clips gibt es nicht mehr');
+  const P0 = P; if (!(await askOpenRefs())){ if (P === P0){ setTab('text'); openRefs(); } return; }
+  if (P !== P0) return;
+  const back = {id: P.id, tab, pos: outPos, undo, redo}; pausePlay(); closeSheet();
+  if (!saveNow()) return toast('Das Projekt ließ sich nicht speichern – der Export wurde nicht gestartet');
+  const m = hcModal(`<h3>${esc(title)}</h3><p id="bxMsg">Wird vorbereitet …</p><div class="progress"><i id="bxBar"></i></div><p class="muted small">Jeder Clip wird kurz geöffnet und in die Warteschlange gestellt. Danach geht es hier im Projekt weiter.</p><div class="row" style="margin-top:12px"><button class="btn" id="bxStop" style="margin-left:auto">Abbrechen</button></div>`);
+  let stop = false, files = 0, done = 0; const bad = []; m.querySelector('#bxStop').onclick = () => { stop = true; m.querySelector('#bxMsg').textContent = 'Wird abgebrochen …'; };
+  exBatch = true;
+  try {
+    for (let k = 0; k < ids.length && !stop; k++){
+      const id = ids[k], nm = pm.get(id).name;
+      if ($('#bxMsg')) $('#bxMsg').textContent = `Clip ${k + 1} von ${ids.length}: ${nm}`; if ($('#bxBar')) $('#bxBar').style.width = (k / ids.length * 100).toFixed(0) + '%';
+      await waitMs(20);
+      if (!P || P.id !== id){ if (P) closeProject(); if (P) break;   // Schließen abgelehnt: der letzte Stand ließ sich nicht speichern
+        if (!(await openProjectWait(id))){ bad.push(nm); continue; } }
+      if (!timeline.length || !(total > 0)){ bad.push(nm); continue; }
+      try {
+        if (window.slSyncAll) await slSyncAll();
+        await lowerReady(); await decoReady(); await partReady();
+        if (!P || P.id !== id){ bad.push(nm); continue; }
+        saveNow();
+        const base = cleanFile(P.name), plans = asVideo(() => videoPlans(base));
+        for (const plan of plans){
+          const info = planInfo(plan), t = plan === plans[0] ? exTextFile(plan, 'video') : {};
+          if ($('#exLevel').checked){ try { await levelPlan(plan); } catch(e){ console.warn(e); } }
+          exqAdd({name: plan.name, proj: id, info, plan, ...t}); files++;
+        }
+        done++;
+      } catch(e){ hcLog('Reihe exportieren: ' + ((e && e.message) || e)); bad.push(nm); }
+    }
+  } finally {
+    exBatch = false;
+    if (!P || P.id !== back.id){ if (P) closeProject(); if (!P) await openProjectWait(back.id); }
+    if (P && P.id === back.id){ undo = back.undo; redo = back.redo; if (tab !== back.tab) setTab(back.tab); seekOut(Math.min(back.pos, Math.max(0, total - 0.01)), false); }
+    closeHcModal();
+  }
+  if (files) openQueue();
+  toast(stop ? `Abgebrochen – ${files} ${files === 1 ? 'Export ist' : 'Exporte sind'} eingereiht` : bad.length ? `${done} von ${ids.length} Clips eingereiht – nicht geklappt: ${bad.join(', ')}` : `${files} ${files === 1 ? 'Export' : 'Exporte'} eingereiht – die Warteschlange rechnet sie nacheinander`);
+}
+const cleanFile = s => String(s || 'Video').replace(/[\\/:*?"<>|]/g, '_').slice(0, 120);
+function asVideo(fn){ const keep = exFmt; exFmt = 'video'; try { return fn(); } finally { exFmt = keep; } }
+
+// ── Hook-Varianten (F4): Der Hook-Titel trägt bis zu zwei weitere Texte (alts: B und C). Für den Export wird der Text des Titels
+// kurz getauscht – Lage, Größe und Dauer gelten für alle Varianten. ──
+const hookItem = () => P ? P.items.find(x => x.type === 'title' && x.hook) || null : null;
+function hookVars(){   // [{tag, text}] – leer, solange es nur den einen Hook gibt
+  const h = hookItem(); if (!h || !String(h.text || '').trim()) return [];
+  const out = [{tag: 'A', text: h.text.trim()}];
+  (h.alts || []).slice(0, 2).forEach((t, k) => { t = String(t || '').trim(); if (t) out.push({tag: 'BC'[k], text: t}); });
+  return out.length > 1 ? out : [];
+}
+function withHook(text, fn){ const h = hookItem(); if (!h) return fn(); const keep = h.text; h.text = text; try { return fn(); } finally { h.text = keep; } }
+// Pläne für den Video-Export: einer je Hook-Variante, sonst genau einer. base: Dateiname ohne Zusatz (sonst der aus dem Export-Reiter).
+function videoPlans(base){
+  const vars = exFmt === 'video' ? hookVars() : [], mk = () => { const p = buildPlan(); if (base) p.name = base; return p; };
+  if (!vars.length) return [mk()];
+  return vars.map(v => withHook(v.text, () => { const p = mk(); p.name = `${p.name}_Hook-${v.tag}`; p.hook = v.tag; return p; }));
+}
+
+// ── „Teil 1/3“ (F5): Kennzeichnung der Clips einer Reihe, gezeichnet im Designprofil der Folien (wie die Bauchbinde). Dasselbe Bild
+// steht in der Vorschau und liegt im Export als Bild über allen Clips (Spur 97). ──
+const PART_DEF = {pos: 'ol', size: 1, dur: 0, word: 'Teil'};
+const partStyle = () => ({...PART_DEF, ...((P && P.partStyle) || {})});
+function partText(){ const p = P && P.part; if (!p || !(p.n > 1) || !(p.k >= 1)) return ''; const w = String(partStyle().word ?? '').replace(/\s+/g, ' ').trim().slice(0, 24); return `${w ? w + ' ' : ''}${p.k}/${p.n}`; }
+const partOn = () => !!(P && P.part && P.part.on !== false && partText());
+const partReady = () => partOn() ? lowerFonts() : Promise.resolve();
+const partImgs = new Map();
+function partImage(text, W, H){
+  const pr = slProfile(), C = slColors(pr, pr.theme !== 'hell'), size = +partStyle().size || 1;
+  const key = JSON.stringify(['teil', text, W, H, size, C.bg, C.fg, C.acc, pr.fonts, pr.bar !== false, lowerFontsOk.has(lowerFontKey())]);
+  let im = partImgs.get(key); if (im) return im;
+  if (partImgs.size > 30) partImgs.clear();
+  const u = Math.min(W, H) * (H > W ? 1.25 : 1) * size, F = slFontFn(pr.fonts.head, 800), cv = document.createElement('canvas'), ctx = cv.getContext('2d');
+  let fs = u * 0.034; ctx.font = F(fs); let tw = ctx.measureText(text).width;
+  const fit = W * 0.6 / (tw + fs * 1.5); if (fit < 1){ fs *= Math.max(0.5, fit); ctx.font = F(fs); tw = ctx.measureText(text).width; }
+  const bar = pr.bar !== false ? Math.round(fs * 0.22) : 0, padX = fs * 0.6, padY = fs * 0.38, w = Math.ceil(bar + 2 * padX + tw), h = Math.ceil(2 * padY + fs * 1.08);
+  cv.width = w; cv.height = h;
+  ctx.fillStyle = C.bg; ctx.fillRect(0, 0, w, h); if (bar){ ctx.fillStyle = C.acc; ctx.fillRect(0, 0, bar, h); }
+  ctx.textBaseline = 'middle'; ctx.textAlign = 'left'; ctx.fillStyle = C.fg; ctx.font = F(fs); ctx.fillText(text, bar + padX, padY + fs * 0.56);
+  im = {key, cv, url: cv.toDataURL('image/png'), w, h}; partImgs.set(key, im); return im;
+}
+// Linke obere Ecke in Ausgabe-Pixeln: in der gewählten Ecke der freien Fläche, neben Textzeile und Quellenzeile; ein Wasserzeichen in derselben Ecke bleibt frei
+function partRect(im, W, H){
+  const p = partStyle().pos || 'ol', z = safeZone(), mn = Math.min(W, H), m = 0.04 * mn, gap = 0.014 * mn, top = p[0] === 'o';
+  const mL = Math.max(m, z ? z.l * W : 0), mR = Math.max(m, z ? (top ? z.r : Math.max(z.r, z.cw)) * W : 0);
+  const rT = linesReach(W, H, 'o'), rB = linesReach(W, H, 'u'), mT = Math.max(m, z ? z.t * H : 0, rT ? rT + gap : 0), mB = Math.max(m, z ? z.b * H : 0, rB ? rB + gap : 0);
+  const x = p[1] === 'l' ? mL : p[1] === 'r' ? W - mR - im.w : (W - im.w) / 2; let y = top ? mT : H - mB - im.h;
+  if (wmOn()){ const r = wmRect(W, H), wx = r.cx - r.w / 2, wy = r.cy - r.h / 2;
+    if (x < wx + r.w + gap && x + im.w > wx - gap && y < wy + r.h + gap && y + im.h > wy - gap) y = top ? wy + r.h + gap : wy - gap - im.h; }
+  return {x, y};
+}
+// Fläche der Kennzeichnung (für die Bauchbinde, die ihr ausweicht) – null, wenn keine im Bild steht
+function partBox(W, H){ if (!partOn()) return null; const im = partImage(partText(), W, H), r = partRect(im, W, H); return {x: r.x, y: r.y, w: im.w, h: im.h}; }
+function placePart(W, H, o){
+  const box = $('#partOv'), d = +partStyle().dur || 0, on = partOn() && total > 0 && (!(d > 0) || o < d);
+  if (!on){ if (box.firstChild) box.textContent = ''; return; }
+  if (!lowerFontsOk.has(lowerFontKey())) lowerFonts();
+  const [OW, OH] = outSize(), k = W / OW, im = partImage(partText(), OW, OH), r = partRect(im, OW, OH);
+  let el = box.firstChild; if (!el){ el = document.createElement('img'); el.alt = ''; box.append(el); }
+  const key = [im.key, W, r.x.toFixed(1), r.y.toFixed(1)].join('|'); if (el.dataset.k === key) return; el.dataset.k = key;
+  if (el.dataset.src !== im.key){ el.src = im.url; el.dataset.src = im.key; }
+  Object.assign(el.style, {left: (r.x * k).toFixed(1) + 'px', top: (r.y * k).toFixed(1) + 'px', width: (im.w * k).toFixed(1) + 'px', height: (im.h * k).toFixed(1) + 'px'});
+}
+const viewPart = () => { const st = $('#stage'); placePart(st.clientWidth, st.clientHeight, outPos); };
+function partPlan(W, H){
+  if (!partOn() || !(total > 0) || !TS.saveImage) return [];
+  const im = partImage(partText(), W, H), m = J(TS.saveImage(`teil-${hashStr(im.key)}.png`, im.url, im.w, im.h, P.id)); if (!m || !m.uri) return [];
+  const r = partRect(im, W, H), d = +partStyle().dur || 0;
+  return [{mode: 'pip', image: true, uri: m.uri, in: 0, out: r3(d > 0 ? Math.min(total, d) : total), at: 0, x: +((r.x + im.w / 2) / W).toFixed(4), y: +((r.y + im.h / 2) / H).toFixed(4), w: +(im.w / W).toFixed(4), aspect: +(im.w / im.h).toFixed(5),
+    track: 97, vol: 0, hasAudio: false, width: im.w, height: im.h, rotation: 0, part: true}];
+}
+const partSheetOpen = () => !$('#sheet').classList.contains('hidden') && !!$('#ptSheet');
+// Ecke, Bezeichnung, Dauer und Größe gelten für die ganze Reihe: Die anderen Clips (nicht geöffnet) bekommen sie kurz nach der Änderung.
+let partSyncT = 0, partSyncJob = null, partSyncN = 0;
+function partSyncLater(){ if (!P || !P.part) return; partSyncJob = {ids: (P.part.ids || []).filter(id => id !== P.id), st: jc(P.partStyle)}; clearTimeout(partSyncT); partSyncT = setTimeout(partSyncFlush, 900); }
+function partSyncFlush(){
+  clearTimeout(partSyncT); const j = partSyncJob; partSyncJob = null; if (!j) return;
+  let n = 0; for (const id of j.ids){ if (P && P.id === id) continue; if (projEdit(id, p => { if (j.st) p.partStyle = j.st; else delete p.partStyle; })) n++; }
+  partSyncN = Math.max(partSyncN, n);
+}
+function partChanged(quiet){
+  lowerRects.clear(); viewPart(); viewLower();
+  if (tab === 'clip' && window.renderClip) renderClip(); if (tab === 'export' && !quiet) renderExport();
+  if (partSheetOpen()) paintPartSheet();
+}
+// Einstellungen der Kennzeichnung. Ecke, Größe, Dauer und Bezeichnung gelten für die ganze Reihe: Beim Schließen übernehmen die anderen Clips sie.
+function openPart(){
+  if (!P || !P.part) return; sheetItem = null;
+  const body = $('#sheetBody'); body.innerHTML = '<div id="ptSheet"></div>'; body.onclick = null;
+  const box = $('#ptSheet'), POS = [['ol','↖'],['om','↑'],['or','↗'],['ul','↙'],['um','↓'],['ur','↘']]; partSyncN = 0;
+  const setSt = patch => { commitBurst('part', () => { P.partStyle = {...partStyle(), ...patch}; }); partSyncLater(); partChanged(); };
+  box.innerHTML = `<h3>Kennzeichnung der Reihe</h3>
+    <label class="row"><input type="checkbox" id="ptOn"><span>„<b id="ptPrev"></b>“ in diesem Clip einblenden</span></label>
+    <div class="grid2" style="margin-top:10px">
+      <div class="field"><span>Ecke</span><div class="wm-pos" id="ptPos">${POS.map(([k, a]) => `<button type="button" data-p="${k}">${a}</button>`).join('')}</div></div>
+      <label>Bezeichnung <input type="text" id="ptWord" maxlength="24" dir="auto" placeholder="Teil"></label>
+      <label>Dauer <select id="ptDur"><option value="0">ganzer Clip</option><option value="3">erste 3 s</option><option value="5">erste 5 s</option><option value="10">erste 10 s</option></select></label>
+    </div>
+    <div class="field"><span>Größe <b id="ptSizeV"></b></span><input type="range" id="ptSize" min="0.7" max="1.8" step="0.05"></div>
+    <p class="muted small">Farben, Schrift und der Balken kommen aus dem Designprofil deiner Folien. Ecke, Bezeichnung, Dauer und Größe gelten für alle Clips der Reihe und gehören zum Hausstil. Schutzzonen, Textzeile, Quellenzeile und Wasserzeichen bleiben frei.</p>
+    <div class="row" style="margin-top:12px"><button class="btn primary" data-a="ok" style="margin-left:auto">Fertig</button></div>`;
+  box.addEventListener('click', e => { const b = e.target.closest('#ptPos button'); if (b) return setSt({pos: b.dataset.p}); if (e.target.closest('[data-a="ok"]')) closeSheet(); });
+  const onIn = e => { const id = e.target.id;
+    if (id === 'ptOn'){ commitBurst('part', () => { P.part = {...P.part, on: e.target.checked}; }); partChanged(); }
+    else if (id === 'ptSize') setSt({size: +e.target.value});
+    else if (id === 'ptDur' && e.type === 'change') setSt({dur: +e.target.value || 0});
+    else if (id === 'ptWord') setSt({word: e.target.value.replace(/\s+/g, ' ').slice(0, 24)}); };
+  box.addEventListener('input', onIn); box.addEventListener('change', onIn);
+  box.addEventListener('keydown', e => { if (e.target.tagName === 'INPUT') e.stopPropagation(); });
+  sheetOnClose = () => { partSyncFlush(); const n = partSyncN; partSyncN = 0; if (n) toast(`Kennzeichnung für ${n === 1 ? 'den anderen Clip' : 'die ' + n + ' anderen Clips'} der Reihe übernommen`); };
+  paintPartSheet(); openSheet(true);
+}
+function paintPartSheet(){
+  if (!$('#ptSheet') || !P || !P.part) return; const st = partStyle();
+  $('#ptOn').checked = P.part.on !== false; $('#ptPrev').textContent = partText() || `${P.part.k}/${P.part.n}`;
+  $$('#ptPos button').forEach(b => b.classList.toggle('on', b.dataset.p === st.pos));
+  if (document.activeElement !== $('#ptWord')) $('#ptWord').value = st.word ?? '';
+  $('#ptDur').value = String([0, 3, 5, 10].includes(+st.dur) ? +st.dur : 0); $('#ptSize').value = st.size; $('#ptSizeV').textContent = Math.round(st.size * 100) + ' %';
+}
+
+// ── Clip-Vorschläge (F1): Vorauswahl nach festen Regeln, ohne Online-Dienst. Gesucht werden in sich geschlossene Abschnitte von 20 bis
+// 90 Sekunden aus ganzen Sätzen. Es zählen: Absatzgrenzen am Anfang und Ende (eine Sprechpause ab 1,2 s, ein Kapitel oder ein neues Video
+// wiegen voll, ein Absatz, den nur die Länge des Textes erzeugt hat, halb; am meisten zählt, wenn beide Enden geschlossen sind), eine Frage
+// zum Einstieg, Zahlen, Schlagwörter (eigene Liste, Wörterbuch, betonte Wörter). Dagegen zählen: Absatzgrenzen mitten im Abschnitt und ein
+// Einstieg, der an den Satz davor anknüpft („Und …“, „Deshalb …“). ──
+const SUG_MIN = 20, SUG_MAX = 90;
+const SUG_NUM = /\d|^(prozent|prozentpunkte?n?|euro|cent|millionen?|milliarden?|billionen?|tausende?|hunderte?|drittel|viertel|hälfte|doppelt)$/;   // geprüft am Wort ohne Satzzeichen, klein geschrieben
+const SUG_BACK = new Set(['und', 'aber', 'denn', 'doch', 'oder', 'also', 'deshalb', 'deswegen', 'darum', 'daher', 'dadurch', 'dabei', 'dazu', 'dafür', 'dagegen', 'damit', 'danach', 'dann', 'außerdem', 'trotzdem', 'stattdessen', 'sondern', 'weil', 'obwohl', 'nämlich', 'genau', 'ja', 'nein']);
+let clipWords = (() => { try { const v = JSON.parse(localStorage.getItem('hc-clipwords')); return Array.isArray(v) ? v.filter(x => typeof x === 'string' && x.trim()).slice(0, 60) : []; } catch(_){ return []; } })();
+function clipWordsSet(text){ clipWords = [...new Set(String(text || '').split(/[,;\n]+/).map(s => s.replace(/\s+/g, ' ').trim().slice(0, 60)).filter(Boolean))].slice(0, 60); try { localStorage.setItem('hc-clipwords', JSON.stringify(clipWords)); } catch(_){} }
+function mergeClipWords(list){ let n = 0; const have = new Set(clipWords.map(w => w.toLowerCase())); for (const w of Array.isArray(list) ? list : []){ if (typeof w !== 'string' || !w.trim() || have.has(w.trim().toLowerCase()) || clipWords.length >= 60) continue; clipWords.push(w.trim().slice(0, 60)); have.add(w.trim().toLowerCase()); n++; }
+  if (n) try { localStorage.setItem('hc-clipwords', JSON.stringify(clipWords)); } catch(_){} return n; }
+let sugMemo = null;
+function clipSuggest(){
+  if (!P || !tokens.length) return [];
+  const key = JSON.stringify([P.id, total.toFixed(2), tokens.length, deleted.size, P.dels.length, (P.moves || []).length, Object.keys(P.edits || {}).length, clipWords, P.kw || [], dict.length, (P.marks || []).filter(m => m.k === 'chap').map(m => m.at)]);
+  if (sugMemo && sugMemo.key === key) return sugMemo.list;
+  if (order.length !== tokens.length) computeOrder();
+  // 1. Wörter, die im Video bleiben, in der Reihenfolge des Textes
+  const W = [], kwTok = new Set(P.kw || []);
+  for (let k = 0; k < order.length; k++){ const i = order[k], t = tokens[i]; if (!isSaid(i) || isCut(i)) continue; const txt = String(tokText(t) || '').trim(); if (!txt) continue;
+    const pv = k > 0 ? tokens[order[k - 1]] : null;   // Sprechpause unmittelbar davor (auch eine gekürzte oder herausgeschnittene zählt als Einschnitt)
+    W.push({k, i, txt, n: kwNorm(txt), a: srcToOut(snapSrc(wS(t))), e: srcToOut(wE(t)), p: t.p, src: t.src, gap: pv && pv.type === 'pause' && !P.edits[pv.i] ? pv.e - pv.s : 0}); }
+  // 2. Sätze: bis zum Satzzeichen; ohne Satzzeichen endet ein Satz an einer Pause oder nach 40 Wörtern
+  const S0 = []; let cur = null;
+  W.forEach((w, x) => {
+    if (cur && (w.src !== W[cur.b].src || (cur.b - cur.a >= 39) || (w.gap >= 0.45 && cur.b - cur.a >= 11))){ S0.push(cur); cur = null; }
+    if (!cur) cur = {a: x, b: x}; else cur.b = x;
+    if (sentEnd(w.txt)){ S0.push(cur); cur = null; }
+  });
+  if (cur) S0.push(cur);
+  const own = clipWords.map(w => ({w, n: w.split(/\s+/).map(kwNorm).filter(Boolean).join(' ')})).filter(q => q.n.length > 1), dset = kwDictSet();
+  for (const s of S0){
+    const ws = W.slice(s.a, s.b + 1), text = ' ' + ws.map(w => w.n).join(' ') + ' ';
+    s.o1 = ws[0].a; s.o2 = ws[ws.length - 1].e; s.q = /[?؟]$/.test(ws[ws.length - 1].txt); s.num = ws.some(w => SUG_NUM.test(w.n)); s.first = ws[0].n; s.gap = ws[0].gap;
+    s.kw = new Set(); for (const q of own) if (text.includes(' ' + q.n)) s.kw.add(q.w);
+    for (const w of ws){ if (dset.has(w.n)) s.kw.add(w.txt.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '')); if (kwTok.has(w.i)) s.kw.add(w.txt.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '')); }
+  }
+  // Absatzgrenzen vor jedem Satz: 2 = Sprechpause ab 1,2 s, Kapitelanfang, neues Video oder der Anfang; 1 = Absatz, den nur die Länge erzeugt hat; 0 = keine
+  const chapTok = new Set((P.marks || []).filter(m => m.k === 'chap').map(m => tokAtSrc(m.at)).filter(k => k >= 0).map(k => pos[k]));
+  S0.forEach((s, x) => { const pv = S0[x - 1], f = W[s.a];
+    s.ps = !pv || W[pv.b].src !== f.src || f.gap >= 1.2 || [...chapTok].some(k => k > W[pv.b].k && k <= f.k) ? 2 : W[pv.b].p !== f.p ? 1 : 0; });
+  S0.forEach((s, x) => { s.pe = S0[x + 1] ? S0[x + 1].ps : 2; });
+  // 3. Fenster aus ganzen Sätzen, bewertet
+  const cand = [];
+  for (let x = 0; x < S0.length; x++){
+    const kws = new Set(); let nums = 0, qs = 0, in2 = 0, in1 = 0;   // in2, in1: volle und halbe Absatzgrenzen im Inneren
+    for (let y = x; y < S0.length; y++){
+      const a = S0[x], b = S0[y]; if (W[b.a].src !== W[a.a].src || b.o2 < a.o1) break;
+      const d = b.o2 - a.o1 + 0.23; if (d > SUG_MAX) break;
+      for (const q of b.kw) kws.add(q); if (b.num) nums++; if (b.q && y > x) qs++; if (y > x){ if (b.ps === 2) in2++; else if (b.ps === 1) in1++; }
+      if (d < SUG_MIN) continue;
+      let sc = 0; const why = [];
+      sc += a.ps === 2 ? 2.5 : a.ps === 1 ? 1.2 : a.gap >= 0.45 ? 0.4 : 0; sc += b.pe === 2 ? 2.5 : b.pe === 1 ? 1.2 : 0; sc -= 2 * in2 + 0.5 * in1;
+      if (a.ps === 2 && b.pe === 2){ sc += in2 ? 3 : 3.5; why.push(in2 ? `${in2 + 1} Absätze` : 'ganzer Absatz'); }   // an beiden Enden geschlossen: das wiegt am meisten
+      else { if (a.ps === 2) why.push('beginnt mit einem Absatz'); if (b.pe === 2) why.push('endet mit einem Absatz'); }
+      if (a.q){ sc += 2; why.push('Frage zum Einstieg'); }
+      if (qs && !b.q) sc += 0.5; if (b.q && y > x) sc -= 1;
+      if (nums){ sc += Math.min(2, nums); why.push('Zahlen'); }
+      if (kws.size){ sc += Math.min(4.5, kws.size * 1.5); why.push((kws.size === 1 ? 'Schlagwort: ' : 'Schlagwörter: ') + [...kws].slice(0, 3).join(', ') + (kws.size > 3 ? ' …' : '')); }
+      if (SUG_BACK.has(a.first)) sc -= 2;
+      if (d >= 25 && d <= 60) sc += 0.5; else if (d > 75) sc -= 0.5;
+      if (sc > 0) cand.push({x, y, sc, d, why});
+    }
+  }
+  // 4. Auswahl ohne Überschneidung, bei der die Summe der Wertungen am größten ist: Zwei geschlossene Absätze nebeneinander zählen
+  // dadurch mehr als ein Fenster über beide. Sind es mehr als das Video an Vorschlägen verträgt, bleiben die bestbewerteten.
+  const byEnd = new Map(); for (const c of cand){ if (!byEnd.has(c.y)) byEnd.set(c.y, []); byEnd.get(c.y).push(c); }
+  const best = new Float64Array(S0.length + 1), take = new Array(S0.length + 1).fill(null);
+  for (let y = 0; y < S0.length; y++){ best[y + 1] = best[y];
+    for (const c of byEnd.get(y) || []) if (best[c.x] + c.sc > best[y + 1] + 1e-9){ best[y + 1] = best[c.x] + c.sc; take[y + 1] = c; } }
+  let pick = []; for (let y = S0.length; y > 0;){ const c = take[y]; if (c){ pick.push(c); y = c.x; } else y--; }
+  const max = clamp(Math.round(total / 30), 3, 15);
+  if (pick.length > max) pick = pick.sort((p, q) => q.sc - p.sc || Math.abs(p.d - 45) - Math.abs(q.d - 45)).slice(0, max);
+  pick.sort((p, q) => p.x - q.x);
+  const list = pick.map(c => { const a = S0[c.x], b = S0[c.y], ws = W.slice(a.a, b.b + 1), ids = order.slice(W[a.a].k, W[b.b].k + 1), r = outRangeOf(ids) || [a.o1, b.o2];
+    return {ids, o1: r[0], o2: r[1], sc: c.sc, why: c.why, text: ws.slice(0, 12).map(w => w.txt).join(' ') + (ws.length > 12 ? ' …' : '')}; });
+  sugMemo = {key, list}; return list;
+}
+function clipsSugHtml(){
+  if (!tokens.length) return '<p class="muted small">Vorschläge gibt es, sobald das Video transkribiert ist.</p>';
+  const list = clipSuggest(), have = clipListAll();
+  const head = `<p class="muted small">Vorauswahl nach festen Regeln, ohne Online-Dienst: in sich geschlossene Abschnitte von ${SUG_MIN} bis ${SUG_MAX} Sekunden – nach Absätzen, Fragen, Zahlen und Schlagwörtern. Anhören und übernehmen, was trägt.</p>
+    <label class="field"><span>Eigene Schlagwörter (durch Komma getrennt)</span><input type="text" id="clWords" placeholder="z. B. Mietendeckel, Streik, Vergesellschaftung" autocomplete="off" dir="auto"></label>`;
+  if (!list.length) return head + '<p class="muted small">Kein Abschnitt passt in dieses Raster. Das Video ist dafür zu kurz, oder dem Text fehlen Satzzeichen und Absätze.</p>';
+  return head + `<div class="cl-list">${list.map((q, k) => { const on = have.some(p => secSame(p, secOf(q.ids)));
+    return `<div class="cl-row sug" data-k="${k}"><button type="button" class="mini" data-a="play" title="Anhören">▶</button>
+      <button type="button" class="mk-go" title="Im Text zeigen"><span class="mono">${fmtT(q.o1)}</span><span class="mk-t"><b dir="auto">${esc(q.text)}</b><i>${fmtD(q.o2 - q.o1)} s${q.why.length ? ' · ' + esc(q.why.join(' · ')) : ''}</i></span></button>
+      ${on ? '<span class="cl-on" title="Schon vorgemerkt">✓ vorgemerkt</span>' : '<button type="button" class="btn small" data-a="take" title="In die Liste „Vorgemerkt“ übernehmen">Übernehmen</button>'}</div>`; }).join('')}</div>
+    <div class="row wrap"><button type="button" class="btn small" data-a="takeall">Alle übernehmen</button></div>`;
+}
+
+// ── Suche über alle Projekte (C9): Die Suchzeile der Projektliste findet auch, was in den Videos gesagt wird. Je Projekt entsteht im
+// Arbeitsspeicher ein kleiner Index aus den Wörtern, die im Video bleiben (ein Text, dazu die Wortnummern); er wird neu gebaut, sobald
+// das Projekt geändert wurde. Clips, deren Hauptprojekt es noch gibt, bleiben außen vor – ihre Treffer stehen schon dort.
+// Gesucht wird wie im Text-Reiter: die Wörter am Stück, das letzte darf weitergehen. Ein einzelnes Wort ab vier Buchstaben findet
+// auch Zusammensetzungen („Deckel“ in „Mietendeckel“). ──
+const FIND_MIN = 3, FIND_SHOW = 4;
+const findIdx = new Map();   // Projekt-ID → {updated, n, text, off, raw, roff, tok, at} oder {updated, skip}
+let findRun = 0, findT = 0, findRes = null, findLastQ = '', findDoneQ = null, findOpenAll = new Set();
+const findNorm = s => String(s || '').toLowerCase().normalize('NFC').split(/\s+/).map(w => w.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '')).filter(Boolean).join(' ');
+function findBuild(p, ids){
+  const toks = p.tokens || []; if (!toks.length || (p.clipOf && ids.has(p.clipOf))) return {skip: true};
+  const del = new Set(p.deleted || []), dels = (p.dels || []).slice().sort((a, b) => a[0] - b[0]), ed = p.edits || {}, tr = p.trims || {};
+  const N = [], R = [], tok = [], at = []; let acc = 0, di = 0;
+  for (let i = 0; i < toks.length; i++){
+    const t = toks[i], mid = ((t.ws ?? t.s) + (t.we ?? t.e)) / 2;
+    while (di < dels.length && dels[di][1] <= mid) di++;
+    if (del.has(i) || (di < dels.length && mid > dels[di][0] + 1e-4 && mid < dels[di][1] - 1e-4)) continue;
+    const raw = String((ed[i] != null ? ed[i] : t.type === 'word' ? t.text : '') || '').replace(/\s+/g, ' ').trim(), n = raw && findNorm(raw);
+    if (n){ N.push(n); R.push(raw); tok.push(i); at.push(acc); }
+    acc += t.type === 'pause' && tr[i] != null ? Math.max(0, +tr[i] || 0) : Math.max(0, (t.e || 0) - (t.s || 0));
+  }
+  if (!N.length) return {skip: true};
+  const off = new Int32Array(N.length), roff = new Int32Array(N.length + 1); let a = 1, b = 0;
+  N.forEach((w, k) => { off[k] = a; a += w.length + 1; }); R.forEach((w, k) => { roff[k] = b; b += w.length + 1; }); roff[N.length] = b;
+  return {n: N.length, text: ' ' + N.join(' ') + ' ', off, raw: R.join(' ') + ' ', roff, tok: Int32Array.from(tok), at: Float32Array.from(at)};
+}
+function findWordAt(ix, p){ let lo = 0, hi = ix.n - 1, k = 0; while (lo <= hi){ const m = (lo + hi) >> 1; if (ix.off[m] <= p){ k = m; lo = m + 1; } else hi = m - 1; } return k; }
+function findIn(ix, qs){   // → [[erstes Wort, letztes Wort], …] als Nummern im Index
+  const hits = [], one = qs.length === 1, needle = (one && qs[0].length >= 4 ? '' : ' ') + qs.join(' '); let p = -1, last = -1;
+  while ((p = ix.text.indexOf(needle, p + 1)) >= 0){
+    const k1 = findWordAt(ix, needle[0] === ' ' ? p + 1 : p), k2 = findWordAt(ix, p + needle.length - 1);
+    if (k1 > last){ hits.push([k1, k2]); last = k2; }
+  }
+  return hits;
+}
+const findRaw = (ix, a, b) => a >= b ? '' : ix.raw.slice(ix.roff[a], ix.roff[b]).trim();   // Wörter a bis b − 1, wie sie im Text stehen
+function findHit(ix, p, h){
+  const [k1, k2] = h, a = Math.max(0, k1 - 7), b = Math.min(ix.n, k2 + 12);
+  return {pid: p.id, tokA: ix.tok[k1], tokB: ix.tok[k2], at: ix.at[k1], pre: (a > 0 ? '… ' : '') + findRaw(ix, a, k1), hit: findRaw(ix, k1, k2 + 1), post: findRaw(ix, k2 + 1, b) + (b < ix.n ? ' …' : '')};
+}
+function findLater(){ clearTimeout(findT); if (findNorm($('#projFind').value).length < FIND_MIN) return findStart(); findT = setTimeout(findStart, 220); }
+async function findStart(){
+  const run = ++findRun, box = $('#findHits'), query = $('#projFind').value.trim(), qs = findNorm(query).split(' ').filter(Boolean);
+  if (qs.join(' ').length < FIND_MIN || !homeList.length){ findRes = null; findDoneQ = query; box.classList.add('hidden'); box.textContent = ''; return; }
+  if ($('#home').classList.contains('hidden')) return;   // ein Projekt ist offen: gesucht wird wieder, sobald die Liste zu sehen ist
+  if (query !== findLastQ){ findLastQ = query; findOpenAll.clear(); }
+  const list = [...homeList].sort(HOME_SORT.new), ids = new Set(list.map(p => p.id)), res = []; let seen = 0, t0 = performance.now();
+  for (const k of [...findIdx.keys()]) if (!ids.has(k)) findIdx.delete(k);   // gelöschte Projekte
+  for (const p of list){
+    let ix = findIdx.get(p.id);
+    if (!ix || ix.updated !== p.updated){
+      let full = null; try { full = J(TS.loadProject(p.id)); } catch(_){}
+      ix = full && typeof full === 'object' ? findBuild(full, ids) : {skip: true}; ix.updated = p.updated; findIdx.set(p.id, ix);
+      if (performance.now() - t0 > 40){ findPaint(query, res, `Texte werden durchsucht … ${seen + 1} von ${list.length} Projekten`); await waitMs(0); t0 = performance.now(); if (run !== findRun) return; }
+    }
+    seen++; if (ix.skip) continue;
+    const hits = findIn(ix, qs); if (hits.length) res.push({p, n: hits.length, hits: hits.slice(0, 40).map(h => findHit(ix, p, h))});
+  }
+  if (run !== findRun) return;
+  findRes = res; findPaint(query, res, ''); findDoneQ = query;
+}
+function findPaint(query, res, busy){
+  const box = $('#findHits'); if ($('#home').classList.contains('hidden')) return;
+  const n = res.reduce((s, r) => s + r.n, 0), none = $('#projList .home-none');
+  if (none && n) none.remove();   // kein Projektname passt, der Text hat Treffer: Dann stehen nur sie da
+  box.classList.toggle('hidden', !n && !busy);
+  box.innerHTML = (n || busy ? `<h3 class="fh-h">Im gesprochenen Text${n ? ` · ${n === 1 ? '1 Treffer' : n + ' Treffer'}${res.length > 1 ? ' in ' + res.length + ' Projekten' : ''}` : ''}</h3>` : '') + (busy ? `<p class="muted small fh-busy">${esc(busy)}</p>` : '') +
+    res.map(r => { const all = findOpenAll.has(r.p.id), shown = all ? r.hits : r.hits.slice(0, FIND_SHOW);
+      return `<div class="fh-proj" data-id="${esc(r.p.id)}"><div class="fh-name"><b dir="auto">${esc(r.p.name)}</b><span class="muted small">${r.n === 1 ? '1 Treffer' : r.n + ' Treffer'}</span></div>
+        ${shown.map((h, k) => `<div class="fh-row" data-k="${k}"><button type="button" class="fh-go" title="Projekt an dieser Stelle öffnen"><span class="mono">${fmtT(h.at)}</span><span class="fh-t" dir="auto">${esc(h.pre)} <mark>${esc(h.hit)}</mark> ${esc(h.post)}</span></button><button type="button" class="btn small" data-a="clip" title="Projekt öffnen und den Satz um die Stelle als Clip übernehmen">Als Clip</button></div>`).join('')}
+        ${r.hits.length > shown.length ? `<button type="button" class="btn small ghost" data-a="more">${r.n > r.hits.length ? `Weitere ${r.hits.length - shown.length} zeigen (von ${r.n})` : `Weitere ${r.hits.length - shown.length} zeigen`}</button>` : ''}</div>`; }).join('');
+}
+$('#findHits').addEventListener('click', e => {
+  const pj = e.target.closest('.fh-proj'), r = pj && findRes && findRes.find(x => x.p.id === pj.dataset.id); if (!r) return;
+  if (e.target.closest('[data-a="more"]')){ findOpenAll.add(r.p.id); return findPaint($('#projFind').value.trim(), findRes, ''); }
+  const row = e.target.closest('.fh-row'), h = row && r.hits[+row.dataset.k]; if (!h) return;
+  findOpen(h, !!e.target.closest('[data-a="clip"]'));
+});
+// Treffer öffnen: Projekt laden, die Stelle im Text markieren und zeigen; „Als Clip“ markiert den ganzen Satz und öffnet den Clip-Dialog
+async function findOpen(h, asClip){
+  if (!(await openProjectWait(h.pid)) || !tokens.length) return;
+  if (tab !== 'text') setTab('text');
+  for (let k = 0; k < 40 && !spans.length; k++) await waitMs(25);
+  if (!P || P.id !== h.pid || !tokens[h.tokA] || !tokens[h.tokB] || !spans.length) return;
+  if (order.length !== tokens.length) computeOrder();
+  let a = h.tokA, b = h.tokB;
+  if (asClip){ const r = sentBounds(Math.min(pos[a], pos[b]), Math.max(pos[a], pos[b])); a = order[r[0]]; b = order[r[1]]; }
+  selA = a; selB = b; showSel();
+  if (spans[a]) spans[a].scrollIntoView({block: 'center'});
+  const t = tokens[a]; seekOut(Math.min(srcToOut(snapSrc(t.ws ?? t.s)), Math.max(0, total - 0.01)), false); tlReveal();
+  if (asClip) $('#selClip').click();
+}
+
 fillFontSelects(); loadUserFonts();
 showHome();
 (() => { const h = new URLSearchParams(location.hash.slice(1)); const p = h.get('p');
@@ -6416,5 +6977,9 @@ showHome();
   if (!o || !o.id || Date.now() - (o.at || 0) > 12 * 3600e3) return;
   try { if (!J(TS.loadProject(o.id))) return; } catch(_){ return; }
   openProjectNow(o.id);
-  if (P && P.id === o.id){ if (o.tab && o.tab !== tab && !tjGet(o.id)) setTab(o.tab); if (o.pos) seekOut(o.pos, false); }
+  if (P && P.id === o.id){ if (o.tab && o.tab !== tab && !tjGet(o.id)) setTab(o.tab); if (o.pos) seekOut(o.pos, false);
+    // Zeitleiste, Clip- und Folien-Reiter stehen in Skripten, die erst nach diesem geladen werden. Ohne den zweiten Aufbau blieb die
+    // Zeitleiste nach dem Neuladen leer, bis man den Reiter wechselte.
+    const late = () => { if (P && P.id === o.id){ setTab(tab); seekOut(outPos, false); } };
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', late, {once: true}); else setTimeout(late, 0); }
 })();

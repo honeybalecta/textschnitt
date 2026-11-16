@@ -2,6 +2,15 @@
 
 Was sich mit jeder Version von HoneyCut ändert. Die Windows-App zeigt diese Stichpunkte an, sobald eine neuere Version bereitsteht.
 
+## 2.33.0 · Clips in Serie
+- Abschnitte vormerken: im Text markieren und „Vormerken“ wählen (Taste V, am Handy im Clip-Dialog). Aus der Liste wird mit einem Klick eine Clip-Reihe – je Abschnitt ein eigener Clip –, und „Alle exportieren“ reiht die ganze Reihe in die Warteschlange ein
+- Zusammenschnitt: alle vorgemerkten Abschnitte in einem Clip, als „Best of“ in der Reihenfolge des Videos
+- Clip-Vorschläge: HoneyCut sucht in sich geschlossene Abschnitte von 20 bis 90 Sekunden heraus – nach Absätzen, Fragen, Zahlen und eigenen Schlagwörtern, zum Anhören und Übernehmen. Die Vorauswahl folgt festen Regeln und kommt ohne Online-Dienst aus
+- Hook-Varianten: bis zu drei Einstiegstitel hinterlegen; der Export erzeugt je Variante eine Datei zum Testen
+- „Teil 1/3“: Clips einer Reihe tragen ihre Nummer im Bild, im Design deiner Folien. Ecke, Bezeichnung, Größe und Dauer gelten für die ganze Reihe und gehören zum Hausstil
+- Suche über alle Projekte: Die Suchzeile der Projektliste findet auch, was in den Videos gesagt wird – mit Sprung zur Stelle und „Als Clip“
+- Behoben: Nach dem Neuladen blieb die Zeitleiste leer, bis man den Reiter wechselte. Betonte Wörter verrutschten bei „Am Ton ausrichten“
+
 ## 2.32.0 · Untertitel
 - Laufende Wort-Hervorhebung: Das gerade gesprochene Wort bekommt in den Zeilen-Untertiteln eine eigene Farbe
 - Animationen: Einblenden, Aufpoppen oder Wort für Wort aufbauen

@@ -1205,64 +1205,98 @@ const CLIP_LOOKS = {
   box:     {mode:'lines', size:'mittel', lines:2, chars:20, dur:3, outline:false, bg:true},
   classic: {mode:'lines', size:'mittel', lines:2, chars:32, dur:4, outline:true, bg:false},
 };
-function clipDialog(o1, o2){
+function clipDialog(o1, o2, ids){   // ids: die markierten Wörter – dann lässt sich der Abschnitt hier auch vormerken (Clip-Reihe, Zusammenschnitt)
   if (!(o2 - o1 > 0.3)) return toast('Der Ausschnitt ist zu kurz');
   const n = J(TS.listProjects() || '[]').filter(p => (p.name || '').startsWith(P.name + ' – Clip')).length + 1;
   const m = hcModal(`<h3>Clip erstellen</h3><p class="muted small">${fmtS(o1)} – ${fmtS(o2)} (${fmtD(o2 - o1)} s) wird ein eigenes Kurzvideo. Das Hauptprojekt bleibt unverändert.</p>
     <label class="field"><span>Name</span><input type="text" id="clipName"></label>
     <div class="field"><span>Format</span><div class="seg-ctl" id="clipNewFmt"><button data-v="9:16" class="on">9:16</button><button data-v="4:5">4:5</button><button data-v="1:1">1:1</button><button data-v="16:9">16:9</button><button data-v="">Original</button></div></div>
-    <div class="row" style="margin-top:12px"><button class="btn" id="clipNo">Abbrechen</button><button class="btn primary" id="clipGo" style="margin-left:auto">Clip öffnen</button></div>`);
+    ${ids ? '<p class="muted small">„Vormerken“ sammelt den Abschnitt für eine Clip-Reihe oder einen Zusammenschnitt – unter „Clips“ in der Leiste über dem Text.</p>' : ''}
+    <div class="row" style="margin-top:12px"><button class="btn" id="clipNo">Abbrechen</button><span class="row" style="margin-left:auto;justify-content:flex-end">${ids ? '<button class="btn" id="clipKeep">Vormerken</button>' : ''}<button class="btn primary" id="clipGo">Clip öffnen</button></span></div>`);
   let fmt = '9:16'; m.querySelector('#clipName').value = `${P.name} – Clip ${n}`;
   m.querySelector('#clipNewFmt').onclick = e => { const b = e.target.closest('button'); if (!b) return; fmt = b.dataset.v; m.querySelectorAll('#clipNewFmt button').forEach(x => x.classList.toggle('on', x === b)); };
   m.querySelector('#clipNo').onclick = closeHcModal;
+  if (ids) m.querySelector('#clipKeep').onclick = () => { closeHcModal(); if (clipListAdd(ids)) clipListNoted(); };
   m.querySelector('#clipGo').onclick = () => { const name = m.querySelector('#clipName').value.trim() || `${P.name} – Clip ${n}`; closeHcModal(); makeClip(o1, o2, fmt, name); };
 }
-function makeClip(o1, o2, fmt, name){
-  if (playing) pausePlay(); saveNow();
+// Clip-Projekt aus einem oder mehreren Bereichen des geschnittenen Videos (Ausgabezeit). Ein Bereich ergibt einen Clip; mehrere ergeben
+// einen Zusammenschnitt: alles dazwischen ist herausgeschnitten, die Reihenfolge bleibt die des Videos. Gespeichert wird hier nichts.
+function clipData(ranges, fmt, name){
+  const R = ranges.map(r => [r[0], r[1]]).sort((p, q) => p[0] - q[0])
+    .reduce((acc, r) => { const l = acc[acc.length - 1]; if (l && r[0] <= l[1] + 0.02) l[1] = Math.max(l[1], r[1]); else acc.push(r); return acc; }, []);
+  const hit = (a, e, pad) => R.some(([o1, o2]) => e > o1 + pad && a < o2 - pad), at = o => R.some(([o1, o2]) => o >= o1 - 0.05 && o < o2 - 0.05);
   const c = JSON.parse(JSON.stringify(P));
-  c.id = newId(); c.name = name; c.created = c.updated = Date.now(); c.clipOf = P.id; c.clipRange = [r3(o1), r3(o2)];
-  // alles außerhalb des Ausschnitts herausschneiden (in Quellzeit)
+  c.id = newId(); c.name = name; c.created = c.updated = Date.now(); c.clipOf = P.id; c.clipRange = [r3(R[0][0]), r3(R[R.length - 1][1])];
+  if (R.length > 1) c.clipRanges = R.map(([a, e]) => [r3(a), r3(e)]); else delete c.clipRanges;
+  // alles außerhalb der Bereiche herausschneiden (in Quellzeit)
   const cut = [];
   for (const g of timeline){
     const d = segDur(g), a = g.o, e = g.o + d;
-    if (g.kind === 'insert'){ if (e <= o1 + 0.01 || a >= o2 - 0.01) c.items = c.items.filter(x => x.id !== g.item.id); continue; }
-    const sp = g.speed || 1, ka = Math.max(a, o1), kb = Math.min(e, o2);
-    if (kb <= ka + 0.01){ cut.push([g.in, g.out]); continue; }
-    if (ka > a + 0.001) cut.push([g.in, g.in + (ka - a) * sp]);
-    if (kb < e - 0.001) cut.push([g.in + (kb - a) * sp, g.out]);
+    if (g.kind === 'insert'){ if (!hit(a, e, 0.01)) c.items = c.items.filter(x => x.id !== g.item.id); continue; }
+    const sp = g.speed || 1; let cur = a, any = false;
+    for (const [o1, o2] of R){
+      const ka = Math.max(a, o1), kb = Math.min(e, o2); if (kb <= ka + 0.01) continue;
+      if (ka > cur + 0.001) cut.push([g.in + (cur - a) * sp, g.in + (ka - a) * sp]);
+      cur = kb; any = true;
+    }
+    if (!any){ cut.push([g.in, g.out]); continue; }
+    if (cur < e - 0.001) cut.push([g.in + (cur - a) * sp, g.out]);
   }
   c.dels = (c.dels || []).concat(cut.map(([x, y]) => [r3(x), r3(y)])).sort((p, q) => p[0] - q[0])
     .reduce((acc, r) => { const l = acc[acc.length - 1]; if (l && r[0] <= l[1] + 1e-3) l[1] = Math.max(l[1], r[1]); else acc.push([...r]); return acc; }, []);
-  // Elemente außerhalb des Ausschnitts entfernen
-  c.items = c.items.filter(x => { if (x.type === 'insert') return true; const [a, e] = window.itemOutRange ? itemOutRange(x) : [0, 1e9]; return e > o1 + 0.05 && a < o2 - 0.05; });
-  c.cues = c.cues.filter(x => { if (!x.own) return true; const t = cueTimes(x); return t && t.e > o1 && t.s < o2; });
-  c.marks = (c.marks || []).filter(m => { const o = markOut(m); return o >= o1 - 0.05 && o < o2 - 0.05 && !isSrcDeleted(m.at); });
-  c.refs = (c.refs || []).filter(r => { const o = refOut(r); return !refGone(r) && o >= o1 - 0.05 && o < o2 - 0.05; });
+  // Elemente außerhalb der Bereiche entfernen
+  c.items = c.items.filter(x => { if (x.type === 'insert') return true; const [a, e] = window.itemOutRange ? itemOutRange(x) : [0, 1e9]; return hit(a, e, 0.05); });
+  c.cues = c.cues.filter(x => { if (!x.own) return true; const t = cueTimes(x); return t && hit(t.s, t.e, 0); });
+  c.marks = (c.marks || []).filter(m => at(markOut(m)) && !isSrcDeleted(m.at));
+  c.refs = (c.refs || []).filter(r => !refGone(r) && at(refOut(r)));
   c.checks = [];   // die Prüfliste gehört zum ganzen Video
+  delete c.clipList; delete c.clipSeries; delete c.part;   // Vorgemerktes und Reihen gehören zum Hauptprojekt
   c.format = fmt || null;
+  // Bildausschnitt: Hat der Clip ein anderes Format als das Projekt, gilt dessen Ausschnitt nicht mehr. Dann zählt der Ausschnitt, den dieses
+  // Format im Projekt zuletzt hatte; sonst füllt das Bild die Leinwand (wird beim Öffnen berechnet, weil es vom Format abhängt).
+  if ((c.format || null) !== (P.format || null)){ const f = c.format && P.frameBy && P.frameBy[c.format]; if (f) c.frame = {sc: f.sc, tx: f.tx, ty: f.ty}; else delete c.frame; }
   c.sub_style = {...c.sub_style, ...CLIP_LOOKS[fmt ? 'punch' : 'classic'], y: fmt === '9:16' || fmt === '4:5' ? 0.7 : 0.86, x: 0.5, pos: 'frei', look: fmt ? 'punch' : 'classic'};
   c.regen = true;
+  return c;
+}
+// Clip speichern und öffnen
+function openClip(c, msg){
   TS.saveProject(c.id, JSON.stringify(c));
-  // Bildausschnitt: füllt das neue Format (wird nach dem Öffnen berechnet, weil er vom Format abhängt)
   const pid = c.id; closeProject(); openProject(pid);
   const fill = () => { if (!P || P.id !== pid) return; if (P.format && !P.frame){ P.frame = clampFrame({sc: coverSc(), tx: 0, ty: 0}); changed(true); saveNow(); } if (window.slSyncAll) slSyncAll(); setTab('clip'); seekOut(0, false); };
   let tries = 0; (function wait(){ if (P && P.id === pid) return fill(); if (++tries < 60) setTimeout(wait, 100); })();
-  toast('Clip erstellt – hier Format, Ausschnitt, Untertitel und Hook einstellen');
+  toast(msg || 'Clip erstellt – hier Format, Ausschnitt, Untertitel und Hook einstellen');
+}
+function makeClip(o1, o2, fmt, name){
+  if (playing) pausePlay(); saveNow();
+  openClip(clipData([[o1, o2]], fmt, name));
+}
+// Bereich im geschnittenen Video, den diese Wörter belegen, mit etwas Luft davor und dahinter – null, wenn alle weggeschnitten sind
+function outRangeOf(ids){
+  const outs = ids.filter(i => tokens[i].type !== 'pause' && !isCut(i)).map(i => [srcToOut(snapSrc(wS(tokens[i]))), srcToOut(wE(tokens[i]))]);
+  if (!outs.length) return null;
+  let a = Infinity, b = -Infinity; for (const [x, y] of outs){ if (x < a) a = x; if (y > b) b = y; }
+  return [Math.max(0, a - 0.08), Math.min(total, b + 0.15)];
 }
 // Ausschnitt aus der Textauswahl
 $('#selClip').onclick = () => {
   const ids = selIds().filter(i => tokens[i].type !== 'pause'); if (!ids.length) return;
-  const outs = ids.filter(i => !isCut(i)).map(i => [srcToOut(snapSrc(wS(tokens[i]))), srcToOut(wE(tokens[i]))]);
-  if (!outs.length) return toast('Nur weggeschnittene Wörter markiert');
-  const o1 = Math.max(0, Math.min(...outs.map(x => x[0])) - 0.08), o2 = Math.min(total, Math.max(...outs.map(x => x[1])) + 0.15);
-  clipDialog(o1, o2);
+  const r = outRangeOf(ids); if (!r) return toast('Nur weggeschnittene Wörter markiert');
+  clipDialog(r[0], r[1], selIds());
 };
 // ── Clip-Studio ──
+// Name des Hauptprojekts: einmal je geöffnetem Clip nachgesehen. Vorher wurde das ganze Hauptprojekt bei jedem Aufbau des Reiters neu geladen.
+let clipParMemo = null;
+function clipParentName(){
+  if (!P.clipOf) return null; const k = P.id + '|' + P.clipOf;
+  if (!clipParMemo || clipParMemo.k !== k){ let p = null; try { p = J(TS.loadProject(P.clipOf) || 'null'); } catch(_){} clipParMemo = {k, name: p && typeof p === 'object' ? String(p.name || 'Hauptprojekt') : null}; }
+  return clipParMemo.name;
+}
 function renderClip(){
   if (!P) return;
-  const par = P.clipOf && J(TS.loadProject(P.clipOf) || 'null');
-  $('#clipParent').classList.toggle('hidden', !par);
-  $('#clipInfo').textContent = `${fmtS(total)} lang · ${P.format || 'Originalformat'}${par ? ' · aus „' + par.name + '“' : ''}`;
+  const par = clipParentName();
+  $('#clipParent').classList.toggle('hidden', par == null);
+  $('#clipInfo').textContent = `${fmtS(total)} lang · ${P.format || 'Originalformat'}${par != null ? ' · aus „' + par + '“' : ''}`;
   renderLenLights();
   $$('#clipFmt button').forEach(b => b.classList.toggle('on', (b.dataset.v || null) === (P.format || null)));
   const F = P.frame || {sc:1, tx:0, ty:0}, mx = Math.max(coverSc() * 2.5, 3);
@@ -1270,7 +1304,43 @@ function renderClip(){
   $$('#clipLooks button').forEach(b => b.classList.toggle('on', b.dataset.look === S().look)); renderLooks();   // eigene Looks hinter den mitgelieferten
   $$('#clipColors button').forEach(b => b.classList.toggle('on', (b.dataset.c || '').toLowerCase() === (S().color || '').toLowerCase()));
   const hook = P.items.find(x => x.type === 'title' && x.hook); if (document.activeElement !== $('#clipHook')) $('#clipHook').value = hook ? hook.text : '';
+  // Hook-Varianten (F4): B und C gehören zum Hook-Titel
+  const alts = (hook && hook.alts) || [], nv = hookVars().length, box = $('#clipHookAlts');
+  [['clipHookB', 0], ['clipHookC', 1]].forEach(([id, k]) => { const el = $('#' + id); if (document.activeElement !== el) el.value = alts[k] || ''; el.disabled = !hook; el.placeholder = hook ? (k ? 'dritter Einstiegstitel' : 'zweiter Einstiegstitel') : 'erst oben den Hook einblenden'; });
+  $('#clipHookAltN').textContent = nv ? `· ${nv} Dateien im Export` : '';
+  if (box.dataset.pid !== P.id){ box.dataset.pid = P.id; box.open = nv > 0; }   // beim Öffnen des Projekts: aufgeklappt, wenn es Varianten gibt
+  // Clip-Reihe (F2, F5): Teil k von n, Nachbarn, Kennzeichnung
+  const pt = P.part; $('#clipSeriesCard').classList.toggle('hidden', !pt);
+  if (pt){ const ids = pt.ids || [];
+    $('#clipSeriesH').textContent = `Teil ${pt.k} von ${pt.n}`;
+    $('#clipSeriesInfo').textContent = partOn() ? `„${partText()}“ steht im Bild – im Design deiner Folien.` : 'Die Kennzeichnung im Bild ist für diesen Clip ausgeschaltet.';
+    $('#clipPrev').disabled = !(pt.k > 1 && ids[pt.k - 2]); $('#clipNext').disabled = !ids[pt.k]; }
 }
+// Reihe: zum Nachbarn wechseln, Kennzeichnung einstellen, alle Teile exportieren
+function clipSibling(d){
+  const pt = P && P.part, id = pt && (pt.ids || [])[pt.k - 1 + d]; if (!id) return;
+  if (!projMap().has(id)) return toast('Diesen Teil gibt es nicht mehr');
+  closeSheet(); closeProject(); if (!P) openProject(id);
+}
+$('#clipPrev').onclick = () => clipSibling(-1); $('#clipNext').onclick = () => clipSibling(1);
+$('#clipPartBtn').onclick = () => openPart();
+$('#clipSeriesEx').onclick = () => { const pt = P && P.part; if (pt && (pt.ids || []).length) exportProjects(pt.ids, `Alle ${pt.n} Teile exportieren`); };
+// Hook-Varianten speichern, sobald ein Feld verlassen wird
+function hookAltsSave(){
+  const hook = hookItem(); if (!hook) return;
+  const alts = [$('#clipHookB').value.replace(/[ \t]+/g, ' ').trim(), $('#clipHookC').value.replace(/[ \t]+/g, ' ').trim()], cur = hook.alts || ['', ''];
+  if (alts[0] === (cur[0] || '') && alts[1] === (cur[1] || '')) return;
+  commit(() => { if (alts.some(Boolean)) hook.alts = alts; else delete hook.alts; }, false); renderClip();
+  const n = hookVars().length; toast(n ? `${n} Hook-Varianten – der Export erzeugt je Variante eine Datei` : 'Hook-Varianten entfernt');
+}
+$('#clipHookB').onchange = hookAltsSave; $('#clipHookC').onchange = hookAltsSave;
+// Variante im Bild ansehen: Sie tauscht mit A den Platz (Lage, Größe und Dauer gelten für alle)
+$('#clipHookAlts').addEventListener('click', e => {
+  const b = e.target.closest('[data-swap]'); if (!b) return; hookAltsSave();
+  const hook = hookItem(), k = +b.dataset.swap, t = hook && String((hook.alts || [])[k] || '').trim(); if (!hook) return toast('Erst oben den Hook einblenden'); if (!t) return toast('Diese Variante ist noch leer');
+  commit(() => { const a = hook.text; hook.text = t; hook.alts[k] = a; }, false);
+  updateTitles(outPos); seekOut(outPos, false); renderClip(); toast(`Variante ${'BC'[k]} steht jetzt als A im Bild`);
+});
 function setFrame(F, quiet){ P.frame = clampFrame(F); applyMainTransform(); placeBox(); if (!quiet){ changed(false); renderClip(); } }
 $('#clipFmt').onclick = e => { const b = e.target.closest('button'); if (!b) return;
   commit(() => { P.format = b.dataset.v || null; P.frame = P.format ? clampFrame({sc: coverSc(), tx: 0, ty: 0}) : null; }, true);
@@ -1400,7 +1470,7 @@ $('#clipHookSet').onclick = () => {
   const text = $('#clipHook').value.trim(); if (!text) return toast('Erst einen Text eingeben');
   const d = +$('#clipHookDur').value || Math.max(1, total - 0.05);
   commit(() => { let it = P.items.find(x => x.type === 'title' && x.hook);
-    if (!it){ it = {id:newId(), type:'title', hook:true, x:0.5, y:0.16, size:'groß', scale:1.1, color:'#FFFFFF', outline:false, bg:true}; P.items.push(it); }
+    if (!it){ it = {id:newId(), type:'title', hook:true, x:0.5, y: partOn() && (partStyle().pos || 'ol')[0] === 'o' ? 0.24 : 0.16, size:'groß', scale:1.1, color:'#FFFFFF', outline:false, bg:true}; P.items.push(it); }   // unter „Teil 1/3“, wenn es oben steht
     it.text = text; it.at = r3(outToSrc(0)); it.dur = Math.min(d, Math.max(0.5, total - 0.05)); }, false);
   updateTitles(outPos); seekOut(0, false); renderClip(); toast('Hook eingeblendet – im Bild ziehen verschiebt ihn');
 };
@@ -1521,6 +1591,7 @@ const KEYS = [
   ['A', 'Markierung im Text auf den ganzen Satz ausweiten, nochmal: auf den Absatz'], ['Umschalt + Entf', 'nur das Markierte behalten, alles andere löschen'],
   ['C / B', 'Kapitel / Notiz an der Markierung oder an der Abspiellinie'],
   ['R', 'Quelle zur markierten Aussage hinterlegen · mit Umschalt: als „Beleg nötig“ markieren (im Text)'],
+  ['V', 'Markierten Abschnitt für eine Clip-Reihe oder einen Zusammenschnitt vormerken · ohne Markierung: den Satz an der Abspiellinie (im Text)'],
   ['P', 'Unsichere Wörter der Reihe nach prüfen (im Text) · Enter bestätigt oder übernimmt die Korrektur · Tab überspringt · Pfeil nach unten spielt noch einmal · Esc beendet'],
   ['Markierten Text ziehen', 'Abschnitt verschieben'], ['Clip in der Zeitleiste ziehen', 'Clips umsortieren'],
   ['Strg + B', 'an der Abspiellinie teilen'], ['Strg + C / X / V', 'Element kopieren / ausschneiden / an der Abspiellinie einfügen'], ['Strg + D', 'Element duplizieren (direkt dahinter)'], ['Q / W', 'links / rechts der Abspiellinie löschen (mit ausgewähltem Element: nur dessen Teil)'],
@@ -1613,6 +1684,7 @@ document.addEventListener('keydown', e => {
     case 'c': case 'C': if (tab === 'text' || studioOn()){ handled(); addMark('chap'); } return;
     case 'b': case 'B': if (tab === 'text' || studioOn()){ handled(); addMark('note'); } return;
     case 'r': case 'R': if (tab === 'text' && tokens.length){ handled(); addRef(e.shiftKey); } return;
+    case 'v': case 'V': if (tab === 'text' && tokens.length){ handled(); clipListToggle(); } return;   // Abschnitt für Clip-Reihe oder Zusammenschnitt vormerken
     case 'p': case 'P': if (tab === 'text' && tokens.length){ handled(); if (LQ.on) lowEnd(); else lowStart(); } return;   // unsichere Wörter der Reihe nach prüfen   // Quelle zur Markierung; mit Umschalt: als „Beleg nötig“ markieren
     case 'q': case 'Q': handled(); cutTo('l'); return;
     case 'w': case 'W': handled(); cutTo('r'); return;

@@ -19,8 +19,9 @@
   <div class="home-body">
     <div class="upd hidden" id="updBanner"></div>
     <div class="home-actions"><h2 class="home-h">Projekte</h2><button class="btn small" id="impProj" title="Projekt von einem anderen Gerät oder einer anderen Person öffnen (.honeycut)">⤓ Projekt importieren</button></div>
-    <div class="home-find hidden" id="homeFind"><input type="search" id="projFind" placeholder="Projekte durchsuchen" autocomplete="off" enterkeyhint="search"><select id="projSort" title="Reihenfolge der Liste"><option value="new">Zuletzt bearbeitet</option><option value="old">Älteste zuerst</option><option value="name">Name A–Z</option><option value="len">Längste zuerst</option></select></div>
+    <div class="home-find hidden" id="homeFind"><input type="search" id="projFind" placeholder="Projekte und Text durchsuchen" autocomplete="off" enterkeyhint="search"><select id="projSort" title="Reihenfolge der Liste"><option value="new">Zuletzt bearbeitet</option><option value="old">Älteste zuerst</option><option value="name">Name A–Z</option><option value="len">Längste zuerst</option></select></div>
     <div id="projList"></div>
+    <div id="findHits" class="find-hits hidden"></div>
     <div class="empty-home hidden" id="homeEmpty">
       <h2>Noch keine Projekte</h2>
       <p id="homeHint"></p>
@@ -64,6 +65,7 @@
       <div id="decoOv" class="deco-ov"></div>
       <img id="wm" class="wm hidden" alt="">
       <div id="lowerOv" class="lower-ov"></div>
+      <div id="partOv" class="lower-ov"></div>
       <div id="tline" class="tline hidden" dir="auto"></div>
       <div id="srcLine" class="tline hidden" dir="auto"></div>
       <div id="safeOv" class="safe-ov hidden"></div>
@@ -150,6 +152,7 @@
         <label class="chip" title="Gelöschte Wörter ausblenden"><input type="checkbox" id="hideDel"> Gelöschtes aus</label>
         <button class="chip" id="marksBtn" title="Kapitel und Notizen dieses Projekts">Marken</button>
         <button class="chip" id="refsBtn" title="Quellen und offene Belege dieses Projekts">Quellen</button>
+        <button class="chip" id="clipsBtn" title="Clips aus diesem Video: vorgemerkte Abschnitte, Vorschläge und Clip-Reihen">Clips</button>
         <button class="chip hidden" id="lowBtn" title="Unsichere Wörter der Reihe nach anhören, bestätigen oder korrigieren (P)">Unsichere prüfen</button>
         <button class="chip hidden" id="checkBtn" title="Jeden automatischen Schnitt anhören und einzeln zurücknehmen">Prüfliste</button>
         <button class="chip ico" id="textMore" title="Weitere Werkzeuge">⋯</button>
@@ -297,6 +300,12 @@
         <div class="row wrap"><span class="muted small">Höhe</span><button class="btn small" data-y="0.18">oben</button><button class="btn small" data-y="0.5">Mitte</button><button class="btn small" data-y="0.7">unteres Drittel</button><button class="btn small" data-y="0.86">unten</button></div>
         <label class="row safe-row"><span class="muted small">Schutzzonen</span><select class="safe-sel" id="clipSafe"></select></label>
       </div>
+      <div class="card stack hidden" id="clipSeriesCard">
+        <h4 id="clipSeriesH">Teil einer Clip-Reihe</h4>
+        <span class="muted small" id="clipSeriesInfo"></span>
+        <div class="row wrap"><button class="btn small" id="clipPrev">◀ Teil davor</button><button class="btn small" id="clipNext">Nächster Teil ▶</button></div>
+        <div class="row wrap"><button class="btn small" id="clipPartBtn" title="„Teil 1/3“ im Bild: Text, Ecke, Größe und Dauer">Kennzeichnung …</button><button class="btn small" id="clipSeriesEx" title="Alle Clips dieser Reihe nacheinander exportieren">Alle Teile exportieren</button></div>
+      </div>
       <div class="card stack">
         <h4>Dauerhaft im Bild</h4>
         <span class="muted small">Logo oder eine kleine Textzeile über die ganze Länge, zum Beispiel Kanalname oder „V. i. S. d. P.“.</span>
@@ -306,6 +315,11 @@
         <h4>Hook – Titel am Anfang</h4>
         <textarea id="clipHook" rows="2" placeholder="z. B. „Das hat niemand kommen sehen“"></textarea>
         <div class="row wrap"><label class="row small">Dauer <select id="clipHookDur"><option value="2">2 s</option><option value="3" selected>3 s</option><option value="5">5 s</option><option value="0">ganzer Clip</option></select></label><button class="btn small" id="clipHookSet">Einblenden</button><button class="btn small ghost" id="clipHookDel">Entfernen</button></div>
+        <details class="tr-style" id="clipHookAlts"><summary>Varianten zum Testen <b id="clipHookAltN"></b></summary>
+          <span class="muted small">Bis zu zwei weitere Einstiegstitel. Der Export erzeugt je Variante eine Datei (Hook-A, Hook-B, Hook-C) – zum Ausprobieren, welcher Einstieg besser trägt. Im Bild steht Variante A.</span>
+          <div class="field"><span class="hook-alt-h">Variante B<button type="button" class="btn small ghost" data-swap="0" title="Variante B im Bild zeigen: Sie tauscht mit A den Platz">⇄ mit A tauschen</button></span><textarea id="clipHookB" rows="2" aria-label="Hook-Variante B"></textarea></div>
+          <div class="field"><span class="hook-alt-h">Variante C<button type="button" class="btn small ghost" data-swap="1" title="Variante C im Bild zeigen: Sie tauscht mit A den Platz">⇄ mit A tauschen</button></span><textarea id="clipHookC" rows="2" aria-label="Hook-Variante C"></textarea></div>
+        </details>
       </div>
       <div class="card stack">
         <h4>Tempo &amp; Dynamik</h4>
@@ -477,6 +491,7 @@
       <button class="sb" id="selSpk" title="Markierte Wörter einer Person zuordnen"><i>👤</i><span>Person</span></button>
       <button class="sb" id="selKw" title="Markierte Wörter in den Untertiteln farbig betonen (nochmal: Betonung entfernen)"><i>★</i><span>Betonen</span></button>
       <button class="sb" id="selClip" title="Markierten Abschnitt als eigenen Clip (z. B. 9:16) öffnen"><i>📱</i><span>Clip</span></button>
+      <button class="sb" id="selList" title="Markierten Abschnitt vormerken – aus mehreren wird eine Clip-Reihe oder ein Zusammenschnitt (V)"><i>▤</i><span>Vormerken</span></button>
       <button class="sb" id="selSlide" title="Aus den markierten Wörtern eine Folie machen"><i>🖼</i><span>Folie</span></button>
       <button class="sb hidden" id="selKeep" title="Nur den Untertitel der weggeschnittenen Wörter zeigen – der Schnitt bleibt"><i>💬</i><span>Untertitel</span></button>
       <button class="sb" id="selChap" title="Hier beginnt ein Kapitel (C)"><i>🚩</i><span>Kapitel</span></button>

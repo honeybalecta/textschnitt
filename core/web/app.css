@@ -1184,3 +1184,48 @@ label.col input{width:100%}
 .em-map{display:flex;flex-wrap:wrap;gap:6px}
 .em-add{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:6px}
 .em-add select{min-height:var(--ctl-sm);max-width:60%}
+
+/* 2.33: Clips in Serie */
+.transcript .tk.cl:not(.sel):not(.del){background:linear-gradient(to top,rgba(207,198,176,.6) 2px,rgba(207,198,176,.1) 2px)}
+.transcript .tk.cl.del:not(.sel){box-shadow:inset 0 -2px 0 rgba(207,198,176,.3)}
+#selList{display:none}   /* schmale Bildschirme: „Vormerken“ steht im Clip-Dialog, die Leiste bleibt zweizeilig */
+@media (min-width:760px) and (min-height:600px){ #selList{display:flex} }
+.cl-list{display:flex;flex-direction:column}
+#clSheet > .row.wrap{margin-top:10px}
+.cl-row{display:flex;align-items:center;gap:6px;border-top:1px solid var(--line)}
+.cl-list .cl-row:first-child{border-top:0}
+.cl-row .mini{flex:none}
+.cl-row .mk-go{align-items:flex-start}
+.cl-row .mk-t{display:flex;flex-direction:column;gap:2px;min-width:0}
+.cl-row .mk-t b{font-weight:500;font-size:14px;line-height:1.35}
+.cl-row .mk-t i{white-space:normal;overflow:visible;line-height:1.35}
+.cl-row.cut .mk-t b{color:var(--muted);text-decoration:line-through}
+.cl-row .btn.small{flex:none}
+.cl-row.sug{display:grid;grid-template-columns:auto 1fr;padding-bottom:8px}   /* Vorschlag: Text über die ganze Breite, „Übernehmen“ darunter */
+.cl-row.sug .btn.small,.cl-row.sug .cl-on{grid-column:2;justify-self:end}
+.cl-on{flex:none;font-size:12px;color:var(--gruen);padding:0 6px;white-space:nowrap}
+.cl-ser{border:1px solid var(--line);border-radius:12px;padding:8px 10px 10px;margin:10px 0}
+.cl-ser-h{display:flex;align-items:center;gap:8px}
+.cl-ser-n{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.cl-ser-n b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cl-ser .cl-row:first-of-type{margin-top:6px}
+.cl-ser > .row{margin-top:8px}
+#clSheet .field{margin:12px 0 8px}
+@media (min-width:760px) and (min-height:600px){ .sheet.passive:has(#clSheet){max-height:calc(100vh - 88px)} }   /* die ganze Höhe neben dem Text, wie die Prüfliste */
+.hook-alt-h{display:flex;align-items:center;justify-content:space-between;gap:8px}
+#clipHookAlts .field{margin:8px 0 0}
+#clipHookAlts textarea:disabled{opacity:.5}
+#clipHookAltN{font-weight:500;color:var(--muted)}
+.find-hits{padding:6px 12px 96px}
+.fh-h{font-size:14px;margin:14px 2px 6px;color:var(--sand)}
+.fh-proj{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:8px 10px;margin:8px 0}
+.fh-name{display:flex;align-items:baseline;gap:8px;padding:2px 2px 4px}
+.fh-name b{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fh-row{display:flex;align-items:center;gap:6px;border-top:1px solid var(--line)}
+.fh-go{flex:1;min-width:0;display:flex;align-items:baseline;gap:10px;border:0;background:transparent;text-align:left;padding:8px 4px;border-radius:8px;min-height:var(--ctl);color:var(--sand)}
+.fh-go:hover{background:var(--surface-2)}
+.fh-go .mono{flex:none;min-width:38px;font-size:12px;color:var(--muted)}
+.fh-t{flex:1;min-width:0;font-size:14px;line-height:1.4;overflow-wrap:anywhere}
+.fh-t mark{background:rgba(229,64,42,.3);color:var(--creme);border-radius:3px;padding:0 2px}
+.fh-row .btn.small{flex:none}
+.fh-proj > .btn.ghost{margin-top:6px}

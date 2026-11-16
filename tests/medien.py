@@ -2,6 +2,7 @@
 """Erzeugt die Testmedien für die Prüfläufe (nur Python-Standardbibliothek und ffmpeg):
    kurz.mp4 (3 min) und lang.mp4 (6 min) mit sprachähnlichem Ton und passender Wortliste (*.words.json),
    anlauf.mp4 (knapp 1 min) mit festem Text: Anläufe, Füllwörter, unsichere Wörter und falsch geschriebene Namen,
+   serie.mp4 (knapp 3 min) mit festem Text in sechs Absätzen: Fragen, Zahlen und Schlagwörter für die Clip-Vorschläge,
    drei kurze Einspieler (broll1–3.mp4), acht Folienbilder und ein Logo.
 Aufruf: python3 tests/medien.py <Zielordner>   – vorhandene Dateien bleiben stehen."""
 import array
@@ -77,6 +78,39 @@ ANLAUF = [
 ]
 
 
+# Fester Text für „Clips in Serie“: sechs Absätze (Pause von 1,6 s dazwischen, 0,5 s zwischen den Sätzen). Der erste und der vierte beginnen
+# mit einer Frage, der zweite knüpft mit „Und deshalb“ an, der dritte ist für einen Clip zu kurz; Zahlen stehen im ersten und im fünften.
+SERIE = [
+    ["Warum steigen die Mieten in Berlin seit Jahren?", "Die Antwort ist einfacher, als viele denken.", "Der Mietendeckel wurde 2021 gekippt.",
+     "Seitdem zahlen viele Menschen 30 Prozent mehr für ihre Wohnung.", "Das zeigen die Zahlen der Gewerkschaft sehr deutlich.",
+     "Die Löhne sind in derselben Zeit kaum gestiegen.", "Bei vielen geht inzwischen die Hälfte des Einkommens für die Miete drauf."],
+    ["Und deshalb organisieren sich immer mehr Menschen in ihren Häusern.", "Sie gründen Hausgemeinschaften und sprechen mit ihren Nachbarn.",
+     "Sie sammeln Unterschriften und gehen gemeinsam zur Hausverwaltung.", "In Neukölln hat eine Hausgemeinschaft so eine Mieterhöhung verhindert.",
+     "In Kreuzberg haben Nachbarinnen den Verkauf ihres Hauses gestoppt.", "Das klappt, weil viele zusammen mehr erreichen als eine Person allein."],
+    ["Wer sich organisiert, kennt seine Rechte besser.", "Wer seine Rechte kennt, lässt sich weniger gefallen.",
+     "Diese Entwicklung ist das Ergebnis politischer Entscheidungen.", "Entscheidungen lassen sich ändern."],
+    ["Was können wir also tun?", "Erstens können wir uns im eigenen Haus zusammentun.", "Ein Aushang im Treppenhaus reicht oft für den Anfang.",
+     "Zweitens können wir die Initiativen in unserem Kiez unterstützen.", "Viele von ihnen suchen dringend Leute, die mit anpacken.",
+     "Drittens können wir Druck auf die Politik machen."],
+    ["Der Volksentscheid zur Vergesellschaftung hat gezeigt, was möglich ist.", "Mehr als eine Million Menschen haben damals mit Ja gestimmt.",
+     "Das waren 59 Prozent der gültigen Stimmen.", "Umgesetzt ist der Entscheid bis heute nicht.",
+     "Deshalb braucht es weiter Solidarität zwischen den Häusern und den Kiezen.", "Solidarität heißt hier ganz praktisch, dass niemand allein vor dem Vermieter steht."],
+    ["Am Ende zählt, dass wir zusammenhalten.", "Eine Stadt gehört den Menschen, die in ihr leben.", "Wohnen ist ein Grundbedürfnis.",
+     "Darum bleiben wir dran, Haus für Haus und Kiez für Kiez.", "Wenn dir dieses Video geholfen hat, dann teile es mit deinen Nachbarn.",
+     "Wir sehen uns beim nächsten Treffen der Initiative."],
+]
+
+
+def serie_items() -> list:
+    items = []
+    for para in SERIE:
+        for si, sent in enumerate(para):
+            ws = sent.split()
+            for k, w in enumerate(ws):
+                items.append((w, .92, (1.6 if si == len(para) - 1 else 0.5) if k == len(ws) - 1 else 0.05))
+    return items
+
+
 def skript(wav: Path, words_json: Path, items: list) -> float:
     """Wie sprache(), aber mit festem Text und festen Pausen. Rückgabe: Länge in Sekunden."""
     rnd = random.Random(5)
@@ -130,6 +164,12 @@ def main(out: Path) -> None:
         ff("-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30", "-i", str(wav), "-t", f"{length:.2f}", *enc, str(out / "anlauf.mp4"))
         wav.unlink()
         print("anlauf.mp4", f"{length:.1f} s")
+    if not ((out / "serie.mp4").exists() and (out / "serie.words.json").exists()):
+        wav = out / "serie.wav"
+        length = skript(wav, out / "serie.words.json", serie_items())
+        ff("-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30", "-i", str(wav), "-t", f"{length:.2f}", *enc, str(out / "serie.mp4"))
+        wav.unlink()
+        print("serie.mp4", f"{length:.1f} s")
     for k, (src, freq) in enumerate((("testsrc=size=640x360:rate=30", 440), ("smptebars=size=640x360:rate=30", 554), ("rgbtestsrc=size=640x360:rate=30", 659)), 1):
         mp4 = out / f"broll{k}.mp4"
         if not mp4.exists():

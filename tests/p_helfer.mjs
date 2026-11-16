@@ -21,7 +21,7 @@ const drop = async id => { await ev(() => { if (typeof P !== 'undefined' && P){ 
 // ═════════ A9 · Projektliste: Suche, Reihenfolge, Vorschaubild, Duplizieren ═════════
 await sleep(400);
 const home = await ev(() => ({ n: homeList.length, find: !document.querySelector('#homeFind').classList.contains('hidden'), names: homeList.map(p => p.name) }));
-chk('Projektliste: Suchzeile erscheint ab fünf Projekten', home.n >= 5 && home.find, home.n);
+chk('Projektliste: Die Suchzeile steht da (ab zwei Projekten)', home.n >= 2 && home.find, home.n);
 await page.waitForFunction(() => { const ims = [...document.querySelectorAll('#projList .proj-item')].slice(0, 3).map(el => el.querySelector('.pthumb img')); return ims.length === 3 && ims.every(im => im && im.complete && im.naturalWidth > 0); }, null, { timeout: 30000 }).catch(() => {});
 const th0 = await ev(() => [...document.querySelectorAll('#projList .proj-item')].slice(0, 3).map(el => { const im = el.querySelector('.pthumb img'); return im ? [im.naturalWidth, im.naturalHeight, im.src.slice(0, 5)] : null; }));
 chk('Projektliste: jedes Projekt zeigt ein Vorschaubild aus dem Video', th0.length === 3 && th0.every(t => t && t[0] > 20 && t[1] > 20), th0);
