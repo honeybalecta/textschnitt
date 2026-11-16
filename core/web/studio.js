@@ -16,6 +16,7 @@ function outToSrc(o){
   return g.kind === 'main' ? clamp(g.in + (o - g.o) * (g.speed || 1), g.in, g.out) : snapSrc(g.item.at);
 }
 function itemOutRange(it){
+  if (it.type === 'join'){ const k = joinIndex(it), T = k > 0 ? timeline[k].o : -1; return [T, T]; }   // Übergang: die Stelle seines Schnitts
   if (it.type === 'zoom' || it.type === 'fx'){ const a = srcToOut(snapSrc(it.at)); return [a, Math.max(a + 0.15, srcToOut(snapSrc(it.at + it.dur)))]; }
   if (it.type === 'title'){ const a = srcToOut(snapSrc(it.at)); return [a, a + it.dur]; }
   const ov = overlays.find(o => o.x === it); if (ov) return [ov.at, ov.end];
@@ -209,6 +210,16 @@ function renderMain(pad){
     b.insertAdjacentHTML('beforeend', `<span class="lbl">${lbl}${fmtD(d)} s</span>`);
     tr.append(b);
   });
+  // Marken an den Schnitten mit Übergang (Blende, Bild früher, Bild später)
+  for (const [k, x] of joinMap){   // je Schnitt der Übergang, der dort gilt
+    const m = document.createElement('span'); m.className = 'jn ' + x.kind + (joinParts.some(p => p.x === x) ? '' : ' off'); m.dataset.k = k; m.style.left = (pad + timeline[k].o * TL.pps) + 'px';
+    m.title = 'Übergang: ' + (x.kind === 'fade' ? 'Blende' : x.kind === 'early' ? 'Bild wechselt früher' : 'Bild wechselt später') + ' – antippen zum Ändern'; tr.append(m); }
+}
+// Der Schnitt an der Kante des ausgewählten Abschnitts, die der Abspiellinie näher liegt (für „Übergang“)
+function joinEdgeOf(i){
+  const g = timeline[i]; if (!g) return -1;
+  const a = isCutAt(i) ? i : -1, b = i + 1 < timeline.length && isCutAt(i + 1) ? i + 1 : -1;
+  return outPos > g.o + segDur(g) / 2 ? (b > 0 ? b : a) : (a > 0 ? a : b);
 }
 // Videospuren über der Hauptspur: so viele wie belegt, plus eine freie oben
 const ovlTracks = () => Math.max(1, ...P.items.filter(x => x.type === 'broll' || x.type === 'pip').map(elTrack)) ;
@@ -433,6 +444,7 @@ function doLink(){
 function doUnlink(){ const k = selKey(), o = k && objOfKey(k); if (!o || !o.lk) return; commit(() => unlinkObject(o), false); renderTimeline(); toast('Verbindung gelöst'); }
 tlInner.addEventListener('click', e => {
   if (TL.drag && TL.drag.moved) return;
+  const jn = e.target.closest('.jn'); if (jn){ openJoin(+jn.dataset.k); return; }
   const b = e.target.closest('.blk');
   const k = b && blkKey(b);
   if (e.target.classList.contains('kf')){
@@ -721,13 +733,13 @@ function linkTools(){
 function toolListBase(){
   const s = TL.sel; const g = s && (s.kind === 'main' || s.kind === 'insert') ? timeline[s.i] : null;
   if (!s) return [T('📱', 'Clip ab hier …', () => clipDialog(outPos, Math.min(total, outPos + 30))), T('▭', 'Leinwand', openCanvas), T('✂', 'Teilen', splitHere), T('⌫', 'Bis hier weg', () => cutTo('l')), T('⌦', 'Ab hier weg', () => cutTo('r')), T('＋', 'Clip', addClip), T('T', 'Titel', addTitle), T('💬', 'Untertitel', addOwnCue), T('🔍', 'Zoom', addZoom),
-    T('🚩', 'Kapitel', () => addMark('chap')), T('📝', 'Notiz', () => addMark('note')), T('🖼', 'Titelbild', openCover),
+    T('⧓', 'Übergang', () => openJoin()), T('🚩', 'Kapitel', () => addMark('chap')), T('📝', 'Notiz', () => addMark('note')), T('🖼', 'Titelbild', openCover),
     ...(P.moves.length ? [T('↺', 'Reihenfolge zurück', () => { commit(() => P.moves = [], true); if (tokens.length) renderTranscript(); toast('Ursprüngliche Reihenfolge'); })] : [])];
   if (s.kind === 'main') return [T('📱', 'Als Clip …', () => clipDialog(g.o, g.o + segDur(g))), T('✂', 'Teilen', splitHere), T('⚙', 'Anpassen', () => openFx(g)),
     T('◆', hasMainKfHere(g) ? 'Keyframe weg (M)' : 'Keyframe (M)', () => toggleMainKeyframe(g)), T('🗑', 'Löschen', delSel, 'danger'), T('⇤', 'Anfang −1', () => nudge('l', -1)), T('⇥', 'Anfang +1', () => nudge('l', 1)),
-    T('⇤', 'Ende −1', () => nudge('r', -1)), T('⇥', 'Ende +1', () => nudge('r', 1)), T('🔍', 'Zoom', addZoom), T('T', 'Titel', addTitle), T('＋', 'Clip', addClip)];
+    T('⇤', 'Ende −1', () => nudge('r', -1)), T('⇥', 'Ende +1', () => nudge('r', 1)), T('⧓', 'Übergang', () => openJoin(joinEdgeOf(s.i))), T('🔍', 'Zoom', addZoom), T('T', 'Titel', addTitle), T('＋', 'Clip', addClip)];
   const cuts = [T('⌫', 'Bis hier weg', () => cutSel('l')), T('⌦', 'Ab hier weg', () => cutSel('r'))];
-  if (s.kind === 'insert') return [T('🎞', 'Ausschnitt', () => openItem(g.item.id)), T('🗑', 'Löschen', delSel, 'danger'), ...cuts, T('⇄', 'Als B-Roll', () => convert('broll'))];
+  if (s.kind === 'insert') return [T('🎞', 'Ausschnitt', () => openItem(g.item.id)), T('🗑', 'Löschen', delSel, 'danger'), ...cuts, T('⧓', 'Übergang', () => openJoin(joinEdgeOf(s.i))), T('⇄', 'Als B-Roll', () => convert('broll'))];
   if (s.kind === 'ovl'){ const it = selItem(); return [T('🎞', 'Ausschnitt', () => openItem(it.id)), T('🗑', 'Löschen', delSel, 'danger'), ...cuts, T('◰', 'Zuschneiden', () => startCrop(it)),
     T('◆', hasKfHere(it) ? 'Keyframe weg (M)' : 'Keyframe (M)', () => toggleKeyframe(it)),
     T('−', 'Kleiner', () => pipScale(1 / 1.15)), T('＋', 'Größer', () => pipScale(1.15)), T('↗', 'Ecke', cycleCorner),
@@ -907,7 +919,7 @@ function placeMedia(m, type, o, track, short){
     commit(() => { computeAudios(); const busy = k => audios.some(x => (x.x.track || 1) === k && x.at < o + len - 0.01 && x.end > o + 0.01);
       it = {id:newId(), type:'audio', at, clip, in:0, out:r3(len), vol:1, track: track && !busy(track) ? track : freeATrack(o, o + len)}; P.items.push(it); }, false);
     TL.sel = {kind:'aud', id: it.id}; renderTimeline(); seekOut(outPos, false); renderBin();
-    toast(clip.kind === 'video' ? 'Nur der Ton des Videos eingefügt – Lautstärke über „Lautstärke & Ausschnitt“' : 'Ton eingefügt – Lautstärke über „Lautstärke & Ausschnitt“'); return;
+    toast((clip.kind === 'video' ? 'Nur der Ton des Videos eingefügt' : 'Ton eingefügt') + (duckOn() ? ' – weicht der Sprache, einstellbar über „Lautstärke & Ausschnitt“' : ' – unter „Lautstärke“ lässt sich einstellen, dass Musik der Sprache weicht')); return;
   }
   const len = img ? 4 : type === 'insert' ? clip.duration : short ? Math.min(clip.duration, 4) : Math.min(clip.duration, Math.max(0.5, total - o));
   let it; commit(() => {
@@ -1511,7 +1523,7 @@ function volClips(){
     if (!it.clip || isImg(it.clip) || it.clip.hasAudio === false) continue;
     if (!['insert', 'audio', 'broll', 'pip'].includes(it.type)) continue;
     const def = it.type === 'insert' || it.type === 'audio' ? 1 : 0;
-    out.push({key:'i' + it.id, name: it.clip.name, kind: it.type === 'audio' ? 'Tonspur' : it.type === 'insert' ? 'Einschub' : 'Videospur', uri: it.clip.uri, a: it.in, b: it.out, muted: (it.vol ?? def) <= 0,
+    out.push({key:'i' + it.id, name: it.clip.name, kind: it.type === 'audio' ? 'Tonspur' : it.type === 'insert' ? 'Einschub' : 'Videospur', uri: it.clip.uri, a: it.in, b: it.out, muted: (it.vol ?? def) <= 0, role: duckRole(it),
       get: () => it.vol ?? def, set: v => { it.vol = r3(v); }});
   }
   return out;
@@ -1540,6 +1552,7 @@ const pct = v => Math.round(v * 100) + ' %';
 function openVolumes(){
   if (!P) return; const body = $('#sheetBody'), list = volClips();
   body.innerHTML = `<h3>Lautstärke</h3>
+    <div class="tone-box" id="toneBox">${toneBoxHtml()}</div>
     <p class="muted small">Jeder Clip einzeln, oder alle mit einem Klick auf dieselbe Lautheit bringen. Stumm geschaltete B-Roll bleibt stumm. Über 100 % wird verstärkt.</p>
     <div class="row"><button class="btn primary" id="volLevel">🔊 Alle angleichen</button><button class="btn" id="volReset">Alle auf 100 %</button><span class="muted small" id="volMsg"></span></div>
     <div class="vol-list">${list.length ? '' : '<p class="muted small">Keine Clips mit Ton.</p>'}</div>
@@ -1548,14 +1561,14 @@ function openVolumes(){
   for (const c of list){
     const row = document.createElement('div'); row.className = 'vol-row';
     row.innerHTML = `<div class="vol-name"><b></b><span class="muted small"></span></div><input type="range" min="0" max="400" step="5"><span class="vol-v mono"></span><span class="vol-l muted small mono"></span>`;
-    row.querySelector('b').textContent = c.name; row.querySelector('.muted').textContent = c.kind + (c.muted ? ' · stumm' : '');
+    row.querySelector('b').textContent = c.name; row.querySelector('.muted').textContent = c.kind + (c.muted ? ' · stumm' : '') + (duckOn() && c.role ? ' · ' + DUCK_ROLE[c.role] : '');
     const r = row.querySelector('input'), v = row.querySelector('.vol-v'); r.value = Math.round(c.get() * 100); v.textContent = pct(c.get());
     r.onpointerdown = () => { r._b = snapshot(); };
     r.oninput = () => { c.set(+r.value / 100); v.textContent = pct(+r.value / 100); changedLive(); seekOut(outPos, false); };
     r.onchange = () => { if (r._b){ undo.push(r._b); redo = []; r._b = null; } renderTimeline(); };
     row.dataset.key = c.key; box.append(row);
   }
-  openSheet(false);
+  openSheet(false); toneBoxBind();
   $('#volOk').onclick = closeSheet;
   $('#volReset').onclick = () => { commit(() => list.forEach(c => { if (!c.muted) c.set(1); }), false); seekOut(outPos, false); openVolumes(); toast('Alle hörbaren Clips auf 100 %'); };
   $('#volLevel').onclick = () => levelAll();

@@ -1,5 +1,5 @@
 // Ende-zu-Ende-Test der Browser-Version in echtem Chrome:
-// Video wählen → transkribieren (Whisper im Browser) → schneiden → Video/Audio exportieren → Neuladen.
+// Video wählen → transkribieren (Whisper im Browser) → schneiden → Video/Audio exportieren (auch mit aufbereiteter Stimme und Übergang) → Neuladen.
 // Aufruf: node web/test/e2e.mjs <site> <testmedien> <ausgabe>
 import { chromium } from 'playwright';
 import http from 'node:http';
@@ -129,6 +129,16 @@ try {
   await exportAs('audio', 'out.mp3', 'mp3');
   await exportAs('audio', 'out.wav', 'wav');
   fs.writeFileSync(path.join(OUT, 'expected.json'), JSON.stringify({total: cut.total, title: {at: 0.4, dur: 2.5}}));
+
+  // Ton und Übergänge (2.34): „Stimme aufbereiten“ und eine Blende am ersten Schnitt – als eigener Export nach den Prüfungen oben
+  const ton = await ev(() => {
+    commit(() => { P.audio = {voice: {on: true}}; }, false); audioDirty();
+    const k = cutList()[0]; if (k != null) joinSet(k, 'fade', 0.4);
+    exFmt = 'video'; const plan = buildPlan();
+    return {cuts: cutList().length, parts: joinParts.length, trans: (plan.trans || []).length, voice: plan.segments.filter(s => s.voice).length, total};
+  });
+  step('Stimme aufbereiten und Übergang stehen im Plan', ton.parts >= 1 && ton.trans >= 1 && ton.voice >= 1 && Math.abs(ton.total - cut.total) < 0.01, ton);
+  await exportAs('video', 'out-ton.mp4');
 
   // Neu laden: Projekt bleibt erhalten, Dateizugriff wird neu erteilt
   await page.reload();

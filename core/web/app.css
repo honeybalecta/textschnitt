@@ -1229,3 +1229,18 @@ label.col input{width:100%}
 .fh-t mark{background:rgba(229,64,42,.3);color:var(--creme);border-radius:3px;padding:0 2px}
 .fh-row .btn.small{flex:none}
 .fh-proj > .btn.ghost{margin-top:6px}
+
+/* ── 2.34: Ton – Musik weicht der Sprache, Stimme aufbereiten, Übergänge ── */
+.tone-box{border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin:8px 0 12px}
+.tone-box p{margin:6px 0 0}
+.tone-box .field{margin-top:8px}
+.tone-box .tone-sep{border-top:1px solid var(--line);margin:10px -12px 10px}
+/* Übergang: Ebene über dem Hauptbild mit dem Material des anderen Clips (Blende über die Deckkraft) */
+.trans-ov{position:absolute;inset:0;z-index:3;background:#000;overflow:hidden;pointer-events:none}
+.trans-ov img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;transform-origin:50% 50%}
+/* Marke am Schnitt in der Zeitleiste */
+.jn{position:absolute;top:50%;width:16px;height:16px;margin:-8px 0 0 -8px;border-radius:50%;border:1.5px solid var(--creme);background:var(--honig);z-index:6;cursor:pointer;box-shadow:0 0 0 1.5px rgba(0,0,0,.45)}
+.jn.fade{background:linear-gradient(90deg,var(--anthrazit) 0 50%,var(--honig) 50% 100%)}
+.jn.early::after,.jn.late::after{content:"";position:absolute;inset:3px;background:var(--creme);clip-path:polygon(0 50%,100% 0,100% 100%)}
+.jn.late::after{clip-path:polygon(0 0,100% 50%,0 100%)}
+.jn.off{opacity:.45}   /* gewählt, aber an diesem Schnitt fehlt das Bildmaterial dafür */

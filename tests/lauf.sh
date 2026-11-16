@@ -51,8 +51,11 @@ bericht() {
 # Ein einzelner Lauf: tests/lauf.sh <Datei> [Angaben]
 EINZELN=("$@")
 
-# 1) Backend ohne Browser
-if [ ${#EINZELN[@]} -eq 0 ]; then lauf hart python3 "$HERE/backend_test.py"; fi
+# 1) Backend ohne Browser; Rechenkern für den Ton in allen drei Fassungen (Python, JavaScript, Java)
+if [ ${#EINZELN[@]} -eq 0 ]; then
+  lauf hart python3 "$HERE/backend_test.py"
+  lauf hart python3 "$HERE/rechenkern.py" "$HC_WORK/rechenkern"
+fi
 
 # 2) Testmedien, Backend, Testprojekte
 python3 "$HERE/medien.py" "$HC_WORK/media" >> "$LOG" 2>&1 || { echo "Die Testmedien ließen sich nicht erzeugen (ffmpeg vorhanden?)"; tail -5 "$LOG"; exit 1; }
@@ -83,6 +86,8 @@ lauf hart node "$HERE/p_hausstil.mjs"
 lauf hart node "$HERE/p_export.mjs"
 lauf hart node "$HERE/p_untertitel.mjs"
 lauf hart node "$HERE/p_clips.mjs"
+lauf hart node "$HERE/p_ton.mjs"
+lauf hart node "$HERE/p_browser.mjs"
 for p in stress edit multi editWord; do lauf hart node "$HERE/p_stand.mjs" $p; done
 for p in stress edit; do lauf hart node "$HERE/p_wiedergabe.mjs" $p; done
 

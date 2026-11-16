@@ -2,13 +2,15 @@
 """Prüfungen des Backends ohne Browser: sicheres Speichern, frühere Fassungen, Papierkorb, Speicher verwalten,
 alle Projekte sichern und einspielen, Projekt weitergeben, Vorschaubild der Projektliste, Textzeile und Untertitel im Export,
 Quellenzeilen und Textfassung, Schrift im Export (Größe und Umbruch wie in der Vorschau), Hinweis aus dem eigenen Wörterbuch für Whisper,
-Hinweis auf neue Versionen, Fehlerbericht.
+Ton (Verlauf für „Musik weicht der Sprache“, „Stimme aufbereiten“) und Übergänge im Export, Hinweis auf neue Versionen, Fehlerbericht.
 Läuft in einem frischen Datenordner; nichts verlässt den Rechner (GitHub ist nachgestellt).
-Aufruf: python3 tests/backend_test.py"""
+Aufruf: python3 tests/backend_test.py            alles
+        python3 tests/backend_test.py ton_234    nur ein Teil (Name der Funktion)"""
 import gzip
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -838,6 +840,188 @@ def untertitel_effekte():
     chk("ASS: der Kasten steht in jedem Abschnitt und blendet mit ein", len([ln for ln in ev if "\\p4" in ln]) == len(T.fx_slices(box[0])) and "\\fad(160,0)" in next(ln for ln in ev if "\\p4" in ln), len(ev))
 
 
+def ton_234():
+    """2.34: Verlauf für „Musik weicht der Sprache“ (auch über die Stückelung langer Exporte hinweg), Rechenkern und Vorarbeit für
+    „Stimme aufbereiten“, Übergänge als Ebenen je Abschnitt – bildgenau abgelesen an takt.mp4 (siehe medien.py)."""
+    import hashlib
+    import wave
+    import numpy as np
+    sys.path.insert(0, str(HERE))
+    import medien
+    import takt_lesen
+    vd = TMP / "videos"
+    vd.mkdir(parents=True, exist_ok=True)
+    medien.takt(vd)
+    video = str(vd / "takt.mp4")
+    sr = 48000
+    musik = vd / "musik3k.wav"
+    tone = (0.2 * np.sin(2 * np.pi * 3000 * np.arange(10 * sr) / sr) * 32767).astype("<i2")
+    with wave.open(str(musik), "wb") as f:
+        f.setnchannels(2)
+        f.setsampwidth(2)
+        f.setframerate(sr)
+        f.writeframes(np.repeat(tone[:, None], 2, axis=1).tobytes())
+
+    def pcm(file, rate=sr):
+        raw = subprocess.run([T.FFMPEG, "-v", "error", "-i", str(file), "-vn", "-ac", "1", "-ar", str(rate), "-f", "s16le", "-"], capture_output=True, check=True).stdout
+        return np.frombuffer(raw, dtype="<i2").astype(float) / 32768
+
+    def band_db(x, a, b, lo, hi, rate=sr):   # Pegel eines Frequenzbands in einem Zeitfenster
+        w = x[int(a * rate): int(b * rate)]
+        sp = np.abs(np.fft.rfft(w * np.hanning(len(w)))) ** 2
+        fr = np.fft.rfftfreq(len(w), 1 / rate)
+        return 10 * np.log10(sp[(fr >= lo) & (fr <= hi)].sum() / len(w) ** 2 + 1e-15)
+
+    def seg(a, b, **kw):
+        return {"kind": "main", "src": 0, "uri": video, "in": a, "out": b, "zooms": [], "hasAudio": True, "hasVideo": True, "speed": 1, "vol": 1,
+                "bright": 0, "contrast": 0, "sat": 0, "gray": False, "tx": 0, "ty": 0, "sc": 1, **kw}
+
+    def plan(name, segs, fmt="video", **kw):
+        return {"format": fmt, "name": name, "width": 640, "height": 360, "fps": 30, "total": round(sum(s["out"] - s["in"] for s in segs), 3), "quality": "klein", "burn": False,
+                "audioFormat": "wav", "overlays": [], "segments": segs,
+                "sources": [{"uri": video, "name": "takt.mp4", "duration": 30, "width": 640, "height": 360, "fps": 30, "hasAudio": True, "hasVideo": True}], **kw}
+
+    # ── Verlauf ──
+    pts = T.clean_curve([[3, 0.2], [1, 1], ["x", 1], [1.25, 0.2], [3.8, 1.5], [0, 1], None])
+    chk("Verlauf: nach Zeit geordnet, Unlesbares fällt weg, Werte bleiben zwischen 0 und 1", pts == [[0, 1], [1, 1], [1.25, 0.2], [3, 0.2], [3.8, 1]], pts)
+    chk("Verlauf: dazwischen linear, davor und dahinter gilt der Randwert", abs(T.curve_at(pts, 1.125) - 0.6) < 1e-9 and T.curve_at(pts, -5) == 1 and T.curve_at(pts, 99) == 1 and T.curve_at([], 3) == 1)
+    sh = T.shift_curve(pts, 1.125, 2.5)
+    chk("Verlauf für ein Stück: beginnt und endet mit dem Wert an seinen Rändern, die Punkte dazwischen rücken mit",
+        len(sh) == 4 and sh[0][0] == 0 and abs(sh[0][1] - 0.6) < 1e-9 and abs(sh[1][0] - 0.125) < 1e-9 and abs(sh[2][0] - 1.875) < 1e-9 and sh[3][0] == 2.5 and abs(sh[3][1] - 0.825) < 1e-9, sh)
+    chk("ohne Verlauf bleibt die Lautstärke bei 1", T.gain_expr([]) == "1" and T.shift_curve([], 3, 2) == [])
+    a0 = T.export_job(job(), plan("ton_ohne", [seg(0, 6)], "audio", overlays=[{"mode": "audio", "uri": str(musik), "in": 0, "out": 6, "at": 0, "track": 1, "vol": 1, "hasAudio": True}],
+                                  duck=[[0, 1], [1, 1], [1.25, 0.2], [3, 0.2], [3.8, 1]]))
+    a1 = T.export_job(job(), plan("ton_weicht", [seg(0, 6)], "audio", overlays=[{"mode": "audio", "uri": str(musik), "in": 0, "out": 6, "at": 0, "track": 1, "vol": 1, "hasAudio": True, "duck": True}],
+                                  duck=[[0, 1], [1, 1], [1.25, 0.2], [3, 0.2], [3.8, 1]]))
+    x0, x1 = pcm(a0["playable"]), pcm(a1["playable"])
+    m = [band_db(x1, a, b, 2900, 3100) - band_db(x0, a, b, 2900, 3100) for a, b in ((0.2, 0.9), (1.5, 2.9), (4.2, 5.8))]
+    chk("Export: Die Tonspur mit duck folgt dem Verlauf (−14 dB im abgesenkten Teil, davor und danach unverändert)", abs(m[0]) < 0.5 and abs(m[1] + 14) < 0.7 and abs(m[2]) < 0.5, [round(v, 2) for v in m])
+    mid = band_db(x1, 3.3, 3.5, 2900, 3100) - band_db(x0, 3.3, 3.5, 2900, 3100)
+    chk("Export: Im Anstieg liegt der Pegel dazwischen", -11 < mid < -3, round(mid, 2))
+    chk("Export: Eine Tonspur ohne duck bleibt trotz Verlauf im Plan gleich laut", abs(band_db(x0, 1.5, 2.9, 2900, 3100) - band_db(x0, 4.2, 5.8, 2900, 3100)) < 0.3)
+    low = [band_db(x1, a, b, 100, 2500) - band_db(x0, a, b, 100, 2500) for a, b in ((0.2, 0.9), (1.5, 2.9))]
+    chk("Export: Der Ton der Hauptspur bleibt vom Verlauf unberührt", max(abs(v) for v in low) < 0.5, [round(v, 2) for v in low])
+
+    # ── Stimme aufbereiten: Rechenkern ──
+    rng = np.random.default_rng(7)
+    n = 4 * sr
+    t = np.arange(n) / sr
+    noise = 0.01 * rng.standard_normal((n, 2))
+    dsp = T.VoiceDsp(sr, 2)
+    dsp.prime(noise[: 2 * sr])
+    y = dsp.process(noise, [])
+    red = 20 * np.log10(np.sqrt((y[sr:] ** 2).mean()) / np.sqrt((noise[sr:] ** 2).mean()))
+    chk("Stimme: gleichmäßiges Rauschen wird um rund 10 dB leiser, die Länge bleibt", y.shape == noise.shape and -13 < red < -8, round(red, 2))
+    hum = np.repeat((0.05 * np.sin(2 * np.pi * 50 * t))[:, None], 2, axis=1)
+    dsp = T.VoiceDsp(sr, 2)
+    yh = dsp.process(hum + noise, [])
+    f50 = lambda v: band_db(v[:, 0], 1.0, 3.9, 40, 60)   # noqa: E731
+    chk("Stimme: Brummen bei 50 Hz verschwindet weitgehend", f50(yh) - f50(hum + noise) < -15, round(f50(yh) - f50(hum + noise), 1))
+    gate = (np.sin(2 * np.pi * 1.5 * t) > 0).astype(float)
+    gate = np.convolve(gate, np.ones(480) / 480, mode="same")
+    voice = np.repeat((0.2 * gate * sum(np.sin(2 * np.pi * 180 * h * t) / h for h in range(1, 20)))[:, None], 2, axis=1)
+    dsp = T.VoiceDsp(sr, 2)
+    dsp.prime((voice + noise)[: 2 * sr])
+    yv = dsp.process(voice + noise, [])
+    on = gate > 0.99
+    keep = 20 * np.log10(np.sqrt((yv[on] ** 2).mean()) / np.sqrt(((voice + noise)[on] ** 2).mean()))
+    chk("Stimme: Die Sprache selbst behält ihren Pegel (höchstens der feste Ausgleich von 1,5 dB kommt dazu)", -1.5 < keep < 2.5, round(keep, 2))
+    z = T.VoiceDsp(sr, 2).process(np.zeros((sr, 2)), [])
+    chk("Stimme: Stille bleibt Stille", z.shape == (sr, 2) and float(np.abs(z).max()) == 0.0)
+    dsp = T.VoiceDsp(sr, 2)
+    dsp.prime((voice + noise)[: 2 * sr])
+    yl = dsp.process(voice + noise, [[0, 0.5], [4, 0.5]])
+    lv = 20 * np.log10(np.sqrt((yl[on] ** 2).mean()) / np.sqrt((yv[on] ** 2).mean()))
+    chk("Stimme: Der Pegelverlauf wirkt als Faktor (0,5 = −6 dB)", abs(lv + 6.02) < 0.4, round(lv, 2))
+    chk("Pegelverlauf aus dem Plan: geordnet und auf 0,1 bis 4 begrenzt", T.clean_level([[2, 9], [0, 0.01], "x", [1, 1.5]]) == [[0, 0.1], [1, 1.5], [2, 4.0]])
+
+    # ── Stimme aufbereiten: Vorarbeit und Export ──
+    tmp = Path(tempfile.mkdtemp(prefix="honeycut-stimme-"))
+    pv = plan("x", [seg(0, 2, voice={"k": "s0"}), seg(3, 5, voice={"k": "s0", "lvl": [[0, 2], [2, 2]]}), seg(6, 7), {**seg(8, 9, voice={"k": "s0"}), "hasAudio": False}])
+    cnt = T.voice_prepare(job(), pv, tmp)
+    files = [s.get("_voice") for s in pv["segments"]]
+    lens = []
+    for name in files[:2]:
+        raw = (tmp / name).read_bytes()
+        lens.append((len(raw) - 44) // 8)
+    chk("Vorarbeit: je Abschnitt mit voice eine Tondatei in voller Länge; Abschnitte ohne voice oder ohne Ton bleiben, wie sie sind",
+        cnt == 2 and files[2] is None and files[3] is None and lens == [2 * sr, 2 * sr], [cnt, files, lens])
+    ya, yb = (np.frombuffer((tmp / name).read_bytes()[44:], dtype="<f4").reshape(-1, 2) for name in files[:2])
+    ra, rb = np.sqrt((ya ** 2).mean()), np.sqrt((yb ** 2).mean())
+    chk("Vorarbeit: Der Pegelverlauf des Abschnitts steckt in der Tondatei", 4.5 < 20 * np.log10(rb / ra) < 7.5, round(20 * np.log10(rb / ra), 2))
+    T.voice_prepare(job(), plan("x", [seg(0, 2)]), tmp)
+    inp, graph = T.build_graph(pv, False, None)
+    chk("Filtergraph: Aufbereitete Abschnitte lesen ihre Tondatei, die übrigen den Ton der Aufnahme",
+        sum(1 for a in inp if a in files[:2]) == 2 and inp.count("-i") == 6 and graph.count("atrim=start=") == 1, [inp.count("-i"), graph.count("atrim=start=")])
+    shutil.rmtree(tmp, ignore_errors=True)
+    v0 = T.export_job(job(), plan("stimme_ohne", [seg(0, 2), seg(3, 5)], "audio"))
+    v1 = T.export_job(job(), plan("stimme_mit", [seg(0, 2, voice={"k": "s0"}), seg(3, 5, voice={"k": "s0"})], "audio"))
+    p0, p1 = pcm(v0["playable"]), pcm(v1["playable"])
+    chk("Export mit aufbereiteter Stimme: gleiche Länge, der Ton ist bearbeitet", len(p0) == len(p1) == 4 * sr and float(np.abs(p0 - p1).max()) > 0.01, [len(p0), len(p1)])
+
+    # ── Übergänge ──
+    segs3 = lambda: [seg(0, 2), seg(3, 5), seg(6, 8)]   # noqa: E731
+    lay = lambda a, b: {**seg(a, b), "hasAudio": False, "vol": 0}   # noqa: E731
+    tr3 = [{"at": 1.6, "d": 0.4, "a0": 0, "a1": 1, "lead": 0, "tail": 0.1, "over": 0, "seg": lay(2.6, 3.1)},      # Blende vor dem ersten Schnitt
+           {"at": 4.0, "d": 0.5, "a0": 1, "a1": 1, "lead": 0.1, "tail": 0, "over": 2, "seg": lay(4.9, 5.5)}]     # Bild später am zweiten Schnitt
+    pt = plan("x", segs3(), trans=tr3 + [{"at": 1, "d": 0.5, "over": 9, "seg": lay(0, 1)}, {"at": 1, "d": 0.01, "over": 1, "seg": lay(0, 1)}, {"at": 1, "d": 0.5, "over": 1}, "x"])
+    T.trans_prepare(pt)
+    got = [[(round(q["off"], 3), q["d"]) for q in s.get("_trans", [])] for s in pt["segments"]]
+    chk("Übergänge hängen an dem Abschnitt, über dem sie liegen, mit ihrem Beginn im Abschnitt; Unbrauchbares fällt weg", got == [[(1.6, 0.4)], [], [(0.0, 0.5)]], got)
+    pt2 = plan("x", segs3(), trans=[{**tr3[1], "at": 4.004}])
+    T.trans_prepare(pt2)
+    chk("Beginnt eine Ebene auf Millisekunden am Schnitt, gilt sie vom ersten Bild des Abschnitts an", pt2["segments"][2]["_trans"][0]["off"] == 0.0)
+    inp, graph = T.build_graph(pt, True, None)
+    chk("Filtergraph: je Ebene eine eigene Eingabe und ein Auflegen vor dem Aneinanderhängen",
+        inp.count("-i") == 5 and graph.count("eof_action=pass") == 2 and graph.count("settb=AVTB") == 2 and "concat=n=3" in graph, inp.count("-i"))
+    inp, graph = T.build_graph(pt, False, None)
+    chk("Nur Ton: Übergänge spielen keine Rolle", inp.count("-i") == 3 and "overlay" not in graph, inp.count("-i"))
+
+    def frames(file):
+        return takt_lesen.lesen(str(file))["frames"]
+
+    def audio_md5(file):
+        return hashlib.md5(subprocess.run([T.FFMPEG, "-v", "error", "-i", str(file), "-vn", "-f", "s16le", "-"], capture_output=True, check=True).stdout).hexdigest()
+
+    def alpha(v, a, b):   # Anteil des Bilds b in einer Mischung mit dem Bild a (Balken, in denen sich beide unterscheiden)
+        est = [(v[k] - ((a >> k) & 1)) / (((b >> k) & 1) - ((a >> k) & 1)) for k in range(10) if ((a >> k) & 1) != ((b >> k) & 1)]
+        return sum(est) / len(est)
+    h3 = T.export_job(job(), plan("takt_hart", segs3()))
+    e3 = T.export_job(job(), plan("takt_weich", segs3(), trans=tr3))
+    fh, fe = frames(h3["playable"]), frames(e3["playable"])
+    want_h = list(range(0, 60)) + list(range(90, 150)) + list(range(180, 240))
+    chk("ohne Übergänge: harte Schnitte, jedes Bild an seiner Stelle", [f[1] for f in fh] == want_h, len(fh))
+    chk("mit Übergängen bleibt das Video gleich lang, der Ton gleich", len(fe) == len(fh) == 180 and audio_md5(e3["playable"]) == audio_md5(h3["playable"]), [len(fe), len(fh)])
+    # Blende 0,4 s vor dem Schnitt bei 2,0 s: Ebene ab Bild 48 (Material ab Bild 78), Deckkraft j/12
+    al = [alpha(fe[i][2], i, 78 + i - 48) for i in range(48, 60)]
+    chk("Blende: Die Deckkraft steigt gleichmäßig von 0 auf 1 und ist am Schnitt fertig", all(abs(al[j] - j / 12) < 0.06 for j in range(12)), [round(v, 2) for v in al])
+    chk("Blende: davor das Bild des vorigen Clips, danach nahtlos der nächste", [f[1] for f in fe[40:48]] == list(range(40, 48)) and [f[1] for f in fe[60:70]] == list(range(90, 100)))
+    # „Bild später“ 0,5 s am Schnitt bei 4,0 s: der vorige Clip läuft 15 Bilder weiter (150–164), dann der nächste ab seinem 16. Bild
+    chk("Bild später: Der vorige Clip läuft im Bild weiter, dann steigt der nächste an der richtigen Stelle ein",
+        [f[1] for f in fe[110:140]] == list(range(140, 165)) + list(range(195, 200)), [f[1] for f in fe[116:140]])
+    # lange Exporte in Stücken: acht Abschnitte zu je 0,5 s (15 Bilder), Schnitt k bei 0,5·k s; das erste Stück endet nach Abschnitt 5
+    segs8 = [seg(m, m + 0.5) for m in range(8)]
+    tr8 = [{"at": 0.5, "d": 0.2, "a0": 1, "a1": 0, "lead": 0.1, "tail": 0, "over": 1, "seg": lay(0.4, 0.7)},      # Blende hinter dem ersten Schnitt
+           {"at": 2.8, "d": 0.2, "a0": 1, "a1": 1, "lead": 0, "tail": 0.1, "over": 5, "seg": lay(5.8, 6.1)},     # Bild früher am Schnitt zwischen den Stücken
+           {"at": 3.5, "d": 0.2, "a0": 1, "a1": 1, "lead": 0.1, "tail": 0, "over": 7, "seg": lay(6.4, 6.7)}]     # Bild später im zweiten Stück
+    mus = [{"mode": "audio", "uri": str(musik), "in": 0, "out": 4, "at": 0, "track": 1, "vol": 1, "hasAudio": True, "duck": True}]
+    h8 = T.export_job(job(), plan("takt8_hart", segs8, overlays=mus))
+    e8 = T.export_job(job(), plan("takt8_weich", [seg(m, m + 0.5) for m in range(8)], overlays=mus, trans=tr8, duck=[[0, 1], [2.9, 1], [3.1, 0.2], [9, 0.2]]))
+    f8 = frames(e8["playable"])
+    n8 = [f[1] for f in f8]
+    chk("Stückelung: gleiche Länge wie ohne Übergänge", len(f8) == len(frames(h8["playable"])) == 120, len(f8))
+    chk("Stückelung: Bild früher am Schnitt zwischen zwei Stücken (sechs Bilder des nächsten Clips, dann nahtlos weiter)", n8[78:96] == list(range(153, 159)) + list(range(174, 186)), n8[78:96])
+    chk("Stückelung: Bild später im zweiten Stück", n8[99:114] == list(range(189, 201)) + list(range(216, 219)), n8[99:114])
+    al8 = [alpha(f8[i][2], 30 + i - 15, 15 + i - 15) for i in range(15, 21)]
+    chk("Stückelung: Blende hinter dem Schnitt läuft von 1 auf 0", all(abs(al8[j] - (1 - j / 6)) < 0.06 for j in range(6)) and n8[21:30] == list(range(36, 45)), [round(v, 2) for v in al8])
+    y8, y8h = pcm(e8["playable"]), pcm(h8["playable"])
+    d8 = [band_db(y8, a, b, 2900, 3100) - band_db(y8h, a, b, 2900, 3100) for a, b in ((0.3, 2.7), (3.3, 3.9))]
+    chk("Stückelung: Der Verlauf für „Musik weicht der Sprache“ gilt über die Stücke hinweg", abs(d8[0]) < 0.6 and abs(d8[1] + 14) < 0.8, [round(v, 2) for v in d8])
+    # die Probe, die auch der Selbsttest der gebauten Windows-App fährt
+    st = T.ton_selftest()
+    chk("Selbsttest der App: Absenkung, aufbereitete Stimme und Übergang im fertigen Video nachgemessen", st.get("ok") is True, st)
+
+
 def bericht_und_protokoll():
     logged = []
     T.log = lambda msg: logged.append(msg)
@@ -858,7 +1042,8 @@ def bericht_und_protokoll():
 if MODE == "umzug":
     umzug()
     sys.exit(1 if BAD else 0)
-for part in (speichern_und_fassungen, speicher, sicherung, projektpakete, kleine_helfer, quellen_und_belege, schrift_im_export, transkript, export_231, untertitel_effekte, neue_versionen, bericht_und_protokoll):
+PARTS = (speichern_und_fassungen, speicher, sicherung, projektpakete, kleine_helfer, quellen_und_belege, schrift_im_export, transkript, export_231, untertitel_effekte, ton_234, neue_versionen, bericht_und_protokoll)
+for part in [p for p in PARTS if p.__name__ == MODE] or PARTS:
     print(f"── {part.__name__.replace('_', ' ')} ──", flush=True)
     part()
 print(f"ERGEBNIS Backend ohne Browser: {N} geprüft, {BAD} Fehler")

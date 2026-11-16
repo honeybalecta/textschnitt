@@ -3,6 +3,8 @@
    kurz.mp4 (3 min) und lang.mp4 (6 min) mit sprachähnlichem Ton und passender Wortliste (*.words.json),
    anlauf.mp4 (knapp 1 min) mit festem Text: Anläufe, Füllwörter, unsichere Wörter und falsch geschriebene Namen,
    serie.mp4 (knapp 3 min) mit festem Text in sechs Absätzen: Fragen, Zahlen und Schlagwörter für die Clip-Vorschläge,
+   ton.mp4 (Sprache mit Rauschen, Brummen und Nachhall) und musik.wav für die Prüfungen am Ton,
+   takt.mp4 (30 s): jedes Bild trägt seine Nummer als Balkenmuster – daran lesen die Prüfungen Schnitte und Übergänge bildgenau ab,
    drei kurze Einspieler (broll1–3.mp4), acht Folienbilder und ein Logo.
 Aufruf: python3 tests/medien.py <Zielordner>   – vorhandene Dateien bleiben stehen."""
 import array
@@ -142,6 +144,112 @@ def skript(wav: Path, words_json: Path, items: list) -> float:
     return length
 
 
+# Prüfmedium zum Ton (2.34): drei Sprechblöcke, dazwischen eine Pause von gut vier Sekunden und eine von 1,2 s. Der zweite Block
+# ist 9 dB leiser aufgenommen. Über allem liegen Rauschen und ein Brummen bei 50 Hz, die Sprache trägt Nachhall (0,6 s).
+# (Sätze, Pegel des Blocks, Pause nach dem Block in Sekunden)
+TON = [
+    (["Heute sprechen wir über den Ton in unseren Videos.", "Musik soll leiser werden, sobald jemand spricht."], 1.0, 4.2),
+    (["Diese Stelle ist deutlich leiser aufgenommen als der Anfang.", "Das gleicht HoneyCut beim Aufbereiten aus."], 0.355, 1.2),
+    (["Am Ende kommt die Musik zurück."], 1.0, 4.0),
+]
+TON_SR = 48000
+TON_START = 3.0      # so lange läuft am Anfang nur der Raum
+TON_NOISE = 0.006    # Rauschen (Effektivwert), rund −44 dBFS
+TON_HUM = 0.03       # Brummen bei 50 Hz (Scheitelwert), rund −33 dBFS
+
+
+def ton(out: Path) -> None:
+    """ton.mp4 (mit ton.words.json und ton.json: Lage der Blöcke, Pegel) und musik.wav (gleichmäßiger Zweiklang, 40 s)."""
+    import numpy as np
+    sr, rng = TON_SR, np.random.default_rng(11)
+    words, blocks, t = [], [], TON_START
+    plan = []
+    for sents, level, pause in TON:
+        b0 = t
+        for si, sent in enumerate(sents):
+            ws = sent.split()
+            for k, w in enumerate(ws):
+                d = 0.14 + 0.045 * len(w.strip(".,"))
+                plan.append((t, d, level, rng.uniform(110, 220)))
+                words.append({"text": " " + w, "start": round(t, 3), "end": round(t + d, 3), "prob": 0.92})
+                t += d + (0.05 if k < len(ws) - 1 else 0.5 if si < len(sents) - 1 else 0.0)
+        blocks.append({"a": round(b0, 3), "b": round(t, 3), "level": level})
+        t += pause
+    length = t
+    n = int(length * sr)
+    dry = np.zeros(n)
+    for a, d, level, f0 in plan:
+        m = int(d * sr)
+        i = np.arange(m)
+        env = np.minimum(1.0, np.minimum(i / (0.02 * sr), (m - i) / (0.03 * sr)))
+        # Grundton mit Obertönen bis 6 kHz, zu den Höhen hin leiser – genug, damit auch oberhalb von 2 kHz Sprache liegt
+        sig = sum(np.sin(2 * np.pi * f0 * h * i / sr + h) / h ** 1.2 for h in range(1, int(6000 / f0)))
+        dry[int(a * sr): int(a * sr) + m] += 0.16 * level * env * sig
+    # Nachhall: abklingendes Rauschen, 60 dB in 0,6 s, 8 dB unter dem Direktschall
+    m = int(0.7 * sr)
+    ir = rng.standard_normal(m) * np.exp(-6.9 * np.arange(m) / (0.6 * sr))
+    ir[: int(0.01 * sr)] = 0
+    ir *= 10 ** (-8 / 20) / np.sqrt((ir ** 2).sum())
+    size = 1 << int(np.ceil(np.log2(n + m)))
+    wet = np.fft.irfft(np.fft.rfft(dry, size) * np.fft.rfft(ir, size), size)[:n]
+    tt = np.arange(n) / sr
+    audio = dry + wet + TON_NOISE * rng.standard_normal(n) + TON_HUM * np.sin(2 * np.pi * 50 * tt) + 0.4 * TON_HUM * np.sin(2 * np.pi * 100 * tt)
+    wav = out / "ton.wav"
+    with wave.open(str(wav), "wb") as f:
+        f.setnchannels(1)
+        f.setsampwidth(2)
+        f.setframerate(sr)
+        f.writeframes((np.clip(audio, -1, 1) * 32767).astype("<i2").tobytes())
+    ff("-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30", "-i", str(wav), "-t", f"{length:.2f}",
+       "-c:v", "libx264", "-preset", "veryfast", "-crf", "30", "-g", "30", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", str(out / "ton.mp4"))
+    wav.unlink()
+    (out / "ton.words.json").write_text(json.dumps(words, ensure_ascii=False), encoding="utf-8")
+    (out / "ton.json").write_text(json.dumps({"length": round(length, 3), "start": TON_START, "blocks": blocks, "noise": TON_NOISE, "hum": TON_HUM}), encoding="utf-8")
+    # Musik: zwei Töne weit oberhalb der Sprache (2 und 3,1 kHz) – ihr Pegel lässt sich im fertigen Ton für sich messen
+    tm = np.arange(40 * sr) / sr
+    mus = 0.12 * np.sin(2 * np.pi * 2000 * tm) + 0.08 * np.sin(2 * np.pi * 3100 * tm)
+    with wave.open(str(out / "musik.wav"), "wb") as f:
+        f.setnchannels(2)
+        f.setsampwidth(2)
+        f.setframerate(sr)
+        f.writeframes((np.repeat(mus[:, None], 2, axis=1) * 32767).astype("<i2").tobytes())
+    print("ton.mp4", f"{length:.1f} s · musik.wav 40 s")
+
+
+TAKT_S, TAKT_FPS, TAKT_BITS = 30, 30, 10
+
+
+def takt(out: Path) -> None:
+    """takt.mp4 (30 s, 30 Bilder/s) mit takt.words.json: Jedes Bild zeigt seine Nummer als zehn senkrechte Balken (von links:
+    Stelle 0 bis 9 der Dualzahl, hell = 1). Im fertigen Export lässt sich so ablesen, welches Bild der Quelle zu sehen ist –
+    und bei einer Blende, zu welchem Anteil. Der Ton: je halbe Sekunde ein kurzer Ton, dazu ein Wort in der Wortliste."""
+    import numpy as np
+    sr = 48000
+    n = TAKT_S * sr
+    audio, words = np.zeros(n), []
+    names = "eins zwei drei vier fünf sechs sieben acht neun zehn".split()
+    for k in range(TAKT_S * 2):
+        a, d = 0.5 * k + 0.05, 0.4
+        m = int(d * sr)
+        i = np.arange(m)
+        env = np.minimum(1.0, np.minimum(i / (0.02 * sr), (m - i) / (0.03 * sr)))
+        f0 = 140 + 12 * (k % 10)
+        audio[int(a * sr): int(a * sr) + m] += 0.15 * env * sum(np.sin(2 * np.pi * f0 * h * i / sr) / h for h in range(1, 9))
+        words.append({"text": " " + names[k % 10] + ("." if k % 10 == 9 else ""), "start": round(a, 3), "end": round(a + d, 3), "prob": 0.95})
+    wav = out / "takt.wav"
+    with wave.open(str(wav), "wb") as f:
+        f.setnchannels(1)
+        f.setsampwidth(2)
+        f.setframerate(sr)
+        f.writeframes((np.clip(audio, -1, 1) * 32767).astype("<i2").tobytes())
+    bars = f"geq=lum='if(gt(mod(floor(N/pow(2,floor(X*{TAKT_BITS}/W))),2),0),232,24)':cb=128:cr=128"
+    ff("-f", "lavfi", "-i", f"color=c=black:size=160x90:rate={TAKT_FPS},format=yuv420p,{bars},scale=640:360:flags=neighbor", "-i", str(wav), "-t", str(TAKT_S),
+       "-c:v", "libx264", "-preset", "veryfast", "-crf", "24", "-g", "30", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", str(out / "takt.mp4"))
+    wav.unlink()
+    (out / "takt.words.json").write_text(json.dumps(words, ensure_ascii=False), encoding="utf-8")
+    print("takt.mp4", f"{TAKT_S} s")
+
+
 def ff(*args: str) -> None:
     subprocess.run(["ffmpeg", "-v", "error", "-y", *args], check=True)
 
@@ -170,6 +278,10 @@ def main(out: Path) -> None:
         ff("-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30", "-i", str(wav), "-t", f"{length:.2f}", *enc, str(out / "serie.mp4"))
         wav.unlink()
         print("serie.mp4", f"{length:.1f} s")
+    if not all((out / f).exists() for f in ("ton.mp4", "ton.words.json", "ton.json", "musik.wav")):
+        ton(out)
+    if not all((out / f).exists() for f in ("takt.mp4", "takt.words.json")):
+        takt(out)
     for k, (src, freq) in enumerate((("testsrc=size=640x360:rate=30", 440), ("smptebars=size=640x360:rate=30", 554), ("rgbtestsrc=size=640x360:rate=30", 659)), 1):
         mp4 = out / f"broll{k}.mp4"
         if not mp4.exists():

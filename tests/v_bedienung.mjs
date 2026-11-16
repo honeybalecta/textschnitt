@@ -21,7 +21,7 @@ async function run(label, url){
     await sleep(350);
     const s = await page.evaluate(() => {
       const h = str => { let x = 0; for (let i = 0; i < str.length; i++) x = (x * 31 + str.charCodeAt(i)) | 0; return x; };
-      const sn = JSON.parse(snapshot()); delete sn.fm; delete sn.fr; delete sn.sv; delete sn.mk; delete sn.tl; delete sn.rf; delete sn.ss; delete sn.lw; delete sn.ck; delete sn.kw; delete sn.cl; delete sn.pt; delete sn.ps;   // neue Felder des Stands (Format, Ausschnitt, Lautstärke, Marken, Textzeile, Quellen, Bauchbinden, Prüfliste, Betonungen, Vorgemerktes, Teil einer Reihe) nicht mitvergleichen
+      const sn = JSON.parse(snapshot()); delete sn.fm; delete sn.fr; delete sn.sv; delete sn.mk; delete sn.tl; delete sn.rf; delete sn.ss; delete sn.lw; delete sn.ck; delete sn.kw; delete sn.cl; delete sn.pt; delete sn.ps; delete sn.au;   // neue Felder des Stands (Format, Ausschnitt, Lautstärke, Marken, Textzeile, Quellen, Bauchbinden, Prüfliste, Betonungen, Vorgemerktes, Teil einer Reihe) nicht mitvergleichen
       return { snap: h(JSON.stringify(sn)), n: timeline.length, total: r3(total), out: r3(outPos), sel: TL.sel ? JSON.stringify(TL.sel) : null, tl: h(JSON.stringify(timeline.map(g => [g.kind, r3(g.in), r3(g.out), r3(g.o)]))),
         ov: h(JSON.stringify(overlays.map(o => [o.x.id, r3(o.at), r3(o.end)]))), blocks: document.querySelectorAll('#tlInner .blk').length, pps: +TL.pps.toFixed(3) };
     });

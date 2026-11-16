@@ -9,7 +9,8 @@ on:
         default: ""
   push:
     branches: [main]
-    paths: ["textschnitt.py", "core/**", "tests/**", ".github/workflows/test.yml"]
+    # web/engine.js und die Java-Tonklassen der Android-App werden in den Läufen mitgeprüft (p_browser.mjs, rechenkern.py)
+    paths: ["textschnitt.py", "core/**", "tests/**", "web/engine.js", "android/app/src/main/java/**/*.java", ".github/workflows/test.yml"]
 
 permissions:
   contents: write

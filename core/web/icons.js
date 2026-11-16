@@ -72,6 +72,7 @@
     '⋯': '<circle cx="5" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="19" cy="12" r="1.6" fill="currentColor" stroke="none"/>',
     '❝': '<path d="M10 7H6a1 1 0 0 0-1 1v4h4v1.5A2.5 2.5 0 0 1 6.5 16M19 7h-4a1 1 0 0 0-1 1v4h4v1.5a2.5 2.5 0 0 1-2.5 2.5"/>',
     '❓': '<circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.6 2.2c-.7.4-1.1 1-1.1 1.8M12 17h.01"/>',
+    '⧓': '<path d="M4 6v12l8-6zM20 6v12l-8-6z"/>',
     '▤': '<rect x="9" y="3" width="11" height="15" rx="2"/><path d="M5 7.5V19a2 2 0 0 0 2 2h8.5"/><path d="M12.5 10.5h4M14.5 8.5v4"/>',
     'safe': '<rect x="6" y="2.5" width="12" height="19" rx="2"/><path d="M9 6.5h4M9 10h6v5H9zM9 18h6" stroke-dasharray="1.6 1.6"/>',
   };

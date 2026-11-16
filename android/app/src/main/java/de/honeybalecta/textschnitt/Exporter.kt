@@ -30,6 +30,7 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.common.audio.AudioProcessor
 import androidx.media3.common.audio.ChannelMixingAudioProcessor
 import androidx.media3.common.audio.ChannelMixingMatrix
+import androidx.media3.common.audio.GainProcessor
 import androidx.media3.common.audio.SpeedProvider
 import androidx.media3.effect.BitmapOverlay
 import androidx.media3.effect.Brightness
@@ -60,6 +61,7 @@ import kotlin.math.roundToLong
  * Baut aus dem Schnittplan der Oberfläche eine Media3-Komposition:
  *  – Hauptspur: behaltene Abschnitte + Einschübe (mit Zoom-Effekten), auf Ausgabegröße gebracht
  *  – Overlay-Spur (oben): B-Roll und Bild-im-Bild, dazwischen Lücken, gesteuert per Deckkraft
+ *  – Übergänge: eine Bildspur direkt über der Hauptspur mit dem Bild des anderen Clips (Blende, versetzter Bildwechsel)
  *  – Untertitel als eingebranntes Bild-Overlay über allem
  */
 @OptIn(UnstableApi::class)
@@ -71,6 +73,11 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
     private val h = plan.getInt("height")
 
     private fun us(sec: Double) = (sec * 1_000_000).roundToLong()
+
+    private companion object {
+        /** Kurze Ton-Blende an jeder Schnittkante der Hauptspur (wie unter Windows und im Browser), in Sekunden. */
+        const val CUT_FADE = 0.008
+    }
 
     /** Ausschnitt in der Quelle als NDC (links, rechts, unten, oben), wenn der vergrößerte Clip das Bild ganz füllt. */
     private fun coverWindow(s: JSONObject, sc: Double, tx: Double, ty: Double): FloatArray? {
@@ -87,8 +94,36 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
     }
     private val fps = plan.optDouble("fps", 30.0).let { if (it < 1 || it > 240) 30.0 else it }
 
-    /** Ein Clip aus dem Plan: Video mit Ausschnitt oder Foto mit fester Dauer – plus Tempo, Lautstärke, Farbe. */
-    private fun item(o: JSONObject, inS: Double, outS: Double, removeAudio: Boolean, effects: List<Effect>, removeVideo: Boolean = false, pre: List<Effect> = emptyList()): EditedMediaItem {
+    // „Musik weicht der Sprache“: Verlauf in Ausgabezeit (Sekunden, Werte 0…1) für Tonspuren mit duck = true
+    private val duckT: DoubleArray
+    private val duckG: FloatArray
+    init {
+        val pts = runCatching { plan.optJSONArray("duck")?.let { a -> (0 until a.length()).map { a.getJSONArray(it) }.map { Pair(it.getDouble(0), it.getDouble(1).toFloat()) } } }.getOrNull() ?: emptyList()
+        duckT = DoubleArray(pts.size) { pts[it].first }; duckG = FloatArray(pts.size) { pts[it].second }
+    }
+
+    // „Stimme aufbereiten“: Die Rauschschätzung wandert je Aufnahme von Clip zu Clip dieses Exports
+    private val voiceShared = VoiceProcessor.Shared()
+
+    /** Prozessor für einen Abschnitt der Hauptspur mit voice = {k: Aufnahme, lvl: Pegelverlauf in Quellzeit}; sonst null. */
+    private fun voiceFor(o: JSONObject, speed: Double): AudioProcessor? {
+        val v = o.optJSONObject("voice") ?: return null
+        val pts = runCatching { v.optJSONArray("lvl")?.let { a -> (0 until a.length()).map { a.getJSONArray(it) }.map { Pair(it.getDouble(0), it.getDouble(1)) } } }.getOrNull() ?: emptyList()
+        return VoiceProcessor(voiceShared, v.optString("k", o.optString("uri")), DoubleArray(pts.size) { pts[it].first }, DoubleArray(pts.size) { pts[it].second.coerceIn(0.1, 4.0) }, speed)
+    }
+
+    /** Ton eines Elements neben der Hauptspur: Lautstärke und – wenn es der Sprache weicht – die Absenkung ab seiner Stelle at. */
+    private fun sideAudio(o: JSONObject, at: Double, dur: Double): ArrayList<AudioProcessor> {
+        val ap = ArrayList<AudioProcessor>()
+        val vol = o.optDouble("vol", 1.0).toFloat()
+        if (Math.abs(vol - 1f) > 0.001) ap.add(ChannelMixingAudioProcessor().apply { for (ch in 1..6) putChannelMixingMatrix(ChannelMixingMatrix.createForConstantGain(ch, ch).scaleBy(vol.coerceIn(0f, 8f))) })
+        if (o.optBoolean("duck") && duckT.isNotEmpty()) ap.add(GainProcessor(GainCurve(duckT, duckG, at, 0.0, dur)))
+        return ap
+    }
+
+    /** Ein Clip aus dem Plan: Video mit Ausschnitt oder Foto mit fester Dauer – plus Tempo, Lautstärke, Farbe.
+     *  fade: kurze Ton-Blende an Anfang und Ende des Clips in Sekunden (Schnittkanten der Hauptspur). */
+    private fun item(o: JSONObject, inS: Double, outS: Double, removeAudio: Boolean, effects: List<Effect>, removeVideo: Boolean = false, pre: List<Effect> = emptyList(), fade: Double = 0.0): EditedMediaItem {
         val b = if (o.optBoolean("image")) EditedMediaItem.Builder(
             MediaItem.Builder().setUri(Uri.parse(o.getString("uri"))).setImageDurationMs(((outS - inS) * 1000).roundToLong()).build()
         ).setFrameRate(Math.round(fps).toInt())
@@ -107,6 +142,10 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
             audio.add(mix)
         }
         val speed = o.optDouble("speed", 1.0).toFloat().coerceIn(0.25f, 4f)
+        // Die Position der Ton-Prozessoren zählt in Ausgabezeit des Clips (das Tempo ist dann schon angewandt)
+        if (!removeAudio && !o.optBoolean("image") && o.optBoolean("hasAudio", true)) voiceFor(o, speed.toDouble())?.let { audio.add(0, it) }   // vor Lautstärke und Blenden
+        if (!removeAudio && fade > 0 && !o.optBoolean("image") && o.optBoolean("hasAudio", true))
+            audio.add(GainProcessor(GainCurve(DoubleArray(0), FloatArray(0), 0.0, fade, (outS - inS) / speed)))
         if (Math.abs(speed - 1f) > 0.001) b.setSpeed(object : SpeedProvider {
             override fun getSpeed(timeUs: Long): Float = speed
             override fun getNextSpeedChangeTimeUs(timeUs: Long): Long = C.TIME_UNSET
@@ -133,7 +172,7 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
             val inS = s.getDouble("in"); val outS = s.getDouble("out"); val sp = s.optDouble("speed", 1.0).coerceIn(0.25, 4.0)
             if (outS - inS <= 0.01) continue
             if (s.optBoolean("image")) { main.addGap(us((outS - inS) / sp)); continue }
-            main.addItem(item(s, inS, outS, false, emptyList(), removeVideo = true)); n++
+            main.addItem(item(s, inS, outS, false, emptyList(), removeVideo = true, fade = CUT_FADE)); n++
         }
         require(n > 0) { "Im Schnitt ist kein Ton enthalten." }
         val total = plan.getDouble("total")
@@ -147,9 +186,7 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
                 val at = maxOf(o.getDouble("at"), cursor); val inS = o.getDouble("in"); val dur = minOf(o.getDouble("out") - inS, total - at)
                 if (dur <= 0.05) continue
                 if (at - cursor > 0.01) seq.addGap(us(at - cursor))
-                val vol = o.optDouble("vol", 1.0).toFloat(); val ap = ArrayList<AudioProcessor>()
-                if (Math.abs(vol - 1f) > 0.001) ap.add(ChannelMixingAudioProcessor().apply { for (ch in 1..6) putChannelMixingMatrix(ChannelMixingMatrix.createForConstantGain(ch, ch).scaleBy(vol.coerceIn(0f, 8f))) })
-                seq.addItem(EditedMediaItem.Builder(clip(o.getString("uri"), inS, inS + dur)).setRemoveVideo(true).setEffects(Effects(ap, listOf())).build())
+                seq.addItem(EditedMediaItem.Builder(clip(o.getString("uri"), inS, inS + dur)).setRemoveVideo(true).setEffects(Effects(sideAudio(o, at, dur), listOf())).build())
                 cursor = at + dur; k++
             }
             if (k == 0) continue
@@ -159,39 +196,43 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
         return Composition.Builder(seqs)
     }
 
+    /** Ein Abschnitt im Aufbau der Hauptspur: eingepasst, mit Zoom, Lage und Größe, Farben und Freistellen.
+     *  layer: als Bild-Ebene eines Übergangs – ohne Ton und bis an den Bildrand deckend. */
+    private fun mainItem(s: JSONObject, layer: Boolean = false): EditedMediaItem {
+        val fx = ArrayList<Effect>()
+        var zooms = s.optJSONArray("zooms")
+        var sc = s.optDouble("sc", 1.0); var tx = s.optDouble("tx", 0.0); var ty = s.optDouble("ty", 0.0)
+        // Keyframes: Lage und Größe ändern sich über die Zeit (ein Keyframe = feste Werte)
+        val kfA = s.optJSONArray("kf")
+        val kfs = if (kfA == null) emptyList() else (0 until kfA.length()).map { kfA.getJSONObject(it) }
+            .map { doubleArrayOf(it.optDouble("t", 0.0), it.optDouble("tx", 0.0), it.optDouble("ty", 0.0), it.optDouble("sc", 1.0).coerceIn(0.05, 20.0)) }.sortedBy { it[0] }
+        if (kfs.size == 1) { tx = kfs[0][1]; ty = kfs[0][2]; sc = kfs[0][3] }
+        val animated = kfs.size >= 2
+        // Vergrößerter Ausschnitt, der das Bild füllt (z. B. 9:16 aus 16:9): direkt aus der Quelle ausschneiden (bleibt scharf)
+        val win = if (animated) null else coverWindow(s, sc, tx, ty)
+        if (win != null) {
+            fx.add(androidx.media3.effect.Crop(win[0], win[1], win[2], win[3]))
+            if (zooms != null) zooms = JSONArray().also { a -> for (k in 0 until zooms!!.length()) a.put(JSONObject(zooms!!.getJSONObject(k).toString()).apply {
+                put("cx", (0.5 + (optDouble("cx", 0.5) - 0.5) * sc + tx).coerceIn(0.0, 1.0)); put("cy", (0.5 + (optDouble("cy", 0.5) - 0.5) * sc + ty).coerceIn(0.0, 1.0)) }) }
+        }
+        if (zooms != null && zooms.length() > 0) fx.add(ZoomEffect(s.getDouble("in"), zooms))
+        fx.add(Presentation.createForWidthAndHeight(w, h, Presentation.LAYOUT_SCALE_TO_FIT))
+        // Lage und Größe des Clips (Mitte verschieben, um die Mitte skalieren)
+        if (animated) fx.add(KeyframeEffect(kfs, s.optDouble("speed", 1.0).coerceIn(0.25, 4.0)))
+        else if (win == null && (Math.abs(sc - 1) > 1e-3 || Math.abs(tx) > 1e-4 || Math.abs(ty) > 1e-4)) fx.add(TransformEffect(sc.toFloat(), tx.toFloat(), ty.toFloat()))
+        if (layer) fx.add(OpaqueEffect())
+        val key = s.optJSONObject("key")
+        return item(s, s.getDouble("in"), s.getDouble("out"), layer, fx,
+            pre = if (key != null && s.optBoolean("hasVideo", true)) listOf(ChromaKeyEffect(key, true)) else emptyList(), fade = if (layer) 0.0 else CUT_FADE)
+    }
+
     fun start() {
         job.message = "Export wird vorbereitet …"
         if (audioOnly) { launch(startAudio()); return }
         // Hauptspur
         val segs = plan.getJSONArray("segments")
         val mainItems = ArrayList<EditedMediaItem>()
-        for (i in 0 until segs.length()) {
-            val s = segs.getJSONObject(i)
-            val fx = ArrayList<Effect>()
-            var zooms = s.optJSONArray("zooms")
-            var sc = s.optDouble("sc", 1.0); var tx = s.optDouble("tx", 0.0); var ty = s.optDouble("ty", 0.0)
-            // Keyframes: Lage und Größe ändern sich über die Zeit (ein Keyframe = feste Werte)
-            val kfA = s.optJSONArray("kf")
-            val kfs = if (kfA == null) emptyList() else (0 until kfA.length()).map { kfA.getJSONObject(it) }
-                .map { doubleArrayOf(it.optDouble("t", 0.0), it.optDouble("tx", 0.0), it.optDouble("ty", 0.0), it.optDouble("sc", 1.0).coerceIn(0.05, 20.0)) }.sortedBy { it[0] }
-            if (kfs.size == 1) { tx = kfs[0][1]; ty = kfs[0][2]; sc = kfs[0][3] }
-            val animated = kfs.size >= 2
-            // Vergrößerter Ausschnitt, der das Bild füllt (z. B. 9:16 aus 16:9): direkt aus der Quelle ausschneiden (bleibt scharf)
-            val win = if (animated) null else coverWindow(s, sc, tx, ty)
-            if (win != null) {
-                fx.add(androidx.media3.effect.Crop(win[0], win[1], win[2], win[3]))
-                if (zooms != null) zooms = JSONArray().also { a -> for (k in 0 until zooms!!.length()) a.put(JSONObject(zooms!!.getJSONObject(k).toString()).apply {
-                    put("cx", (0.5 + (optDouble("cx", 0.5) - 0.5) * sc + tx).coerceIn(0.0, 1.0)); put("cy", (0.5 + (optDouble("cy", 0.5) - 0.5) * sc + ty).coerceIn(0.0, 1.0)) }) }
-            }
-            if (zooms != null && zooms.length() > 0) fx.add(ZoomEffect(s.getDouble("in"), zooms))
-            fx.add(Presentation.createForWidthAndHeight(w, h, Presentation.LAYOUT_SCALE_TO_FIT))
-            // Lage und Größe des Clips (Mitte verschieben, um die Mitte skalieren)
-            if (animated) fx.add(KeyframeEffect(kfs, s.optDouble("speed", 1.0).coerceIn(0.25, 4.0)))
-            else if (win == null && (Math.abs(sc - 1) > 1e-3 || Math.abs(tx) > 1e-4 || Math.abs(ty) > 1e-4)) fx.add(TransformEffect(sc.toFloat(), tx.toFloat(), ty.toFloat()))
-            val key = s.optJSONObject("key")
-            mainItems.add(item(s, s.getDouble("in"), s.getDouble("out"), false, fx,
-                pre = if (key != null && s.optBoolean("hasVideo", true)) listOf(ChromaKeyEffect(key, true)) else emptyList()))
-        }
+        for (i in 0 until segs.length()) mainItems.add(mainItem(segs.getJSONObject(i)))
         require(mainItems.isNotEmpty()) { "Nach dem Schnitt bleibt nichts übrig." }
         // Ton und Bild ausdrücklich: Einschübe ohne Tonspur bekommen so Stille statt eines Fehlers
         val mainSeq = EditedMediaItemSequence.Builder(setOf(C.TRACK_TYPE_AUDIO, C.TRACK_TYPE_VIDEO))
@@ -210,9 +251,7 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
                 val at = maxOf(o.getDouble("at"), cursor); val inS = o.getDouble("in"); val dur = minOf(o.getDouble("out") - inS, total - at)
                 if (dur <= 0.05) continue
                 if (at - cursor > 0.01) seq.addGap(us(at - cursor))
-                val vol = o.optDouble("vol", 1.0).toFloat(); val ap = ArrayList<AudioProcessor>()
-                if (Math.abs(vol - 1f) > 0.001) ap.add(ChannelMixingAudioProcessor().apply { for (ch in 1..6) putChannelMixingMatrix(ChannelMixingMatrix.createForConstantGain(ch, ch).scaleBy(vol.coerceIn(0f, 8f))) })
-                seq.addItem(EditedMediaItem.Builder(clip(o.getString("uri"), inS, inS + dur)).setRemoveVideo(true).setEffects(Effects(ap, listOf())).build())
+                seq.addItem(EditedMediaItem.Builder(clip(o.getString("uri"), inS, inS + dur)).setRemoveVideo(true).setEffects(Effects(sideAudio(o, at, dur), listOf())).build())
                 cursor = at + dur; n++
             }
             if (n == 0) continue
@@ -261,6 +300,35 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
             if (spans.isEmpty()) continue
             if (total - cursor > 0.01) seq.addGap(us(total - cursor))
             seqs.add(seq.build()); trackSpans.add(spans)
+        }
+        // Übergänge (plan.trans): eine eigene Bildspur direkt über der Hauptspur. Jede Ebene zeigt das Bild des anderen Clips,
+        // sichtbar von at − lead bis at + d + tail; im Fenster [at, at + d) läuft die Deckkraft von a0 nach a1. An der Schnittseite
+        // ist die Ebene deckend und läuft dort bildgleich mit der Hauptspur weiter (lead bzw. tail): Media3 führt die Spuren auf ein
+        // Bild genau zusammen (jeweils das zeitlich nächste Bild) – der Wechsel am Schnitt bleibt so unsichtbar.
+        val trans = plan.optJSONArray("trans") ?: JSONArray()
+        val trSeq = EditedMediaItemSequence.Builder(setOf(C.TRACK_TYPE_VIDEO))
+        val trSpans = ArrayList<OvSpan>()
+        var trCursor = 0.0
+        for (t in (0 until trans.length()).map { trans.getJSONObject(it) }.sortedBy { it.optDouble("at", 0.0) - it.optDouble("lead", 0.0) }) {
+            val s = t.optJSONObject("seg") ?: continue
+            val at = t.optDouble("at", -1.0); val d = t.optDouble("d", 0.0)
+            if (at < 0 || d < 0.04) continue
+            val from = at - t.optDouble("lead", 0.0).coerceAtLeast(0.0)
+            if (from < trCursor - 0.02) continue   // läge über der vorigen Ebene – die Oberfläche legt Übergänge nie übereinander
+            val startAt = if (from - trCursor > 0.01) from else trCursor
+            val sp = s.optDouble("speed", 1.0).coerceIn(0.25, 4.0)
+            val inS = s.getDouble("in")
+            val len = minOf((s.getDouble("out") - inS) / sp, total - startAt)
+            if (len <= 0.05) continue
+            if (startAt > trCursor) trSeq.addGap(us(startAt - trCursor))
+            trSeq.addItem(mainItem(JSONObject(s.toString()).put("out", inS + len * sp), layer = true))
+            trSpans.add(OvSpan(startAt, startAt + len, "trans", "", 1f, r0 = at, r1 = at + d,
+                a0 = t.optDouble("a0", 1.0).toFloat().coerceIn(0f, 1f), a1 = t.optDouble("a1", 1.0).toFloat().coerceIn(0f, 1f)))
+            trCursor = startAt + len
+        }
+        if (trSpans.isNotEmpty()) {
+            if (total - trCursor > 0.01) trSeq.addGap(us(total - trCursor))
+            seqs.add(trSeq.build()); trackSpans.add(trSpans)
         }
         val composition = if (seqs.isEmpty()) Composition.Builder(listOf(mainSeq) + audSeqs)
             else Composition.Builder(seqs + mainSeq + audSeqs).setVideoCompositorSettings(OvSettings(w, h, trackSpans))
@@ -361,7 +429,8 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
     // ── Overlay-Steuerung ──
     data class OvSpan(val a: Double, val b: Double, val mode: String, val corner: String, val size: Float,
                       val free: Boolean = false, val x: Float = 0.5f, val y: Float = 0.5f, val wf: Float = 1f, val baseW: Float = 1f,
-                      val kf: List<FloatArray> = emptyList(), val alpha: Float = 1f)
+                      val kf: List<FloatArray> = emptyList(), val alpha: Float = 1f,
+                      val r0: Double = 0.0, val r1: Double = 0.0, val a0: Float = 1f, val a1: Float = 1f)   // Übergang: Deckkraft a0 → a1 von r0 bis r1
 
     class OvSettings(private val w: Int, private val h: Int, private val tracks: List<List<OvSpan>>) : VideoCompositorSettings {
         private val hidden = StaticOverlaySettings.Builder().setAlphaScale(0f).build()
@@ -371,6 +440,11 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
             if (inputId >= tracks.size) return full // Hauptspur
             val t = presentationTimeUs / 1e6
             val s = tracks[inputId].firstOrNull { t >= it.a - 0.001 && t < it.b } ?: return hidden
+            if (s.mode == "trans") {   // Übergang: vor dem Fenster der Anfangswert, im Fenster die Rampe, dahinter der Endwert
+                val f = if (s.r1 > s.r0) ((t - s.r0) / (s.r1 - s.r0)).coerceIn(0.0, 1.0).toFloat() else 1f
+                val al = (s.a0 + (s.a1 - s.a0) * f).coerceIn(0f, 1f)
+                return if (al >= 0.999f) full else StaticOverlaySettings.Builder().setAlphaScale(al).build()
+            }
             if (s.free) {
                 // Keyframes: stückweise linear; Bild liegt in der Breite baseW vor und wird auf die aktuelle Breite skaliert
                 var x = s.x; var y = s.y; var wf = s.wf

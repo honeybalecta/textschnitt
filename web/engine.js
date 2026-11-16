@@ -252,6 +252,7 @@ export async function render(plan, fileOf, job){
 
   const A = new AudioWriter(asrc);
   A.mix = await overlayAudio(plan, fileOf, job);
+  const voiceState = new Map();   // Stimme aufbereiten: Rauschschätzung je Aufnahme, wandert von Abschnitt zu Abschnitt
   const totalFrames = Math.ceil(total * fps - 1e-6);
   let frame = 0, o = 0;
   const t0 = performance.now();
@@ -267,7 +268,7 @@ export async function render(plan, fileOf, job){
       if (job.cancel) throw new Error('Abgebrochen');
       // Ton dieses Abschnitts (exakt auf Abtastwerte gerundet, damit Bild und Ton nicht auseinanderlaufen)
       const n = Math.round((o + s.d) * SR) - A.pos;
-      await segmentAudio(s, n, fileOf, A, job);
+      await segmentAudio(s, n, fileOf, A, job, voiceState);
       if (video){
         const f1 = Math.ceil((o + s.d) * fps - 1e-6);
         const list = []; for (let f = frame; f < f1 && f < totalFrames; f++) list.push(f);
@@ -333,11 +334,22 @@ async function overlayAudio(plan, fileOf, job){
     for await (const c of sourceAudio(file, +o.in, +o.out)){ rs ||= new Resampler(c.sr); const p = rs.push(c.L, c.R); parts.push(p); len += p[0].length; }
     const L = new Float32Array(len), R = new Float32Array(len); let q = 0;
     for (const [a, b] of parts){ L.set(a, q); R.set(b, q); q += a.length; }
-    const fade = Math.min(480, len >> 2);
-    for (let i = 0; i < len; i++){ let g = vol; if (i < fade) g *= i / fade; else if (i >= len - fade) g *= (len - 1 - i) / fade; L[i] *= g; R[i] *= g; }
-    out.push({start: Math.round(+o.at * SR), L, R});
+    const fade = Math.min(480, len >> 2), start = Math.round(+o.at * SR), dk = o.duck ? gainRun(plan.duck) : null;   // dk: Tonspur weicht der Sprache
+    for (let i = 0; i < len; i++){ let g = vol; if (i < fade) g *= i / fade; else if (i >= len - fade) g *= (len - 1 - i) / fade; if (dk) g *= dk((start + i) / SR); L[i] *= g; R[i] *= g; }
+    out.push({start, L, R});
   }
   return out;
+}
+// Stückweise linearer Verlauf [[t, g], …] (Werte 0…1) als Funktion der Zeit. Für fortlaufend steigende Zeiten gedacht: Die
+// Funktion merkt sich die Stelle im Verlauf. Vor dem ersten und nach dem letzten Punkt gilt deren Wert.
+export function gainRun(pts){
+  const p = (Array.isArray(pts) ? pts : []).map(q => [+q[0], clamp(+q[1], 0, 1)]).filter(q => q[0] === q[0] && q[1] === q[1]).sort((a, b) => a[0] - b[0]);
+  const n = p.length; if (!n) return null; let k = 0;
+  return t => {
+    if (t <= p[0][0]) return p[0][1]; if (t >= p[n - 1][0]) return p[n - 1][1];
+    if (t < p[k][0]) k = 0; while (k < n - 2 && t >= p[k + 1][0]) k++;
+    const a = p[k], b = p[k + 1], w = b[0] - a[0]; return w > 1e-9 ? a[1] + (b[1] - a[1]) * (t - a[0]) / w : b[1];
+  };
 }
 // Dekodierter Ton eines Zeitbereichs (Quelle in Sekunden), als Stereo-Stücke in Originalrate
 async function* sourceAudio(file, a, b){
@@ -398,7 +410,26 @@ function stretch(L, R, speed){
   }
   return [oL.subarray(0, outLen), oR.subarray(0, outLen)];
 }
-async function segmentAudio(s, n, fileOf, A, job){
+// Stimme aufbereiten (Abschnitte mit s.voice): Der Rechenkern steht in app.js (voiceDspLib) – derselbe wie in der Vorschau.
+// push() nimmt Stereo-Stücke bei 48 kHz an und gibt zurück, was fertig ist; end() liefert den Rest. Beim ersten Abschnitt einer
+// Aufnahme werden bis zu zwei Sekunden zurückgehalten, aus denen die Rauschschätzung lernt.
+function voiceRun(s, state){
+  if (!s.voice || !state || typeof globalThis.voiceDspLib !== 'function') return null;
+  const lib = (voiceRun.lib ||= globalThis.voiceDspLib()), key = String(s.voice.k ?? s.uri);
+  const lvl = (Array.isArray(s.voice.lvl) ? s.voice.lvl : []).map(p => [+p[0], clamp(+p[1], 0.1, 4)]).filter(p => p[0] === p[0] && p[1] === p[1]).sort((a, b) => a[0] - b[0]);
+  const dsp = new lib.VoiceDsp(SR, 2, state.get(key) || null); dsp.setLevel(lvl, 1);
+  const need = Math.floor(lib.V.prime * SR); let hold = dsp.noise ? null : [], held = 0;
+  const begin = () => {
+    const L = new Float32Array(held), R = new Float32Array(held); let q = 0; for (const [a, b] of hold){ L.set(a, q); R.set(b, q); q += a.length; }
+    hold = null; dsp.prime([L, R], Math.min(held, need)); return dsp.feed([L, R], held);
+  };
+  return {
+    push(L, R){ if (!hold) return dsp.feed([L, R], L.length); hold.push([L.slice(), R.slice()]); held += L.length; return held >= need ? begin() : [new Float32Array(0), new Float32Array(0)]; },
+    end(){ const a = hold ? begin() : null, b = dsp.finish(); state.set(key, dsp.noise);
+      if (!a) return b; const L = new Float32Array(a[0].length + b[0].length), R = new Float32Array(L.length); L.set(a[0]); L.set(b[0], a[0].length); R.set(a[1]); R.set(b[1], a[1].length); return [L, R]; },
+  };
+}
+async function segmentAudio(s, n, fileOf, A, job, voiceState){
   if (n <= 0) return;
   const has = s.hasAudio !== false && !s.image;
   const file = has ? fileOf(s.uri) : null;
@@ -416,15 +447,18 @@ async function segmentAudio(s, n, fileOf, A, job){
     w += k; await A.push(oL, oR);
   };
   let rs = null;
+  const vr = voiceRun(s, voiceState);   // Stimme aufbereiten: vor Tempo, Lautstärke und Blenden
   if (Math.abs(speed - 1) < 1e-3){
     for await (const c of sourceAudio(file, s.in, s.out)){
       if (job.cancel) throw new Error('Abgebrochen');
-      rs ||= new Resampler(c.sr); const [L, R] = rs.push(c.L, c.R); await emit(L, R);
+      rs ||= new Resampler(c.sr); let [L, R] = rs.push(c.L, c.R); if (vr) [L, R] = vr.push(L, R); await emit(L, R);
       if (w >= n) break;
     }
+    if (vr){ const [L, R] = vr.end(); await emit(L, R); }
   } else {
     const parts = []; let len = 0;
-    for await (const c of sourceAudio(file, s.in, s.out)){ rs ||= new Resampler(c.sr); const p = rs.push(c.L, c.R); parts.push(p); len += p[0].length; }
+    for await (const c of sourceAudio(file, s.in, s.out)){ rs ||= new Resampler(c.sr); let p = rs.push(c.L, c.R); if (vr) p = vr.push(p[0], p[1]); parts.push(p); len += p[0].length; }
+    if (vr){ const p = vr.end(); parts.push(p); len += p[0].length; }
     const L = new Float32Array(len), R = new Float32Array(len); let q = 0;
     for (const [a, b] of parts){ L.set(a, q); R.set(b, q); q += a.length; }
     const [sL, sR] = stretch(L, R, speed); await emit(sL, sR);
@@ -440,6 +474,13 @@ class Renderer {
     this.base = document.createElement('canvas'); this.base.width = W; this.base.height = H; this.bctx = this.base.getContext('2d', {alpha:false});
     this.ovs = (plan.overlays || []).filter(o => o.mode !== 'audio').map(o => ({...o, at:+o.at, d: Math.max(0.05, o.out - o.in)})).sort((a, b) => (a.track || 1) - (b.track || 1) || a.at - b.at);
     this.ovState = new Map();
+    // Übergänge: Bild-Ebenen direkt über der Hauptspur (plan.trans), je mit einem Abschnitt im Aufbau der Hauptspur
+    // Sichtbar von t0 bis t1: das Fenster [at, at + d) mit der Deckkraft a0 → a1, davor und dahinter der bildgleiche Vor- und
+    // Nachlauf (lead, tail) mit dem Randwert – so sitzt der Schnitt auch bei gerundeten Zeiten im Plan bildgenau.
+    this.trans = (plan.trans || []).filter(j => j && j.seg && +j.d >= 0.04).map(j => { const lead = Math.max(0, +j.lead || 0), tail = Math.max(0, +j.tail || 0);
+      return {at:+j.at, d:+j.d, t0: +j.at - lead, t1: +j.at + +j.d + tail, a0: j.a0 == null ? 1 : clamp(+j.a0, 0, 1), a1: j.a1 == null ? 1 : clamp(+j.a1, 0, 1),
+        seg: {...j.seg, fx: j.seg.kind === 'main' ? segFx(j.seg) : {...FX_DEF}}}; }).sort((a, b) => a.t0 - b.t0);
+    this.jnState = new Map();
     const subs = plan.subs || {}, style = subs.style || {};
     this.style = style;
     this.cues = (subs.cues || []).filter(c => c.title || plan.burn !== false).map(c => ({...c, start:+c.start, end:+c.end})).filter(c => (c.text || '').trim() && c.end - c.start > 0.05);
@@ -452,56 +493,90 @@ class Renderer {
     try { await Promise.all(Object.keys(this.fonts).map(k => document.fonts.load(`400 48px "TSF-${k}"`, 'Aä1'))); } catch(_){}
   }
   fontOf(key, def){ return key && this.fonts[key] ? `400 %spx "TSF-${key}", ${this.font}` : `${def} %spx ${this.font}`; }
-  sink(file, track, w, h, fit){
-    const k = w + 'x' + h + fit; let m = this.sinks.get(file); if (!m){ m = new Map(); this.sinks.set(file, m); }
+  sink(file, track, w, h, fit, tag = ''){   // tag: eigener Bildpuffer (Übergänge lesen dieselbe Datei zur selben Zeit wie die Hauptspur)
+    const k = w + 'x' + h + fit + tag; let m = this.sinks.get(file); if (!m){ m = new Map(); this.sinks.set(file, m); }
     if (!m.has(k)) m.set(k, new CanvasSink(track, {width:w, height:h, fit, poolSize:3}));
     return m.get(k);
   }
-  async segment(s, o, frames, add){
-    if (!frames.length) return;
-    const {ctx, W, H, fps} = this, speed = s.fx.speed;
-    const file = s.hasVideo === false ? null : this.fileOf(s.uri);
-    // Vergrößerter Bildausschnitt (z. B. 9:16 aus 16:9): Grundbild in höherer Auflösung holen, damit nichts unscharf hochskaliert wird
-    const scMax = s.kind === 'main' ? Math.max(s.fx.sc, ...((s.fx.kf || []).map(k => k.sc))) : 1;
+  // Größe des Grundbilds für einen Abschnitt. Vergrößerter Bildausschnitt (z. B. 9:16 aus 16:9): Grundbild in höherer
+  // Auflösung holen, damit nichts unscharf hochskaliert wird
+  baseSize(s){
+    const {W, H} = this, scMax = s.kind === 'main' ? Math.max(s.fx.sc, ...((s.fx.kf || []).map(k => k.sc))) : 1;
     const kq = scMax > 1.001 ? Math.min(scMax, 4096 / Math.max(W, H)) : 1;
-    const BW = Math.max(2, Math.round(W * kq / 2) * 2), BH = Math.max(2, Math.round(H * kq / 2) * 2);
-    if (this.base.width !== BW || this.base.height !== BH){ this.base.width = BW; this.base.height = BH; this.bctx = this.base.getContext('2d', {alpha:false}); }
-    let it = null, bm = null, last = null;
-    if (file && (s.image || isImageFile(file))) bm = await bitmapOf(file);
+    return [Math.max(2, Math.round(W * kq / 2) * 2), Math.max(2, Math.round(H * kq / 2) * 2)];
+  }
+  // Bildquelle eines Abschnitts: Foto oder die Videobilder zu den Quellzeiten times (in dieser Reihenfolge abzuholen)
+  async openSeg(s, BW, BH, times, tag){
+    const file = s.hasVideo === false ? null : this.fileOf(s.uri), q = {bm: null, it: null, last: null};
+    if (file && (s.image || isImageFile(file))) q.bm = await bitmapOf(file);
     else if (file){
       const tr = await videoTrack(file);
-      if (tr){
-        const off = await firstTs(file);
-        const ts = frames.map(f => off + s.in + (f / fps - o) * speed);
-        it = this.sink(file, tr, BW, BH, 'contain').canvasesAtTimestamps(ts)[Symbol.asyncIterator]();
-      }
+      if (tr){ const off = await firstTs(file); q.it = this.sink(file, tr, BW, BH, 'contain', tag).canvasesAtTimestamps(times.map(t => off + t))[Symbol.asyncIterator](); }
     }
+    return q;
+  }
+  // Bild eines Abschnitts zur Quellzeit st auf ctx zeichnen: eingepasst, freigestellt, mit Lage, Zoom und Farben.
+  // q: Bildquelle (openSeg) · base/bctx: Zwischenbild in der Größe des Grundbilds · slot: Kennung fürs Freistellen
+  paintSeg(ctx, s, st, q, base, bctx, slot){
+    const {W, H} = this, BW = base.width, BH = base.height;
+    bctx.fillStyle = '#000'; bctx.fillRect(0, 0, BW, BH);
+    if (q.bm) drawFit(bctx, q.bm, 0, 0, BW, BH, false); else if (q.last) bctx.drawImage(q.last, 0, 0);
+    const img = s.kind === 'main' && s.key ? this.keyed(base, {...s.key, bg: s.key.bg || '#000000'}, slot, 4096) : base;
+    ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
+    const flt = s.kind === 'main' ? cssFilter(s.fx) : '';
+    const z = s.kind === 'main' ? zoomAt(s.zooms, st) : {s:1};
+    if (flt && this.canFilter) ctx.filter = flt;
+    const mf = s.kind === 'main' ? mainAt(s.fx, st - s.in) : s.fx;
+    const tf = s.kind === 'main' && (Math.abs(mf.sc - 1) > 1e-3 || mf.tx || mf.ty);
+    if (tf){ ctx.save(); ctx.translate(W / 2 + mf.tx * W, H / 2 + mf.ty * H); ctx.scale(mf.sc, mf.sc); ctx.translate(-W / 2, -H / 2); }
+    if (z.s > 1.001){ const sw = BW / z.s, sh = BH / z.s; ctx.drawImage(img, z.cx * BW * (1 - 1 / z.s), z.cy * BH * (1 - 1 / z.s), sw, sh, 0, 0, W, H); }
+    else ctx.drawImage(img, 0, 0, W, H);
+    if (tf) ctx.restore();
+    if (flt && this.canFilter) ctx.filter = 'none';
+    if (flt && !this.canFilter) manualFx(ctx, W, H, s.fx);
+  }
+  async segment(s, o, frames, add){
+    if (!frames.length) return;
+    const {ctx, fps} = this, speed = s.fx.speed;
+    const [BW, BH] = this.baseSize(s);
+    if (this.base.width !== BW || this.base.height !== BH){ this.base.width = BW; this.base.height = BH; this.bctx = this.base.getContext('2d', {alpha:false}); }
+    const q = await this.openSeg(s, BW, BH, frames.map(f => s.in + (f / fps - o) * speed), '');
     try {
       for (const f of frames){
         const t = f / fps, st = s.in + (t - o) * speed;
-        if (it){ const r = await it.next(); if (r.value) last = r.value.canvas; }
-        // Grundbild
-        const b = this.bctx; b.fillStyle = '#000'; b.fillRect(0, 0, BW, BH);
-        if (bm) drawFit(b, bm, 0, 0, BW, BH, false); else if (last) b.drawImage(last, 0, 0);
-        const base = s.kind === 'main' && s.key ? this.keyed(this.base, {...s.key, bg: s.key.bg || '#000000'}, 'main', 4096) : this.base;
-        ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
-        const flt = s.kind === 'main' ? cssFilter(s.fx) : '';
-        const z = s.kind === 'main' ? zoomAt(s.zooms, st) : {s:1};
-        if (flt && this.canFilter) ctx.filter = flt;
-        const mf = s.kind === 'main' ? mainAt(s.fx, st - s.in) : s.fx;
-        const tf = s.kind === 'main' && (Math.abs(mf.sc - 1) > 1e-3 || mf.tx || mf.ty);
-        if (tf){ ctx.save(); ctx.translate(W / 2 + mf.tx * W, H / 2 + mf.ty * H); ctx.scale(mf.sc, mf.sc); ctx.translate(-W / 2, -H / 2); }
-        if (z.s > 1.001){ const sw = BW / z.s, sh = BH / z.s; ctx.drawImage(base, z.cx * BW * (1 - 1 / z.s), z.cy * BH * (1 - 1 / z.s), sw, sh, 0, 0, W, H); }
-        else ctx.drawImage(base, 0, 0, W, H);
-        if (tf) ctx.restore();
-        if (flt && this.canFilter) ctx.filter = 'none';
-        if (flt && !this.canFilter) manualFx(ctx, W, H, s.fx);
+        if (q.it){ const r = await q.it.next(); if (r.value) q.last = r.value.canvas; }
+        this.paintSeg(ctx, s, st, q, this.base, this.bctx, 'main');
+        await this.joins(t);
         await this.overlays(t);
         this.text(t);
         await add(f);
       }
-    } finally { if (it && it.return) await it.return(); }
+    } finally { if (q.it && q.it.return) await q.it.return(); }
   }
+  // Übergänge: Über das Bild der Hauptspur kommt das Bild des anderen Clips (sein Material beginnt bei t0)
+  async joins(t){
+    const {ctx, W, H, fps} = this;
+    for (const j of this.trans){
+      if (t < j.t0 - 1e-6 || t >= j.t1){ if (t >= j.t1) this.endJoin(j); continue; }
+      const s = j.seg, sp = s.fx.speed, src = u => s.in + (u - j.t0) * sp;
+      let st = this.jnState.get(j);
+      if (!st){
+        const [BW, BH] = this.baseSize(s), ts = [];
+        for (let f = Math.ceil(t * fps - 1e-6); f / fps < j.t1; f++) ts.push(src(f / fps));
+        st = await this.openSeg(s, BW, BH, ts, 'j');
+        st.base = document.createElement('canvas'); st.base.width = BW; st.base.height = BH; st.bctx = st.base.getContext('2d', {alpha:false});
+        this.jnState.set(j, st);
+      }
+      if (st.done) continue;
+      if (st.it){ const r = await st.it.next(); if (r.value) st.last = r.value.canvas; }
+      if (!this.jc){ this.jc = document.createElement('canvas'); this.jc.width = W; this.jc.height = H; this.jx = this.jc.getContext('2d', {alpha:false}); }
+      this.paintSeg(this.jx, s, src(t), st, st.base, st.bctx, 'join');
+      ctx.globalAlpha = clamp(j.a0 + (j.a1 - j.a0) * clamp((t - j.at) / j.d, 0, 1), 0, 1);
+      ctx.drawImage(this.jc, 0, 0);
+      ctx.globalAlpha = 1;
+    }
+  }
+  endJoin(j){ const st = this.jnState.get(j); if (st && !st.done){ st.done = true; if (st.it && st.it.return) st.it.return(); st.base = st.bctx = st.last = null; } }
   async overlays(t){
     const {ctx, W, H, fps} = this;
     for (const o of this.ovs){
@@ -611,7 +686,7 @@ class Renderer {
     });
     ctx.restore();
   }
-  close(){ for (const st of this.ovState.values()) if (st.it && !st.done && st.it.return) st.it.return(); if (this.keyGL){ for (const g of this.keyGL.values()) g.destroy(); this.keyGL.clear(); } }
+  close(){ for (const st of this.ovState.values()) if (st.it && !st.done && st.it.return) st.it.return(); for (const j of this.trans) this.endJoin(j); if (this.keyGL){ for (const g of this.keyGL.values()) g.destroy(); this.keyGL.clear(); } }
 }
 function wrapRows(ctx, text, maxW){
   const out = [];

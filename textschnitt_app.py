@@ -126,6 +126,11 @@ def selftest(out_path: str) -> int:
         rep["schrift_export"] = T.font_selftest()
         if not rep["schrift_export"].get("ok"):
             raise RuntimeError(f"Schrift im Export stimmt nicht: {rep['schrift_export']}")
+        # Ton und Übergänge: Absenkung der Musik, aufbereitete Stimme (numpy) und ein Übergang im fertigen Video – mit dem
+        # mitgelieferten ffmpeg, in der gebauten App nachgemessen.
+        rep["ton"] = T.ton_selftest()
+        if not rep["ton"].get("ok"):
+            raise RuntimeError(f"Ton oder Übergang im Export stimmt nicht: {rep['ton']}")
         # Export über die Grafikkarte: Das mitgelieferte ffmpeg muss die Encoder von Nvidia, Intel und AMD kennen; die Suche nach
         # einer nutzbaren Grafikkarte darf auf einem Rechner ohne sie nichts finden und nicht scheitern.
         enc = subprocess.run([T.FFMPEG, "-hide_banner", "-encoders"], capture_output=True, text=True, **T.NOWIN).stdout

@@ -37,7 +37,7 @@ os.environ.setdefault("HF_HUB_DISABLE_IMPLICIT_TOKEN", "1")
 import warnings  # noqa: E402
 warnings.filterwarnings("ignore", module="huggingface_hub")
 
-VERSION = "2.33.0"
+VERSION = "2.34.0"
 APP_DIR = Path(__file__).resolve().parent
 FROZEN = bool(getattr(sys, "frozen", False))          # als installierte .exe gebaut
 RES_DIR = Path(getattr(sys, "_MEIPASS", APP_DIR))      # mitgelieferte Dateien (Oberfläche, ffmpeg, Modelle)
@@ -1795,6 +1795,288 @@ def atempo_chain(speed: float) -> str:
     return "".join("," + p for p in out)
 
 
+# ───────────────────────────── Stimme aufbereiten (E2) ─────────────────────────────
+# Ein Schalter im Projekt: Hochpass gegen Trittschall und Brummen, Rauschminderung, weniger Nachhall, gleichmäßigere Lautstärke.
+# Die Rechnung steht dreimal im Projekt und liefert überall dasselbe Ergebnis: hier (numpy), in core/web/app.js (voiceDspLib:
+# Vorschau und Browser) und in android/…/VoiceDsp.java. Die Prüfläufe vergleichen die drei Fassungen Abtastwert für Abtastwert.
+# Im Plan trägt jeder Abschnitt der Hauptspur, dessen Ton aufbereitet wird, voice = {k: Schlüssel der Aufnahme, lvl: Pegelverlauf
+# [[Sekunden ab Abschnittsbeginn in der Quelle, Faktor], …]}.
+VOICE = {"hp": 85.0, "tau_s": 0.04, "rise": 2.0, "beta": 2.5, "floor_n": -12.0, "floor_r": -9.0, "rt60": 0.6, "td": 0.05,
+         "tau_g": 0.05, "dd": 0.96, "makeup": 1.5, "knee": 0.8, "prime": 2.0}
+
+
+class VoiceDsp:
+    """Ein STFT-Durchgang je Abschnitt: Hochpass, Rauschminderung (Minimum-Verfolgung, entscheidungsgestützter Wiener-Gewinn),
+    Nachhall-Dämpfung (späte Anteile), danach Pegelverlauf und weiche Begrenzung. Die Rauschschätzung (noise) wird von
+    Abschnitt zu Abschnitt derselben Aufnahme weitergegeben."""
+
+    def __init__(self, sr: int, ch: int, noise=None):
+        import numpy as np
+        v = VOICE
+        self.sr, self.ch = sr, ch
+        self.N = 2048 if sr >= 64000 else 1024 if sr >= 32000 else 512 if sr >= 16000 else 256
+        N = self.N
+        self.H = H = N // 4
+        self.K = K = N // 2 + 1
+        self.win = np.sin(np.pi * np.arange(N) / N)
+        f = np.arange(K) * sr / N
+        self.hp = np.zeros(K)
+        self.hp[1:] = 1 / np.sqrt(1 + (v["hp"] / f[1:]) ** 4)
+        self.aS = float(np.exp(-H / (sr * v["tau_s"])))
+        self.W = max(2, int(round(2 * v["tau_s"] * sr / H)))
+        self.up = float(10 ** (v["rise"] * H / sr / 10))
+        self.rel = float(np.exp(-H / (sr * v["tau_g"])))
+        self.D = max(1, int(round(v["td"] * sr / H)))
+        self.rho = float(10 ** (-6 * (self.D * H / sr) / v["rt60"]))
+        self.gn, self.gr = 10 ** (v["floor_n"] / 20), 10 ** (v["floor_r"] / 20)
+        self.makeup = 10 ** (v["makeup"] / 20)
+        self.noise = None if noise is None or len(noise) != K else np.array(noise, dtype=np.float64)
+        self.reset()
+
+    def reset(self):
+        import numpy as np
+        self.S, self.m = None, 0
+        self.ring = np.zeros((self.D, self.K))
+        self.ri = 0
+        self.Gs = np.full(self.K, self.gn)
+        self.Gp = np.full(self.K, self.gn)
+        self.gam = np.ones(self.K)
+
+    def _track(self, P):
+        """Geglättete Leistung und Rauschschätzung aus einem vollständigen Rahmen."""
+        import numpy as np
+        self.m += 1
+        if self.m == 1:
+            self.S = P.copy()
+        elif self.m <= self.W:
+            self.S = self.S + (P - self.S) / self.m
+        else:
+            self.S = self.aS * self.S + (1 - self.aS) * P
+        if self.noise is None:
+            if self.m == self.W:
+                self.noise = self.S.copy()
+        elif self.m > self.W:
+            self.noise = np.where(self.S < self.noise, self.S, np.minimum(self.S, self.noise * self.up))
+
+    def _gain(self, P, full: bool):
+        import numpy as np
+        v = VOICE
+        if full and float(P.sum()) > 1e-9:   # völlige Stille (stumm geschaltete Stellen) lehrt nichts über das Rauschen
+            self._track(P)
+        Sx = self.S if self.S is not None else P
+        if self.noise is None:
+            Gn = np.ones(self.K)
+            gam = np.ones(self.K)
+        else:
+            gam = P / (v["beta"] * self.noise + 1e-12)
+            xi = v["dd"] * self.Gp * self.Gp * self.gam + (1 - v["dd"]) * np.maximum(gam - 1, 0)
+            Gn = np.maximum(self.gn, xi / (1 + xi))
+        self.Gp, self.gam = Gn, gam
+        Gr = np.maximum(self.gr, 1 - self.rho * self.ring[self.ri] / (Sx + 1e-12))
+        if full and self.S is not None:
+            self.ring[self.ri] = self.S
+            self.ri = (self.ri + 1) % self.D
+        G = np.maximum(self.gn, Gn * Gr)
+        Gf = G.copy()
+        Gf[1:-1] = 0.25 * G[:-2] + 0.5 * G[1:-1] + 0.25 * G[2:]
+        self.Gs = np.where(Gf > self.Gs, Gf, self.rel * self.Gs + (1 - self.rel) * Gf)
+        return self.Gs * self.hp
+
+    def prime(self, x):
+        """Rauschschätzung aus dem Anfang einer Aufnahme lernen (nur vollständige Rahmen, ohne Ausgabe)."""
+        import numpy as np
+        N, H = self.N, self.H
+        x = np.asarray(x, dtype=np.float64).reshape(-1, self.ch)
+        nf = (len(x) - N) // H + 1
+        self.reset()
+        if nf >= 1:
+            fr = np.lib.stride_tricks.sliding_window_view(x, N, axis=0)[::H][:nf]     # (nf, ch, N)
+            P = (np.abs(np.fft.rfft(fr * self.win, axis=2)) ** 2).mean(axis=1)
+            for j in range(nf):
+                if float(P[j].sum()) > 1e-9:
+                    self._track(P[j])
+            if self.noise is None and self.m >= 2:
+                self.noise = self.S.copy()
+        self.reset()
+
+    def process(self, x, lvl=None):
+        """x: (n, ch) – ein Abschnitt. Rückgabe gleich lang, ohne Versatz. lvl: Pegelverlauf [[t, g], …] ab Abschnittsbeginn."""
+        import numpy as np
+        N, H, ch = self.N, self.H, self.ch
+        x = np.asarray(x, dtype=np.float64).reshape(-1, ch)
+        n = len(x)
+        if n == 0:
+            return x
+        J = -(-(n + N - H) // H)
+        xp = np.zeros(((J - 1) * H + N, ch))
+        xp[N - H: N - H + n] = x
+        out = np.zeros_like(xp)
+        self.reset()
+        B = 1024
+        for j0 in range(0, J, B):
+            j1 = min(J, j0 + B)
+            fr = np.lib.stride_tricks.sliding_window_view(xp[j0 * H: (j1 - 1) * H + N], N, axis=0)[::H]   # (nb, ch, N)
+            X = np.fft.rfft(fr * self.win, axis=2)
+            P = (X.real ** 2 + X.imag ** 2).mean(axis=1)
+            G = np.empty((j1 - j0, self.K))
+            for j in range(j0, j1):
+                a = j * H - (N - H)
+                G[j - j0] = self._gain(P[j - j0], a >= 0 and a + N <= n)
+            y = np.fft.irfft(X * G[:, None, :], N, axis=2) * (self.win * 0.5)
+            for q in range(4):   # je vier Rahmen überlappen sich: phasenweise aufaddieren
+                yq = y[q::4]
+                if len(yq):
+                    a = (j0 + q) * H
+                    out[a: a + len(yq) * N] += yq.transpose(0, 2, 1).reshape(-1, ch)
+        y = out[N - H: N - H + n] * self.makeup
+        if lvl:
+            t = np.array([p[0] for p in lvl], dtype=np.float64)
+            g = np.array([p[1] for p in lvl], dtype=np.float64)
+            y = y * np.interp(np.arange(n) / self.sr, t, g)[:, None]
+        k = VOICE["knee"]
+        a = np.abs(y)
+        return np.where(a <= k, y, np.sign(y) * (k + (1 - k) * np.tanh((a - k) / (1 - k))))
+
+
+def clean_level(raw) -> list:
+    """Pegelverlauf aus dem Plan: Zahlenpaare, nach Zeit geordnet, Faktoren zwischen 0,1 und 4."""
+    out = []
+    for p in raw if isinstance(raw, list) else []:
+        try:
+            t, g = float(p[0]), float(p[1])
+        except (TypeError, ValueError, IndexError):
+            continue
+        if t == t and g == g:
+            out.append([t, min(4.0, max(0.1, g))])
+    out.sort(key=lambda p: p[0])
+    return out
+
+
+def write_wav_float(path: Path, data, sr: int) -> None:
+    """Schreibt (n, Kanäle) als WAV mit 32-Bit-Gleitkommawerten."""
+    import struct
+    raw = data.astype("<f4").tobytes()
+    ch = data.shape[1]
+    with open(path, "wb") as f:
+        f.write(struct.pack("<4sI4s4sIHHIIHH4sI", b"RIFF", 36 + len(raw), b"WAVE", b"fmt ", 16, 3, ch, sr, sr * ch * 4, ch * 4, 32, b"data", len(raw)))
+        f.write(raw)
+
+
+VOICE_SR = 48000
+VOICE_SPAN = 120.0   # so viele Sekunden einer Aufnahme dekodiert ein ffmpeg-Aufruf höchstens am Stück
+
+
+def voice_decode(uri: str, a: float, b: float):
+    """Ton einer Aufnahme von a bis b (Sekunden) als (n, 2)-Feld bei 48 kHz – über denselben Weg wie der Ton der Hauptspur
+    im Export (Vorspulen, sekundengenau zuschneiden, auf 48 kHz Stereo bringen)."""
+    import numpy as np
+    seek = max(0.0, a - 1.0)
+    cmd = [FFMPEG, "-hide_banner", "-v", "error", "-ss", f"{seek:.3f}", "-i", uri, "-vn", "-map", "0:a:0",
+           "-af", f"atrim=start={a - seek:.4f}:end={b - seek:.4f},asetpts=PTS-STARTPTS,aresample=48000,aformat=sample_fmts=flt:channel_layouts=stereo",
+           "-f", "f32le", "-"]
+    p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL, **NOWIN)
+    if p.returncode:
+        raise RuntimeError("Der Ton ließ sich zum Aufbereiten nicht lesen: " + p.stderr.decode("utf-8", "replace")[-300:])
+    return np.frombuffer(p.stdout, dtype="<f4").reshape(-1, 2)
+
+
+def voice_prepare(job: dict | None, plan: dict, tmp: Path) -> int:
+    """Rechnet den Ton aller Abschnitte mit voice vor und legt ihn je Abschnitt als WAV in tmp ab; der Abschnitt bekommt den
+    Dateinamen in _voice, build_graph liest den Ton dieses Abschnitts dann aus dieser Datei. Rückgabe: Zahl der Abschnitte."""
+    for s in plan.get("segments") or []:
+        s.pop("_voice", None)
+    todo = [(k, s) for k, s in enumerate(plan.get("segments") or [])
+            if isinstance(s.get("voice"), dict) and s.get("kind") == "main" and s.get("hasAudio", True) and not s.get("image") and float(s["out"]) - float(s["in"]) > 0.01]
+    if not todo:
+        return 0
+    import numpy as np
+    sr = VOICE_SR
+    total = sum(float(s["out"]) - float(s["in"]) for _, s in todo)
+    done = 0.0
+    state: dict = {}   # Rauschschätzung je Aufnahme, wandert von Abschnitt zu Abschnitt
+    by_uri: dict[str, list] = {}
+    for k, s in todo:
+        by_uri.setdefault(norm_path(s["uri"]), []).append((k, s))
+    t0 = time.time()
+    for uri, lst in by_uri.items():
+        lst.sort(key=lambda q: float(q[1]["in"]))
+        i = 0
+        while i < len(lst):   # nahe beieinanderliegende Abschnitte mit einem Aufruf dekodieren
+            a, b, j = float(lst[i][1]["in"]), float(lst[i][1]["out"]), i
+            while j + 1 < len(lst) and float(lst[j + 1][1]["out"]) - a <= VOICE_SPAN:
+                j += 1
+                b = max(b, float(lst[j][1]["out"]))
+            pcm = voice_decode(uri, a, b)
+            for k, s in lst[i:j + 1]:
+                if job and job.get("cancel"):
+                    raise RuntimeError("Abgebrochen")
+                i0, i1 = int(round((float(s["in"]) - a) * sr)), int(round((float(s["out"]) - a) * sr))
+                x = np.zeros((i1 - i0, 2))
+                got = pcm[i0:i1]
+                x[: len(got)] = got   # fehlt am Ende der Aufnahme etwas, bleibt Stille
+                key = str(s["voice"].get("k", uri))
+                dsp = VoiceDsp(sr, 2, state.get(key))
+                if dsp.noise is None:
+                    dsp.prime(x[: int(VOICE["prime"] * sr)])
+                y = dsp.process(x, clean_level(s["voice"].get("lvl")))
+                state[key] = dsp.noise
+                name = f"stimme_{k:05d}.wav"
+                write_wav_float(tmp / name, y, sr)
+                s["_voice"] = name
+                done += float(s["out"]) - float(s["in"])
+                if job is not None:
+                    job["message"] = f"Stimme wird aufbereitet … {int(100 * done / total)} %"
+            i = j + 1
+    log(f"Stimme aufbereitet: {len(todo)} Abschnitte, {total:.1f} s Ton in {time.time() - t0:.1f} s")
+    return len(todo)
+
+
+def curve_at(pts: list, t: float) -> float:
+    """Wert eines stückweise linearen Verlaufs [[t, g], …]; vor dem ersten und nach dem letzten Punkt gilt deren Wert."""
+    if not pts:
+        return 1.0
+    if t <= pts[0][0]:
+        return float(pts[0][1])
+    for (t0, g0), (t1, g1) in zip(pts, pts[1:]):
+        if t < t1:
+            return float(g0 + (g1 - g0) * (t - t0) / (t1 - t0)) if t1 - t0 > 1e-9 else float(g1)
+    return float(pts[-1][1])
+
+
+def clean_curve(raw) -> list:
+    """Verlauf aus dem Plan: Zahlenpaare, nach Zeit geordnet, Werte zwischen 0 und 1."""
+    out = []
+    for p in raw if isinstance(raw, list) else []:
+        try:
+            t, g = float(p[0]), float(p[1])
+        except (TypeError, ValueError, IndexError):
+            continue
+        if t == t and g == g:
+            out.append([t, min(1.0, max(0.0, g))])
+    out.sort(key=lambda p: p[0])
+    return out
+
+
+def shift_curve(pts: list, o0: float, dur: float) -> list:
+    """Verlauf für ein Stück der Ausgabe [o0, o0+dur): zugeschnitten und auf den Beginn des Stücks verschoben."""
+    if not pts:
+        return []
+    return [[0.0, curve_at(pts, o0)]] + [[t - o0, g] for t, g in pts if o0 < t < o0 + dur] + [[dur, curve_at(pts, o0 + dur)]]
+
+
+def gain_expr(pts: list) -> str:
+    """Verlauf als ffmpeg-Ausdruck in t: Anfangswert plus eine begrenzte Rampe je Stück. Jeder Summand bleibt zwischen 0 und
+    seinem Hub – so summieren sich auch bei langen Videos keine Rundungsfehler auf."""
+    if not pts:
+        return "1"
+    e = f"{pts[0][1]:.5f}"
+    for (t0, g0), (t1, g1) in zip(pts, pts[1:]):
+        if abs(g1 - g0) < 1e-6:
+            continue
+        e += f"{g1 - g0:+.5f}*clip((t-{t0:.4f})/{max(1e-4, t1 - t0):.4f},0,1)"
+    return e
+
+
 def build_graph(plan: dict, with_video: bool, ass_name: str | None):
     """Erzeugt Eingaben und filter_complex für den Export-Plan der Oberfläche."""
     W, H = int(plan["width"]) // 2 * 2, int(plan["height"]) // 2 * 2
@@ -1821,7 +2103,14 @@ def build_graph(plan: dict, with_video: bool, ass_name: str | None):
 
     fit = f"scale={W}:{H}:force_original_aspect_ratio=decrease,pad={W}:{H}:(ow-iw)/2:(oh-ih)/2:black,setsar=1"
     parts, labels = [], []
-    for k, s in enumerate(plan["segments"]):
+    # Übergänge: Bild-Ebenen, die trans_prepare an ihren Abschnitt gehängt hat (s["_trans"]). Ihre Bildketten entstehen in
+    # derselben Schleife wie die Abschnitte selbst (Kennung "t0", "t1", …, ohne Ton) und werden gleich danach auf das Bild
+    # ihres Abschnitts gelegt – noch vor dem Aneinanderhängen. So sitzt jede Ebene bildgenau am Schnitt.
+    trans = [(k, t) for k, s in enumerate(plan["segments"]) for t in (s.get("_trans") or [])] if with_video else []
+    tvl: dict[str, str] = {}
+    seglab: list[list[str]] = []
+    for k, s in list(enumerate(plan["segments"])) + [(f"t{j}", t["seg"]) for j, (_, t) in enumerate(trans)]:
+        is_tr = isinstance(k, str)
         a0, b0 = float(s["in"]), float(s["out"])
         fx = seg_fx(s) if s.get("kind") == "main" else seg_fx({"vol": s.get("vol", 1)})
         sp = fx["speed"]
@@ -1832,7 +2121,8 @@ def build_graph(plan: dict, with_video: bool, ass_name: str | None):
             i = image_input(s["uri"], d) if with_video else None
             if with_video:
                 parts.append(f"[{i}:v:0]{fit},fps={fps_s},format=yuv420p,trim=duration={d:.4f},setpts=PTS-STARTPTS{vlab}")
-            parts.append(f"anullsrc=r=48000:cl=stereo,atrim=duration={d:.4f},aformat=sample_fmts=fltp:channel_layouts=stereo{alab}")
+            if not is_tr:
+                parts.append(f"anullsrc=r=48000:cl=stereo,atrim=duration={d:.4f},aformat=sample_fmts=fltp:channel_layouts=stereo{alab}")
         else:
             # Jeder Abschnitt bekommt eine eigene, vorgespulte Eingabe. Liest man alle Abschnitte aus einer
             # gemeinsamen Eingabe, puffert ffmpeg die Bilder für spätere Abschnitte – bei 4K und vielen Schnitten
@@ -1900,20 +2190,52 @@ def build_graph(plan: dict, with_video: bool, ass_name: str | None):
                     parts.append(f"color=c=0x{bg}:s={W}x{H}:r={fps_s}:d={d:.4f},format=yuv420p[kb{k}]")
                     parts.append(f"[kb{k}][vk{k}]overlay=shortest=1:eof_action=pass,format=yuv420p,setsar=1{vfin}")
                     vlab = vfin
-            if s.get("hasAudio", True):
+            if is_tr:
+                pass
+            elif s.get("hasAudio", True):
                 f = min(0.008, d / 4)
                 spa = atempo_chain(sp) if abs(sp - 1) > 1e-3 else ""
                 vol = f",volume={fx['vol']:.3f}" if abs(fx["vol"] - 1) > 1e-3 else ""
-                parts.append(f"[{i}:a:0]atrim=start={a0 + off:.4f}:end={b0 + off:.4f},asetpts=PTS-STARTPTS,"
-                             f"aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo{spa}{vol},"
+                head = f"[{i}:a:0]atrim=start={a0 + off:.4f}:end={b0 + off:.4f},asetpts=PTS-STARTPTS,"
+                if s.get("_voice"):   # Stimme aufbereitet: der Ton dieses Abschnitts liegt fertig zugeschnitten als Datei vor
+                    inputs.append(["-i", str(s["_voice"])])
+                    head = f"[{len(inputs) - 1}:a:0]asetpts=PTS-STARTPTS,"
+                parts.append(head + f"aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo{spa}{vol},"
                              f"afade=t=in:st=0:d={f:.4f},afade=t=out:st={max(0, d - f):.4f}:d={f:.4f}{alab}")
             else:
                 parts.append(f"anullsrc=r=48000:cl=stereo,atrim=duration={d:.4f},aformat=sample_fmts=fltp:channel_layouts=stereo{alab}")
-        labels.append((vlab if with_video else "") + alab)
+        if is_tr:
+            tvl[k] = vlab
+        else:
+            seglab.append([vlab if with_video else "", alab])
+    for j, (k, t) in enumerate(trans):
+        off, d, lead = float(t["off"]), float(t["d"]), max(0.0, float(t.get("lead") or 0))
+        a0, a1 = (min(1.0, max(0.0, float(t[q]) if t.get(q) is not None else 1.0)) for q in ("a0", "a1"))
+        # feine Zeitbasis: sonst rundet setpts den Beginn der Ebene auf ganze Bilder
+        chain = tvl[f"t{j}"] + (f"trim=start={lead:.4f},setpts=PTS-STARTPTS," if lead > 0.001 else "") + "format=yuva420p,settb=AVTB"
+        if abs(a1 - a0) > 1e-3:
+            # Deckkraft von a0 nach a1: Die Blende des Filters läuft über df Sekunden von 0 nach 1 (bzw. von 1 nach 0); die
+            # Ebene steigt bei s0 in diese Rampe ein. Davor und danach hält der Filter den Randwert.
+            up = a1 > a0
+            df = d / abs(a1 - a0)
+            s0 = (a0 if up else 1 - a0) * df
+            chain += f",setpts=PTS-STARTPTS+{s0:.4f}/TB,fade=t={'in' if up else 'out'}:st=0:d={df:.4f}:alpha=1"
+        elif a0 < 0.999:
+            chain += f",colorchannelmixer=aa={a0:.3f}"
+        parts.append(chain + f",setpts=PTS-STARTPTS+{off:.4f}/TB[tf{j}]")
+        # Reicht die Ebene bis ans Ende des Abschnitts, deckt sie auch dessen letztes Bild: Ihr Material läuft dafür ein Stück
+        # über den Schnitt hinaus (tail). eof_action=pass: Die Länge des Abschnitts bestimmt allein sein eigenes Bild.
+        to_end = off + d >= seg_duration(plan["segments"][k]) - 0.02
+        en = f"gte(t,{off:.4f})" if to_end else f"gte(t,{off:.4f})*lt(t,{off + d:.4f})"
+        parts.append(f"{seglab[k][0]}[tf{j}]overlay=x=0:y=0:eof_action=pass:enable='{en}',format=yuv420p[vj{j}]")
+        seglab[k][0] = f"[vj{j}]"
+    labels = [v + a for v, a in seglab]
     n = len(plan["segments"])
     ovs = sorted(plan.get("overlays") or [], key=lambda o: (int(o.get("track") or 1), float(o["at"])))
-    # Ton der Einblendungen (Lautstärke je Element) dazumischen
-    oa = []
+    # Ton der Einblendungen (Lautstärke je Element) dazumischen. Tonspuren, die der Sprache weichen (duck), laufen vorher
+    # gemeinsam durch den Verlauf plan["duck"] (Ausgabezeit, 0…1).
+    oa, od = [], []
+    duck = clean_curve(plan.get("duck"))
     for k, o in enumerate(ovs):
         vol = float(o.get("vol") or 0)
         if vol <= 0 or o.get("image") or o.get("hasAudio") is False:
@@ -1925,7 +2247,15 @@ def build_graph(plan: dict, with_video: bool, ass_name: str | None):
         ms = int(round(at * 1000))
         parts.append(f"[{i}:a:0]atrim=start={inn + off:.4f}:end={inn + d + off:.4f},asetpts=PTS-STARTPTS,aresample=48000,"
                      f"aformat=sample_fmts=fltp:channel_layouts=stereo,volume={vol:.3f},afade=t=in:st=0:d=0.01,adelay={ms}|{ms}[oa{k}]")
-        oa.append(f"[oa{k}]")
+        (od if duck and o.get("duck") else oa).append(f"[oa{k}]")
+    if od:
+        bus = od[0]
+        if len(od) > 1:
+            parts.append("".join(od) + f"amix=inputs={len(od)}:normalize=0:duration=longest:dropout_transition=0[odm]")
+            bus = "[odm]"
+        # in kleinen Blöcken, damit der Verlauf ohne hörbare Stufen läuft (die Lautstärke gilt je Block)
+        parts.append(f"{bus}asetnsamples=n=256,volume=eval=frame:volume='{gain_expr(duck)}'[oduck]")
+        oa.append("[oduck]")
     afin = "[apre]" if plan.get("level") else "[aout]"   # Lautstärke vereinheitlicht: Spitzen zum Schluss begrenzen
     amain = "[amain]" if oa else afin
     parts.append("".join(labels) + f"concat=n={n}:v={int(with_video)}:a=1" + ("[base]" if with_video else "") + amain)
@@ -2021,6 +2351,29 @@ def seg_duration(s: dict) -> float:
     return max(0.04, (float(s["out"]) - float(s["in"])) / fx["speed"])
 
 
+def trans_prepare(plan: dict) -> None:
+    """Übergänge (plan["trans"]) an die Abschnitte hängen, über denen sie liegen: s["_trans"] = [{…, "off": Beginn im Abschnitt}].
+    Eine Ebene: {at, d: Fenster in Ausgabezeit · a0, a1: Deckkraft am Anfang und Ende · lead, tail: bildgleicher Vor- und
+    Nachlauf im Material · over: Nummer des Abschnitts · seg: das Material im Aufbau eines Abschnitts der Hauptspur}."""
+    segs = plan.get("segments") or []
+    starts, o = [], 0.0
+    for s in segs:
+        s.pop("_trans", None)
+        starts.append(o)
+        o += seg_duration(s)
+    for t in plan.get("trans") or []:
+        try:
+            k, at, d = int(t["over"]), float(t["at"]), float(t["d"])
+            if not (0 <= k < len(segs)) or d < 0.04 or not isinstance(t["seg"], dict) or float(t["seg"]["out"]) - float(t["seg"]["in"]) < 0.02:
+                continue
+        except (KeyError, TypeError, ValueError):
+            continue
+        off = min(max(0.0, at - starts[k]), max(0.0, seg_duration(segs[k]) - 0.04))
+        if off < 0.02:   # beginnt am Schnitt: vom ersten Bild des Abschnitts an (die Zeiten im Plan sind auf Millisekunden gerundet)
+            off = 0.0
+        segs[k].setdefault("_trans", []).append({**t, "off": off, "d": d})
+
+
 def shift_plan(plan: dict, segs: list[dict], o0: float, dur: float) -> dict:
     """Teilplan für ein Stück der Ausgabe [o0, o0+dur): Einblendungen werden verschoben und zugeschnitten."""
     sub = dict(plan)
@@ -2044,6 +2397,8 @@ def shift_plan(plan: dict, segs: list[dict], o0: float, dur: float) -> dict:
             q["kf"] = [{**k, "t": float(k["t"]) - cut} for k in o["kf"]]
         ovs.append(q)
     sub["overlays"] = ovs
+    if plan.get("duck"):
+        sub["duck"] = shift_curve(clean_curve(plan["duck"]), o0, dur)
     return sub
 
 
@@ -2189,6 +2544,8 @@ def render_plan_with(job: dict, plan: dict, out: Path, with_video: bool, cues: l
         vtail = (vcodec or ["-c:v", "libx264", "-crf", QUALITY_CRF.get(plan.get("quality"), "20"), "-preset", "medium",
                             "-pix_fmt", "yuv420p"]) + ["-r", f"{float(plan.get('fps') or 30):.3f}"]
         segs = plan["segments"]
+        voice_prepare(job, plan, tmp)
+        trans_prepare(plan)
         if not with_video:
             inputs, graph = build_graph(plan, False, None)
             tail = ["-map", "[aout]", "-vn"] + AUDIO_CODECS.get(plan.get("audioFormat") or "wav", AUDIO_CODECS["wav"]) + [str(out)]
@@ -2861,6 +3218,72 @@ def font_selftest(keys: tuple = ("poppins", "anton")) -> dict:
         return out
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+def ton_selftest() -> dict:
+    """Probe für den Selbsttest der gebauten App und für die Prüfläufe: ein kurzer Export mit „Musik weicht der Sprache“,
+    „Stimme aufbereiten“ und einem Übergang – gerechnet mit dem mitgelieferten ffmpeg und numpy – neben demselben Export ohne
+    die drei. Gemessen wird am fertigen Video: Die Musik ist im abgesenkten Teil leiser, das Brummen der Aufnahme ist
+    zurückgenommen, und im Fenster des Übergangs steht schon das Bild des nächsten Clips."""
+    import numpy as np
+    tmp = Path(tempfile.mkdtemp(prefix="textschnitt_ton_"))
+    w, h, fps = 320, 180, 25
+    out: dict = {"ok": False}
+    try:
+        # Aufnahme: Die Helligkeit steigt mit jedem Bild um zwei Stufen (so verrät ein Bild, aus welcher Stelle es stammt);
+        # der Ton: Tonstöße bei 800 Hz über einem Brummen bei 50 Hz. Musik: ein Dauerton bei 3 kHz.
+        video, musik = tmp / "aufnahme.mp4", tmp / "musik.wav"
+        subprocess.run([FFMPEG, "-v", "error", "-y", "-f", "lavfi", "-i", f"color=c=black:size={w}x{h}:rate={fps},format=yuv420p,geq=lum='16+2*N':cb=128:cr=128",
+                        "-f", "lavfi", "-i", "aevalsrc='0.05*sin(2*PI*50*t)+0.12*sin(2*PI*800*t)*lt(mod(t,0.5),0.3)':s=48000:c=stereo", "-t", "4",
+                        "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-g", "25", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "160k", str(video)],
+                       check=True, capture_output=True, stdin=subprocess.DEVNULL, **NOWIN)
+        subprocess.run([FFMPEG, "-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=3000:sample_rate=48000", "-t", "5", "-af", "volume=0.5", "-ac", "2", str(musik)],
+                       check=True, capture_output=True, stdin=subprocess.DEVNULL, **NOWIN)
+
+        def seg(a, b, **kw):
+            return {"kind": "main", "src": 0, "uri": str(video), "in": a, "out": b, "zooms": [], "hasAudio": True, "hasVideo": True, "speed": 1, "vol": 1,
+                    "bright": 0, "contrast": 0, "sat": 0, "gray": False, "tx": 0, "ty": 0, "sc": 1, **kw}
+
+        def run(name, full):
+            vo = {"voice": {"k": "s0"}} if full else {}
+            plan = {"format": "video", "name": name, "width": w, "height": h, "fps": fps, "total": 3.2, "quality": "klein", "burn": False,
+                    "segments": [seg(0, 1.6, **vo), seg(2.4, 4.0, **vo)],
+                    "overlays": [{"mode": "audio", "uri": str(musik), "in": 0, "out": 3.2, "at": 0, "track": 1, "vol": 1, "hasAudio": True, **({"duck": True} if full else {})}],
+                    "sources": [{"uri": str(video), "name": video.name, "duration": 4, "width": w, "height": h, "fps": fps, "hasAudio": True, "hasVideo": True}]}
+            if full:   # Musik ab 1,2 s um 14 dB zurück; „Bild früher“: 0,4 s vor dem Schnitt bei 1,6 s
+                plan["duck"] = [[0, 1], [1.0, 1], [1.2, 0.2], [9, 0.2]]
+                plan["trans"] = [{"at": 1.2, "d": 0.4, "a0": 1, "a1": 1, "lead": 0, "tail": 0.1, "over": 0, "seg": {**seg(2.0, 2.5), "hasAudio": False, "vol": 0}}]
+            res = export_job({"cancel": False, "progress": 0, "message": ""}, plan)
+            raw = subprocess.run([FFMPEG, "-v", "error", "-i", res["playable"], "-vn", "-ac", "1", "-ar", "48000", "-f", "s16le", "pipe:1"],
+                                 capture_output=True, stdin=subprocess.DEVNULL, **NOWIN).stdout
+            pcm = np.frombuffer(raw, dtype="<i2").astype(float) / 32768
+            pic = subprocess.run([FFMPEG, "-v", "error", "-i", res["playable"], "-an", "-vf", "scale=8:8:flags=area,format=gray", "-f", "rawvideo", "pipe:1"],
+                                 capture_output=True, stdin=subprocess.DEVNULL, **NOWIN).stdout
+            return pcm, [sum(pic[k * 64:(k + 1) * 64]) / 64 for k in range(len(pic) // 64)]
+
+        def band(x, a, b, lo, hi):   # Pegel eines Frequenzbands in einem Zeitfenster (dB)
+            part = x[int(a * 48000): int(b * 48000)]
+            if len(part) < 1000:
+                return -200.0
+            sp = np.abs(np.fft.rfft(part * np.hanning(len(part)))) ** 2
+            fr = np.fft.rfftfreq(len(part), 1 / 48000)
+            return float(10 * np.log10(sp[(fr >= lo) & (fr <= hi)].sum() / len(part) ** 2 + 1e-15))
+        p0, y0 = run("probe_ton_ohne", False)
+        p1, y1 = run("probe_ton_mit", True)
+        out["absenkung_db"] = round((band(p1, 1.6, 3.0, 2900, 3100) - band(p1, 0.2, 0.9, 2900, 3100)) - (band(p0, 1.6, 3.0, 2900, 3100) - band(p0, 0.2, 0.9, 2900, 3100)), 1)
+        out["brummen_db"] = round(band(p1, 0.3, 1.5, 40, 60) - band(p0, 0.3, 1.5, 40, 60), 1)
+        k = int(1.4 * fps)   # mitten im Fenster des Übergangs: ohne ihn Bild 35 der Aufnahme, mit ihm Bild 55
+        out["bild"] = [round(y0[k], 1) if k < len(y0) else None, round(y1[k], 1) if k < len(y1) else None]
+        out["bilder"] = [len(y0), len(y1)]
+        step = 2 * 255 / 219   # zwei Stufen im Videobereich, als volle Graustufen gelesen
+        want0, want1 = (16 + 2 * 35 - 16) * 255 / 219, (16 + 2 * 55 - 16) * 255 / 219
+        out["ok"] = bool(-16 < out["absenkung_db"] < -12 and out["brummen_db"] < -10 and len(y0) == len(y1) and k < len(y0)
+                         and abs(y0[k] - want0) < 4 * step and abs(y1[k] - want1) < 4 * step)
+    except Exception as e:
+        out["fehler"] = f"{type(e).__name__}: {e}"[:300]
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return out
 
 
 # ───────────────────────────── Projekte ─────────────────────────────

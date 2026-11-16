@@ -1105,7 +1105,7 @@ function tokMarks(){ const o = {}; for (const t of tokens) if (t.spk || t.ks || 
 // Zum Stand gehören auch Format, Bildausschnitt und die Lautstärke der Hauptvideos (fm, fr, sv). Sie fehlten: „Rückgängig“
 // nach einem Formatwechsel, nach dem Verschieben des Ausschnitts oder nach „Alle angleichen“ tat nichts bzw. nur die Hälfte.
 function snapshot(){ return JSON.stringify({d:[...deleted], t:P.trims, c:P.cues, i:P.items, a:P.adj, x:P.dels, y:P.splits, s:P.sub_style, e:P.edits, m:P.moves, k:P.speakers, w:tokMarks(), f:P.slides, wm:P.watermark || null, tr:P.trans || null,
-  fm:P.format || null, fr:P.frame || null, sv:P.sources.map(x => x.vol == null ? null : x.vol), mk:P.marks || [], tl:P.textline || null, rf:P.refs || [], ss:P.srcStyle || null, lw:P.lower || null, cl:P.clipList || [], pt:P.part || null, ps:P.partStyle || null, ck:P.checks || [], kw:P.kw || []}); }
+  fm:P.format || null, fr:P.frame || null, sv:P.sources.map(x => x.vol == null ? null : x.vol), mk:P.marks || [], tl:P.textline || null, rf:P.refs || [], ss:P.srcStyle || null, lw:P.lower || null, cl:P.clipList || [], pt:P.part || null, ps:P.partStyle || null, au:P.audio || null, ck:P.checks || [], kw:P.kw || []}); }
 function restore(s){ const o = JSON.parse(s); deleted = new Set(o.d); P.trims = o.t; P.cues = o.c; P.items = o.i; P.adj = o.a; P.dels = o.x || []; P.splits = o.y || [];
   if (o.s) P.sub_style = o.s; P.edits = o.e || {}; P.moves = o.m || [];
   const fmCh = 'fm' in o && (P.format || null) !== (o.fm || null), frCh = 'fr' in o && JSON.stringify(P.frame || null) !== JSON.stringify(o.fr || null);
@@ -1122,6 +1122,7 @@ function restore(s){ const o = JSON.parse(s); deleted = new Set(o.d); P.trims = 
   if ('cl' in o) P.clipList = o.cl || [];
   const psCh = 'ps' in o && JSON.stringify(P.partStyle || null) !== JSON.stringify(o.ps || null);
   if ('pt' in o){ if (o.pt) P.part = o.pt; else delete P.part; } if ('ps' in o){ if (o.ps) P.partStyle = o.ps; else delete P.partStyle; }
+  if ('au' in o){ if (o.au) P.audio = o.au; else delete P.audio; }
   if ('ck' in o) P.checks = o.ck || [];
   if ('kw' in o) P.kw = o.kw || [];
   if (o.f) P.slides = o.f; if (o.k) P.speakers = o.k;
@@ -1132,6 +1133,7 @@ function restore(s){ const o = JSON.parse(s); deleted = new Set(o.d); P.trims = 
   if (lowerSheetOpen()) paintLowerSheet(); if (tab === 'subs') renderSpeakers();
   if (mkCh){ paintMarksBtn(); if (marksSheetOpen()) renderMarksSheet(); }
   if (clCh){ paintClipsBtn(); if (clipsSheetOpen()) renderClipsSheet(); }
+  if (joinSheetOpen()) paintJoinSheet();
   partChanged(true); if (psCh) partSyncLater();
   chkChanged();
   if (fmCh || frCh) frameRestored(fmCh); }
@@ -1491,7 +1493,7 @@ function updateAudio(o){
     if (!el){ el = new Audio(); el.preload = 'auto'; audLayers.set(a.x.id, el); }
     const url = MEDIA(a.x.clip.uri); if (el.dataset.src !== url){ el.src = url; el.dataset.src = url; if (soon) try { el.currentTime = a.x.in || 0; } catch(_){} }
     if (!on || !playing){ if (!el.paused) el.pause(); if (!on) continue; }
-    setVol(el, a.x.vol ?? 1);
+    setVol(el, (a.x.vol ?? 1) * (ducks(a.x) ? duckAt(o) : 1));
     const target = a.x.in + (o - a.at);
     syncMedia(el, target);
     if (playing && el.paused) el.play().catch(() => {});
@@ -1516,8 +1518,8 @@ function zoomAt(src){
   return {s, cx, cy};
 }
 function recompute(noTL){
-  computeRanges(); computePieces(); computeOrder(); buildTimeline(); syncLinks(); computeOverlays(); computeAudios(); drawScrub();
-  refMemo = null; lowerMemo = null; lowerRects.clear(); clipTokMemo = null;   // Quellenzeilen, Bauchbinden und vorgemerkte Abschnitte folgen dem Schnitt
+  computeRanges(); computePieces(); computeOrder(); buildTimeline(); syncLinks(); computeOverlays(); computeAudios(); computeJoins(); drawScrub();
+  refMemo = null; lowerMemo = null; lowerRects.clear(); clipTokMemo = null; audioDirty();   // Quellenzeilen, Bauchbinden und vorgemerkte Abschnitte folgen dem Schnitt
   if (!noTL && !tlHold && tlOn() && window.renderTimeline) renderTimeline();
   setText($('#tTot'), fmtT(total)); setText($('#sideTot'), fmtT(total));
 }
@@ -2246,7 +2248,7 @@ function updateOverlay(o){
     syncMedia(el, it.in + (o - a.at));
     if (playing && el.paused) el.play().catch(() => {}); if (!playing && !el.paused) el.pause();
   });
-  updateAudio(o); placeDeco(act, o, W, H); placeWatermark(W, H); placeTextline(W, H); placeSrcLine(W, H, o); placeLower(W, H, o); placePart(W, H, o);
+  updateAudio(o); updateJoin(o); placeDeco(act, o, W, H); placeWatermark(W, H); placeTextline(W, H); placeSrcLine(W, H, o); placeLower(W, H, o); placePart(W, H, o);
   // Griffe: am ausgewählten Element, sonst am obersten
   const sel = selOvlId(), mainSel = typeof TL !== 'undefined' && TL.sel && TL.sel.kind === 'main', tgt = act.find(a => a.x.id === sel) || (mainSel ? null : act[act.length - 1]) || null;   // Hauptclip ausgewählt: Rahmen am Hauptbild
   curPip = tgt ? tgt.x : null; pipTarget = tgt;
@@ -2534,17 +2536,18 @@ const cssFilter = fx => !fx ? '' : [fx.bright ? `brightness(${(1 + fx.bright).to
 function applySegFx(g){
   const fx = g && g.kind === 'main' ? g.fx : null;
   V.style.filter = cssFilter(fx); const rate = g && g.kind === 'main' ? (g.speed || 1) : 1; if (Math.abs(V.playbackRate - rate) > 0.001) V.playbackRate = clamp(rate, 0.25, 4);
-  setVol(V, (fx ? fx.vol ?? 1 : 1) * (g && g.kind === 'main' ? srcVol(g.si) : 1));
+  voiceWire();
+  setVol(V, (fx ? fx.vol ?? 1 : 1) * (g && g.kind === 'main' ? srcVol(g.si) * voiceGainNow(g) : 1));
 }
 // Lautstärke je Video der Hauptspur (P.sources[k].vol) – wird mit der Anpassung des Abschnitts multipliziert
 const srcVol = si => { const s = P && P.sources[si]; return s && s.vol != null ? +s.vol : 1; };
 // Lautstärke in der Vorschau, auch über 100 % (dann über die Web-Audio-Schnittstelle verstärkt)
 let actx = null;
-function setVol(el, v){
+function setVol(el, v, force){   // force: die Verstärker-Kette auch unter 100 % anlegen (Vorschau von „Stimme aufbereiten“)
   v = Math.max(0, +v || 0);
-  if (!el._g && v <= 1){ if (Math.abs(el.volume - v) > 0.001) el.volume = v; return; }
+  if (!el._g && v <= 1 && !force){ if (Math.abs(el.volume - v) > 0.001) el.volume = v; return; }
   try {
-    if (!el._g){ actx ||= new (window.AudioContext || window.webkitAudioContext)(); const src = actx.createMediaElementSource(el), gn = actx.createGain(); src.connect(gn).connect(actx.destination); el._g = gn; }
+    if (!el._g){ actx ||= new (window.AudioContext || window.webkitAudioContext)(); const src = actx.createMediaElementSource(el), gn = actx.createGain(); src.connect(gn).connect(actx.destination); el._g = gn; el._s = src; }
     if (el.volume !== 1) el.volume = 1; el._g.gain.value = Math.min(v, 4); if (actx.state === 'suspended') actx.resume().catch(() => {});
   } catch(_){ el.volume = Math.min(1, v); }
 }
@@ -5432,6 +5435,8 @@ function openItem(id){
       </div>
       <div class="field"><span>Position im Video</span><div class="nudge"><button data-at="-0.5">−0,5</button><button data-at="-0.1">−0,1</button><span class="val" id="cAt"></span><button data-at="0.1">+0,1</button><button data-at="0.5">+0,5</button></div></div>
       <div class="field volopt"><span>Lautstärke <b id="cVolV"></b></span><input type="range" id="cVol" min="0" max="200" step="5"></div>
+      <div class="field audopt"><span>Wenn gesprochen wird</span><div class="seg-ctl" id="cDuck"><button data-v="duck">wird leiser</button><button data-v="voice">ist selbst Sprache</button><button data-v="keep">bleibt gleich</button></div></div>
+      <p class="muted small audopt" id="cDuckNote"></p>
       <div class="field pipopt"><span>Größe <b id="cSizeV"></b></span><input type="range" id="cSize" min="5" max="500" step="1"></div>
       <div class="field pipopt"><span>Platzieren</span><div class="seg-ctl" id="cCorner"><button data-v="ol">↖</button><button data-v="or">↗</button><button data-v="mm">Mitte</button><button data-v="ul">↙</button><button data-v="ur">↘</button><button data-v="full">Vollbild</button></div></div>
       <div class="field pipopt"><span>Splitscreen: Einblendung in die Hälfte</span><div class="seg-ctl" id="cSplit"><button data-v="o">Oben</button><button data-v="u">Unten</button><button data-v="l">Links</button><button data-v="r">Rechts</button><button data-v="">Aus</button></div></div>
@@ -5460,6 +5465,7 @@ function openItem(id){
     if (seg){ const v = b.dataset.v;
       commit(() => { if (seg.id === 'zKind') it.kind = v; if (seg.id === 'cMode'){ it.type = v; if (v === 'insert') it.out = Math.max(it.out, Math.min(it.clip.duration, it.in + 1)); }
         if (seg.id === 'cMode' && v === 'pip') pipFree(it);
+        if (seg.id === 'cDuck'){ if (v === 'duck') delete it.duck; else it.duck = v === 'voice' ? 'voice' : false; }
         if (seg.id === 'cSplit'){ if (v) splitApply(it, v); else splitEnd(it); }
         if (seg.id === 'cCorner'){ if (v === 'full'){ delete it.w; delete it.x; delete it.y; delete it.kf; it.type = 'broll'; } else pipCorner(it, v); } }, false); if (seg.id === 'cSplit'){ applyMainTransform(); if (tab === 'clip' && window.renderClip) renderClip(); }
       if (seg.id !== 'zKind') seekOut(outPos, false); h.textContent = TYPE_LBL[it.type]; paintItem(); return; }
@@ -5472,6 +5478,7 @@ function openItem(id){
     else if (b.id === 'itPlay'){ const o = srcToOut(snapSrc(it.at)), d = it.type === 'zoom' ? it.dur : it.out - it.in; seekOut(Math.max(0, o - 1), false); startPlay(); stopAt = o + d + 1; return; }
     else if (b.id === 'itDel'){ commit(() => P.items = P.items.filter(x => x !== it)); closeSheet(); return; }
     else if (b.id === 'itOk'){ closeSheet(); return; }
+    else if (b.id === 'cDuckOn'){ audioEdit(a => { a.duck = {...(a.duck || {}), on: true}; }); }
     paintItem();
   };
   const cf = $('#cFrame'), ct = $('#cTag');
@@ -5487,12 +5494,14 @@ function openItem(id){
 function paintItem(){
   const it = sheetItem; if (!it) return;
   $$('#sheet .seg-ctl button').forEach(b => { const id = b.parentElement.id; const v = b.dataset.v;
-    b.classList.toggle('on', (id === 'zKind' && it.kind === v) || (id === 'cMode' && it.type === v) || (id === 'cCorner' && it.w == null && it.corner === v) || (id === 'cSplit' && splitOf(it) === v)); });
+    b.classList.toggle('on', (id === 'zKind' && it.kind === v) || (id === 'cMode' && it.type === v) || (id === 'cCorner' && it.w == null && it.corner === v) || (id === 'cSplit' && splitOf(it) === v) || (id === 'cDuck' && duckRole(it) === v)); });
   if (it.type === 'zoom'){ $('#zStr').value = it.strength; $('#zStrV').textContent = it.strength.toFixed(2).replace('.', ',') + '×'; $('#zDur').textContent = it.dur.toFixed(1).replace('.', ',') + ' s'; $('#zAt').textContent = fmtS(srcToOut(snapSrc(it.at)));
     const pin = $('#pin'); pin.classList.remove('hidden'); pin.style.left = it.cx * 100 + '%'; pin.style.top = it.cy * 100 + '%'; }
   else { $('#cName').textContent = isImg(it.clip) ? `${it.clip.name} · Foto, Länge frei wählbar` : `${it.clip.name} · ${fmtS(it.clip.duration)}`; $('#cIn').textContent = fmtS(it.in); $('#cOut').textContent = fmtS(it.out); $('#cAt').textContent = fmtS(srcToOut(snapSrc(it.at)));
     $$('.pipopt').forEach(x => x.classList.toggle('hidden', it.type === 'insert' || it.type === 'audio'));
     const cm = $('#cMode'); if (cm) cm.parentElement.classList.toggle('hidden', it.type === 'audio');
+    $$('.audopt').forEach(x => x.classList.toggle('hidden', it.type !== 'audio'));
+    const dn = $('#cDuckNote'); if (dn && it.type === 'audio'){ const h = duckNote(it); if (dn.dataset.h !== h){ dn.dataset.h = h; dn.innerHTML = h; } }
     $$('.volopt').forEach(x => x.classList.toggle('hidden', isImg(it.clip) || it.clip.hasAudio === false));
     const vol = it.vol ?? (it.type === 'insert' || it.type === 'audio' ? 1 : 0); $('#cVol').value = Math.round(vol * 100); $('#cVolV').textContent = vol ? Math.round(vol * 100) + ' %' : 'stumm';
     if (it.type !== 'insert' && it.type !== 'audio'){ const v = elVals(it, curRel(it)), w = v ? v.w : coverVals(it).w; $('#cSize').value = Math.round(w * 100); $('#cSizeV').textContent = Math.round(w * 100) + ' %' + (it.kf && it.kf.length ? ` · ${it.kf.length} Keyframes` : ''); } $('#cInHere').classList.toggle('hidden', isImg(it.clip)); $('#cOutHere').classList.toggle('hidden', isImg(it.clip)); }
@@ -5558,20 +5567,24 @@ function wrapTitle(text, size, font, W, H){
 }
 // Freistellen im Plan: Farben als #rrggbb, Toleranz/weicher Rand wie ffmpeg „chromakey“ (similarity/blend), Hauptbild mit Hintergrundfarbe
 function planKey(k, main){ const n = ChromaGL.norm(k); const o = {colors: n.colors.map(c => c.toLowerCase()), tol: +n.tol.toFixed(3), soft: +n.soft.toFixed(3), spill: !!n.spill}; if (main) o.bg = (k.bg || '#000000').toLowerCase(); return o; }
+// Ein Abschnitt der Hauptspur für den Plan. a, b: Quellzeit (bei Einschüben die Zeit im Clip) – für den Abschnitt selbst g.in und
+// g.out, für Übergänge das Material davor oder dahinter. vo: „Stimme aufbereiten“ gilt für diesen Export.
+function planSeg(g, a, b, vo){
+  if (g.kind === 'insert') return {kind:'insert', uri:g.uri, in:r3(a), out:r3(b), image: isImg(g.item.clip), hasAudio: g.item.clip.hasAudio !== false && !isImg(g.item.clip), hasVideo:true, vol:+(g.item.vol ?? 1)};
+  const s = P.sources[g.si], off = s.off;
+  const zs = P.items.filter(z => z.type === 'zoom' && z.at < b && z.at + z.dur > a)
+    .map(z => ({at:r3(z.at - off), dur:z.dur, kind:z.kind, strength:z.strength, cx:z.cx, cy:z.cy}));
+  const fx = g.fx || FX_DEF;
+  return {kind:'main', src:g.si, uri:s.uri, in:r3(a - off), out:r3(b - off), zooms:zs, hasAudio: s.hasAudio !== false, hasVideo: hasVid(s),
+    speed:+(fx.speed || 1), vol:+((fx.vol ?? 1) * srcVol(g.si)).toFixed(3), bright:+(fx.bright || 0), contrast:+(fx.contrast || 0), sat:+(fx.sat || 0), gray:!!fx.gray,
+    ...(f2 => ({tx:r3(f2.tx || 0), ty:r3(f2.ty || 0), sc:+(f2.sc || 1).toFixed(4)}))(frameFx({tx:+(fx.tx || 0), ty:+(fx.ty || 0), sc:+(fx.sc || 1)})),
+    ...(kf => kf ? {kf: kf.map(k => { const f2 = frameFx({tx:+(k.tx || 0), ty:+(k.ty || 0), sc:+(k.sc || 1)}); return {t:r3(fxItemOf(g).at + k.t - a), tx:r3(f2.tx || 0), ty:r3(f2.ty || 0), sc:+(f2.sc || 1).toFixed(4)}; })} : {})(mainKf(g)),
+    ...(k => k ? {key: planKey(k, true)} : {})(mainKeyOf(g)),
+    ...(vo && s.hasAudio !== false && !s.noAudio ? {voice: voicePlan(g)} : {})};
+}
 function buildPlan(dry){   // dry: nur nachsehen (z. B. für das Titelbild) – es werden keine Bilder abgelegt
-  const [W, H] = outSize();
-  const segs = timeline.map(g => {
-    if (g.kind === 'insert') return {kind:'insert', uri:g.uri, in:r3(g.in), out:r3(g.out), image: isImg(g.item.clip), hasAudio: g.item.clip.hasAudio !== false && !isImg(g.item.clip), hasVideo:true, vol:+(g.item.vol ?? 1)};
-    const s = P.sources[g.si], off = s.off;
-    const zs = P.items.filter(z => z.type === 'zoom' && z.at < g.out && z.at + z.dur > g.in)
-      .map(z => ({at:r3(z.at - off), dur:z.dur, kind:z.kind, strength:z.strength, cx:z.cx, cy:z.cy}));
-    const fx = g.fx || FX_DEF;
-    return {kind:'main', src:g.si, uri:s.uri, in:r3(g.in - off), out:r3(g.out - off), zooms:zs, hasAudio: s.hasAudio !== false, hasVideo: hasVid(s),
-      speed:+(fx.speed || 1), vol:+((fx.vol ?? 1) * srcVol(g.si)).toFixed(3), bright:+(fx.bright || 0), contrast:+(fx.contrast || 0), sat:+(fx.sat || 0), gray:!!fx.gray,
-      ...(f2 => ({tx:r3(f2.tx || 0), ty:r3(f2.ty || 0), sc:+(f2.sc || 1).toFixed(4)}))(frameFx({tx:+(fx.tx || 0), ty:+(fx.ty || 0), sc:+(fx.sc || 1)})),
-      ...(kf => kf ? {kf: kf.map(k => { const f2 = frameFx({tx:+(k.tx || 0), ty:+(k.ty || 0), sc:+(k.sc || 1)}); return {t:r3(fxItemOf(g).at + k.t - g.in), tx:r3(f2.tx || 0), ty:r3(f2.ty || 0), sc:+(f2.sc || 1).toFixed(4)}; })} : {})(mainKf(g)),
-      ...(k => k ? {key: planKey(k, true)} : {})(mainKeyOf(g))};
-  });
+  const [W, H] = outSize(), dk = dry ? null : duckPlan(), vo = !dry && voiceExport(), jn = dry ? null : joinPlan();
+  const segs = timeline.map(g => planSeg(g, g.in, g.out, vo));
   const ovs = overlays.map(o => ({mode:o.x.type, image: isImg(o.x.clip), uri:o.x.clip.uri, in:o.x.in, out:r3(o.x.in + (o.end - o.at)), at:r3(o.at), corner:o.x.corner || 'or', size:o.x.size || 0.33,
     ...(o.x.w != null || (o.x.kf && o.x.kf.length) || hasCrop(o.x) ? (() => { const v = elVals(o.x, 0) || coverVals(o.x); return {x:r3(v.x), y:r3(v.y), w:r3(v.w)}; })() : {}),
     ...(o.x.kf && o.x.kf.length ? {kf: o.x.kf.filter(k => k.t <= o.end - o.at + 0.01).map(k => ({t:k.t, x:k.x, y:k.y, w:k.w}))} : {}),
@@ -5580,7 +5593,7 @@ function buildPlan(dry){   // dry: nur nachsehen (z. B. für das Titelbild) – 
     aspect:+elAspect(o.x).toFixed(5), track: elTrack(o.x), vol:+(o.x.vol || 0), hasAudio: o.x.clip.hasAudio !== false && !isImg(o.x.clip),
     width:o.x.clip.width, height:o.x.clip.height, rotation:o.x.clip.rotation || 0}))
     .concat(dry ? [] : decoPlan(W, H)).concat(dry ? [] : lowerPlan(W, H)).concat(dry ? [] : partPlan(W, H)).concat(wmPlan(W, H))
-    .concat(audios.map(a => ({mode:'audio', image:false, uri:a.x.clip.uri, in:r3(a.x.in), out:r3(a.x.in + (a.end - a.at)), at:r3(a.at), track:a.x.track || 1, vol:+(a.x.vol ?? 1), hasAudio:true})));
+    .concat(audios.map(a => ({mode:'audio', image:false, uri:a.x.clip.uri, in:r3(a.x.in), out:r3(a.x.in + (a.end - a.at)), at:r3(a.at), track:a.x.track || 1, vol:+(a.x.vol ?? 1), hasAudio:true, ...(dk && ducks(a.x) ? {duck: true} : {})})));
   const cl = S().enabled !== false && P.cues.length ? computedCues() : [], ctr = trTexts(cl), emo = [];
   const cues = cl.length ? cl.map((x, k) => { const [cx, cy0] = cueXY(x.c), sy = x.c.x == null && window.subSlideY ? subSlideY(x.s, x.e) : null, cy = sy ?? cy0, o = {start:r3(x.s), end:r3(x.e), text:wrapText(x.text), x:cx, y:cy};
     if (S().bg) o.bg = true;   // Untertitel mit Kasten (Clip-Look)
@@ -5599,7 +5612,7 @@ function buildPlan(dry){   // dry: nur nachsehen (z. B. für das Titelbild) – 
   const media = P.sources.map(s => ({uri:s.uri, name:s.name, duration:s.duration, width:dispSize(s)[0], height:dispSize(s)[1], fps:s.fps, hasAudio:s.hasAudio !== false, hasVideo:hasVid(s), kind:s.kind || 'video'}));
   return {format:exFmt, name: ($('#exName').value || P.name).replace(/[\\/:*?"<>|]/g, '_'), width:W, height:H, fps:primary().fps || 30, total:r3(total),
     segments:segs, overlays:ovs, subs, burn: P.settings.burn !== false, quality: $('#exQuality').value, audioFormat: $('#exAudioFmt').value,
-    capcutInstall: $('#exCapcutInstall').checked, sources:media, project:P.id, ...(exFmt === 'video' && gpuUse() ? {gpu: true} : {})};
+    capcutInstall: $('#exCapcutInstall').checked, sources:media, project:P.id, ...(exFmt === 'video' && gpuUse() ? {gpu: true} : {}), ...(dk ? {duck: dk} : {}), ...(jn ? {trans: jn} : {})};
 }
 // ───────── Transkript als Text oder Word-Datei ─────────
 function transcriptParas(o = {}){
@@ -5693,7 +5706,13 @@ function renderExport(){
   const nLower = exFmt === 'audio' ? 0 : lowerList().length, nTitle = P.items.filter(x => x.type === 'title' && !x.lt).length, nSrc = exFmt === 'audio' ? 0 : refCues().length;
   $('#exSummary').textContent = `${fmtT(total)}${exFmt === 'audio' ? '' : ` · ${W}×${H}`} · ${timeline.filter(g => g.kind === 'main').length} Abschnitte` + (P.sources.length > 1 ? ` aus ${P.sources.length} Videos` : '') +
     (n.insert ? ` · ${n.insert} Einschub` : '') + (n.broll ? ` · ${n.broll} B-Roll` : '') + (n.pip ? ` · ${n.pip} Einblendung${n.pip > 1 ? 'en' : ''}` : '') + (n.zoom ? ` · ${n.zoom} Zoom` : '') + (n.fx ? ` · ${n.fx} Anpassungen` : '') + (nTitle ? ` · ${nTitle} Titel` : '') + (nLower ? ` · ${nLower} Bauchbinde${nLower > 1 ? 'n' : ''}` : '') + (tlineOn() ? ' · Textzeile' : '') + (nSrc ? ` · ${nSrc} Quellenzeile${nSrc > 1 ? 'n' : ''}` : '') +
-    (S().enabled !== false && P.cues.length ? ` · ${computedCues().length} Untertitel` : '') + (exFmt !== 'audio' && partOn() ? ` · „${partText()}“` : '') + (exFmt === 'video' && hookVars().length ? ` · ${hookVars().length} Hook-Varianten` : '');
+    (S().enabled !== false && P.cues.length ? ` · ${computedCues().length} Untertitel` : '') + (exFmt !== 'audio' && partOn() ? ` · „${partText()}“` : '') + (exFmt === 'video' && hookVars().length ? ` · ${hookVars().length} Hook-Varianten` : '') +
+    (nJoin => exFmt === 'video' && nJoin ? ` · ${nJoin} ${nJoin > 1 ? 'Übergänge' : 'Übergang'}` : '')(new Set(joinParts.map(p => p.x)).size) +
+    (voiceExport() ? ' · Stimme aufbereitet' : '') + (duckPlan() ? ' · Musik weicht der Sprache' : '');
+  // Projektformate (CapCut, Schnittprojekt) übernehmen Schnitte und Spuren, aber weder Übergänge noch die Bearbeitung des Tons
+  const lost = exFmt === 'video' || exFmt === 'audio' ? [] : [joinParts.length ? 'Übergänge' : '', voiceOn() ? '„Stimme aufbereiten“' : '', duckOn() && audios.some(a => ducks(a.x) && (a.x.vol ?? 1) > 0) ? '„Musik weicht der Sprache“' : ''].filter(Boolean);
+  $('#exToneNote').textContent = lost.length ? `${lost.length > 1 ? lost.slice(0, -1).join(', ') + ' und ' + lost[lost.length - 1] : lost[0]} ${lost.length > 1 || lost[0] === 'Übergänge' ? 'stecken' : 'steckt'} nur in den Exporten „${FMT_LBL.video || 'Video'}“ und „${FMT_LBL.audio || 'Ton'}“. In diesem Format bleiben die Schnitte hart und der Ton, wie er aufgenommen ist.` : '';
+  $('#exToneNote').classList.toggle('hidden', !lost.length);
   paintExBtns(); renderLenLights(); renderChapters(); renderRefsCard(); renderA11y();
 }
 $('#exRes').onchange = renderExport;
@@ -5710,8 +5729,8 @@ async function levelPlan(plan){
     const a = await envOfUri(uri); if (!a) continue;
     // gemessen über die tatsächlich verwendeten Stücke
     let sum = 0, n = 0, pk = -99;
-    for (const s of list){ const L = loudness(a, s.in, s.out), d = s.out - s.in; if (L != null){ sum += Math.pow(10, L / 10) * d; n += d; }
-      for (let i = Math.max(0, Math.floor(s.in * 100)); i < Math.min(a.length, Math.ceil(s.out * 100)); i++) pk = Math.max(pk, a[i] / 2.8 - 90 + 20 * Math.log10(s.vol ?? 1)); }
+    for (const s of list){ const L0 = loudness(a, s.in, s.out), d = s.out - s.in, lv = voiceLvlDb(s), L = L0 == null ? null : L0 + lv; if (L != null){ sum += Math.pow(10, L / 10) * d; n += d; }
+      for (let i = Math.max(0, Math.floor(s.in * 100)); i < Math.min(a.length, Math.ceil(s.out * 100)); i++) pk = Math.max(pk, a[i] / 2.8 - 90 + lv + 20 * Math.log10(s.vol ?? 1)); }
     if (n > 0){ const L = 10 * Math.log10(sum / n); speech.push({uri, L, d: n, pk}); }
   }
   if (!speech.length) return {master: 1, note: ''};
@@ -6167,7 +6186,7 @@ function autoSet(a){
 // Stil des offenen Projekts als Vorlage
 function houseOf(){
   return {sub: jc(P.sub_style), wm: jc(P.watermark), format: P.format || null, safe: P.settings.safe || '', burn: P.settings.burn !== false, level: P.settings.level !== false,
-    textline: jc(P.textline), srcStyle: jc(P.srcStyle), lower: jc(P.lower), part: jc(P.partStyle), slideProfile: jc(P.slideProfile), auto: autoVals()};
+    textline: jc(P.textline), srcStyle: jc(P.srcStyle), lower: jc(P.lower), part: jc(P.partStyle), audio: jc(P.audio), slideProfile: jc(P.slideProfile), auto: autoVals()};
 }
 // Vorlage in ein Projekt schreiben (auch in ein gerade angelegtes, noch ungeöffnetes). Alles, was die Vorlage abdeckt, wird ersetzt.
 function houseInto(p, st){
@@ -6175,6 +6194,7 @@ function houseInto(p, st){
   if (st.sub) p.sub_style = {...DEF_STYLE, ...jc(st.sub)};
   set('watermark', st.wm); set('textline', st.textline); set('srcStyle', st.srcStyle); set('lower', st.lower); set('slideProfile', st.slideProfile);
   if ('part' in st) set('partStyle', st.part);   // Vorlagen aus früheren Fassungen kennen die Kennzeichnung der Reihe noch nicht und lassen sie, wie sie ist
+  if ('audio' in st) set('audio', st.audio);   // ebenso die Einstellungen zum Ton (ab 2.34)
   if ((p.format || null) !== (st.format || null)){ if (st.format && FORMATS[st.format]) p.format = st.format; else delete p.format; delete p.frame; p.frameNew = true; }
   p.settings ||= {pad: 0.06}; p.settings.safe = st.safe || ''; p.settings.burn = st.burn !== false; p.settings.level = st.level !== false;
 }
@@ -6185,6 +6205,8 @@ function houseSummary(st){
   if (st.textline && st.textline.on !== false && String(st.textline.text || '').trim()) a.push('Textzeile');
   if (st.safe) a.push('Schutzzonen');
   if (st.slideProfile && st.slideProfile.name) a.push('Folien „' + st.slideProfile.name + '“');
+  if (st.audio && st.audio.duck && st.audio.duck.on) a.push('Musik weicht der Sprache');
+  if (st.audio && st.audio.voice && st.audio.voice.on) a.push('Stimme aufbereiten');
   return a.join(' · ');
 }
 // Vorlage auf das offene Projekt anwenden
@@ -6296,7 +6318,7 @@ function openHouse(){
   sheetItem = null;
   body.innerHTML = `<h3>Hausstil und Bausteine</h3>
     <div class="hs-sec"><h4>Hausstil</h4>
-      <p class="muted small">Eine Vorlage merkt sich Untertitel-Stil, Wasserzeichen, Format der Leinwand, Schutzzonen, Lautstärke-Angleichung, Textzeile, Quellenzeile, Bauchbinden, die Kennzeichnung von Clip-Reihen („Teil 1/3“), das Designprofil der Folien und die Aufräum-Optionen. Mit dem Stern starten neue Projekte in diesem Stil.</p>
+      <p class="muted small">Eine Vorlage merkt sich Untertitel-Stil, Wasserzeichen, Format der Leinwand, Schutzzonen, Lautstärke-Angleichung, die Einstellungen zum Ton (Musik weicht der Sprache, Stimme aufbereiten), Textzeile, Quellenzeile, Bauchbinden, die Kennzeichnung von Clip-Reihen („Teil 1/3“), das Designprofil der Folien und die Aufräum-Optionen. Mit dem Stern starten neue Projekte in diesem Stil.</p>
       <div class="hs-list" id="hsList"></div>
       ${inP ? '<div class="row"><button class="btn" id="hsSave">＋ Stil dieses Projekts als Vorlage speichern</button></div>' : '<p class="muted small">Neue Vorlagen speicherst du in einem geöffneten Projekt über dasselbe Symbol.</p>'}
     </div>
@@ -6426,6 +6448,514 @@ function decoPlan(W, H){
       track: 60 + elTrack(it), vol: 0, hasAudio: false, width: cv.width, height: cv.height, rotation: 0, deco: true});
   }
   return out;
+}
+
+// ───────── Ton (2.34): Musik weicht der Sprache (E1), Stimme aufbereiten (E2), Übergänge (E3) ─────────
+// P.audio = {duck: {on, db}, voice: {on}} – Einstellungen zum Ton des Projekts; Teil des Rückgängig-Stands (au) und des Hausstils.
+// Tonspur-Elemente tragen ihre Rolle in duck: (fehlt) weicht der Sprache · 'voice' ist selbst Sprache · false bleibt, wie sie ist.
+const DUCK_STEPS = [[8, 'leicht'], [14, 'mittel'], [20, 'stark']], DUCK_DEF = 14;
+const DUCK_DOWN = 0.25, DUCK_HOLD = 0.4, DUCK_UP = 0.8, DUCK_GAP = 2;   // Sekunden: absenken, halten, zurückkommen; kürzere Pausen bleiben abgesenkt
+const audioSet = () => (P && P.audio) || {};
+const duckOn = () => !!(audioSet().duck && audioSet().duck.on);
+const duckDb = () => { const d = +(audioSet().duck || {}).db; return d >= 3 && d <= 30 ? d : DUCK_DEF; };
+const duckRole = x => !x || x.type !== 'audio' ? '' : x.duck === false ? 'keep' : x.duck === 'voice' ? 'voice' : 'duck';
+const ducks = x => duckRole(x) === 'duck';
+function audioEdit(fn){ commit(() => { P.audio = jc(P.audio) || {}; fn(P.audio); }, false); }
+// Sprachabschnitte aus einem Lautstärkeverlauf, der nicht zu einem Video der Hauptspur gehört (Sprachaufnahme auf einer Tonspur)
+function burstsOfUri(uri){
+  const src = P.sources.find(x => x.uri === uri); if (src && envArr(src)) return burstsOf(src);
+  const a = envDone.get(uri);
+  if (!a){ if (!burstsOfUri.asked.has(uri) && window.envOfUri){ burstsOfUri.asked.add(uri); envOfUri(uri).then(e => { if (e){ if (!envDone.has(uri)) envDone.set(uri, e); audioDirty(); } }); } return null; }
+  let h = burstsOfUri.memo.get(uri); if (!h){ h = {env: 1}; Object.defineProperty(h, '_env', {value: a, writable: true}); burstsOfUri.memo.set(uri, h); }
+  return burstsOf(h);
+}
+burstsOfUri.memo = new Map(); burstsOfUri.asked = new Set();
+let speechMemo = null, duckMemo = null;
+function audioDirty(){ speechMemo = null; duckMemo = null; }
+// Wo gesprochen wird, in Ausgabezeit: Sprachabschnitte der Hauptspur (aus dem Lautstärkeverlauf), Einschübe mit Ton und
+// Tonspur-Elemente, die als Sprache gelten. Abschnitte, zwischen denen weniger als DUCK_GAP liegt, zählen als einer.
+function speechOut(){
+  if (speechMemo) return speechMemo;
+  const out = [];
+  for (const g of timeline){
+    const d = segDur(g); if (!(d > 0)) continue;
+    if (g.kind === 'insert'){ const c = g.item.clip; if (c && !isImg(c) && c.hasAudio !== false && (g.item.vol ?? 1) > 0) out.push([g.o, g.o + d]); continue; }
+    const s = P.sources[g.si]; if (!s || s.hasAudio === false || s.noAudio || !(((g.fx || FX_DEF).vol ?? 1) * srcVol(g.si) > 0)) continue;
+    const bs = burstsOf(s), sp = g.speed || 1, a0 = g.in - s.off, b0 = g.out - s.off;
+    if (!bs && !tokens.length){ out.push([g.o, g.o + d]); continue; }   // ohne Lautstärkeverlauf und ohne Transkript gilt der ganze Abschnitt als Sprache
+    for (const [x, y] of bs || []){ if (y <= a0) continue; if (x >= b0) break; out.push([g.o + (Math.max(x, a0) - a0) / sp, g.o + (Math.min(y, b0) - a0) / sp]); }
+    // Die Wörter des Transkripts zählen auch dort, wo leise gesprochen wird und der Lautstärkeverlauf unter seiner Schwelle bleibt
+    let lo = 0, hi = tokens.length; while (lo < hi){ const m = (lo + hi) >> 1; if (tokens[m].e <= g.in) lo = m + 1; else hi = m; }
+    for (let i = lo; i < tokens.length && tokens[i].s < g.out; i++){ const t = tokens[i]; if (t.type !== 'word' || deleted.has(i)) continue;
+      const x = Math.max(wS(t), g.in), y = Math.min(wE(t), g.out); if (y > x) out.push([g.o + (x - g.in) / sp, g.o + (y - g.in) / sp]); }
+  }
+  for (const a of audios){
+    if (duckRole(a.x) !== 'voice' || !((a.x.vol ?? 1) > 0)) continue;
+    const bs = burstsOfUri(a.x.clip.uri), i0 = a.x.in || 0, i1 = i0 + (a.end - a.at);
+    if (!bs || !bs.length){ out.push([a.at, a.end]); continue; }   // (noch) kein Lautstärkeverlauf oder keine Abschnitte darin: die ganze Aufnahme zählt
+    for (const [x, y] of bs){ if (y <= i0) continue; if (x >= i1) break; out.push([a.at + Math.max(x, i0) - i0, a.at + Math.min(y, i1) - i0]); }
+  }
+  out.sort((p, q) => p[0] - q[0]);
+  const m = [];
+  for (const iv of out){ const l = m[m.length - 1]; if (l && iv[0] - l[1] < DUCK_GAP) l[1] = Math.max(l[1], iv[1]); else m.push([iv[0], iv[1]]); }
+  return speechMemo = m;
+}
+// Wert eines stückweise linearen Verlaufs [[t, g], …] an der Stelle t (vor dem ersten und nach dem letzten Punkt gilt deren Wert)
+function curveAt(pts, t){
+  const n = pts.length; if (!n) return 1; if (t <= pts[0][0]) return pts[0][1]; if (t >= pts[n - 1][0]) return pts[n - 1][1];
+  let lo = 0, hi = n - 1; while (hi - lo > 1){ const m = (lo + hi) >> 1; if (pts[m][0] <= t) lo = m; else hi = m; }
+  const a = pts[lo], b = pts[hi], w = b[0] - a[0]; return w > 1e-9 ? a[1] + (b[1] - a[1]) * (t - a[0]) / w : b[1];
+}
+// Verlauf der Absenkung in Ausgabezeit: vor der Sprache geht die Musik in DUCK_DOWN herunter, bleibt nach ihrem Ende DUCK_HOLD
+// unten und kommt in DUCK_UP zurück. Leer, wenn nichts abzusenken ist.
+function duckPts(){
+  if (duckMemo) return duckMemo;
+  const k = Math.pow(10, -duckDb() / 20), raw = [];
+  for (const [a, b] of speechOut()) raw.push([a - DUCK_DOWN, 1], [a, k], [b + DUCK_HOLD, k], [b + DUCK_HOLD + DUCK_UP, 1]);
+  const pts = [];
+  if (raw.length){   // auf die Länge des Videos beschneiden
+    const g0 = curveAt(raw, 0), g1 = curveAt(raw, total);
+    if (raw[0][0] < 0) pts.push([0, g0]);
+    for (const p of raw) if (p[0] >= 0 && p[0] <= total) pts.push(p);
+    if (raw[raw.length - 1][0] > total) pts.push([total, g1]);
+  }
+  return duckMemo = pts;
+}
+const duckAt = o => duckOn() ? curveAt(duckPts(), o) : 1;
+// Für den Export: Verlauf nur, wenn es etwas abzusenken gibt
+function duckPlan(){
+  if (!duckOn() || !(exFmt === 'video' || exFmt === 'audio') || !audios.some(a => ducks(a.x) && (a.x.vol ?? 1) > 0)) return null;
+  const pts = duckPts(); return pts.length ? pts.map(([t, g]) => [r3(t), +g.toFixed(4)]) : null;
+}
+// Hinweis unter der Rolle eines Tonspur-Elements („Lautstärke & Ausschnitt“)
+function duckNote(it){
+  if (!duckOn()) return '„Musik weicht der Sprache“ ist für dieses Projekt aus. <button type="button" class="btn small" id="cDuckOn">Einschalten</button>';
+  const r = duckRole(it);
+  return r === 'duck' ? `Geht um ${duckDb()} dB zurück, sobald gesprochen wird, und kommt in Pausen ab ${DUCK_GAP} Sekunden wieder. Die Stärke steht unter „Lautstärke“.`
+    : r === 'voice' ? 'Gilt selbst als Sprache: Musik auf den anderen Tonspuren weicht auch dieser Aufnahme.' : 'Behält durchgehend die eingestellte Lautstärke.';
+}
+// Schalter zum Ton des Projekts im Blatt „Lautstärke“
+const DUCK_ROLE = {duck: 'weicht der Sprache', voice: 'gilt als Sprache', keep: 'bleibt gleich'};
+function toneBoxHtml(){
+  const on = duckOn(), db = duckDb(), n = P.items.filter(x => x.type === 'audio').length;
+  return `<label class="row"><input type="checkbox" id="duckOn"${on ? ' checked' : ''}><span><b>Musik weicht der Sprache</b></span></label>
+    <p class="muted small">Tonspuren werden leiser, sobald gesprochen wird, und kommen in Pausen ab ${DUCK_GAP} Sekunden zurück.${n ? '' : ' Noch liegt nichts auf einer Tonspur.'} Einzelne Elemente lassen sich unter „Lautstärke & Ausschnitt“ ausnehmen oder selbst als Sprache einstellen.</p>
+    <div class="field${on ? '' : ' hidden'}" id="duckDbRow"><span>Absenkung <b>${db} dB</b></span><div class="seg-ctl" id="duckDb">${DUCK_STEPS.map(([v, l]) => `<button type="button" data-db="${v}"${v === db ? ' class="on"' : ''}>${l}</button>`).join('')}</div></div>
+    <div class="tone-sep"></div>
+    <label class="row"><input type="checkbox" id="voiceOn"${voiceOn() ? ' checked' : ''}><span><b>Stimme aufbereiten</b></span></label>
+    <p class="muted small">Nimmt Brummen und Rauschen zurück, dämpft den Nachhall zwischen den Silben und gleicht leise und laute Stellen an. Gilt für die Videos der Hauptspur, in der Vorschau und im Export, und läuft auf diesem Gerät ohne Online-Dienst.</p>`;
+}
+function toneBoxBind(){
+  const box = $('#toneBox'); if (!box) return;
+  const again = () => { box.innerHTML = toneBoxHtml(); toneBoxBind(); seekOut(outPos, false); if (window.renderTimeline && tlOn()) renderTimeline(); };
+  $('#duckOn').onchange = e => { const on = e.target.checked; audioEdit(a => { a.duck = {...(a.duck || {}), on}; }); again(); toast(on ? 'Musik weicht jetzt der Sprache' : 'Musik bleibt durchgehend gleich laut'); };
+  $('#duckDb').onclick = e => { const b = e.target.closest('button'); if (!b) return; audioEdit(a => { a.duck = {...(a.duck || {}), on: true, db: +b.dataset.db}; }); again(); };
+  $('#voiceOn').onchange = e => { const on = e.target.checked; audioEdit(a => { a.voice = {...(a.voice || {}), on}; }); again(); toast(on ? 'Die Stimme wird aufbereitet – in der Vorschau zu hören' : 'Der Ton der Hauptspur bleibt, wie er aufgenommen ist'); };
+}
+// ── Stimme aufbereiten (E2): Rechenkern ──
+// Ein Durchgang in überlappenden Rahmen (rund 21 ms, 75 % Überlappung): Hochpass gegen Trittschall und Brummen,
+// Rauschminderung (die Rauschschätzung folgt je Frequenzband dem leisesten Pegel der letzten Zeit) und eine Dämpfung des späten
+// Nachhalls; danach der Pegelverlauf (leise Stellen anheben) und eine weiche Begrenzung. Dieselbe Rechnung steht in
+// textschnitt.py (Windows) und VoiceDsp.java (Android). Die Funktion ist in sich geschlossen: Ihr Quelltext läuft auch im
+// AudioWorklet der Vorschau, deshalb greift sie auf nichts außerhalb zu.
+function voiceDspLib(){
+  const V = {hp: 85, tauS: 0.04, rise: 2, beta: 2.5, floorN: -12, floorR: -9, rt60: 0.6, td: 0.05, tauG: 0.05, dd: 0.96, makeup: 1.5, knee: 0.8, prime: 2};
+  class VoiceDsp {
+    // sr: Abtastrate, ch: Kanäle; noise: Rauschschätzung aus einem früheren Abschnitt derselben Aufnahme (Float64Array) oder null
+    constructor(sr, ch, noise){
+      this.sr = sr; this.ch = ch;
+      const N = this.N = sr >= 64000 ? 2048 : sr >= 32000 ? 1024 : sr >= 16000 ? 512 : 256, H = this.H = N >> 2, K = this.K = (N >> 1) + 1;
+      this.win = new Float64Array(N); for (let i = 0; i < N; i++) this.win[i] = Math.sin(Math.PI * i / N);
+      this.hp = new Float64Array(K); for (let k = 1; k < K; k++){ const q = V.hp / (k * sr / N); this.hp[k] = 1 / Math.sqrt(1 + q * q * q * q); }
+      this.aS = Math.exp(-H / (sr * V.tauS)); this.W = Math.max(2, Math.round(2 * V.tauS * sr / H));
+      this.up = Math.pow(10, V.rise * H / sr / 10); this.rel = Math.exp(-H / (sr * V.tauG));
+      this.D = Math.max(1, Math.round(V.td * sr / H)); this.rho = Math.pow(10, -6 * (this.D * H / sr) / V.rt60);
+      this.gn = Math.pow(10, V.floorN / 20); this.gr = Math.pow(10, V.floorR / 20); this.makeup = Math.pow(10, V.makeup / 20);
+      this.noise = noise && noise.length === K ? Float64Array.from(noise) : null;
+      // Tabellen der schnellen Fourier-Transformation
+      let bits = 0; while ((1 << bits) < N) bits++;
+      this.rev = new Uint32Array(N); for (let i = 0; i < N; i++){ let r = 0; for (let b = 0; b < bits; b++) if (i & (1 << b)) r |= 1 << (bits - 1 - b); this.rev[i] = r; }
+      this.cos = new Float64Array(N >> 1); this.sin = new Float64Array(N >> 1); for (let i = 0; i < N >> 1; i++){ this.cos[i] = Math.cos(2 * Math.PI * i / N); this.sin[i] = Math.sin(2 * Math.PI * i / N); }
+      this.re = new Float64Array(N); this.im = new Float64Array(N);
+      this.Xr = []; this.Xi = []; this.inb = []; this.ola = [];
+      for (let c = 0; c < ch; c++){ this.Xr.push(new Float64Array(K)); this.Xi.push(new Float64Array(K)); this.inb.push(new Float64Array(N)); this.ola.push(new Float64Array(N)); }
+      this.S = new Float64Array(K); this.P = new Float64Array(K); this.G = new Float64Array(K); this.Gf = new Float64Array(K);
+      this.Gs = new Float64Array(K); this.Gp = new Float64Array(K); this.gam = new Float64Array(K); this.ring = new Float64Array(this.D * K);
+      this.lvl = null; this.reset();
+    }
+    // Neuer Abschnitt: alles auf Anfang, die Rauschschätzung bleibt
+    reset(){
+      this.m = 0; this.ri = 0; this.ring.fill(0); this.Gs.fill(this.gn); this.Gp.fill(this.gn); this.gam.fill(1);
+      for (let c = 0; c < this.ch; c++){ this.inb[c].fill(0); this.ola[c].fill(0); }
+      this.hops = 0; this.fed = 0; this.done = 0; this.part = 0; this.lk = 0;
+    }
+    // inv: Rücktransformation (ohne Teilung durch N)
+    fft(inv){
+      const N = this.N, re = this.re, im = this.im, rev = this.rev, cs = this.cos, sn = this.sin;
+      for (let i = 0; i < N; i++){ const j = rev[i]; if (j > i){ let t = re[i]; re[i] = re[j]; re[j] = t; t = im[i]; im[i] = im[j]; im[j] = t; } }
+      for (let size = 2; size <= N; size <<= 1){
+        const half = size >> 1, step = N / size;
+        for (let a = 0; a < N; a += size) for (let k = 0; k < half; k++){
+          const wr = cs[k * step], wi = inv ? sn[k * step] : -sn[k * step], p = a + k, q = p + half;
+          const tr = re[q] * wr - im[q] * wi, ti = re[q] * wi + im[q] * wr;
+          re[q] = re[p] - tr; im[q] = im[p] - ti; re[p] += tr; im[p] += ti;
+        }
+      }
+    }
+    // Geglättete Leistung und Rauschschätzung aus einem vollständigen Rahmen
+    track(){
+      const K = this.K, S = this.S, P = this.P; this.m++;
+      if (this.m === 1) for (let k = 0; k < K; k++) S[k] = P[k];
+      else if (this.m <= this.W) for (let k = 0; k < K; k++) S[k] = S[k] + (P[k] - S[k]) / this.m;
+      else { const a = this.aS; for (let k = 0; k < K; k++) S[k] = a * S[k] + (1 - a) * P[k]; }
+      if (!this.noise){ if (this.m === this.W) this.noise = Float64Array.from(S); }
+      else if (this.m > this.W){ const nz = this.noise, up = this.up; for (let k = 0; k < K; k++) nz[k] = S[k] < nz[k] ? S[k] : Math.min(S[k], nz[k] * up); }
+    }
+    // Gewinn je Frequenzband für den Rahmen mit der Leistung this.P; full: der Rahmen besteht ganz aus Ton (keine Auffüllung)
+    gain(full){
+      const K = this.K, P = this.P, G = this.G, Gf = this.Gf, Gs = this.Gs, Gp = this.Gp, gam = this.gam, gn = this.gn, gr = this.gr;
+      if (full && this.psum > 1e-9) this.track();   // völlige Stille (stumm geschaltete Stellen) lehrt nichts über das Rauschen
+      const Sx = this.m > 0 ? this.S : P, nz = this.noise, ring = this.ring, r0 = this.ri * K;
+      for (let k = 0; k < K; k++){
+        let g = 1, ga = 1;
+        if (nz){ ga = P[k] / (V.beta * nz[k] + 1e-12); const xi = V.dd * Gp[k] * Gp[k] * gam[k] + (1 - V.dd) * Math.max(ga - 1, 0); g = Math.max(gn, xi / (1 + xi)); }
+        Gp[k] = g; gam[k] = ga;
+        const r = Math.max(gr, 1 - this.rho * ring[r0 + k] / (Sx[k] + 1e-12));
+        G[k] = Math.max(gn, g * r);
+      }
+      if (full && this.m > 0){ for (let k = 0; k < K; k++) ring[r0 + k] = this.S[k]; this.ri = (this.ri + 1) % this.D; }
+      Gf[0] = G[0]; Gf[K - 1] = G[K - 1]; for (let k = 1; k < K - 1; k++) Gf[k] = 0.25 * G[k - 1] + 0.5 * G[k] + 0.25 * G[k + 1];
+      const rel = this.rel; for (let k = 0; k < K; k++) Gs[k] = Gf[k] > Gs[k] ? Gf[k] : rel * Gs[k] + (1 - rel) * Gf[k];
+    }
+    // Die Rahmen aller Kanäle transformieren und die mittlere Leistung je Band bilden (this.inb ist gefüllt)
+    analyse(){
+      const N = this.N, K = this.K, P = this.P, re = this.re, im = this.im, win = this.win; P.fill(0);
+      for (let c = 0; c < this.ch; c++){
+        const b = this.inb[c]; for (let i = 0; i < N; i++){ re[i] = b[i] * win[i]; im[i] = 0; }
+        this.fft(false);
+        const xr = this.Xr[c], xi = this.Xi[c]; for (let k = 0; k < K; k++){ xr[k] = re[k]; xi[k] = im[k]; P[k] += re[k] * re[k] + im[k] * im[k]; }
+      }
+      let s = 0; for (let k = 0; k < K; k++){ P[k] /= this.ch; s += P[k]; } this.psum = s;
+    }
+    // Ein Schritt: x[c] sind H neue Abtastwerte je Kanal (ab Stelle xo), y[c] nimmt H fertige auf (ab Stelle yo) – um N − H verzögert
+    hop(x, xo, y, yo, full){
+      const N = this.N, H = this.H, K = this.K, re = this.re, im = this.im, win = this.win, hp = this.hp, Gs = this.Gs;
+      for (let c = 0; c < this.ch; c++){ const b = this.inb[c]; b.copyWithin(0, H); for (let i = 0; i < H; i++) b[N - H + i] = x[c][xo + i]; }
+      this.analyse(); this.gain(full);
+      for (let c = 0; c < this.ch; c++){
+        const xr = this.Xr[c], xi = this.Xi[c], o = this.ola[c];
+        for (let k = 0; k < K; k++){ const g = Gs[k] * hp[k]; re[k] = xr[k] * g; im[k] = xi[k] * g; }
+        for (let k = 1; k < K - 1; k++){ re[N - k] = re[k]; im[N - k] = -im[k]; }
+        this.fft(true);
+        for (let i = 0; i < N; i++) o[i] += re[i] / N * win[i] * 0.5;
+        for (let i = 0; i < H; i++) y[c][yo + i] = o[i];
+        o.copyWithin(0, H); o.fill(0, N - H);
+      }
+      this.hops++;
+    }
+    // Rauschschätzung aus dem Anfang einer Aufnahme lernen (x[c]: Float-Felder; nur vollständige Rahmen, ohne Ausgabe)
+    prime(x, n){
+      const N = this.N, H = this.H; this.reset();
+      for (let a = 0; a + N <= n; a += H){ for (let c = 0; c < this.ch; c++){ const b = this.inb[c]; for (let i = 0; i < N; i++) b[i] = x[c][a + i]; } this.analyse(); if (this.psum > 1e-9) this.track(); }
+      if (!this.noise && this.m >= 2) this.noise = Float64Array.from(this.S);
+      this.reset();
+    }
+    // Pegelverlauf [[t, g], …] in Sekunden ab Beginn des Abschnitts (stückweise linear); scale: Zeitmaß (Tempo des Clips)
+    setLevel(lvl, scale){ this.lvl = lvl && lvl.length ? lvl : null; this.lscale = scale || 1; this.lk = 0; }
+    levelAt(i){
+      const p = this.lvl; if (!p) return 1; const t = i / this.sr * this.lscale, n = p.length;
+      if (t <= p[0][0]) return p[0][1]; if (t >= p[n - 1][0]) return p[n - 1][1];
+      if (t < p[this.lk][0]) this.lk = 0; while (this.lk < n - 2 && t >= p[this.lk + 1][0]) this.lk++;
+      const a = p[this.lk], b = p[this.lk + 1], w = b[0] - a[0]; return w > 1e-9 ? a[1] + (b[1] - a[1]) * (t - a[0]) / w : b[1];
+    }
+    // Abtastwert i des Abschnitts fertig machen: Ausgleich, Pegelverlauf, weiche Begrenzung
+    shape(v, i){
+      v *= this.makeup * this.levelAt(i); const k = V.knee, a = Math.abs(v);
+      return a <= k ? v : (v < 0 ? -1 : 1) * (k + (1 - k) * Math.tanh((a - k) / (1 - k)));
+    }
+    // Abschnitt als Datenstrom: feed() nimmt beliebig lange Stücke an und gibt zurück, was fertig ist; finish() liefert den Rest.
+    // Zusammen kommen genau so viele Abtastwerte heraus, wie hineingegangen sind – ohne Versatz.
+    feed(x, n){
+      const H = this.H, lat = this.N - H, ch = this.ch;
+      if (!this.pend){ this.pend = []; this.tmp = []; for (let c = 0; c < ch; c++){ this.pend.push(new Float64Array(H)); this.tmp.push(new Float64Array(H)); } }
+      const out = []; for (let c = 0; c < ch; c++) out.push(new Float32Array(Math.max(0, Math.floor((this.part + n) / H) * H)));
+      let w = 0, i = 0;
+      while (i < n){
+        const k = Math.min(H - this.part, n - i); for (let c = 0; c < ch; c++) for (let q = 0; q < k; q++) this.pend[c][this.part + q] = x[c][i + q];
+        this.part += k; i += k; this.fed += k;
+        if (this.part === H){ this.hop(this.pend, 0, this.tmp, 0, this.hops * H + H >= this.N); this.part = 0;
+          for (let q = 0; q < H; q++){ const pos = (this.hops - 1) * H + q - lat; if (pos < 0) continue; for (let c = 0; c < ch; c++) out[c][w] = this.shape(this.tmp[c][q], pos); w++; this.done++; } }
+      }
+      return out.map(o => o.subarray(0, w));
+    }
+    finish(){
+      const H = this.H, ch = this.ch, rest = this.fed - this.done, out = []; for (let c = 0; c < ch; c++) out.push(new Float32Array(rest));
+      if (!this.pend) return out;
+      let w = 0;
+      while (w < rest){
+        for (let c = 0; c < ch; c++) this.pend[c].fill(0, this.part); this.part = 0;
+        this.hop(this.pend, 0, this.tmp, 0, false);
+        for (let q = 0; q < H && w < rest; q++){ const pos = (this.hops - 1) * H + q - (this.N - H); if (pos < 0) continue; for (let c = 0; c < ch; c++) out[c][w] = this.shape(this.tmp[c][q], pos); w++; this.done++; }
+      }
+      return out;
+    }
+    // Ein ganzer Abschnitt am Stück (x[c]: Float-Felder der Länge n)
+    run(x, n, lvl){ this.reset(); this.setLevel(lvl, 1); const a = this.feed(x, n), b = this.finish(), out = [];
+      for (let c = 0; c < this.ch; c++){ const o = new Float32Array(n); o.set(a[c]); o.set(b[c], a[c].length); out.push(o); } return out; }
+  }
+  return {VoiceDsp, V};
+}
+// ── Stimme aufbereiten: Schalter, Pegelverlauf, Vorschau ──
+const voiceOn = () => !!(audioSet().voice && audioSet().voice.on);
+// Pegelverlauf einer Aufnahme (Sekunden in der Aufnahme → Faktor): Wo leiser gesprochen wird als im Mittel, hebt er an, wo
+// lauter, nimmt er zurück – zu 70 %, höchstens +9 und −6 dB, über drei Sekunden gemittelt. Gemessen wird am Lautstärkeverlauf,
+// und zwar dort, wo gesprochen wird (Sprachabschnitte und Wörter des Transkripts); Pausen übernehmen den Wert ihrer Nachbarn.
+const LVL_STEP = 0.25, LVL_WIN = 1.5, LVL_K = 0.7, LVL_MIN = -6, LVL_MAX = 9;
+const lvlMemo = new Map();
+function voiceLevel(si){
+  const src = P.sources[si], a = src && envArr(src); if (!a) return [];
+  const key = src.uri + ':' + a.length + ':' + tokens.length, hit = lvlMemo.get(key); if (hit) return hit;
+  const n = a.length, act = new Uint8Array(n), ix = t => clamp(Math.round(t * 100), 0, n);
+  for (const [x, y] of burstsOf(src) || []) act.fill(1, ix(x), ix(y));
+  for (const t of tokens) if (t.src === si && t.type === 'word') act.fill(1, ix(wS(t) - src.off), ix(wE(t) - src.off));
+  const cp = new Float64Array(n + 1), cn = new Uint32Array(n + 1);
+  for (let i = 0; i < n; i++){ cp[i + 1] = cp[i] + (act[i] ? Math.pow(10, (a[i] / 2.8 - 90) / 10) : 0); cn[i + 1] = cn[i] + act[i]; }
+  const pts = [];
+  if (cn[n] >= 30){
+    const ref = 10 * Math.log10(cp[n] / cn[n]), m = Math.ceil(n / 100 / LVL_STEP) + 1, g = new Float64Array(m).fill(NaN);
+    for (let j = 0; j < m; j++){ const t = j * LVL_STEP, i0 = ix(t - LVL_WIN), i1 = ix(t + LVL_WIN), c = cn[i1] - cn[i0];
+      if (c >= 30) g[j] = clamp(LVL_K * (ref - 10 * Math.log10((cp[i1] - cp[i0]) / c)), LVL_MIN, LVL_MAX); }
+    let last = -1;   // Lücken füllen: zwischen zwei Messwerten gerade verbinden, am Rand den nächsten übernehmen
+    for (let j = 0; j < m; j++){ if (g[j] !== g[j]) continue;
+      if (last < 0) g.fill(g[j], 0, j); else for (let q = last + 1; q < j; q++) g[q] = g[last] + (g[j] - g[last]) * (q - last) / (j - last);
+      last = j; }
+    if (last >= 0){ g.fill(g[last], last + 1);
+      const s = Float64Array.from(g, (v, j) => (g[Math.max(0, j - 1)] + v + g[Math.min(m - 1, j + 1)]) / 3);
+      let kept = NaN;
+      for (let j = 0; j < m; j++) if (j === 0 || j === m - 1 || Math.abs(s[j] - kept) >= 0.2){ kept = s[j]; pts.push([+(j * LVL_STEP).toFixed(2), +Math.pow(10, s[j] / 20).toFixed(3)]); }
+    }
+  }
+  if (lvlMemo.size > 60) lvlMemo.clear();
+  lvlMemo.set(key, pts); return pts;
+}
+// Faktor des Pegelverlaufs an der Stelle, die das Hauptvideo gerade zeigt (für die Vorschau)
+function voiceGainNow(g){
+  if (!g || g.kind !== 'main' || !voiceOn()) return 1;
+  const s = P.sources[g.si]; return s ? curveAt(voiceLevel(g.si), vT() - s.off) : 1;
+}
+// Für den Export: Schlüssel der Aufnahme und Pegelverlauf des Abschnitts (Sekunden ab Abschnittsbeginn in der Quelle)
+function voicePlan(g){
+  const s = P.sources[g.si], pts = voiceLevel(g.si), a = g.in - s.off, b = g.out - s.off, lvl = [];
+  if (pts.length){ lvl.push([0, curveAt(pts, a)]); for (const [t, v] of pts) if (t > a + 1e-3 && t < b - 1e-3) lvl.push([t - a, v]); lvl.push([b - a, curveAt(pts, b)]); }
+  return {k: 's' + g.si, ...(lvl.every(p => Math.abs(p[1] - 1) < 0.006) ? {} : {lvl: lvl.map(([t, v]) => [r3(t), +v.toFixed(3)])})};
+}
+const voiceExport = () => voiceOn() && (exFmt === 'video' || exFmt === 'audio');
+// Mittlere Wirkung des Pegelverlaufs auf einen Abschnitt in dB (für „Lautstärke vereinheitlichen“)
+function voiceLvlDb(s){
+  const p = s.voice && s.voice.lvl; if (!p || p.length < 2) return 0;
+  let sum = 0; for (let i = 1; i < p.length; i++) sum += (p[i][0] - p[i - 1][0]) * 10 * Math.log10(Math.max(1e-3, p[i][1] * p[i - 1][1]));
+  const d = p[p.length - 1][0] - p[0][0]; return d > 0 ? sum / d : 20 * Math.log10(Math.max(1e-3, p[0][1]));
+}
+// Vorschau: Der Ton des Hauptvideos läuft durch denselben Rechenkern (AudioWorklet); den Pegelverlauf stellt die Lautstärke
+// des Videos nach (applySegFx). Kann der Browser das nicht, bleibt die Vorschau unbearbeitet – der Export bereitet trotzdem auf.
+let voiceMod = null, voiceFail = false, voiceBusy = false;
+function voiceWorkletSrc(){
+  return voiceDspLib.toString() + `
+const VoiceDsp = voiceDspLib().VoiceDsp;
+class HcVoice extends AudioWorkletProcessor {
+  constructor(){
+    super(); this.dsp = new VoiceDsp(sampleRate, 2, null); const H = this.dsp.H;
+    this.pend = [new Float64Array(H), new Float64Array(H)]; this.tmp = [new Float64Array(H), new Float64Array(H)]; this.part = 0;
+    this.q = [new Float32Array(8192), new Float32Array(8192)]; this.r = 0; this.w = 0; this.go = false;
+    this.port.onmessage = e => { if (e.data === 'reset'){ this.dsp.reset(); this.part = 0; } };
+  }
+  process(inputs, outputs){
+    const inp = inputs[0], out = outputs[0], n = out[0].length, d = this.dsp, H = d.H, M = 8191;
+    if (!inp || !inp.length){ for (const c of out) c.fill(0); return true; }
+    const a = inp[0], b = inp[1] || inp[0];
+    for (let i = 0; i < n; i++){
+      this.pend[0][this.part] = a[i]; this.pend[1][this.part] = b[i];
+      if (++this.part === H){ this.part = 0; d.hop(this.pend, 0, this.tmp, 0, d.hops * H + H >= d.N);
+        for (let k = 0; k < H; k++){ this.q[0][this.w & M] = d.shape(this.tmp[0][k], 0); this.q[1][this.w & M] = d.shape(this.tmp[1][k], 0); this.w++; } }
+    }
+    if (!this.go && this.w - this.r >= n) this.go = true;
+    for (let i = 0; i < n; i++){ const ok = this.go && this.r < this.w; for (let c = 0; c < out.length; c++) out[c][i] = ok ? this.q[c > 0 ? 1 : 0][this.r & M] : 0; if (ok) this.r++; }
+    return true;
+  }
+}
+registerProcessor('hc-voice', HcVoice);`;
+}
+// Hängt das Hauptvideo an die Aufbereitung oder löst es davon – je nach Schalter. Läuft bei jedem Bild mit und tut meist nichts.
+function voiceWire(){
+  const want = !!P && voiceOn() && !voiceFail;
+  if (want === !!V._von) return;
+  try {
+    if (!want){ V._s.disconnect(); V._vn.disconnect(); V._s.connect(V._g); V._von = false; return; }
+    if (!V._g) setVol(V, V.volume, true);   // Verstärker-Kette des Videos anlegen
+    if (!V._g || !V._s || !actx.audioWorklet) throw new Error('kein AudioWorklet');
+    if (!V._vn){
+      if (voiceBusy) return; voiceBusy = true;
+      voiceMod ||= actx.audioWorklet.addModule(URL.createObjectURL(new Blob([voiceWorkletSrc()], {type: 'text/javascript'})));
+      voiceMod.then(() => { V._vn = new AudioWorkletNode(actx, 'hc-voice', {numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2]}); voiceBusy = false; },
+        e => { voiceBusy = false; voiceFail = true; console.warn('Stimme aufbereiten: Vorschau ohne Aufbereitung', e); });
+      return;
+    }
+    V._s.disconnect(); V._s.connect(V._vn); V._vn.connect(V._g); V._von = true; V._vn.port.postMessage('reset');
+  } catch(e){ voiceFail = true; console.warn('Stimme aufbereiten: Vorschau ohne Aufbereitung', e); try { if (V._s && V._g){ V._s.disconnect(); V._s.connect(V._g); } } catch(_){} V._von = false; }
+}
+V.addEventListener('seeked', () => { if (V._von && V._vn) V._vn.port.postMessage('reset'); });
+// ── Übergänge (E3): weiche Blende und versetzter Bildwechsel (J- und L-Schnitt) ──
+// Je Schnitt der Hauptspur ein Element in P.items: {id, type: 'join', at | ins, pa | pins, kind: 'fade' | 'early' | 'late', d}.
+//   at:  Quellzeit, an der der Abschnitt nach dem Schnitt beginnt – ins: der Einschub, der nach dem Schnitt beginnt
+//   pa:  Quellzeit, an der der Abschnitt vor dem Schnitt endet – pins: der Einschub, der vor dem Schnitt endet
+//   Der Übergang bleibt an seinem Schnitt, solange eine der beiden Seiten noch passt (z. B. wenn ein Wort mehr gestrichen wird).
+//   fade: Blende über d Sekunden · early: das Bild wechselt d Sekunden vor dem Ton (L-Schnitt) · late: d Sekunden danach (J-Schnitt)
+// Der Ton wechselt immer am Schnitt. Das Bild des Übergangs kommt aus dem Material unmittelbar vor bzw. nach dem Schnitt
+// (auch aus Herausgeschnittenem) und liegt als Ebene direkt über der Hauptspur – in der Vorschau wie im Export (plan.trans).
+// Jeder Übergang ist genau eine Ebene auf einer Seite des Schnitts: „davor“ zeigt den nächsten Clip über dem Ende des vorigen
+// (die Blende ist am Schnitt fertig), „dahinter“ den vorigen Clip über dem Anfang des nächsten. An der Schnittseite ist die Ebene
+// deckend und läuft dort ein Stück bildgleich mit der Hauptspur weiter (lead/tail) – so bleibt der Export auch dann sauber, wenn
+// ein Programm Ebene und Hauptspur um ein Bild versetzt zusammenführt (Android).
+const JOIN_KINDS = [['', 'Hart'], ['fade', 'Blende'], ['early', 'Bild früher'], ['late', 'Bild später']];
+const JOIN_D = {fade: [0.2, 0.4, 0.8], early: [0.3, 0.6, 1], late: [0.3, 0.6, 1]}, JOIN_DEF = {fade: 0.4, early: 0.6, late: 0.6}, JOIN_MIN = 0.08, JOIN_PAD = 0.1;
+// aufgelöst: [{x, k, over, at, d, a0, a1, lead, tail, g, from}] – Ebene über [at, at + d) mit Deckkraft a0 → a1, Material von g ab from;
+// over: der Abschnitt, über dem sie liegt · lead/tail: bildgleicher Vor- bzw. Nachlauf in Sekunden (nur für den Export)
+let joinParts = [], joinMap = new Map();   // joinMap: Nummer des Abschnitts nach dem Schnitt → Übergang, der dort gilt
+const joinItems = () => P.items.filter(x => x.type === 'join');
+// Ein echter Schnitt? Zwei Abschnitte derselben Aufnahme, die nahtlos aneinanderschließen, sind keiner.
+const isCutAt = k => { const A = timeline[k - 1], B = timeline[k]; return !!(A && B) && !(A.kind === 'main' && B.kind === 'main' && A.si === B.si && Math.abs(B.in - A.out) < 0.02); };
+// Wo sitzt der Übergang? [Nummer des Abschnitts nach dem Schnitt, Güte] – Güte 0: der Abschnitt danach beginnt genau dort ·
+// 1: sein Anfang ist inzwischen gestrichen, der Schnitt liegt am nächsten behaltenen Abschnitt · 2: nur der Abschnitt davor passt noch.
+// [−1] heißt: Den Schnitt gibt es nicht mehr.
+function joinSeat(x){
+  const cut = k => k > 0 && isCutAt(k);
+  let k = -1;
+  if (x.ins) k = timeline.findIndex(g => g.kind === 'insert' && g.item.id === x.ins);
+  else if (x.at != null) k = timeline.findIndex(g => g.kind === 'main' && Math.abs(g.in - x.at) < 0.03);
+  if (cut(k)) return [k, 0];
+  if (!x.ins && x.at != null){ const a = snapSrc(x.at); k = timeline.findIndex(g => g.kind === 'main' && Math.abs(g.in - a) < 0.03); if (cut(k)) return [k, 1]; }
+  if (x.pins) k = timeline.findIndex(g => g.kind === 'insert' && g.item.id === x.pins) + 1;
+  else if (x.pa != null) k = timeline.findIndex(g => g.kind === 'main' && Math.abs(g.out - x.pa) < 0.03) + 1;
+  else k = -1;
+  return k > 0 && k < timeline.length && cut(k) ? [k, 2] : [-1];
+}
+const joinIndex = x => joinSeat(x)[0];
+const joinAt = k => joinMap.get(k) || null;
+// Wie viel Bildmaterial es hinter dem Ende bzw. vor dem Anfang eines Abschnitts gibt (Sekunden in Ausgabezeit, höchstens d)
+function handleAfter(g, d){
+  if (g.kind === 'insert'){ const c = g.item.clip; return isImg(c) ? d : Math.min(d, Math.max(0, (c.duration || 0) - g.out)); }
+  const s = P.sources[g.si]; return hasVid(s) ? Math.min(d, Math.max(0, (s.off + s.duration - g.out) / (g.speed || 1))) : 0;
+}
+function handleBefore(g, d){
+  if (g.kind === 'insert'){ const c = g.item.clip; return isImg(c) ? d : Math.min(d, Math.max(0, g.in)); }
+  const s = P.sources[g.si]; return hasVid(s) ? Math.min(d, Math.max(0, (g.in - s.off) / (g.speed || 1))) : 0;
+}
+function joinResolve(x, k){
+  const A = timeline[k - 1], B = timeline[k], T = B.o, sb = B.speed || 1, la = segDur(A) / 2, lb = segDur(B) / 2, d = Math.max(JOIN_MIN, +x.d || 0);
+  const nb = Math.min(handleBefore(B, d), la), na = Math.min(handleAfter(A, d), lb);   // so viel Bild gibt es vor B und hinter A
+  const pre = (a0, a1) => ({x, k, over: k - 1, at: T - nb, d: nb, a0, a1, lead: 0, tail: Math.min(JOIN_PAD, lb), g: B, from: B.in - nb * sb});
+  const post = (a0, a1) => ({x, k, over: k, at: T, d: na, a0, a1, lead: Math.min(JOIN_PAD, la), tail: 0, g: A, from: A.out});
+  if (x.kind === 'early') return nb >= JOIN_MIN ? [pre(1, 1)] : [];
+  if (x.kind === 'late') return na >= JOIN_MIN ? [post(1, 1)] : [];
+  if (x.kind !== 'fade') return [];
+  // Blende: am liebsten vor dem Schnitt (der nächste Clip steht ganz im Bild, wenn sein Ton beginnt); dahinter, wenn dort mehr Material liegt
+  if (nb >= JOIN_MIN && (nb >= d - 1e-6 || nb >= na)) return [pre(0, 1)];
+  return na >= JOIN_MIN ? [post(1, 0)] : [];
+}
+function computeJoins(){
+  joinParts = []; joinMap = new Map();
+  const best = new Map();   // je Schnitt gilt ein Übergang: der am genauesten passende, bei Gleichstand der zuletzt gesetzte
+  for (const x of P.items){ if (x.type !== 'join') continue; const [k, q] = joinSeat(x); if (k > 0 && (!best.has(k) || q <= best.get(k)[1])) best.set(k, [x, q]); }
+  for (const [k, [x]] of best){ joinMap.set(k, x); joinParts.push(...joinResolve(x, k)); }
+  joinParts.sort((a, b) => a.at - b.at);
+}
+// Für den Export: Ebenen direkt über der Hauptspur, je mit einem Abschnitt im Aufbau der Hauptspur (gleiche Lage, Zoom, Farben)
+function joinPlan(){
+  if (exFmt !== 'video') return null;
+  const list = joinParts.map(p => { const sp = p.g.speed || 1, seg = planSeg(p.g, p.from - p.lead * sp, p.from + (p.d + p.tail) * sp, false);
+    seg.hasAudio = false; seg.vol = 0; if (seg.image){ seg.out = r3(seg.out - seg.in); seg.in = 0; }
+    return {at: r3(p.at), d: r3(p.d), a0: p.a0, a1: p.a1, lead: r3(p.lead), tail: r3(p.tail), over: p.over, seg}; }).filter(t => t.d >= 0.04);
+  return list.length ? list : null;
+}
+// ── Vorschau: eine Ebene über dem Hauptbild zeigt das Material des anderen Clips ──
+const TO = $('#transOv'), TV = $('#tv'), TI = $('#ti');
+function joinCss(g, t){   // Lage, Zoom und Farben, wie sie das Hauptbild für Abschnitt g zur Quellzeit t hätte
+  if (g.kind !== 'main') return {transform: '', filter: ''};
+  const z = zoomAt(t), f = frameFx(mainFxAt(g, t)), tx = f.tx || 0, ty = f.ty || 0, sc = f.sc || 1, parts = [];
+  if (tx || ty) parts.push(`translate(${(tx * 100).toFixed(3)}%, ${(ty * 100).toFixed(3)}%)`);
+  if (Math.abs(sc - 1) > 1e-3) parts.push(`scale(${sc.toFixed(4)})`);
+  if (z.s > 1.001) parts.push(`translate(${(-(z.cx - 0.5) * (z.s - 1) * 100).toFixed(3)}%, ${(-(z.cy - 0.5) * (z.s - 1) * 100).toFixed(3)}%) scale(${z.s.toFixed(4)})`);
+  return {transform: parts.join(' '), filter: cssFilter(g.fx)};
+}
+const joinUrl = g => g.kind === 'main' ? srcPlayUrl(P.sources[g.si]) : MEDIA(g.uri);
+function updateJoin(o){
+  if (!joinParts.length && TO.classList.contains('hidden') && !TV.dataset.src) return;
+  const act = joinParts.find(p => o >= p.at && o < p.at + p.d), soon = !act && playing ? joinParts.find(p => p.at > o && p.at - o < PRELOAD_S) : null, p = act || soon;
+  if (!p){ if (!TO.classList.contains('hidden')) TO.classList.add('hidden'); if (!TV.paused) TV.pause(); if (TV.dataset.src && !playing) releaseMedia(TV); return; }
+  const g = p.g, img = g.kind === 'insert' && isImg(g.item.clip), url = joinUrl(g), sp = g.speed || 1;
+  const t = p.from + clamp(o - p.at, 0, p.d) * sp, local = g.kind === 'main' ? t - P.sources[g.si].off : t;   // Zeit im Material
+  if (img){ if (TI.dataset.src !== url){ TI.src = url; TI.dataset.src = url; } }
+  else if (TV.dataset.src !== url){ TV.src = url; TV.dataset.src = url; try { TV.currentTime = Math.max(0, local); } catch(_){} }
+  TI.classList.toggle('hidden', !img); TV.classList.toggle('hidden', img);
+  if (!act){ if (!TO.classList.contains('hidden')) TO.classList.add('hidden'); if (!img && !TV.paused) TV.pause(); if (!img && !TV.seeking && Math.abs(TV.currentTime - local) > 0.05) try { TV.currentTime = Math.max(0, local); } catch(_){} return; }
+  const css = joinCss(g, t), el = img ? TI : TV;
+  if (el.style.transform !== css.transform) el.style.transform = css.transform; if (el.style.filter !== css.filter) el.style.filter = css.filter;
+  TO.style.opacity = (p.a0 + (p.a1 - p.a0) * clamp((o - p.at) / p.d, 0, 1)).toFixed(3);
+  if (TO.classList.contains('hidden')) TO.classList.remove('hidden');
+  if (img) return;
+  if (Math.abs(sp - 1) < 1e-3) syncMedia(TV, local);
+  else { if (Math.abs(TV.playbackRate - sp) > 0.01) TV.playbackRate = clamp(sp, 0.25, 4); if (!TV.seeking && Math.abs(TV.currentTime - local) > (playing ? 0.4 : 0.05)) try { TV.currentTime = local; } catch(_){} }
+  if (playing && TV.paused) TV.play().catch(() => {}); if (!playing && !TV.paused) TV.pause();
+}
+// ── Bedienung: Blatt „Übergang“ am Schnitt, Marken in der Zeitleiste ──
+const cutList = () => timeline.map((g, k) => k).filter(k => k > 0 && isCutAt(k));
+function cutNear(o){ let best = -1, bd = Infinity; for (const k of cutList()){ const d = Math.abs(timeline[k].o - o); if (d < bd){ bd = d; best = k; } } return best; }
+function joinSet(k, kind, d){   // Übergang am Schnitt vor Abschnitt k setzen, ändern oder entfernen (kind leer)
+  const A = timeline[k - 1], B = timeline[k], old = joinItems().filter(x => joinIndex(x) === k);
+  commit(() => {
+    if (old.length) P.items = P.items.filter(x => !old.includes(x));
+    if (kind) P.items.push({id: newId(), type: 'join', ...(B.kind === 'insert' ? {ins: B.item.id} : {at: r3(B.in)}), ...(A.kind === 'insert' ? {pins: A.item.id} : {pa: r3(A.out)}), kind, d: +d || JOIN_DEF[kind]});
+  }, true);
+}
+function joinNote(k){
+  const x = joinAt(k); if (!x) return 'Bild und Ton wechseln im selben Augenblick.';
+  const ps = joinParts.filter(p => p.x === x), got = ps.reduce((s, p) => s + p.d, 0), sec = v => v.toFixed(1).replace('.', ',') + ' s';
+  const side = ps.length && x.kind === 'fade' ? (ps[0].over < k ? ' Die Blende ist am Schnitt fertig.' : ' Die Blende beginnt am Schnitt.') : '';
+  const what = x.kind === 'fade' ? `Das Bild blendet in ${sec(x.d)} weich über.${side}` : x.kind === 'early' ? `Das Bild wechselt ${sec(x.d)} vor dem Ton: Der nächste Clip ist schon zu sehen, der vorige noch zu Ende zu hören (L-Schnitt).`
+    : `Das Bild wechselt ${sec(x.d)} nach dem Ton: Der nächste Clip ist schon zu hören, der vorige noch zu sehen (J-Schnitt).`;
+  const fit = !ps.length ? ' An diesem Schnitt fehlt dafür das Bildmaterial vor oder hinter dem Clip – es bleibt beim harten Schnitt.' : got < x.d - 0.02 ? ` Das Material reicht hier für ${sec(got)}.` : '';
+  return what + fit + ' Der Ton wechselt am Schnitt. Das Bild dazu kommt aus dem Material unmittelbar vor oder hinter dem Schnitt, auch aus Herausgeschnittenem.';
+}
+let joinK = -1;
+const joinSheetOpen = () => !$('#sheet').classList.contains('hidden') && !!$('#jnSheet');
+function openJoin(k){
+  if (k == null || k < 0) k = cutNear(outPos);
+  if (k < 0) return toast('In der Hauptspur gibt es noch keinen Schnitt');
+  joinK = k; sheetItem = null; pausePlay(); seekOut(Math.min(timeline[k].o, Math.max(0, total - 0.01)), false); if (window.revealHead && tlOn()) revealHead(outPos);
+  const body = $('#sheetBody'); body.innerHTML = '<div id="jnSheet"></div>'; body.onclick = null; paintJoinSheet(); openSheet(true);
+}
+function paintJoinSheet(){
+  const box = $('#jnSheet'); if (!box || !P) return;
+  if (!(joinK > 0 && joinK < timeline.length && isCutAt(joinK))){ joinK = cutNear(outPos); if (joinK < 0) return closeSheet(); }
+  const k = joinK, x = joinAt(k), kind = x ? x.kind : '', cuts = cutList(), n = cuts.indexOf(k), name = g => g.kind === 'insert' ? 'Einschub' : P.sources.length > 1 ? `Video ${g.si + 1}` : 'Clip';
+  box.innerHTML = `<h3>Übergang</h3>
+    <p class="muted small">Schnitt ${n + 1} von ${cuts.length} bei ${fmtS(timeline[k].o)} · ${esc(name(timeline[k - 1]))} → ${esc(name(timeline[k]))}</p>
+    <div class="field"><span>Art</span><div class="seg-ctl" id="jnKind">${JOIN_KINDS.map(([v, l]) => `<button type="button" data-v="${v}"${v === kind ? ' class="on"' : ''}>${l}</button>`).join('')}</div></div>
+    <div class="field${kind ? '' : ' hidden'}"><span>Dauer</span><div class="seg-ctl" id="jnDur">${(JOIN_D[kind] || []).map(v => `<button type="button" data-d="${v}"${x && Math.abs(x.d - v) < 1e-3 ? ' class="on"' : ''}>${String(v).replace('.', ',')} s</button>`).join('')}</div></div>
+    <p class="muted small" id="jnNote">${esc(joinNote(k))}</p>
+    <div class="row wrap" style="margin-top:12px"><button class="btn" data-a="prev"${n > 0 ? '' : ' disabled'}>‹ Schnitt davor</button><button class="btn" data-a="next"${n < cuts.length - 1 ? '' : ' disabled'}>Schnitt danach ›</button>
+      <button class="btn" data-a="play">▶ Ansehen</button><button class="btn primary" data-a="ok" style="margin-left:auto">Fertig</button></div>`;
+  if (window.iconize) iconize(box);
+  box.onclick = e => {
+    const b = e.target.closest('button'); if (!b) return;
+    if (b.dataset.v != null && b.closest('#jnKind')){ joinSet(k, b.dataset.v, x && x.kind === b.dataset.v ? x.d : 0); return paintJoinSheet(); }
+    if (b.dataset.d){ joinSet(k, kind, +b.dataset.d); return paintJoinSheet(); }
+    const a = b.dataset.a, cs = cutList(), i = cs.indexOf(joinK);
+    if (a === 'ok') return closeSheet();
+    if (a === 'prev' && i > 0) return openJoin(cs[i - 1]);
+    if (a === 'next' && i >= 0 && i < cs.length - 1) return openJoin(cs[i + 1]);
+    if (a === 'play'){ const T = timeline[joinK].o; seekOut(Math.max(0, T - 2), false); startPlay(); stopAt = Math.min(total, T + 2); }
+  };
 }
 
 // ───────── Clips in Serie (2.33): Vormerken und Clip-Reihe (F2), Zusammenschnitt (F3), Vorschläge (F1), Hook-Varianten (F4), „Teil 1/3“ (F5), Suche über alle Projekte (C9) ─────────

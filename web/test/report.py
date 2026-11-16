@@ -17,7 +17,7 @@ def decodes(f):
     return r.stderr.strip()[:300]
 
 total = exp.get("total")
-for name in ("out.mp4", "out.mp3", "out.wav"):
+for name in ("out.mp4", "out-ton.mp4", "out.mp3", "out.wav"):
     f = OUT / name
     if not f.exists():
         checks.append((name, False, "fehlt")); continue
@@ -43,6 +43,26 @@ if mp4.exists():
     except Exception as e:
         checks.append(("Titel im Bild", False, str(e)[:200]))
 
+# „Stimme aufbereiten“ an der Sprachausgabe des Testvideos: Die Sprache soll ihren Pegel in etwa behalten (reine Auskunft)
+notes = []
+try:
+    import array, math
+    def rms_db(f):
+        raw = subprocess.run(["ffmpeg", "-v", "error", "-i", str(f), "-vn", "-ac", "1", "-ar", "16000", "-f", "s16le", "-"], capture_output=True).stdout
+        a = array.array("h"); a.frombytes(raw[: len(raw) // 2 * 2])
+        win = [math.sqrt(sum(v * v for v in a[i:i + 1600]) / 1600) / 32768 for i in range(0, len(a) - 1600, 1600)]
+        if not win: return None
+        win.sort(); loud = win[len(win) * 6 // 10:]; quiet = win[: max(1, len(win) // 10)]
+        db = lambda xs: 20 * math.log10(max(1e-6, math.sqrt(sum(v * v for v in xs) / len(xs))))
+        return db(loud), db(quiet)
+    if (OUT / "out.mp4").exists() and (OUT / "out-ton.mp4").exists():
+        a, b = rms_db(OUT / "out.mp4"), rms_db(OUT / "out-ton.mp4")
+        if a and b:
+            d = b[0] - a[0]
+            notes.append(f"- {'ℹ️' if abs(d) < 6 else '⚠️'} Stimme aufbereiten an der Sprachausgabe: Sprache {a[0]:.1f} → {b[0]:.1f} dB ({d:+.1f}), leiseste Stellen {a[1]:.1f} → {b[1]:.1f} dB")
+except Exception as e:
+    notes.append(f"- ℹ️ Pegelvergleich nicht möglich: {str(e)[:150]}")
+
 lines = ["### Web-Version: Browser-Test", f"Browser: {res.get('browser')} {res.get('browserVersion', '')}", ""]
 ok_all = True
 for s in res.get("steps", []):
@@ -52,6 +72,7 @@ for s in res.get("steps", []):
 for n, ok, info in checks:
     ok_all &= ok
     lines.append(f"- {'✅' if ok else '❌'} Datei {n}: {info}")
+lines += notes
 if res.get("errors"):
     ok_all = False
     lines += ["", "**Fehler:**"] + [f"```\n{e[:1500]}\n```" for e in res["errors"][:5]]

@@ -2,6 +2,13 @@
 
 Was sich mit jeder Version von HoneyCut ändert. Die Windows-App zeigt diese Stichpunkte an, sobald eine neuere Version bereitsteht.
 
+## 2.34.0 · Ton
+- Musik weicht der Sprache: Tonspuren werden leiser, sobald gesprochen wird, und kommen in Pausen ab zwei Sekunden zurück. Ein Schalter je Projekt unter „Lautstärke“, in drei Stärken; einzelne Tonspuren lassen sich ausnehmen oder selbst als Sprache einstellen
+- Stimme aufbereiten: ein Schalter gegen Brummen, Rauschen und Raumhall, der zugleich leise und laute Stellen angleicht – zu hören in der Vorschau und im Export, gerechnet auf dem eigenen Gerät
+- Übergänge: an jedem Schnitt der Hauptspur eine weiche Blende oder ein versetzter Bildwechsel – das Bild wechselt vor dem Ton (L-Schnitt) oder nach ihm (J-Schnitt). „Übergang“ in der Zeitleiste öffnet die Auswahl am nächsten Schnitt; der Ton wechselt weiter am Schnitt
+- Die kurze Ton-Blende an jedem Schnitt gibt es jetzt auch im Android-Export
+- Alles gilt in der Vorschau und in den Exporten Video und Audio unter Windows, Android und im Browser; die beiden Schalter zum Ton gehören zum Hausstil
+
 ## 2.33.0 · Clips in Serie
 - Abschnitte vormerken: im Text markieren und „Vormerken“ wählen (Taste V, am Handy im Clip-Dialog). Aus der Liste wird mit einem Klick eine Clip-Reihe – je Abschnitt ein eigener Clip –, und „Alle exportieren“ reiht die ganze Reihe in die Warteschlange ein
 - Zusammenschnitt: alle vorgemerkten Abschnitte in einem Clip, als „Best of“ in der Reihenfolge des Videos
