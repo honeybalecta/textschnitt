@@ -15,7 +15,12 @@ const rnd = (v, k = 3) => +(+v).toFixed(k);
 const toastTxt = (pg = page) => pg.evaluate(() => document.querySelector('#toast').textContent);
 const rect = (sel, pg = page) => pg.evaluate(s => { const el = document.querySelector(s); if (!el) return null; const r = el.getBoundingClientRect(); return [r.left, r.top, r.width, r.height]; }, sel);
 const drag = async (x0, y0, x1, y1, pg = page, mods = []) => { for (const m of mods) await pg.keyboard.down(m); await pg.mouse.move(x0, y0); await pg.mouse.down(); await pg.mouse.move((x0 + x1) / 2, (y0 + y1) / 2, { steps: 3 }); await pg.mouse.move(x1, y1, { steps: 3 }); await pg.mouse.up(); for (const m of mods) await pg.keyboard.up(m); await sleep(220); };
-const tools = (pg = page) => pg.evaluate(() => [...document.querySelectorAll('#tools .tool')].map(b => b.textContent.trim()));
+const tools = (pg = page) => pg.evaluate(() => [...document.querySelectorAll('#tools .tool:not(.more)')].map(b => b.textContent.trim()));
+// seit 2.42: Werkzeuge ohne Auswahl stehen in den Menüs „Einfügen“ und „Bearbeiten“ über den Spuren
+const menus = (pg = page) => pg.evaluate(() => ({ insert: barMenu('insert').map(t => t.label), edit: barMenu('edit').map(t => t.label) }));
+const menuTool = (name, pg = page) => pg.evaluate(n => { const t = [...barMenu('insert'), ...barMenu('edit')].find(t => t.label === n); if (t) t.fn(); return !!t; }, name);
+// Werkzeug des ausgewählten Elements (auch wenn es im Menü „Mehr“ steckt)
+const selTool = (name, last = false, pg = page) => pg.evaluate(([n, last]) => { const a = [...document.querySelectorAll('#tools .tool:not(.more)')].filter(b => b.textContent.includes(n)), b = last ? a[a.length - 1] : a[0]; if (b) b.click(); return !!b; }, [name, last]);
 const item = (id, pg = page) => pg.evaluate(i => { const it = P.items.find(x => x.id === i); return it ? JSON.parse(JSON.stringify(it)) : null; }, id);
 const made = [], trash = new Set();
 // Echter Export des offenen Projekts über das Test-Backend (ffmpeg wie in der Windows-App)
@@ -46,9 +51,9 @@ try {
   const idA = await scratch(page, ids().kurz); made.push(idA);
   await ev(() => { localStorage.removeItem('hc-mark'); setTab('studio'); }); await sleep(600);
   await ev(() => { select(null); seekOut(2, false); }); await sleep(200);
-  const t0 = await tools();
-  chk('Studio ohne Auswahl: Werkzeuge „Form“, „Unkenntlich“ und „Fortschritt“', ['Form', 'Unkenntlich', 'Fortschritt'].every(n => t0.some(t => t.endsWith(n))), t0.filter(t => /Form|Unkennt|Fortschr/.test(t)));
-  await page.locator('#tools .tool', { hasText: 'Form' }).first().click(); await sleep(250);
+  const t0 = await menus();
+  chk('Studio ohne Auswahl: „Form“ steht im Menü „Einfügen“, „Unkenntlich“ und „Fortschritt“ im Menü „Bearbeiten“; die untere Leiste ist leer', t0.insert.includes('Form') && t0.edit.includes('Unkenntlich') && t0.edit.includes('Fortschritt') && (await tools()).length === 0, t0);
+  await menuTool('Form'); await sleep(250);
   const tiles = await ev(() => [...document.querySelectorAll('.choice.shapes [data-k]')].map(b => b.dataset.k + ':' + b.textContent.trim()));
   chk('„Form“ bietet Rahmen, Kreis, Pfeil und Textmarker an', tiles.join() === 'rect:Rahmen,ellipse:Kreis,arrow:Pfeil,marker:Textmarker', tiles);
   await page.click('.choice.shapes [data-k="rect"]'); await sleep(350);
@@ -149,7 +154,7 @@ try {
   chk('Textmarker: durchscheinendes Gelb über die ganze Fläche', imgs.marker.mid[0] > 240 && imgs.marker.mid[1] > 200 && imgs.marker.mid[2] < 120 && imgs.marker.mid[3] > 60 && imgs.marker.mid[3] < 200 && imgs.marker.share < 0.2, imgs.marker);
   // ═════════ B6 · Unkenntlich machen ═════════
   await ev(() => { select(null); seekOut(3, false); }); await sleep(250);
-  await page.locator('#tools .tool', { hasText: 'Unkenntlich' }).first().click(); await sleep(600);
+  await menuTool('Unkenntlich'); await sleep(600);
   const b0 = await ev(() => { const it = P.items[P.items.length - 1]; window._b = it.id; const c = document.querySelector(`#blurOv canvas[data-mk="${it.id}"]`), cs = c && getComputedStyle(c);
     const d = c ? c.getContext('2d').getImageData(0, 0, c.width, c.height).data : []; let mx = 0; for (let i = 0; i < d.length; i += 4) mx = Math.max(mx, d[i], d[i + 1], d[i + 2]);
     return { it: JSON.parse(JSON.stringify(it)), sel: TL.sel, cls: c ? c.className : '', rad: cs ? cs.borderTopLeftRadius : '', ren: cs ? cs.imageRendering : '', cw: c ? c.width : 0, ch: c ? c.height : 0, mx,
@@ -167,7 +172,7 @@ try {
     pl.blurs && pl.blurs.length === 1 && near(pl.blurs[0].at, 3, 0.05) && pl.blurs[0].d === 4 && pl.blurs[0].x === 0.5 && pl.blurs[0].y === 0.4 && near(pl.blurs[0].w, 0.135, 0.002) && near(pl.blurs[0].wmax, 0.135, 0.002)
     && pl.blurs[0].aspect === 0.8 && pl.blurs[0].form === 'ellipse' && pl.blurs[0].kind === 'pixel' && near(pl.blurs[0].cell, 0.135 / 6, 0.0006) && /maske-ellipse-205x256\.png$/.test(pl.blurs[0].mask || '') && !pl.top.length, pl.blurs);
   // Blatt: Art, Form, Stärke
-  await page.locator('#tools .tool', { hasText: 'Art & Stärke' }).first().click(); await sleep(300);
+  await selTool('Art & Stärke'); await sleep(300);
   const w0 = await ev(() => document.querySelector('#mkWarn').textContent);
   await page.click('#mkKind button[data-v="soft"]'); await page.click('#mkStr button[data-v="3"]'); await page.click('#mkShape button[data-v="rect"]'); await sleep(300);
   const b1 = await ev(() => { const c = document.querySelector(`#blurOv canvas[data-mk="${_b}"]`), cs = getComputedStyle(c); return { cw: c.width, ren: cs.imageRendering, rad: cs.borderTopLeftRadius, warn: document.querySelector('#mkWarn').textContent, blk: document.querySelector(`#trMark .blk[data-id="${_b}"] .txt`).textContent }; });
@@ -217,7 +222,7 @@ try {
 
   // ═════════ E8 · Fortschrittsbalken ═════════
   await ev(() => { select(null); seekOut(0, false); }); await sleep(150);
-  await page.locator('#tools .tool', { hasText: 'Fortschritt' }).first().click(); await sleep(300);
+  await menuTool('Fortschritt'); await sleep(300);
   const g0 = await ev(() => ({ form: !!document.querySelector('#pgForm'), on: document.querySelector('#pgOn') ? document.querySelector('#pgOn').checked : null, set: P.progress || null, cls: document.querySelector('#progOv').className }));
   if (!g0.on) await page.click('#pgOn'); await sleep(200);
   const g1 = await ev(() => { const p = document.querySelector('#progOv'), i = p.querySelector('i'), s = document.querySelector('#stage').getBoundingClientRect(), r = p.getBoundingClientRect(), cs = getComputedStyle(i);
@@ -263,9 +268,9 @@ try {
   await sleep(450);
   const tm = await tools();
   const slideTool = await ev(async () => { const sl = newSlide({layout: 'titel', title: 'Folie'}); commit(() => P.slides.push(sl), false); const m = await slMedia(sl); placeMedia(m, 'broll', 40, null, true); const it = P.items[P.items.length - 1]; it.slide = sl.id; window._sl0 = sl.id;
-    select({kind: 'ovl', id: it.id}); await new Promise(r => setTimeout(r, 150)); const t = [...document.querySelectorAll('#tools .tool')].map(b => b.textContent.trim()); select({kind: 'ovl', id: _m}); return { tools: t.filter(x => /Markier/.test(x)), can: canMark(it) }; });
+    select({kind: 'ovl', id: it.id}); await new Promise(r => setTimeout(r, 150)); const t = [...document.querySelectorAll('#tools .tool:not(.more)')].map(b => b.textContent.trim()); select({kind: 'ovl', id: _m}); return { tools: t.filter(x => /Markier/.test(x)), can: canMark(it) }; });
   chk('Bild auf einer Videospur: Werkzeug „Markieren“; bei Folien gibt es das Werkzeug nicht', tm.some(t => t.endsWith('Markieren')) && !slideTool.tools.length && !slideTool.can, [tm.filter(t => /Markier/.test(t)), slideTool]);
-  await page.locator('#tools .tool', { hasText: 'Markieren' }).first().click(); await sleep(700);
+  await selTool('Markieren'); await sleep(700);
   const ed = await rect('#mkxImg');
   const dragRect = async (x0, y0, x1, y1) => drag(ed[0] + x0 * ed[2], ed[1] + y0 * ed[3], ed[0] + x1 * ed[2], ed[1] + y1 * ed[3]);
   chk('Editor zum Markieren öffnet bildschirmfüllend mit dem ganzen Bild', !!ed && ed[2] > 100 && near(ed[2] / ed[3], 900 / 1400, 0.01) && ed[1] >= 0 && ed[1] + ed[3] <= 900, ed);
@@ -290,14 +295,14 @@ try {
   // wieder öffnen: eine Stelle entfernen, Heranfahren aus
   await ev(() => { select({kind: 'ovl', id: _m}); }); await sleep(200);
   const tm2 = await tools();
-  await page.locator('#tools .tool', { hasText: 'Markierung' }).first().click(); await sleep(600);
+  await selTool('Markierung'); await sleep(600);
   const again = await ev(() => document.querySelectorAll('.mkx-r').length);
   const r1 = await rect('.mkx-r');
   await page.mouse.click(r1[0] + r1[2] / 2, r1[1] + r1[3] / 2); await sleep(150);
   await page.click('#mkxZoom'); await page.click('#mkxOk'); await sleep(1000);
   const mb = await ev(() => { const it = P.items.find(x => x.id === _m); return { n: it.mark.rects.length, zoom: it.mark.zoom, kf: it.kf || null, file: it.clip.uri.split('/').pop() }; });
   chk('wieder öffnen zeigt beide Stellen; eine antippen entfernt sie; ohne Heranfahren entfallen die Keyframes', tm2.some(t => t.endsWith('Markierung')) && again === 2 && mb.n === 1 && mb.zoom === false && !mb.kf && mb.file !== ma.file, [again, mb]);
-  await page.locator('#tools .tool', { hasText: 'Markierung' }).first().click(); await sleep(500);
+  await selTool('Markierung'); await sleep(500);
   await page.click('#mkxClear'); await sleep(500);
   const mc = await ev(() => { const it = P.items.find(x => x.id === _m); return { mark: it.mark || null, name: it.clip.name, kf: it.kf || null }; });
   chk('„Markierung entfernen“ stellt das Originalbild wieder her', mc.mark === null && mc.name === 'Artikel.png' && !mc.kf, mc);
@@ -339,7 +344,7 @@ try {
   chk('Werkzeuge der Aufbau-Folie: „Schritt hierher“ und „Aufbau“', tb.some(t => t.endsWith('Schritt hierher')) && tb.some(t => t.endsWith('Aufbau')), tb.filter(t => /Schritt|Aufbau/.test(t)));
   const sh = await ev(() => { const it = P.items.find(x => x.id === _it); seekOut(12.5, false); stepHere(it); return { build: it.build.map(b => [b.t, b.a || 0]), at: ovOf(it).at, toast: document.querySelector('#toast').textContent }; });
   chk('„Schritt hierher“ legt den nächstgelegenen Schritt an die Abspiellinie', near(sh.build[1][0], 12.5 - sh.at, 0.02) && !sh.build[1][1] && /Schritt 2/.test(sh.toast), sh);
-  await page.locator('#tools .tool', { hasText: 'Aufbau' }).last().click(); await sleep(300);
+  await selTool('Aufbau', true); await sleep(300);
   const bd = await ev(() => ({ form: !!document.querySelector('#bdForm'), rows: [...document.querySelectorAll('.bd-list button')].map(b => b.textContent.replace(/\s+/g, ' ').trim()) }));
   await page.click('#bdEven'); await sleep(200);
   const ev1 = await ev(() => { const it = P.items.find(x => x.id === _it); return { build: it.build.map(b => [b.t, b.a || 0]), dur: slDur(it) }; });

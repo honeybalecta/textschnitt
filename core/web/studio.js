@@ -27,6 +27,7 @@ function itemOutRange(it){
 function renderStudio(){ renderTimeline(); if (!tlLite()) renderBin(); }
 function renderTimeline(){
   if (!P || !tlOn()) return;
+  requestAnimationFrame(syncHbar);
   const pad = padL();
   measureTl(TL.mode === 'center' ? Math.round(outPos * TL.pps) : null);   // fester Zeiger: gleich wird dorthin gescrollt
   tlInner.style.width = Math.ceil(total * TL.pps + pad + half() + 40) + 'px';
@@ -367,6 +368,26 @@ function revealHead(o){
   if (x < 0 || x > W - 10){ TL.expect = -1; tlEl.scrollLeft = Math.max(0, padL() + o * TL.pps - W * 0.3); }
   placeHead(o);
 }
+// Waagerechte Scrollleiste, die immer zu sehen ist (2.42): Die Spuren scrollen als Ganzes auch senkrecht; ihre eigene
+// Scrollleiste läge am Ende des Inhalts und damit oft außerhalb des Sichtbaren. Diese Leiste sitzt fest unter den Spuren.
+const tlHbar = $('#tlHbar'), tlThumb = tlHbar ? tlHbar.firstElementChild : null;
+function hbarGeo(){ const track = tlHbar.clientWidth, range = Math.max(1, tlEl.scrollWidth - tlEl.clientWidth), tw = Math.max(48, Math.round(track * tlEl.clientWidth / Math.max(1, tlEl.scrollWidth))); return {track, range, tw, free: Math.max(1, track - tw)}; }
+function syncHbar(){
+  if (!tlHbar) return; const g = $('.tl-gutter'), need = tlEl.scrollWidth > tlEl.clientWidth + 16;   // ein paar Pixel Spiel am Rand brauchen keine Leiste
+  tlHbar.classList.toggle('off', !need); tlHbar.style.marginLeft = (g ? g.offsetWidth : 0) + 'px'; if (!need) return;
+  const q = hbarGeo(); tlThumb.style.width = q.tw + 'px'; tlThumb.style.transform = `translateX(${Math.round(tlEl.scrollLeft / q.range * q.free)}px)`;
+}
+if (tlHbar){
+  let drag = null;
+  tlThumb.addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropagation(); drag = {x: e.clientX, left: tlEl.scrollLeft}; tlThumb.setPointerCapture(e.pointerId); tlHbar.classList.add('drag'); });
+  tlThumb.addEventListener('pointermove', e => { if (!drag) return; const q = hbarGeo(); tlEl.scrollLeft = drag.left + (e.clientX - drag.x) / q.free * q.range; });
+  const end = () => { drag = null; tlHbar.classList.remove('drag'); };
+  tlThumb.addEventListener('pointerup', end); tlThumb.addEventListener('pointercancel', end);
+  // Klick neben den Griff: dorthin springen (Griff mittig unter dem Zeiger)
+  tlHbar.addEventListener('pointerdown', e => { if (e.target === tlThumb) return; const q = hbarGeo(), x = e.clientX - tlHbar.getBoundingClientRect().left - q.tw / 2; tlEl.scrollLeft = Math.max(0, Math.min(1, x / q.free)) * q.range; });
+}
+addEventListener('resize', () => { syncHbar(); if (P && $('#tools')) fitTools(); });
+tlEl.addEventListener('scroll', syncHbar);
 tlEl.addEventListener('scroll', () => {
   TLV.l = tlEl.scrollLeft; TLV.r = TLV.l + (tlEl.clientWidth || 2000); rulerFollow();
   if (TL.mode !== 'center'){ placeHead(outPos); return; }
@@ -488,15 +509,15 @@ tlInner.addEventListener('contextmenu', e => {
   if (b) selectBlock(b); else select(null);
   showMenu(e.clientX, e.clientY, toolList());
 });
-function showMenu(x, y, list){
+function showMenu(x, y, list, o){   // o.up: das Menü klappt nach oben auf (y ist dann seine Unterkante)
   closeMenu();
   const m = document.createElement('div'); m.className = 'ctx'; m.id = 'ctxMenu';
   for (const t of list){ const b = document.createElement('button'); b.innerHTML = `<i>${t.icon}</i>${t.label}`; if (t.cls) b.classList.add(t.cls); b.onclick = () => { closeMenu(); t.fn(); }; m.append(b); }
   document.body.append(m);
-  const r = m.getBoundingClientRect(); m.style.left = Math.min(x, innerWidth - r.width - 8) + 'px'; m.style.top = Math.min(y, innerHeight - r.height - 8) + 'px';
-  setTimeout(() => document.addEventListener('pointerdown', closeMenuOutside, {once:true}), 0);
+  const r = m.getBoundingClientRect(); m.style.left = Math.max(8, Math.min(x, innerWidth - r.width - 8)) + 'px'; m.style.top = Math.max(8, Math.min(o && o.up ? y - r.height : y, innerHeight - r.height - 8)) + 'px';
+  setTimeout(() => document.addEventListener('pointerdown', closeMenuOutside, {once:true, capture:true}), 0);
 }
-function closeMenuOutside(e){ if (!e.target.closest('#ctxMenu')) closeMenu(); else document.addEventListener('pointerdown', closeMenuOutside, {once:true}); }
+function closeMenuOutside(e){ if (!e.target.closest('#ctxMenu')) closeMenu(); else document.addEventListener('pointerdown', closeMenuOutside, {once:true, capture:true}); }
 function closeMenu(){ const m = $('#ctxMenu'); if (m) m.remove(); }
 
 // Zoomen der Zeitleiste (Zeiger bleibt an Ort und Stelle)
@@ -787,11 +808,37 @@ function toolListBase(){
     ...(c && (isFree(c) || c.ds || c.de) ? [T('↺', 'Zeit ↺', () => { commit(() => { delete c.fa; delete c.fd; c.ds = 0; c.de = 0; }, false); })] : [])]; }
   return [];
 }
+// Menüs der Leiste über den Spuren (2.42): Was an der Abspiellinie eingefügt oder am ganzen Video eingestellt wird, steht in
+// „Einfügen“ und „Bearbeiten“. Die Leiste unter den Spuren gehört dem ausgewählten Element (und dem Zuschneiden und Verbinden).
+function playheadTools(){ const keep = TL.sel; TL.sel = null; try { return toolListBase(); } finally { TL.sel = keep; } }
+function barMenu(which){
+  const base = playheadTools(), pick = (...names) => names.map(n => base.find(t => t.label === n)).filter(Boolean);
+  if (which === 'insert') return [T('🎞', $('#mediaBin').classList.contains('hidden') ? 'Medienablage öffnen' : 'Medienablage schließen', () => toggleBin()), ...pick('Clip', 'Titel', 'Untertitel'),
+    T('🖼', 'Folie (N)', () => slNext()), ...pick('Form', 'Standbild', 'Kapitel', 'Notiz')];
+  return [T('⚙', 'Anpassen (E)', () => { const g = curMainSeg(); if (!g) return toast('Abspiellinie auf einen Clip setzen'); openFx(g); }), ...pick('Zoom'), T('🔊', 'Lautstärke', () => openVolumes()),
+    ...pick('Farbe', 'Übergang', 'Unkenntlich', 'Fortschritt', 'Zoom-Schnitte', 'Leinwand', 'Titelbild'), T('🚩', 'Kapitel und Notizen', () => openMarks()),
+    ...pick('Bis hier weg', 'Ab hier weg', 'Clip ab hier …', 'Reihenfolge zurück')];
+}
+function openBarMenu(which){ const b = $(which === 'insert' ? '#barInsert' : '#barEdit'), r = b.getBoundingClientRect(); showMenu(r.left, r.bottom + 4, barMenu(which)); }
+$('#barInsert').onclick = e => { e.stopPropagation(); if (P) openBarMenu('insert'); };
+$('#barEdit').onclick = e => { e.stopPropagation(); if (P) openBarMenu('edit'); };
+// Passt die Leiste nicht in die Breite, wandert der Rest in ein Menü „Mehr“ – nichts läuft aus dem Bild
+function fitTools(){
+  const box = $('#tools'), all = [...box.querySelectorAll('.tool:not(.more)')]; let more = box.querySelector('.tool.more');
+  for (const b of all) b.classList.remove('over'); if (more) more.remove();
+  if (!all.length || box.scrollWidth <= box.clientWidth + 1) return;
+  more = document.createElement('button'); more.className = 'tool more'; more.innerHTML = '<i>⋯</i>Mehr'; more.title = 'Weitere Werkzeuge'; box.append(more);
+  let n = all.length; while (n > 1 && box.scrollWidth > box.clientWidth + 1) all[--n].classList.add('over');
+  const rest = all.slice(n);
+  more.onclick = e => { e.stopPropagation(); const r = more.getBoundingClientRect(); showMenu(r.right - 220, r.top - 6, rest.map(b => ({icon: b._t.icon, label: b._t.label, cls: b._t.cls, fn: b._t.fn})), {up: true}); };
+}
 function updateTools(){
   const box = $('#tools'); box.innerHTML = ''; const s = TL.sel;
   const g = s && (s.kind === 'main' || s.kind === 'insert') ? timeline[s.i] : null;
-  for (const t of toolList()){ const b = document.createElement('button'); b.className = 'tool ' + t.cls; b.innerHTML = `<i>${t.icon}</i>${t.label}`; b.onclick = t.fn; box.append(b); }
-  $('#selLbl').textContent = !s ? 'Abspiellinie' : s.kind === 'main' ? 'Clip' : s.kind === 'insert' ? 'Einschub' : s.kind === 'cue' ? 'Untertitel' : TYPE_LBL[(selItem() || {}).type] || '';
+  const list = !s && !tlLite() && !TL.pick && !Crop.it ? [] : toolList();   // ohne Auswahl: siehe die Menüs der Leiste über den Spuren
+  for (const t of list){ const b = document.createElement('button'); b.className = 'tool ' + t.cls; b.innerHTML = `<i>${t.icon}</i>${t.label}`; b.onclick = t.fn; b._t = t; box.append(b); }
+  box.classList.toggle('none', !list.length); fitTools();
+  $('#selLbl').textContent = !s ? '' : s.kind === 'main' ? 'Clip' : s.kind === 'insert' ? 'Einschub' : s.kind === 'cue' ? 'Untertitel' : TYPE_LBL[(selItem() || {}).type] || '';
   const info = $('#tlInfo');
   if (tlLite()) info.textContent = g && s.kind === 'main' ? `${fmtS(g.o)} – ${fmtS(g.o + segDur(g))} (${fmtD(segDur(g))} s) · Griffe an den Kanten ziehen verschiebt den Schnitt · „Anfang/Ende ±1“ versetzt ihn um ein Bild`
     : FINE ? 'Clip anklicken, dann die Griffe an den Kanten ziehen · Klick in die Zeitskala setzt den Zeiger · , und . schneiden bis zur bzw. ab der Abspiellinie' : 'Clip antippen, dann die Griffe an den Kanten ziehen · wischen zum Spulen';
@@ -809,12 +856,6 @@ $('#modeBtn').onclick = () => setMode(TL.mode === 'move' ? 'center' : 'move');
 $('#snapBtn').onclick = () => { TL.snap = !TL.snap; try { localStorage.setItem('ts-tl-snap', TL.snap ? '1' : '0'); } catch(_){} paintBar(); toast(TL.snap ? 'Einrasten an' : 'Einrasten aus'); };
 $('#barSplit').onclick = () => splitHere();
 $('#barDel').onclick = () => { if (TL.sel) delSel(); else toast('Erst einen Clip auswählen'); };
-$('#barClip').onclick = () => addClip();
-$('#barTitle').onclick = () => addTitle();
-$('#barZoom').onclick = () => addZoom();
-$('#barFx').onclick = () => { const g = curMainSeg(); if (!g) return toast('Abspiellinie auf einen Clip setzen'); openFx(g); };
-$('#barUndo').onclick = () => $('#undoBtn').click();
-$('#barRedo').onclick = () => $('#redoBtn').click();
 
 function curMainSeg(){ const g = timeline[curSeg]; return g && g.kind === 'main' ? g : null; }
 function splitHere(){
@@ -1010,7 +1051,7 @@ function mediaList(){
 const binOpen = () => !$('#mediaBin').classList.contains('hidden');
 function toggleBin(on){
   if (on == null) on = !binOpen();
-  $('#mediaBin').classList.toggle('hidden', !on); $('#barMedia').classList.toggle('on', on);
+  $('#mediaBin').classList.toggle('hidden', !on);
   try { localStorage.setItem('ts-bin', on ? '1' : '0'); } catch(_){}
   if (on) renderBin();
 }
@@ -1091,8 +1132,7 @@ const s0kind = (m, t) => m.kind === 'audio' || m.hasVideo === false || t.kind ==
   };
   grid.addEventListener('pointerup', end); grid.addEventListener('pointercancel', () => { if (g && g.ghost) g.ghost.remove(); g = null; });
 })();
-$('#barMedia').onclick = () => toggleBin();
-try { if (localStorage.getItem('ts-bin') === '1'){ $('#mediaBin').classList.remove('hidden'); $('#barMedia').classList.add('on'); } } catch(_){}
+try { if (localStorage.getItem('ts-bin') === '1') $('#mediaBin').classList.remove('hidden'); } catch(_){}
 $('#binAdd').onclick = () => binAdd();
 $('#binClose').onclick = () => toggleBin(false);
 // ── Titel ──
@@ -1677,8 +1717,6 @@ async function levelAll(){
   if ($('#sheet').classList.contains('hidden')) toast(`${meas.length} Clips angeglichen`); else { openVolumes(); msg(`${meas.length} Clips angeglichen`); }
   for (const m of meas){ const row = document.querySelector(`.vol-row[data-key="${m.c.key}"] .vol-l`); if (row) row.textContent = `vorher ${m.L.toFixed(0)} dB`; }
 }
-$('#barVol').onclick = () => openVolumes();
-$('#barMarks').onclick = () => openMarks();
 $('#clipWm').onclick = () => openWatermark(); $('#clipTline').onclick = () => openTextline();
 $('#volBtn').onclick = () => openVolumes();
 $('#clipLevel').onclick = () => levelAll();

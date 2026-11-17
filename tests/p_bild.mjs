@@ -14,7 +14,7 @@ const shot = (name, pg = page) => pg.screenshot({ path: path.join(OUT, `bild-${n
 const near = (a, b, tol) => Math.abs(a - b) <= tol;
 const nah = (a, b, tol = 8) => !!a && [0, 1, 2].every(i => Math.abs(a[i] - b[i]) <= tol);
 const toastTxt = (pg = page) => pg.evaluate(() => document.querySelector('#toast').textContent);
-const tools = (pg = page) => pg.evaluate(() => [...document.querySelectorAll('#tools .tool')].map(b => b.textContent.trim()));
+const tools = (pg = page) => pg.evaluate(() => [...document.querySelectorAll('#tools .tool:not(.more)')].map(b => b.textContent.trim()));
 const made = [], trash = new Set();
 const W = 640, H = 360;
 // Echter Export des offenen Projekts über das Test-Backend (ffmpeg wie in der Windows-App)
@@ -41,8 +41,8 @@ try {
   // drei Schnitte: vier Abschnitte mit Bildsprung dazwischen
   await ev(() => { commit(() => { addDel(10, 12); addDel(20, 23); addDel(30, 31); addDel(40, 180); }, true); TL.sel = null; renderTimeline(); seekOut(2, false); }); await sleep(500);
   const tl0 = await ev(() => timeline.map(g => [g.kind, g.in, g.out]));
-  let t = await tools();
-  chk('ohne Auswahl stehen „Standbild“, „Zoom-Schnitte“ und „Farbe“ in der Werkzeugleiste', ['Standbild', 'Zoom-Schnitte', 'Farbe'].every(x => t.includes(x)), t);
+  let t = await ev(() => [...barMenu('insert'), ...barMenu('edit')].map(x => x.label));
+  chk('ohne Auswahl stehen „Standbild“, „Zoom-Schnitte“ und „Farbe“ in den Menüs über den Spuren', ['Standbild', 'Zoom-Schnitte', 'Farbe'].every(x => t.includes(x)), t);
   chk('das Testprojekt hat vier Abschnitte', tl0.length === 4 && tl0.every(g => g[0] === 'main'), tl0);
 
   await ev(() => openColorAll()); await sleep(250);

@@ -700,7 +700,6 @@ $('#selSlide').onclick = () => {
   commit(() => P.slides.push(sl), false); slCur = sl; clearSel();
   toast(`Folie ${P.slides.length} erstellt – im Reiter „Folien“ gestalten`);
 };
-$('#barSlide').onclick = e => { if (e.shiftKey) slClose(); else slNext(); };
 // Tastatur: N = nächste Folie, Umschalt+N = laufende Folie beenden (im Studio)
 document.addEventListener('keydown', e => {
   if (!P || !studioOn() || e.ctrlKey || e.metaKey || e.altKey) return;

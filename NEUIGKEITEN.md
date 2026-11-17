@@ -2,6 +2,14 @@
 
 Was sich mit jeder Version von HoneyCut ändert. Die Windows-App zeigt diese Stichpunkte an, sobald eine neuere Version bereitsteht.
 
+## 2.42.0 · Studio aufgeräumt
+- Vorschau: Die Knöpfe links und rechts neben dem Bild sind weg. Unter dem Bild steht eine Leiste mit Abspielen, vorigem und nächstem Schnitt, Zeitstrahl, Zeit, „Ansicht“ und Vollbild – jeder Knopf einmal
+- Menü „Ansicht“ (Auge): Untertitel ein- und ausblenden, Schrift der Untertitel, Schutzzonen, letzten Schnitt anhören, Einzelbilder
+- Über den Spuren: „Teilen“ und „Löschen“ bleiben sichtbar, alles Weitere steht in den Menüs „Einfügen“ (Medienablage, Clip, Titel, Untertitel, Folie, Form, Standbild, Kapitel, Notiz) und „Bearbeiten“ (Anpassen, Zoom, Lautstärke, Farbe, Übergang, Unkenntlich, Fortschritt, Zoom-Schnitte, Leinwand, Titelbild, Kapitel und Notizen, Schnitte an der Abspiellinie). Nichts läuft mehr aus dem Fenster
+- Unter den Spuren: Die Leiste zeigt nur noch die Werkzeuge des ausgewählten Elements. Reicht der Platz nicht, steht der Rest unter „Mehr“
+- Die Leiste zum Schieben nach links und rechts sitzt fest unter den Spuren und ist immer zu sehen
+- Rückgängig und Wiederholen stehen oben in der Kopfzeile. Tastenkürzel und Rechtsklick sind unverändert
+
 ## 2.41.0 · Zweite Tonquelle angleichen
 - Ton vom externen Mikrofon (Windows; Studio → Clip antippen → „Anpassen“ → „Ton vom externen Mikrofon“): Tonaufnahme wählen, und HoneyCut legt sie genau unter das Bild. Verglichen wird mit dem Ton der Kamera – ein Klatschen zum Angleichen braucht es dafür nicht
 - Es entsteht eine Kopie der Aufnahme mit dem neuen Ton; das Bild bleibt unverändert, Transkript und Schnitt gelten weiter. „Original zurück“ stellt den Ton der Kamera wieder her

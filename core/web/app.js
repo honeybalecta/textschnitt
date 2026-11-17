@@ -527,7 +527,6 @@ function fullPoke(){
   const pr = $('#proj'); pr.classList.remove('full-idle'); clearTimeout(fullHide);
   if (pr.classList.contains('full')) fullHide = setTimeout(() => { if (playing) pr.classList.add('full-idle'); }, 2500);
 }
-$('#sideFull').onclick = e => { e.stopPropagation(); setFull(true); };
 $('#fullBtn').onclick = e => { e.stopPropagation(); setFull(!$('#proj').classList.contains('full')); };
 document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement && $('#proj').classList.contains('full')) setFull(false); });
 $('#proj').addEventListener('pointermove', () => { if ($('#proj').classList.contains('full')) fullPoke(); });
@@ -824,7 +823,7 @@ function closeProject(){
   try { localStorage.removeItem(OPEN_KEY); } catch(_){} setFull(false); allLayers(releaseMedia); for (const el of audLayers.values()) releaseMedia(el); audLayers.clear(); busPid = null; P = null; V.removeAttribute('src'); V.load(); vSi = -1; hideOverlay(); showHome(); }
 $('#backBtn').onclick = closeProject;
 const fillsWrap = () => isWide() || matchMedia('(orientation: landscape) and (max-height: 599px)').matches;
-// Bühne: ein 16:9-Feld. Hochformat-Videos lassen links und rechts Platz – dort sitzt zusätzliche Steuerung.
+// Bühne: ein 16:9-Feld. Alle Steuerung sitzt in der Leiste unter dem Bild (2.42) – neben dem Bild bleibt es frei.
 function fitStage(){
   if (!P) return;
   const [w, h] = CanvasEdit ? dispSize(primary()) : baseDims(), wrap = $('.stage-wrap'), st = $('#stage');
@@ -834,16 +833,13 @@ function fitStage(){
   if (full){ wrap.style.height = ''; boxH = innerHeight;
     let W = availW, H = W * h / w; if (H > boxH){ H = boxH; W = H * w / h; }
     st.style.width = Math.floor(W) + 'px'; st.style.height = Math.floor(H) + 'px';
-    for (const el of [$('#sideL'), $('#sideR')]) el.classList.add('hidden');
     styleOverlay(); refreshStageOverlays(); placeSafe(); return; }
   if (fill){ wrap.style.height = ''; boxH = wrap.clientHeight || innerHeight * 0.6; }
-  else { boxH = Math.round(h > w ? Math.max(150, innerHeight * 0.38) : Math.min(availW * 9 / 16, Math.max(150, innerHeight * 0.36))); wrap.style.height = boxH + 'px'; }   // Hochformat: mehr Höhe, die Seiten nutzen die Steuerung
+  else { boxH = Math.round(h > w ? Math.max(150, innerHeight * 0.38) : Math.min(availW * 9 / 16, Math.max(150, innerHeight * 0.36))); wrap.style.height = boxH + 'px'; }   // Hochformat: mehr Höhe
   const boxW = fill ? availW : Math.min(availW, boxH * 16 / 9);
   let W = boxW, H = W * h / w; if (H > boxH){ H = boxH; W = H * w / h; }
   if (CanvasEdit){ W *= 0.8; H *= 0.8; }   // Rand lassen, damit der Leinwand-Rahmen auch über das Bild hinausragen kann
   st.style.width = Math.floor(W) + 'px'; st.style.height = Math.floor(H) + 'px';
-  const side = Math.floor((availW - W) / 2), show = side >= 64;
-  for (const el of [$('#sideL'), $('#sideR')]){ el.classList.toggle('hidden', !show); el.style.width = show ? Math.min(side, 170) + 'px' : ''; el.style.height = Math.floor(fill ? H : boxH) + 'px'; }
   styleOverlay(); refreshStageOverlays(); placeSafe();
 }
 // Einblendungen und Titel nach einer Größenänderung der Bühne neu setzen
@@ -1533,7 +1529,7 @@ function recompute(noTL){
   computeRanges(); computePieces(); computeOrder(); buildTimeline(); syncLinks(); computeOverlays(); computeMarks(); computeAudios(); computeJoins(); drawScrub();
   refMemo = null; lowerMemo = null; lowerRects.clear(); clipTokMemo = null; audioDirty();   // Quellenzeilen, Bauchbinden und vorgemerkte Abschnitte folgen dem Schnitt
   if (!noTL && !tlHold && tlOn() && window.renderTimeline) renderTimeline();
-  setText($('#tTot'), fmtT(total)); setText($('#sideTot'), fmtT(total));
+  setText($('#tTot'), fmtT(total));
 }
 // ───────── Verbundene Objekte ─────────
 // Einblendungen, Titel, Zooms, Anpassungen und Untertitel lassen sich verbinden (lk = Gruppe). Ein Mitglied führt (lead),
@@ -1651,7 +1647,7 @@ function advanceSeg(){
   if (g.kind === 'main' && n.kind === 'main' && n.si === g.si && Math.abs(n.in - g.out) < 0.02){ curSeg++; return; }
   seekOut(n.o, true);
 }
-function setPlayIcons(on){ if (typeof fullPoke === 'function') fullPoke(); for (const b of [$('#playBtn'), $('#sidePlay')]) if (b) b.innerHTML = icon(on ? '❚❚' : '▶'); }
+function setPlayIcons(on){ if (typeof fullPoke === 'function') fullPoke(); const b = $('#playBtn'); if (b) b.innerHTML = icon(on ? '❚❚' : '▶'); }
 function togglePlay(){ if (V.dataset.err){ toast('Vorschau nicht abspielbar – siehe Hinweis im Bild'); return; } playing ? pausePlay() : startPlay(); }
 function startPlay(){
   if (!timeline.length) return; if (AUD.k >= 0) audStop(); if (outPos >= total - 0.05) seekOut(0, false);
@@ -1663,19 +1659,21 @@ function pausePlay(){
   playing = false; stopAt = null; vWantPlay = false; V.pause(); IV.pause(); allLayers(el => { if (el.pause) el.pause(); }); for (const el of audLayers.values()) el.pause(); setPlayIcons(false); TS.keepAwake(false);
 }
 $('#playBtn').onclick = togglePlay;
-// Seitensteuerung neben der Bühne
-$('#sidePlay').onclick = togglePlay;
-$('#sideBack').onclick = () => window.stepFrames && stepFrames(-1);
-$('#sideFwd').onclick = () => window.stepFrames && stepFrames(1);
+// Abspielleiste unter dem Bild: Sprung zum vorigen und nächsten Schnitt, Menü „Ansicht“ (2.42 – ersetzt die Knöpfe neben dem Bild)
 const cutEdges = () => [...new Set(timeline.map(g => r3(g.o)).concat([0, r3(total)]))].sort((a, b) => a - b);
-$('#sidePrevCut').onclick = () => { if (playing) pausePlay(); const e = cutEdges().filter(x => x < outPos - 0.05); seekOut(e.length ? e[e.length-1] : 0, false); tlReveal(); };
-$('#sideNextCut').onclick = () => { if (playing) pausePlay(); const e = cutEdges().find(x => x > outPos + 0.05); seekOut(e != null ? e : total, false); tlReveal(); };
-$('#sideUndo').onclick = () => $('#undoBtn').click();
-$('#sideRedo').onclick = () => $('#redoBtn').click();
-$('#sideSplit').onclick = () => { if (window.splitHere) splitHere(); };
-$('#sideCutPlay').onclick = () => $('#cutPlayBtn').click();
-$('#sideSubs').onclick = () => { if (!P) return; const on = S().enabled === false; S().enabled = on; syncStyleInputs(); changed(false); toast(on ? 'Untertitel an' : 'Untertitel aus'); window.slSyncAll && slSyncAll(); };
-$('#sideFont').onclick = () => { if (P) openFontSheet(); };
+$('#tPrevCut').onclick = () => { if (!P) return; if (playing) pausePlay(); const e = cutEdges().filter(x => x < outPos - 0.05); seekOut(e.length ? e[e.length-1] : 0, false); tlReveal(); };
+$('#tNextCut').onclick = () => { if (!P) return; if (playing) pausePlay(); const e = cutEdges().find(x => x > outPos + 0.05); seekOut(e != null ? e : total, false); tlReveal(); };
+function toggleSubs(){ if (!P) return; const on = S().enabled === false; S().enabled = on; syncStyleInputs(); changed(false); toast(on ? 'Untertitel an' : 'Untertitel aus'); window.slSyncAll && slSyncAll(); }
+function toggleSafe(){ if (!P) return; let last = 'all'; try { last = localStorage.getItem('hc-safe') || 'all'; } catch(_){} setSafe(P.settings.safe ? '' : last); }
+function viewMenu(){
+  const T = (ic, label, fn) => ({icon: icon(ic), label, fn, cls: ''}), subs = S().enabled !== false;
+  return [T('cc', subs ? 'Untertitel ausblenden' : 'Untertitel einblenden', toggleSubs), T('Aa', 'Schrift der Untertitel …', () => openFontSheet()),
+    T('safe', P.settings.safe ? 'Schutzzonen ausblenden' : 'Schutzzonen der Plattformen zeigen', toggleSafe),
+    T('▶', 'Letzten Schnitt anhören', () => $('#cutPlayBtn').click()),
+    T('cutprev', 'Zum vorigen Schnitt', () => $('#tPrevCut').click()), T('cutnext', 'Zum nächsten Schnitt', () => $('#tNextCut').click()),
+    T('step-', 'Ein Bild zurück (←)', () => window.stepFrames && stepFrames(-1)), T('step+', 'Ein Bild vor (→)', () => window.stepFrames && stepFrames(1))];
+}
+$('#viewBtn').onclick = e => { e.stopPropagation(); if (!P || !window.showMenu) return; const r = e.currentTarget.getBoundingClientRect(); showMenu(r.right - 240, r.top - 8, viewMenu(), {up: true}); };
 // Wächter beim Abspielen: Steht das Bild trotz „Abspielen“ still (abgebrochenes play(), hängender Ladevorgang),
 // erst erneut starten, dann die Quelle an derselben Stelle neu laden – ohne dass das Programm neu gestartet werden muss.
 // Hilft ein erneutes play() nicht, wird an derselben Stelle neu gesprungen – genau das, was „Pause und wieder Abspielen“
@@ -1724,12 +1722,12 @@ function loop(){
 requestAnimationFrame(loop);
 // Abspielmarke im Balken und die Zeitanzeigen. Die Marke wird in Schritten von einem Zwanzigstel Prozent gesetzt
 // (bei 1000 px Breite ein halber Bildpunkt) – so ändert sich ihre Lage nur, wenn man es auch sieht.
-const headEl = $('#head'), tNowEl = $('#tNow'), sideNowEl = $('#sideNow');
+const headEl = $('#head'), tNowEl = $('#tNow');
 let headPct = '';
 function updateHead(o){
   const p = (total ? Math.round(o / total * 2000) / 20 : 0) + '%';
   if (p !== headPct){ headPct = p; headEl.style.left = p; }
-  setText(tNowEl, fmtT(o)); setText(sideNowEl, fmtS(o));
+  setText(tNowEl, fmtT(o));
 }
 // ───────── Elemente auf den Videospuren (Spur 1, 2, …; die Hauptspur ist 0) ─────────
 // Jedes Element kann frei liegen: Mittelpunkt x/y und Breite w (Anteil des Bildes), Seitenverhältnis des Clips.
@@ -2177,7 +2175,7 @@ function safeZone(){   // die gewählte Zone (bei „alle drei“ die jeweils gr
 const safeLabel = () => { const [key, kind] = String((P && P.settings.safe) || '').split(':'); return key ? `${SAFE_NAME[key] || key}${kind === 'ad' ? ' · Anzeige' : ''}` : ''; };
 function placeSafe(){
   const ov = $('#safeOv'), z = P && !CanvasEdit ? safeZone() : null;
-  ov.classList.toggle('hidden', !z); $('#sideSafe').classList.toggle('on', !!(P && P.settings.safe));
+  ov.classList.toggle('hidden', !z);
   if (!z) return;
   const pc = v => (v * 100).toFixed(2) + '%', key = JSON.stringify(z) + safeLabel(); if (ov.dataset.k === key) return; ov.dataset.k = key;
   ov.innerHTML = `<i style="left:0;right:0;top:0;height:${pc(z.t)}"></i><i style="left:0;right:0;bottom:0;height:${pc(z.b)}"></i>
@@ -2211,7 +2209,6 @@ function syncSafe(){ const v = (P && P.settings.safe) || ''; for (const sel of $
 (() => { const keys = ['tiktok', 'reels', 'shorts', 'all'], opt = (k, ad) => `<option value="${k}${ad ? ':ad' : ''}">${SAFE_NAME[k]}</option>`;
   for (const sel of $$('select.safe-sel')){ sel.innerHTML = `<option value="">aus</option><optgroup label="Beiträge (Richtwerte)">${keys.map(k => opt(k)).join('')}</optgroup><optgroup label="Anzeigen (Vorgaben der Plattformen)">${keys.map(k => opt(k, true)).join('')}</optgroup>`;
     sel.addEventListener('change', () => setSafe(sel.value)); } })();
-$('#sideSafe').onclick = e => { e.stopPropagation(); if (!P) return; let last = 'all'; try { last = localStorage.getItem('hc-safe') || 'all'; } catch(_){} setSafe(P.settings.safe ? '' : last); };
 
 // ───────── Längen-Ampel (F6): passt der Clip in die Grenzen der Plattformen? ─────────
 // hard = längstens möglich, soft = Grenze, ab der es Einschränkungen gibt. Stand November 2026: YouTube Shorts bis 3:00;
@@ -5028,7 +5025,7 @@ function syncStyleInputs(){
   $('#stPos').value = POS_Y[st.pos] != null && st.x === 0.5 && st.y === POS_Y[st.pos] ? st.pos : 'frei';
   $('#stColor').value = st.color.toLowerCase(); $('#stOutline').checked = !!st.outline; $('#stMode').value = st.mode;
   $('#stOutlineColor').value = (st.outlineColor || '#000000').toLowerCase(); $('#stOutlineColor').disabled = !st.outline;
-  $('#sideSubs').classList.toggle('on', st.enabled !== false); fillFontSelects();
+  fillFontSelects();
   $('#subsMaster').checked = st.enabled !== false; $('#subsMasterLbl').textContent = st.enabled !== false ? 'Untertitel an' : 'Untertitel aus';
   $('#paneSubs').classList.toggle('subs-off', st.enabled === false); $('#paneSubs').classList.toggle('word-mode', st.mode === 'word');
   styleOverlay(); renderLooks(); syncFxInputs();

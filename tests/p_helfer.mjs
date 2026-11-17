@@ -212,7 +212,7 @@ const late = await ev(([a, b]) => { const m = P.marks.find(x => x.text === 'Woru
 chk('späterer Beginn: „0:00 Einstieg“ steht davor, mit Erklärung; zu kurze Kapitel werden genannt', late.rows[0] === '0:00 Einstieg' && late.rows.length === 4 && /beginnt mit „0:00 Einstieg“/.test(late.iss) && /Das Kapitel „Worum es geht“ ist kürzer als zehn Sekunden/.test(late.iss), late);
 // Zeitskala im Studio
 await ev(() => { setTab('studio'); seekOut(0, false); tlReveal(); }); await sleep(700);   // die Zeitleiste folgt der Abspiellinie, wie nach jedem Sprung in der Oberfläche
-const flags = await ev(() => ({ chap: [...document.querySelectorAll('#ruler .rmk.chap span')].map(s => s.textContent), bar: !!document.querySelector('#barMarks'), tools: [...document.querySelectorAll('#paneStudio button')].map(b => b.textContent.trim()).filter(t => ['Kapitel', 'Notiz', 'Titelbild'].includes(t)) }));
+const flags = await ev(() => ({ chap: [...document.querySelectorAll('#ruler .rmk.chap span')].map(s => s.textContent), bar: barMenu('edit').some(t => t.label === 'Kapitel und Notizen'), tools: [...barMenu('insert'), ...barMenu('edit')].map(t => t.label).filter(t => ['Kapitel', 'Notiz', 'Titelbild'].includes(t)) }));
 chk('Zeitskala im Studio zeigt Fähnchen, Werkzeuge für Kapitel, Notiz und Titelbild sind da', flags.chap.includes('Worum es geht') && flags.bar && flags.tools.length >= 3, flags);
 await shot('marken-studio');
 // Stelle am Ende wegschneiden: Das Kapitel dort fällt aus der Liste
@@ -329,9 +329,9 @@ const opts = await ev(() => ({ n: document.querySelector('#clipSafe').options.le
 chk('Schutzzonen: Auswahl für Beiträge und für Anzeigen', opts.n === 9 && JSON.stringify(opts.groups) === '["Beiträge (Richtwerte)","Anzeigen (Vorgaben der Plattformen)"]', opts);
 await page.selectOption('#clipSafe', 'tiktok'); await sleep(300);
 const z1 = await ev(() => { const s = document.querySelector('#stage').getBoundingClientRect(), r = [...document.querySelectorAll('#safeOv i')].map(i => { const b = i.getBoundingClientRect(); return [(b.left - s.left) / s.width, (b.top - s.top) / s.height, b.width / s.width, b.height / s.height].map(v => +v.toFixed(3)); });
-  return { r, lbl: document.querySelector('#safeOv b').textContent, set: P.settings.safe, other: document.querySelector('#safeSel').value, side: document.querySelector('#sideSafe').classList.contains('on'), hidden: document.querySelector('#safeOv').classList.contains('hidden') }; });
+  return { r, lbl: document.querySelector('#safeOv b').textContent, set: P.settings.safe, other: document.querySelector('#safeSel').value, side: viewMenu().some(t => t.label === 'Schutzzonen ausblenden'), hidden: document.querySelector('#safeOv').classList.contains('hidden') }; });
 chk('TikTok: Maske oben 8 %, unten 21 %, an den Seiten 6 %, dazu die Knopfspalte rechts', !z1.hidden && z1.r.length === 5 && near(z1.r[0][3], 0.08, 0.004) && near(z1.r[1][3], 0.21, 0.004) && near(z1.r[1][1], 0.79, 0.004) && near(z1.r[2][2], 0.06, 0.004) && near(z1.r[3][2], 0.06, 0.004) && near(z1.r[4][0], 0.84, 0.004) && near(z1.r[4][2], 0.10, 0.004) && near(z1.r[4][1], 0.41, 0.004), z1.r);
-chk('Beschriftung, Einstellung im Projekt, zweite Auswahl und Seitenknopf ziehen mit', z1.lbl === 'Bedienelemente · TikTok' && z1.set === 'tiktok' && z1.other === 'tiktok' && z1.side, z1);
+chk('Beschriftung, Einstellung im Projekt, zweite Auswahl und das Menü „Ansicht“ ziehen mit', z1.lbl === 'Bedienelemente · TikTok' && z1.set === 'tiktok' && z1.other === 'tiktok' && z1.side, z1);
 // Untertitel in der gesperrten Fläche: gekennzeichnet; beim Ziehen rastet er in der freien Fläche ein
 await ev(() => { commit(() => { S().y = 0.93; S().x = 0.5; S().pos = 'frei'; }, false); const c = computedCues()[2]; seekOut(c.s + 0.1, false); }); await sleep(500);
 const u1 = await ev(() => ({ txt: document.querySelector('#subOv').textContent.length, unsafe: document.querySelector('#subOv').classList.contains('unsafe') }));
@@ -351,10 +351,10 @@ await ev(() => { commit(() => { P.items = P.items.filter(x => x.id !== 'tt1'); }
 await page.selectOption('#clipSafe', 'all:ad'); await sleep(300);
 const z2 = await ev(() => ({ z: safeZone(), lbl: document.querySelector('#safeOv b').textContent }));
 chk('„alle drei“ für Anzeigen nimmt je Seite die größte Vorgabe', JSON.stringify(z2.z) === JSON.stringify({ t: 0.15, b: 0.35, l: 0.111, r: 0.178, cw: 0.278, cy: 0.4375 }) && z2.lbl === 'Bedienelemente · alle drei · Anzeige', z2);
-await page.click('#sideSafe'); await sleep(200);
+await ev(() => toggleSafe()); await sleep(200);
 const offS = await ev(() => [P.settings.safe, document.querySelector('#safeOv').classList.contains('hidden'), document.querySelector('#clipSafe').value]);
-await page.click('#sideSafe'); await sleep(200);
-chk('der Seitenknopf schaltet aus und holt die letzte Wahl zurück', JSON.stringify(offS) === '["",true,""]' && (await ev(() => P.settings.safe)) === 'all:ad', offS);
+await page.click('#viewBtn'); await page.locator('#ctxMenu button', { hasText: 'Schutzzonen der Plattformen zeigen' }).click(); await sleep(200);
+chk('„Schutzzonen“ im Menü „Ansicht“ schaltet aus und holt die letzte Wahl zurück', JSON.stringify(offS) === '["",true,""]' && (await ev(() => P.settings.safe)) === 'all:ad', offS);
 await page.selectOption('#clipSafe', 'tiktok'); await sleep(200);
 
 // B9 · Dauerhafte Textzeile
@@ -392,7 +392,7 @@ const hid = await ev(() => [document.querySelector('#tline').classList.contains(
 await page.click('#tlOn'); await page.click('#tlOk'); await sleep(200);
 chk('„Anzeigen“ blendet sie aus, ohne sie zu löschen', JSON.stringify(hid) === '[true,0]' && (await ev(() => !document.querySelector('#tline').classList.contains('hidden'))), hid);
 await ev(() => setTab('studio')); await sleep(500);
-await page.click('#barClip'); await page.waitForSelector('#sheetBody [data-t="tline"]');
+await page.click('#barInsert'); await page.locator('#ctxMenu button', { hasText: /^Clip$/ }).click(); await page.waitForSelector('#sheetBody [data-t="tline"]');
 await page.click('#sheetBody [data-t="tline"]'); await sleep(300);
 chk('im Studio führt „Clip einfügen“ → „Textzeile“ zum selben Blatt', (await ev(t => (document.querySelector('#tlText') || {}).value === t, LINE)));
 await ev(() => { closeSheet(); setTab('clip'); }); await sleep(400);

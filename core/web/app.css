@@ -1330,3 +1330,21 @@ label.col input{width:100%}
 /* Skript abgleichen (2.40): frei gesprochene Wörter hinterlegt; ⌄ hinter dem Wort, nach dem Text aus dem Manuskript fehlt */
 .tk.fr{background:rgba(207,198,176,.16);border-radius:3px;box-shadow:0 1px 0 rgba(207,198,176,.55)}
 .tk.ms::after{content:' ⌄';color:var(--rot,#E5402A);font-weight:700}
+
+/* Studio aufgeräumt (2.42): eine Abspielleiste unter dem Bild, Menüs über den Spuren, feste waagerechte Scrollleiste */
+.transport .t-cut{flex:none;width:36px}
+.transport #viewBtn{flex:none}
+.tb.menu em{font-style:normal;font-size:10px;opacity:.7;margin-left:2px}
+.tool.over{display:none}
+.tool.more{margin-left:auto}
+.tools{overflow:hidden}
+.tools.none{display:none}
+.tl{scrollbar-width:none}
+.tl::-webkit-scrollbar{display:none}
+.tl-hbar{flex:none;height:16px;position:relative;background:var(--sbg2);border-top:1px solid var(--sline);overflow:hidden;touch-action:none;cursor:pointer}
+.tl-hbar i{position:absolute;left:0;top:3px;height:9px;min-width:48px;border-radius:5px;background:#6a6676;cursor:grab}
+.tl-hbar i:hover,.tl-hbar.drag i{background:#8d899b}
+.tl-hbar.drag i{cursor:grabbing}
+.tl-hbar.off{visibility:hidden}
+#proj.tl-min .tl-hbar{display:none}
+@media (max-width: 700px){ .transport .t-cut{display:none} .tl-bar .tl-time{display:none} .tl-bar #tlOut,.tl-bar #tlIn{display:none} }

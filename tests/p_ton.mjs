@@ -193,7 +193,7 @@ try {
   chk('Export ohne Übergänge: harte Schnitte, jedes Bild lesbar', hart.ok && H.length > 300 && H.every(f => f[1] !== null) && !hart.plan.trans, hart.error || H.length);
   // Bedienung: Werkzeug „Übergang“, Blatt, Marken
   await ev(() => { TL.sel = null; seekOut(timeline[1].o + 0.2, false); renderTimeline(); }); await sleep(200);
-  const tool = await ev(() => { const b = [...document.querySelectorAll('#tools button')].find(x => /Übergang/.test(x.textContent) || /Übergang/.test(x.title || '')); if (!b) return null; b.click(); return true; }); await sleep(300);
+  const tool = await ev(() => { const t = barMenu('edit').find(x => x.label === 'Übergang'); if (!t) return null; t.fn(); return true; }); await sleep(300);   // seit 2.42 im Menü „Bearbeiten“
   const sh0 = await ev(() => ({ open: joinSheetOpen(), k: joinK, head: (document.querySelector('#jnSheet p') || {}).textContent || '', kinds: [...document.querySelectorAll('#jnKind button')].map(b => b.textContent + (b.classList.contains('on') ? '*' : '')), dur: document.querySelector('#jnDur').closest('.field').classList.contains('hidden'), note: document.querySelector('#jnNote').textContent, out: +outPos.toFixed(2) }));
   chk('Werkzeug „Übergang“ öffnet das Blatt am nächsten Schnitt: vier Arten, „Hart“ gewählt, die Abspiellinie steht am Schnitt',
     tool && sh0.open && sh0.k === 1 && sh0.kinds.join() === 'Hart*,Blende,Bild früher,Bild später' && sh0.dur && /selben Augenblick/.test(sh0.note) && near(sh0.out, T(1), 0.02) && /Schnitt 1 von 7/.test(sh0.head), sh0);
