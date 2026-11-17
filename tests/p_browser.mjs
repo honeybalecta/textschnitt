@@ -207,12 +207,14 @@ try {
     const job = { cancel: false, progress: 0, message: '' }, r = await E.personTrack(FILES.gs, job, seg);
     const bin = atob(r.data), m = k => { const cols = new Array(r.w).fill(0), rows = new Array(r.h).fill(0); for (let y = 0; y < r.h; y++) for (let x = 0; x < r.w; x++){ const v = bin.charCodeAt(k * r.w * r.h + y * r.w + x); cols[x] += v; rows[y] += v; }
       const on = a => [a.findIndex(v => v > 0), a.length - 1 - [...a].reverse().findIndex(v => v > 0)]; return { x: on(cols), y: on(rows) }; };
+    const n1 = seg.ms.length; await E.personTrack(FILES.gs, { cancel: false, progress: 0, message: '' }, seg); const zwei = seg.ms.every((v, i, a) => i === 0 || v > a[i - 1]) && seg.ms.length === 2 * n1;
     const stop = { cancel: true, progress: 0, message: '' }; let err = ''; try { await E.personTrack(FILES.gs, stop, seg); } catch (e){ err = e.message; }
-    return { step: r.step, w: r.w, h: r.h, n: r.n, len: bin.length, first: m(0), last: m(r.n - 1), mono: seg.ms.slice(0, r.n).every((v, i, a) => i === 0 || v > a[i - 1]), closed: seg.closed >= r.n, prog: job.progress, err };
+    return { step: r.step, w: r.w, h: r.h, n: r.n, len: bin.length, first: m(0), last: m(r.n - 1), mono: seg.ms.slice(0, r.n).every((v, i, a) => i === 0 || v > a[i - 1]), zwei, closed: seg.closed >= r.n, prog: job.progress, err };
   });
   chk('Person verfolgen im Browser: alle 0,25 s eine Maske mit 32 × 18 Feldern, Zeiten steigen, Masken werden freigegeben', tr.step === 0.25 && tr.w === 32 && tr.h === 18 && tr.n === 120 && tr.len === 120 * 32 * 18 && tr.mono && tr.closed && tr.prog > 0.9, tr);
   chk('Person verfolgen im Browser: Die Maske liegt dort, wo das Feld im Bild steht', tr.first.x.join() === '10,21' && tr.first.y.join() === '4,13' && tr.last.x.join() === '10,21', [tr.first, tr.last]);
   chk('Person verfolgen im Browser: Abbruch beendet den Auftrag', tr.err === 'Abgebrochen', tr.err);
+  chk('Person verfolgen im Browser: Auch über zwei Aufträge hinweg steigen die Zeiten für die Erkennung (sonst bricht MediaPipe ab)', tr.zwei, tr.zwei);
   await want(null);
   chk('keine Fehlermeldungen der Seite', logs.length === 0, logs.slice(0, 5));
 } catch (e) {

@@ -1586,7 +1586,18 @@ def folgen_239():
     chk("Die Oberfläche bekommt folgen.js ausgeliefert", (T.WEB_DIR / "folgen.js").is_file() and '"folgen.js"' in Path(T.__file__).read_text(encoding="utf-8") and 'src="folgen.js"' in (T.WEB_DIR / "index.html").read_text(encoding="utf-8"))
 
 
-PARTS = (speichern_und_fassungen, speicher, sicherung, projektpakete, kleine_helfer, quellen_und_belege, schrift_im_export, transkript, export_231, untertitel_effekte, ton_234, belege_235, bild_236, uebergabe_237, stimmen_238, folgen_239, neue_versionen, bericht_und_protokoll)
+def skript_240():
+    """2.40: Der Rechenkern für „Skript abgleichen“ wird mit der Oberfläche ausgeliefert."""
+    src = Path(T.__file__).read_text(encoding="utf-8")
+    html = (T.WEB_DIR / "index.html").read_text(encoding="utf-8")
+    chk("Die Oberfläche bekommt skript.js ausgeliefert", (T.WEB_DIR / "skript.js").is_file() and '"skript.js"' in src and 'src="skript.js"' in html)
+    order = [html.index(f'src="{f}"') for f in ("chroma.js", "stimmen.js", "folgen.js", "skript.js", "bridge-http.js", "app.js")]
+    chk("Die Rechenkerne stehen in der Seite vor der Oberfläche, die sie benutzt", order == sorted(order), order)
+    build = (Path(T.__file__).parent / "web" / "build.py").read_text(encoding="utf-8")
+    chk("Die Browser-Fassung nimmt die Rechenkerne in den Bau und in den Zwischenspeicher für den Betrieb ohne Netz", all(build.count(f'"{f}"') == 2 for f in ("stimmen.js", "folgen.js", "skript.js")))
+
+
+PARTS = (speichern_und_fassungen, speicher, sicherung, projektpakete, kleine_helfer, quellen_und_belege, schrift_im_export, transkript, export_231, untertitel_effekte, ton_234, belege_235, bild_236, uebergabe_237, stimmen_238, folgen_239, skript_240, neue_versionen, bericht_und_protokoll)
 for part in [p for p in PARTS if p.__name__ == MODE] or PARTS:
     print(f"── {part.__name__.replace('_', ' ')} ──", flush=True)
     part()

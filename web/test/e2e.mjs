@@ -184,6 +184,12 @@ try {
     return {ready: voiceReady(), words: words.length, sec: +(pcm.length / 16000).toFixed(1), float: pcm instanceof Float32Array, count: r ? r.count : -1}; }).catch(e => ({error: String(e && e.message || e)}));
   step('Personen erkennen: Ton aus dem Browser erreicht den Rechenkern', !!vc.ready && vc.words > 0 && vc.sec > 1 && vc.count >= 1, vc);
 
+  // Skript abgleichen (2.40): Das eigene Transkript als Manuskript stimmt vollständig überein; ein eingefügter Satz gilt als ausgelassen
+  const sk = await ev(() => { const ws = tokens.filter(t => t.type === 'word').map(t => tokText(t)).filter(Boolean), half = ws.length >> 1;
+    const r = Skript.compare(tokens.filter(t => t.type === 'word').map(t => ({i: t.i, text: tokText(t)})), ws.slice(0, half).join(' ') + ' Dieser Satz steht nur im Manuskript und nirgends im Video. ' + ws.slice(half).join(' '));
+    return {words: ws.length, same: r.stats.same, pairs: r.pairs.length, miss: r.miss.map(m => m.n), free: r.free.length, chip: !!document.querySelector('#scriptChip')}; }).catch(e => ({error: String(e && e.message || e)}));
+  step('Skript abgleichen: Rechenkern in der Browser-Fassung', sk.chip && sk.words > 5 && sk.same >= sk.words - 2 && sk.pairs <= 2 && sk.free === 0 && sk.miss.reduce((a, b) => a + b, 0) >= 7, sk);
+
   // Service Worker & Isolation (schnellere Spracherkennung ohne Grafikkarte)
   const p2 = await ctx.newPage();
   await p2.goto(BASE);

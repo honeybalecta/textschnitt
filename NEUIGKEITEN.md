@@ -2,6 +2,14 @@
 
 Was sich mit jeder Version von HoneyCut ändert. Die Windows-App zeigt diese Stichpunkte an, sobald eine neuere Version bereitsteht.
 
+## 2.40.0 · Skript abgleichen
+- Skript abgleichen (Text-Reiter → „⋯“ → „Skript abgleichen“): Manuskript einfügen, und HoneyCut legt es Wort für Wort neben das Transkript. Schreibweisen, Großschreibung und Satzzeichen kommen aus dem Manuskript – auch Namen, gegenderte Formen und zusammengeschriebene Wörter
+- Frei gesprochen: Stellen ab drei Wörtern, die im Manuskript fehlen, sind im Text hinterlegt und stehen in einer Liste mit Sprung zur Stelle
+- Ausgelassen: Was im Manuskript steht und im Video fehlt, steht ebenfalls in der Liste; im Text zeigt ⌄ die Stelle
+- Regieanweisungen in eckigen Klammern und Überschriften mit # bleiben unberücksichtigt. „Rückgängig“ nimmt den Abgleich in einem Schritt zurück; der Knopf „Skript“ öffnet die Übersicht jederzeit wieder
+- Läuft auf dem Gerät, unter Windows, Android und im Browser
+- Behoben (Browser): „Person im Bild halten“ brach ab, wenn vorher „Hintergrund automatisch erkennen“ lief oder eine zweite Aufnahme auszuwerten war; ebenso ein zweites „Hintergrund automatisch erkennen“ in derselben Sitzung
+
 ## 2.39.0 · Person im Bild halten
 - Person im Bild halten (Studio → „Leinwand“, bei Clips im Clip-Reiter unter „Bildausschnitt“): Im Hochformat oder Quadrat rückt der Ausschnitt der Person nach, wenn sie sich im Bild bewegt. HoneyCut wertet jede Aufnahme dafür einmal aus
 - Die Kamera bleibt ruhig: Kleine Bewegungen lassen den Ausschnitt stehen, größere führen zu einer weichen Fahrt. Ist kurz niemand zu sehen, bleibt der Ausschnitt, wo er war

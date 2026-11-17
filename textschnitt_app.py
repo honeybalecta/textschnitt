@@ -145,6 +145,9 @@ def selftest(out_path: str) -> int:
         rep["folgen"] = T.folgen_selftest()
         if not rep["folgen"].get("ok"):
             raise RuntimeError(f"Die Masken für „Person im Bild halten“ kommen nicht wie erwartet: {rep['folgen']}")
+        rep["kerne"] = [f for f in ("stimmen.js", "folgen.js", "skript.js") if (T.WEB_DIR / f).is_file()]
+        if len(rep["kerne"]) != 3:
+            raise RuntimeError(f"Rechenkerne der Oberfläche fehlen im Paket: {rep['kerne']}")
         rep["stimmen"] = T.stimmen_selftest()
         if not rep["stimmen"].get("ok"):
             raise RuntimeError(f"Der Ton für das Erkennen der Personen kommt nicht wie erwartet: {rep['stimmen']}")

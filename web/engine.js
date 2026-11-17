@@ -781,6 +781,10 @@ const MP_CDN = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VER}`;
 const MP_MODEL = 'https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter_landscape/float16/latest/selfie_segmenter_landscape.tflite';
 export const MATTE_BG = '#00ff00';
 let mpSeg = null;
+// Der Segmentierer läuft im Video-Modus und verlangt über alle Aufrufe hinweg steigende Zeiten – auch über mehrere Aufträge
+// (zweites Video, erst Freistellen und dann „Person im Bild halten“). mpNext zählt deshalb für die ganze Sitzung weiter.
+let mpLast = -1;
+const mpNext = (base, ms) => (mpLast = Math.max(mpLast + 1, base + ms));
 async function segmenter(job){
   if (mpSeg) return mpSeg;
   job.message = 'Lade Personenerkennung (einmalig, ca. 10 MB) …';
@@ -814,14 +818,14 @@ export async function autoMatte(file, job){
   const mask = document.createElement('canvas'); mask.width = sw; mask.height = sh; const mctx = mask.getContext('2d');
   const mimg = mctx.createImageData(sw, sh), md = mimg.data; for (let i = 0; i < md.length; i += 4){ md[i] = md[i + 1] = md[i + 2] = 255; }
   const off = await firstTs(file), t0 = performance.now();
-  let n = 0, last = -1;
+  let n = 0; const mpBase = mpLast + 1;
   try {
     const sink = new CanvasSink(v, {width: W, height: H, fit: 'contain', poolSize: 3});
     for await (const fr of sink.canvases()){
       if (job.cancel) throw new Error('Abgebrochen');
       const t = Math.max(0, fr.timestamp - off);
       sctx.drawImage(fr.canvas, 0, 0, sw, sh);
-      const ms = Math.max(last + 1, Math.round(t * 1000)); last = ms;
+      const ms = mpNext(mpBase, Math.round(t * 1000));
       const res = seg.segmentForVideo(small, ms);
       try {
         const m = res.confidenceMasks && res.confidenceMasks[0]; if (m){
@@ -868,12 +872,12 @@ export async function personTrack(file, job, seg0){
   const out = new Uint8Array(n * GW * GH), sum = new Float32Array(GW * GH), cnt = new Uint16Array(GW * GH);
   const off = await firstTs(file), times = Array.from({length: n}, (_, i) => i * step), sink = new CanvasSink(v, {width: sw, height: sh, fit: 'fill', poolSize: 2});
   job.message = 'Person wird gesucht …';
-  let i = 0, last = -1;
+  let i = 0; const mpBase = mpLast + 1;
   for await (const fr of sink.canvasesAtTimestamps(times.map(t => off + t))){
     if (job.cancel) throw new Error('Abgebrochen');
     if (fr){
       sctx.drawImage(fr.canvas, 0, 0, sw, sh);
-      const ms = Math.max(last + 1, Math.round(times[i] * 1000)); last = ms;
+      const ms = mpNext(mpBase, Math.round(times[i] * 1000));
       const res = seg.segmentForVideo(small, ms);
       try {
         const m = res.confidenceMasks && res.confidenceMasks[0];

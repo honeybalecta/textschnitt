@@ -1022,6 +1022,7 @@ function realign(){
   const old = tokens, oldDel = deleted, oldEdits = P.edits || {}, oldKw = new Set(P.kw || []), kw = [];
   rebuildTokens();
   deleted = new Set(); P.edits = {}; P.trims = {}; P.checks = [];   // die Prüfliste hängt an den Wortnummern
+  if (P.script) P.script = {text: P.script.text};                    // ebenso die Markierungen des Skript-Abgleichs
   P.sources.forEach((src, k) => {
     const a = old.filter(t => t.src === k && t.type === 'word'), b = tokens.filter(t => t.src === k && t.type === 'word');
     a.forEach((t, j) => { if (!b[j]) return; if (oldDel.has(t.i)) deleted.add(b[j].i); if (oldEdits[t.i] != null) P.edits[b[j].i] = oldEdits[t.i]; if (t.spk) b[j].spk = t.spk; if (t.ks) b[j].ks = true; if (t.ok) b[j].ok = 1;
@@ -1107,7 +1108,7 @@ function tokMarks(){ const o = {}; for (const t of tokens) if (t.spk || t.ks || 
 // Zum Stand gehören auch Format, Bildausschnitt und die Lautstärke der Hauptvideos (fm, fr, sv). Sie fehlten: „Rückgängig“
 // nach einem Formatwechsel, nach dem Verschieben des Ausschnitts oder nach „Alle angleichen“ tat nichts bzw. nur die Hälfte.
 function snapshot(){ return JSON.stringify({d:[...deleted], t:P.trims, c:P.cues, i:P.items, a:P.adj, x:P.dels, y:P.splits, s:P.sub_style, e:P.edits, m:P.moves, k:P.speakers, w:tokMarks(), f:P.slides, wm:P.watermark || null, tr:P.trans || null,
-  fm:P.format || null, fr:P.frame || null, sv:P.sources.map(x => x.vol == null ? null : x.vol), mk:P.marks || [], tl:P.textline || null, rf:P.refs || [], ss:P.srcStyle || null, lw:P.lower || null, cl:P.clipList || [], pt:P.part || null, ps:P.partStyle || null, au:P.audio || null, pg:P.progress || null, co:P.color || null, fo:P.follow || null, ck:P.checks || [], kw:P.kw || []}); }
+  fm:P.format || null, fr:P.frame || null, sv:P.sources.map(x => x.vol == null ? null : x.vol), mk:P.marks || [], tl:P.textline || null, rf:P.refs || [], ss:P.srcStyle || null, lw:P.lower || null, cl:P.clipList || [], pt:P.part || null, ps:P.partStyle || null, au:P.audio || null, pg:P.progress || null, co:P.color || null, fo:P.follow || null, sk:P.script || null, ck:P.checks || [], kw:P.kw || []}); }
 function restore(s){ const o = JSON.parse(s); deleted = new Set(o.d); P.trims = o.t; P.cues = o.c; P.items = o.i; P.adj = o.a; P.dels = o.x || []; P.splits = o.y || [];
   if (o.s) P.sub_style = o.s; P.edits = o.e || {}; P.moves = o.m || [];
   const fmCh = 'fm' in o && (P.format || null) !== (o.fm || null), frCh = 'fr' in o && JSON.stringify(P.frame || null) !== JSON.stringify(o.fr || null);
@@ -1129,6 +1130,7 @@ function restore(s){ const o = JSON.parse(s); deleted = new Set(o.d); P.trims = 
   const coCh = 'co' in o && JSON.stringify(P.color || null) !== JSON.stringify(o.co || null);
   if ('co' in o){ if (o.co) P.color = o.co; else delete P.color; }
   if ('fo' in o){ if (o.fo) P.follow = o.fo; else delete P.follow; }
+  if ('sk' in o){ if (o.sk) P.script = o.sk; else delete P.script; paintScriptBtn(); }
   if ('ck' in o) P.checks = o.ck || [];
   if ('kw' in o) P.kw = o.kw || [];
   if (o.f) P.slides = o.f; if (o.k) P.speakers = o.k;
@@ -2783,7 +2785,7 @@ function renderTranscript(){
     prev = i;
   }
   root.append(frag); tokens.forEach(t => paint(t.i));
-  paintFillerCount(fset); paintMarkTimes(); paintMarksBtn(); paintRefsBtn(); paintClipsBtn(); paintLowBtn(); paintChkBtn(); lowMark();
+  paintFillerCount(fset); paintMarkTimes(); paintMarksBtn(); paintRefsBtn(); paintClipsBtn(); paintLowBtn(); paintChkBtn(); paintScriptBtn(); lowMark();
   const todo = P.sources.filter(s => !s.tr).length;
   $('#textTodo').classList.toggle('hidden', !todo); $('#textTodo b').textContent = todo === 1 ? '1 Video ist' : `${todo} Videos sind`;
   if ($('#findIn').value) runFind();
@@ -2792,6 +2794,7 @@ $('#textTodoBtn').onclick = () => setTab('trans');
 function paint(i){
   const t = tokens[i], sp = spans[i]; if (!sp) return;
   if (t.type === 'word'){ const tx = tokText(t); if (sp.textContent !== tx) sp.textContent = tx; sp.classList.toggle('empty', !tx); sp.classList.toggle('edited', P.edits[t.i] != null); sp.classList.toggle('low', isLowTok(t)); }
+  { const ss = scriptSets(); sp.classList.toggle('fr', !!ss && ss.fr.has(i)); sp.classList.toggle('ms', !!ss && ss.ms.has(i)); }
   sp.classList.toggle('del', deleted.has(i) || (t.type === 'word' && isSrcDeleted((t.ws + t.we) / 2)));
   sp.classList.toggle('ks', !!t.ks && sp.classList.contains('del'));
   const kwOn = !!(P.kw && P.kw.length && P.kw.includes(i)); if (kwOn !== sp.classList.contains('kw')){ sp.classList.toggle('kw', kwOn); } sp.style.setProperty('--kw', kwOn ? (S().kwColor || KW_DEF) : '');
@@ -3629,6 +3632,7 @@ function openDict(){
   sheetItem = null; paintList(); openSheet(false);
 }
 $('#dictBtn').onclick = openDict; $('#dictChip').onclick = openDict;
+if ($('#scriptChip')) $('#scriptChip').onclick = () => openScript(); if ($('#scriptBtn')) $('#scriptBtn').onclick = () => openScript();
 
 // ───────── Unsichere Wörter der Reihe nach prüfen (C2) ─────────
 // Der Prüfmodus springt von unsicherer Stelle zu unsicherer Stelle (direkt aufeinanderfolgende unsichere Wörter gelten als eine),
@@ -7527,6 +7531,73 @@ function openMarker(id){
   $('#mkxZoom').onchange = e => { st.zoom = e.target.checked; };
   window.addEventListener('resize', fit);
   img.onload = fit; img.onerror = () => { toast('Das Bild lässt sich nicht laden'); close(); }; img.src = MEDIA(orig.uri);
+}
+
+// ───────── Skript abgleichen (2.40, C6) ─────────
+// Das Manuskript wird Wort für Wort am Transkript ausgerichtet (skript.js). Ergebnis im Projekt:
+// P.script = {text, free: [[a, b], …], miss: [{after, text, n}], stats: {spoken, script, same, fixed}} – a, b, after sind Wortnummern.
+const scriptOn = () => !!(P && P.script && P.script.stats);
+let scriptMemo = null;
+function scriptSets(){   // Wortnummern: frei gesprochen · Stelle, hinter der Text aus dem Manuskript fehlt
+  if (!scriptOn()) return null;
+  if (!scriptMemo || scriptMemo.of !== P.script){ const fr = new Set(), ms = new Set();
+    for (const [a, b] of P.script.free || []) for (let i = a; i <= b && i < tokens.length; i++) if (tokens[i] && tokens[i].type === 'word') fr.add(i);
+    for (const m of P.script.miss || []) if (m.after >= 0 && m.after < tokens.length) ms.add(m.after);
+    scriptMemo = {of: P.script, fr, ms}; }
+  return scriptMemo;
+}
+function paintScriptBtn(){ const b = $('#scriptBtn'); if (!b) return; const on = scriptOn(), n = on ? (P.script.free || []).length + (P.script.miss || []).length : 0; b.classList.toggle('hidden', !on); b.textContent = `Skript (${n})`; }
+function scriptRun(text, adopt){
+  const spoken = tokens.filter(t => t.type === 'word').map(t => ({i: t.i, text: tokText(t)}));
+  const r = Skript.compare(spoken, text); let fixed = 0; const touched = [];
+  commit(() => {
+    if (adopt) for (const p of r.pairs){ p.ids.forEach((i, q) => { const v = q === 0 ? p.text : ''; if (v === tokens[i].text) delete P.edits[i]; else P.edits[i] = v; touched.push(i); }); fixed++; }
+    if (touched.length) regenCuesFor(touched);
+    P.script = {text, free: r.free.map(f => [f.a, f.b]), miss: r.miss.map(m => ({after: m.after, text: m.text, n: m.n})), stats: {spoken: r.stats.spoken, script: r.stats.script, same: r.stats.same, fixed}};
+  }, false);
+  renderTranscript(); if (tab === 'subs') renderSubs();
+  return P.script;
+}
+function scriptJump(i){ const t = tokens[i]; if (!t) return; if (playing) pausePlay(); seekOut(Math.min(srcToOut(snapSrc(t.ws ?? t.s)), Math.max(0, total - 0.01)), false); tlReveal();
+  if (tab === 'text' && spans[i]) spans[i].scrollIntoView({block: 'center', behavior: 'smooth'}); }
+function openScript(edit){
+  if (!P) return; if (!window.Skript) return toast('„Skript abgleichen“ braucht die aktuelle Fassung von HoneyCut');
+  if (!tokens.some(t => t.type === 'word')) return toast('Dafür braucht es ein Transkript');
+  sheetItem = null; const body = $('#sheetBody'); body.onclick = null;
+  if (!scriptOn() || edit){
+    body.innerHTML = `<h3>Skript abgleichen</h3>
+      <p class="muted small">Füge dein Manuskript ein. HoneyCut legt es Wort für Wort neben das Transkript: Schreibweisen, Großschreibung und Satzzeichen kommen aus dem Manuskript, frei gesprochene und ausgelassene Stellen werden markiert.</p>
+      <textarea id="skText" rows="10" dir="auto" placeholder="Manuskript hier einfügen …" style="width:100%;font-size:16px"></textarea>
+      <label class="row"><input type="checkbox" id="skAdopt" checked> Schreibweisen und Satzzeichen übernehmen</label>
+      <p class="muted small">Regieanweisungen in eckigen Klammern und Überschriften mit # bleiben unberücksichtigt. „Rückgängig“ nimmt den Abgleich in einem Schritt zurück.</p>
+      <div class="row" style="margin-top:12px"><button class="btn" id="skNo">Abbrechen</button><button class="btn primary" id="skGo" style="margin-left:auto">Abgleichen</button></div>`;
+    $('#skText').value = (P.script && P.script.text) || '';
+    $('#skNo').onclick = () => { if (scriptOn()) openScript(); else closeSheet(); };
+    $('#skGo').onclick = () => { const text = $('#skText').value;
+      if (Skript.words(text).length < 5){ toast('Bitte das Manuskript einfügen'); $('#skText').focus(); return; }
+      const s = scriptRun(text, $('#skAdopt').checked), share = s.stats.spoken ? s.stats.same / s.stats.spoken : 0;
+      toast(share < 0.3 ? 'Manuskript und Transkript passen kaum zusammen – ist es das richtige Skript?' : `${Math.round(share * 100)} % stimmen überein` + (s.stats.fixed ? ` · ${s.stats.fixed === 1 ? '1 Stelle' : s.stats.fixed + ' Stellen'} angepasst` : ''));
+      openScript(); };
+    openSheet(); setTimeout(() => { const t = $('#skText'); if (t && !t.value) t.focus(); }, 50); return;
+  }
+  const S0 = P.script, st = S0.stats, pct = st.spoken ? Math.round(st.same / st.spoken * 100) : 0, cut = (s, n = 90) => s.length > n ? s.slice(0, n - 1).trimEnd() + '…' : s;
+  const freeRows = (S0.free || []).filter(([a]) => tokens[a]).map(([a, b], k) => { const txt = []; for (let i = a; i <= b && i < tokens.length; i++) if (tokens[i].type === 'word' && tokText(tokens[i])) txt.push(tokText(tokens[i]));
+    return `<div class="mk-row"><button type="button" class="mk-go" data-go="${a}" title="Zur Stelle springen"><span class="mono">${fmtT(tokens[a].ws ?? tokens[a].s)}</span><span class="mk-t" dir="auto">${esc(cut(txt.join(' ')))}</span></button></div>`; }).join('');
+  const missRows = (S0.miss || []).map(m => { const i = m.after >= 0 && tokens[m.after] ? m.after : tokens.findIndex(t => t.type === 'word'), t = tokens[i];
+    return `<div class="mk-row"><button type="button" class="mk-go" data-go="${i}" title="Zur Stelle springen, an der der Text stehen würde"><span class="mono">${m.after >= 0 && t ? fmtT(t.we ?? t.e) : fmtT(0)}</span><span class="mk-t" dir="auto">${esc(cut(m.text))}</span></button></div>`; }).join('');
+  body.innerHTML = `<h3>Skript abgleichen</h3>
+    <p class="small" id="skSum">${pct} % der gesprochenen Wörter stehen so im Manuskript (${st.same} von ${st.spoken})${st.fixed ? ` · ${st.fixed === 1 ? '1 Stelle' : st.fixed + ' Stellen'} nach dem Manuskript geschrieben` : ''}.</p>
+    <h4>Frei gesprochen (${(S0.free || []).length})</h4>
+    <div id="skFree">${freeRows || '<p class="muted small">Keine längeren Stellen abseits des Manuskripts.</p>'}</div>
+    <h4 style="margin-top:14px">Im Manuskript, im Video ausgelassen (${(S0.miss || []).length})</h4>
+    <div id="skMiss">${missRows || '<p class="muted small">Alles aus dem Manuskript kommt im Video vor.</p>'}</div>
+    <p class="muted small" style="margin-top:10px">Gezählt werden Stellen ab drei Wörtern. Im Text sind frei gesprochene Wörter hinterlegt; ein Zeichen ⌄ zeigt, wo Text aus dem Manuskript fehlt.</p>
+    <div class="row wrap" style="margin-top:12px"><button class="btn" id="skAgain">Neu abgleichen …</button><button class="btn" id="skOff" title="Markierungen entfernen; übernommene Schreibweisen bleiben">Markierungen entfernen</button><button class="btn primary" id="skOk" style="margin-left:auto">Fertig</button></div>`;
+  body.onclick = e => { const b = e.target.closest('[data-go]'); if (b) scriptJump(+b.dataset.go); };
+  $('#skAgain').onclick = () => openScript(true);
+  $('#skOff').onclick = () => { commit(() => { P.script = {text: P.script.text}; }, false); renderTranscript(); closeSheet(); toast('Markierungen entfernt'); };
+  $('#skOk').onclick = closeSheet;
+  openSheet(true);
 }
 
 // ───────── Person im Bild halten (2.39, E5) ─────────

@@ -1326,3 +1326,7 @@ label.col input{width:100%}
 .ho-card select{width:100%;font-size:16px}
 .ho-card label.row{flex-wrap:nowrap;align-items:flex-start;gap:8px;margin:2px 0}
 .ho-card label.row input{flex:none;margin-top:3px}
+
+/* Skript abgleichen (2.40): frei gesprochene Wörter hinterlegt; ⌄ hinter dem Wort, nach dem Text aus dem Manuskript fehlt */
+.tk.fr{background:rgba(207,198,176,.16);border-radius:3px;box-shadow:0 1px 0 rgba(207,198,176,.55)}
+.tk.ms::after{content:' ⌄';color:var(--rot,#E5402A);font-weight:700}

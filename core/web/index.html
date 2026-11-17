@@ -160,6 +160,7 @@
         <button class="chip" id="clipsBtn" title="Clips aus diesem Video: vorgemerkte Abschnitte, Vorschläge und Clip-Reihen">Clips</button>
         <button class="chip hidden" id="lowBtn" title="Unsichere Wörter der Reihe nach anhören, bestätigen oder korrigieren (P)">Unsichere prüfen</button>
         <button class="chip hidden" id="checkBtn" title="Jeden automatischen Schnitt anhören und einzeln zurücknehmen">Prüfliste</button>
+        <button class="chip hidden" id="scriptBtn" title="Abgleich mit dem Manuskript: frei gesprochene und ausgelassene Stellen">Skript</button>
         <button class="chip ico" id="textMore" title="Weitere Werkzeuge">⋯</button>
       </div>
       <div class="hidden" id="textMoreBtns">
@@ -168,6 +169,7 @@
         <button id="addSrcChip" onclick="addSources()">Video anhängen</button>
         <button id="realignChip" onclick="$('#realignBtn').click()">Am Ton ausrichten</button>
         <button id="dictChip">Wörterbuch</button>
+        <button id="scriptChip" title="Manuskript einfügen: Schreibweisen übernehmen, frei Gesprochenes und Ausgelassenes zeigen">Skript abgleichen</button>
       </div>
       <div class="findrow hidden" id="findRow">
         <input type="search" id="findIn" placeholder="Im Text suchen – Enter: nächster Treffer" autocomplete="off"><span class="muted small" id="findInfo"></span>
@@ -543,6 +545,7 @@
 <script src="chroma.js"></script>
 <script src="stimmen.js"></script>
 <script src="folgen.js"></script>
+<script src="skript.js"></script>
 <script src="bridge-http.js"></script>
 <script src="app.js"></script>
 <script src="studio.js"></script>
