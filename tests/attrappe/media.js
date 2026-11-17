@@ -14,7 +14,7 @@ export class Input {
   constructor(o){ this.fake = (o.source.file || {}).fake || null; }
   async getFirstTimestamp(){ return 0; }
   async computeDuration(){ return this.fake ? this.fake.duration || 60 : 0; }
-  async getPrimaryVideoTrack(){ return this.fake && this.fake.fps ? { kind: 'video', fake: this.fake } : null; }
+  async getPrimaryVideoTrack(){ return this.fake && this.fake.fps ? { kind: 'video', fake: this.fake, getDisplayWidth: async () => this.fake.width || 640, getDisplayHeight: async () => this.fake.height || 360 } : null; }
   async getPrimaryAudioTrack(){ return this.fake && this.fake.audio ? { kind: 'audio', fake: this.fake } : null; }
 }
 const BITS = 10;

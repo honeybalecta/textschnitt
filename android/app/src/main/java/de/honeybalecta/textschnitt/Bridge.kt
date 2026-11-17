@@ -222,6 +222,10 @@ class Bridge(private val act: MainActivity) {
         JSONObject().put("env", Transcriber.envelope(audio))
     }.id
 
+    /** Person im Bild halten: Masken der Person über die Zeit (Track.kt); Ergebnis {step, w, h, n, data}. */
+    @JavascriptInterface
+    fun personTrack(uri: String): String = Jobs.start { Track.run(ctx, uri, it) }.also { WorkService.track(ctx, it, "Person wird gesucht") }.id
+
     /** Ton für das Trennen der Stimmen (stimmen.js): 16 kHz, mono, 16 Bit als Datei im Zwischenspeicher; Ergebnis {url}. */
     @JavascriptInterface
     fun voicePcm(uri: String): String = Jobs.start {

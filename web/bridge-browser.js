@@ -402,6 +402,7 @@
       return {texts: out};
     });
   }
+  function personTrack(uri){ const file = need(uri); return newJob(async job => (await E()).personTrack(file, job)); }
   function autoMatte(uri){
     const file = need(uri);
     return newJob(async job => {
@@ -517,7 +518,7 @@
     deleteProject: id => { projects.delete(id); summaries.delete(id); idb('projects', 'readwrite', s => s.delete(id)).catch(() => {}); },
     models: () => JSON.stringify(modelsList()),
     downloadModel: name => newJob(async job => { await loadModel(name, job, 0, 1); return {}; }),
-    transcribe, transcribeRanges, exportVideo, makeProxy, autoMatte, translate, envelope, voicePcm, voicePcmTake, exportPackage, importPackage,
+    transcribe, transcribeRanges, exportVideo, makeProxy, autoMatte, personTrack, translate, envelope, voicePcm, voicePcmTake, exportPackage, importPackage,
     // Erzeugtes Bild (Folie): sofort nutzbar, im Hintergrund dauerhaft im Browser-Speicher (OPFS) abgelegt
     saveImage(name, b64, width, height, project){
       const bin = atob(String(b64).split(',').pop()), u8 = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);

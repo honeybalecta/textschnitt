@@ -37,7 +37,7 @@ os.environ.setdefault("HF_HUB_DISABLE_IMPLICIT_TOKEN", "1")
 import warnings  # noqa: E402
 warnings.filterwarnings("ignore", module="huggingface_hub")
 
-VERSION = "2.38.0"
+VERSION = "2.39.0"
 APP_DIR = Path(__file__).resolve().parent
 FROZEN = bool(getattr(sys, "frozen", False))          # als installierte .exe gebaut
 RES_DIR = Path(getattr(sys, "_MEIPASS", APP_DIR))      # mitgelieferte Dateien (Oberfläche, ffmpeg, Modelle)
@@ -596,6 +596,81 @@ def envelope_job(job: dict, path: str):
         wav.unlink(missing_ok=True)
 
 
+TRACK_W, TRACK_H = 32, 18     # Größe der Masken für „Person im Bild halten“
+TRACK_MAX = 2400               # höchstens so viele Masken je Aufnahme
+
+
+def person_alpha_fn(job: dict, mw: int, mh: int):
+    """Liefert eine Funktion Bild (mh × mw × 3, uint8) → Deckkraft der Person (mh × mw, 0…1). Rechnet mit RVM wie das Freistellen;
+    jedes Bild für sich, weil zwischen den Bildern hier bis zu eine Sekunde liegt."""
+    import numpy as np
+    import onnxruntime as ort
+    model = matte_model_ensure(job)
+    so = ort.SessionOptions()
+    so.intra_op_num_threads = max(1, (os.cpu_count() or 4) - 1)
+    sess = ort.InferenceSession(str(model), so, providers=["CPUExecutionProvider"])
+    dsr = np.array([float(min(1.0, max(0.2, 384 / max(mw, mh))))], np.float32)
+    zero = [np.zeros([1, 1, 1, 1], np.float32) for _ in range(4)]
+
+    def alpha(rgb):
+        src = np.ascontiguousarray(rgb.reshape(1, mh, mw, 3).transpose(0, 3, 1, 2).astype(np.float32) / 255.0)
+        res = sess.run(None, {"src": src, "r1i": zero[0], "r2i": zero[1], "r3i": zero[2], "r4i": zero[3], "downsample_ratio": dsr})
+        return np.clip(res[1][0, 0], 0, 1)
+    return alpha
+
+
+def person_track_job(job: dict, path: str):
+    """Person im Bild halten (2.39): in festen Abständen ein verkleinertes Bild lesen, die Person erkennen und ihre Maske auf
+    TRACK_W × TRACK_H Felder mitteln. Aus den Masken rechnet die Oberfläche den Kameraweg (core/web/folgen.js).
+    Ergebnis: {step, w, h, n, data} – data ist Base64 mit n·w·h Bytes (0 … 255)."""
+    import numpy as np
+    path = norm_path(path)
+    info = probe(path)
+    if not info["hasVideo"] or info["kind"] == "image":
+        raise ValueError("Die Person lässt sich nur in Videos verfolgen.")
+    W, H, dur = int(info["width"]), int(info["height"]), float(info["duration"] or 0)
+    if dur <= 0 or W < 2 or H < 2:
+        raise ValueError("Das Video ließ sich nicht lesen.")
+    step = max(0.25, math.ceil(dur / TRACK_MAX * 20) / 20)     # 0,25 s; bei langen Aufnahmen gröber (höchstens TRACK_MAX Masken)
+    k = min(1.0, 384 / max(W, H))
+    mw, mh = max(32, int(W * k) // 2 * 2), max(32, int(H * k) // 2 * 2)
+    job["message"] = "Person wird gesucht …"
+    alpha = person_alpha_fn(job, mw, mh)
+    dec = subprocess.Popen([FFMPEG, "-v", "error", "-nostdin", "-i", path, "-vf", f"fps=1/{step:.2f},scale={mw}:{mh}", "-an",
+                            "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, **NOWIN)
+    # Felder: Mittel über gleich große Bereiche
+    ys = [round(i * mh / TRACK_H) for i in range(TRACK_H + 1)]
+    xs = [round(i * mw / TRACK_W) for i in range(TRACK_W + 1)]
+    out, n, nbytes = bytearray(), 0, mw * mh * 3
+    total = max(1, int(dur / step) + 1)
+    try:
+        while True:
+            buf = dec.stdout.read(nbytes)
+            if len(buf) < nbytes:
+                break
+            a = np.asarray(alpha(np.frombuffer(buf, np.uint8).reshape(mh, mw, 3)), dtype=np.float32)
+            rows = np.add.reduceat(a, ys[:-1], axis=0)
+            cells = np.add.reduceat(rows, xs[:-1], axis=1)
+            area = np.outer(np.diff(ys), np.diff(xs)).astype(np.float32)
+            out += np.clip(np.round(cells / np.maximum(area, 1) * 255), 0, 255).astype(np.uint8).tobytes()
+            n += 1
+            job["progress"] = min(0.99, n / total)
+            if n % 8 == 0:
+                job["message"] = f"Person wird gesucht … {n * step:.0f} von {dur:.0f} s"
+            if job["cancel"]:
+                raise RuntimeError("Abgebrochen")
+    finally:
+        try:
+            dec.stdout.close()
+            dec.kill()
+            dec.wait(timeout=15)
+        except Exception:
+            pass
+    if n == 0:
+        raise RuntimeError("Aus dem Video ließen sich keine Bilder lesen.")
+    return {"step": round(step, 2), "w": TRACK_W, "h": TRACK_H, "n": n, "data": base64.b64encode(bytes(out)).decode("ascii")}
+
+
 VOICE_PCM: dict = {}   # Job-Kennung → Datei mit dem Ton für das Trennen der Stimmen (wird nach dem Abholen gelöscht)
 
 
@@ -784,6 +859,42 @@ def matte_available() -> bool:
         return False
 
 
+def matte_model_ensure(job: dict) -> Path:
+    """Das Modell zum Erkennen der Person (RVM): mitgeliefert, schon geladen oder jetzt einmalig laden."""
+    model = matte_model_path()
+    if model is not None:
+        return model
+    job["message"] = "Lade Modell zum Freistellen (einmalig, ca. 15 MB) …"
+    import urllib.request
+    dst = DATA_DIR / "models" / MATTE_MODEL
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dst.with_suffix(".part")
+    try:
+        with urllib.request.urlopen(MATTE_URL, timeout=60) as r, open(tmp, "wb") as f:
+            total = int(r.headers.get("Content-Length") or 0)
+            got = 0
+            while True:
+                chunk = r.read(1 << 20)
+                if not chunk:
+                    break
+                f.write(chunk)
+                got += len(chunk)
+                if total:
+                    job["message"] = f"Lade Modell zum Freistellen (einmalig): {got / 1e6:.0f} von {total / 1e6:.0f} MB"
+                if job["cancel"]:
+                    raise RuntimeError("Abgebrochen")
+        if total and got != total:
+            raise RuntimeError("Das Modell zum Freistellen wurde nicht vollständig geladen – bitte noch einmal versuchen.")
+        tmp.replace(dst)
+    finally:
+        try:
+            tmp.unlink(missing_ok=True)   # nach Abbruch oder Fehler kein halbes Modell liegen lassen
+        except OSError:
+            pass
+    model = dst
+    return model
+
+
 def matte_job(job: dict, path: str):
     """Erzeugt eine Kopie des Videos, in der alles außer der Person in der Schlüsselfarbe (Grün) steht.
     Die Alphamaske rechnet RVM in verkleinerter Auflösung; zusammengesetzt wird in voller Größe mit ffmpeg."""
@@ -798,36 +909,7 @@ def matte_job(job: dict, path: str):
     out = out_dir / (hashlib.sha1(f"{path}|{os.path.getmtime(path)}".encode("utf-8")).hexdigest()[:16] + ".mp4")
     if out.exists() and out.stat().st_size > 0:
         return {**probe(str(out)), "name": Path(path).stem + " – freigestellt", "orig": path}
-    model = matte_model_path()
-    if model is None:
-        job["message"] = "Lade Modell zum Freistellen (einmalig, ca. 15 MB) …"
-        import urllib.request
-        dst = DATA_DIR / "models" / MATTE_MODEL
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        tmp = dst.with_suffix(".part")
-        try:
-            with urllib.request.urlopen(MATTE_URL, timeout=60) as r, open(tmp, "wb") as f:
-                total = int(r.headers.get("Content-Length") or 0)
-                got = 0
-                while True:
-                    chunk = r.read(1 << 20)
-                    if not chunk:
-                        break
-                    f.write(chunk)
-                    got += len(chunk)
-                    if total:
-                        job["message"] = f"Lade Modell zum Freistellen (einmalig): {got / 1e6:.0f} von {total / 1e6:.0f} MB"
-                    if job["cancel"]:
-                        raise RuntimeError("Abgebrochen")
-            if total and got != total:
-                raise RuntimeError("Das Modell zum Freistellen wurde nicht vollständig geladen – bitte noch einmal versuchen.")
-            tmp.replace(dst)
-        finally:
-            try:
-                tmp.unlink(missing_ok=True)   # nach Abbruch oder Fehler kein halbes Modell liegen lassen
-            except OSError:
-                pass
-        model = dst
+    model = matte_model_ensure(job)
     W, H, fps, dur = info["width"], info["height"], float(info["fps"]), float(info["duration"])
     # Modellauflösung: höchstens 960 px Kante; downsample_ratio so, dass das grobe Netz um 384 px rechnet
     k = min(1.0, 960 / max(W, H))
@@ -3634,6 +3716,23 @@ def uebergabe_selftest() -> dict:
     return out
 
 
+def folgen_selftest() -> dict:
+    """Probe für den Selbsttest der gebauten App (2.39): Das Personen-Modell rechnet Masken für „Person im Bild halten“ –
+    zwei Sekunden Testbild ohne Person ergeben acht Masken mit 32 × 18 Feldern; folgen.js liegt bei der Oberfläche."""
+    out: dict = {"ok": False}
+    mp4 = Path(tempfile.gettempdir()) / f"honeycut_selbsttest_{uuid.uuid4().hex[:8]}.mp4"
+    try:
+        subprocess.run([FFMPEG, "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=10:duration=2", "-pix_fmt", "yuv420p", str(mp4)], check=True, capture_output=True, **NOWIN)
+        r = person_track_job({"id": "selbsttest", "cancel": False, "progress": 0.0, "message": "", "status": "running"}, str(mp4))
+        out.update(n=r["n"], felder=[r["w"], r["h"]], bytes=len(base64.b64decode(r["data"])), kern=(WEB_DIR / "folgen.js").is_file())
+        out["ok"] = bool(7 <= r["n"] <= 9 and out["bytes"] == r["n"] * TRACK_W * TRACK_H and out["kern"])
+    except Exception as e:
+        out["fehler"] = f"{type(e).__name__}: {e}"[:300]
+    finally:
+        mp4.unlink(missing_ok=True)
+    return out
+
+
 def stimmen_selftest() -> dict:
     """Probe für den Selbsttest der gebauten App (2.38): Das mitgelieferte ffmpeg liefert den Ton für das Erkennen der Personen
     (16 kHz, mono, 16 Bit), und der Rechenkern stimmen.js liegt bei der Oberfläche."""
@@ -5616,7 +5715,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not str(f).startswith(str(d.resolve())) or not f.is_file():
                     return self._json({"error": "Nicht gefunden"}, 404)
                 return self._send(200, f.read_bytes(), DECK_TYPES.get(f.suffix.lower(), "application/octet-stream"))
-            if rest in ("", "index.html", "app.js", "studio.js", "slides.js", "deck-host.js", "app.css", "bridge-http.js", "icons.js", "chroma.js", "stimmen.js"):
+            if rest in ("", "index.html", "app.js", "studio.js", "slides.js", "deck-host.js", "app.css", "bridge-http.js", "icons.js", "chroma.js", "stimmen.js", "folgen.js"):
                 f = WEB_DIR / (rest or "index.html")
                 ctype = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
                          ".css": "text/css; charset=utf-8"}[f.suffix]
@@ -5804,6 +5903,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"job": job["id"]})
             if rest == "api/envelope":
                 job = run_job(new_job("envelope"), envelope_job, data["uri"])
+                return self._json({"job": job["id"]})
+            if rest == "api/persontrack":
+                job = run_job(new_job("persontrack"), person_track_job, data["uri"])
                 return self._json({"job": job["id"]})
             if rest == "api/voicepcm":
                 job = run_job(new_job("voicepcm"), voice_pcm_job, data["uri"])

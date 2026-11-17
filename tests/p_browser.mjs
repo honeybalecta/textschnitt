@@ -199,6 +199,20 @@ try {
   chk('… ebenso die Hintergrundfarbe', !g.error && nah(c.rand, [192, 32, 32], 4) && nah(c.rechts, [160, 128, 96], 6), g.error || c);
   g = await run(gplan([gseg(0, 1, { wb: [0.8, 1, 1.3333], gray: true, key: { ...KEY, bgImg: 'blau' } })])); c = await probe(fr(15), farbe);
   chk('Farbe gilt für das freigestellte Bild: Feld neutral, Hintergrund unverändert', !g.error && Math.max(...c.feld.slice(0, 3)) - Math.min(...c.feld.slice(0, 3)) <= 4 && nah(c.ecke, [32, 64, 192], 4), g.error || c);
+  // ── Person im Bild halten (2.39): Masken der Person über die Zeit. An Stelle von MediaPipe erkennt eine Farbprobe das Feld
+  // des Greenscreen-Bilds (alles, was nicht grün ist); geprüft werden Zeitraster, Felder und Lage.
+  const tr = await page.evaluate(async () => {
+    const seg = { segmentForVideo(cv, ms){ const w = cv.width, h = cv.height, d = cv.getContext('2d').getImageData(0, 0, w, h).data, f = new Float32Array(w * h);
+      for (let i = 0; i < w * h; i++) f[i] = d[i * 4 + 1] > 200 && d[i * 4] < 80 ? 0 : 1; seg.ms.push(ms); return { confidenceMasks: [{ width: w, height: h, getAsFloat32Array: () => f }], close(){ seg.closed++; } }; }, ms: [], closed: 0 };
+    const job = { cancel: false, progress: 0, message: '' }, r = await E.personTrack(FILES.gs, job, seg);
+    const bin = atob(r.data), m = k => { const cols = new Array(r.w).fill(0), rows = new Array(r.h).fill(0); for (let y = 0; y < r.h; y++) for (let x = 0; x < r.w; x++){ const v = bin.charCodeAt(k * r.w * r.h + y * r.w + x); cols[x] += v; rows[y] += v; }
+      const on = a => [a.findIndex(v => v > 0), a.length - 1 - [...a].reverse().findIndex(v => v > 0)]; return { x: on(cols), y: on(rows) }; };
+    const stop = { cancel: true, progress: 0, message: '' }; let err = ''; try { await E.personTrack(FILES.gs, stop, seg); } catch (e){ err = e.message; }
+    return { step: r.step, w: r.w, h: r.h, n: r.n, len: bin.length, first: m(0), last: m(r.n - 1), mono: seg.ms.slice(0, r.n).every((v, i, a) => i === 0 || v > a[i - 1]), closed: seg.closed >= r.n, prog: job.progress, err };
+  });
+  chk('Person verfolgen im Browser: alle 0,25 s eine Maske mit 32 × 18 Feldern, Zeiten steigen, Masken werden freigegeben', tr.step === 0.25 && tr.w === 32 && tr.h === 18 && tr.n === 120 && tr.len === 120 * 32 * 18 && tr.mono && tr.closed && tr.prog > 0.9, tr);
+  chk('Person verfolgen im Browser: Die Maske liegt dort, wo das Feld im Bild steht', tr.first.x.join() === '10,21' && tr.first.y.join() === '4,13' && tr.last.x.join() === '10,21', [tr.first, tr.last]);
+  chk('Person verfolgen im Browser: Abbruch beendet den Auftrag', tr.err === 'Abgebrochen', tr.err);
   await want(null);
   chk('keine Fehlermeldungen der Seite', logs.length === 0, logs.slice(0, 5));
 } catch (e) {

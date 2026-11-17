@@ -2,6 +2,13 @@
 
 Was sich mit jeder Version von HoneyCut ändert. Die Windows-App zeigt diese Stichpunkte an, sobald eine neuere Version bereitsteht.
 
+## 2.39.0 · Person im Bild halten
+- Person im Bild halten (Studio → „Leinwand“, bei Clips im Clip-Reiter unter „Bildausschnitt“): Im Hochformat oder Quadrat rückt der Ausschnitt der Person nach, wenn sie sich im Bild bewegt. HoneyCut wertet jede Aufnahme dafür einmal aus
+- Die Kamera bleibt ruhig: Kleine Bewegungen lassen den Ausschnitt stehen, größere führen zu einer weichen Fahrt. Ist kurz niemand zu sehen, bleibt der Ausschnitt, wo er war
+- Schnitte bleiben frei: Jeder Abschnitt folgt dem Weg seiner Stelle in der Aufnahme, auch nach späterem Kürzen oder Umstellen. Einen einzelnen Clip im Bild zu ziehen verschiebt ihn zusätzlich
+- Gilt in der Vorschau und im Video-Export unter Windows, Android und im Browser. „Rückgängig“ schaltet das Folgen in einem Schritt wieder aus
+- Grenzen: Bei mehreren Menschen im Bild folgt der Ausschnitt der größten Person. Die Erkennung nutzt dieselbe Technik wie „Hintergrund automatisch erkennen“; im Browser lädt sie dafür einmalig rund 10 MB
+
 ## 2.38.0 · Personen erkennen
 - Personen erkennen (Untertitel → Sprecher:innen → „Personen erkennen …“): HoneyCut vergleicht den Klang der Stimmen und ordnet jedes Wort einer Person zu. Die Personen heißen zunächst „Person 1“, „Person 2“ und so weiter; Namen, Funktion und Gestaltung trägst du wie gewohnt ein
 - Die Zahl der Personen schätzt HoneyCut selbst. Klingen zwei Stimmen sehr ähnlich oder ist die Aufnahme kurz, hilft die feste Vorgabe (2 bis 6)

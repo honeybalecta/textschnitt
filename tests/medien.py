@@ -10,6 +10,8 @@
    wackel.mp4 (4 s): ein stehendes Wolkenmuster mit wanderndem Ausschnitt für das Beruhigen,
    gespraech.mp4 (gut 1 min): drei künstliche Stimmen im Wechsel für das Erkennen der Personen (gespraech.json nennt die Lösung);
    mit einem ffmpeg, das flite kennt, zusätzlich stimmen-flite.wav mit drei Sprachsynthese-Stimmen,
+   person.mp4 (24 s): eine Figur in Magenta wandert vor grauem Grund von links nach rechts – für „Person im Bild halten“
+   (das Test-Backend erkennt die Figur an ihrer Farbe),
    drei kurze Einspieler (broll1–3.mp4), acht Folienbilder und ein Logo.
 Aufruf: python3 tests/medien.py <Zielordner>   – vorhandene Dateien bleiben stehen."""
 import array
@@ -385,6 +387,24 @@ def stimmen_flite(out: Path) -> None:
     print("stimmen-flite.wav", f"{len(pcm) / SR:.1f} s")
 
 
+# Prüfmedium für „Person im Bild halten“ (2.39): Mitte der Figur als Anteil der Bildbreite über die Zeit.
+# 0–6 s bei 0,30 · 6–12 s Gang nach 0,70 · danach 0,70; von 18 bis 20 s ist niemand im Bild.
+def person_x(t: float) -> float:
+    return 0.30 if t < 6 else 0.30 + 0.40 * (t - 6) / 6 if t < 12 else 0.70
+
+
+def person(out: Path) -> None:
+    wav = out / "person.wav"
+    sprache(wav, out / "person.words.json", 0.4, 7)
+    x = "if(lt(t,6),0.30,if(lt(t,12),0.30+0.40*(t-6)/6,0.70))*640"
+    seen = "between(t,0,18)+gte(t,20)"
+    ff("-f", "lavfi", "-i", "color=c=0x505050:size=640x360:rate=30", "-f", "lavfi", "-i", "color=c=0xE020E0:size=44x44:rate=30", "-f", "lavfi", "-i", "color=c=0xE020E0:size=90x210:rate=30",
+       "-i", str(wav), "-filter_complex", f"[0:v][1:v]overlay=x='{x}-22':y=70:enable='{seen}'[a];[a][2:v]overlay=x='{x}-45':y=114:enable='{seen}'[v]",
+       "-map", "[v]", "-map", "3:a", "-t", "24", "-c:v", "libx264", "-preset", "veryfast", "-crf", "16", "-g", "30", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "96k", "-movflags", "+faststart", str(out / "person.mp4"))
+    wav.unlink()
+    print("person.mp4 24.0 s")
+
+
 def ff(*args: str) -> None:
     subprocess.run(["ffmpeg", "-v", "error", "-y", *args], check=True)
 
@@ -421,6 +441,8 @@ def main(out: Path) -> None:
         gespraech(out)
     if not (out / "stimmen-flite.wav").exists():
         stimmen_flite(out)
+    if not all((out / f).exists() for f in ("person.mp4", "person.words.json")):
+        person(out)
     if not (out / "karo.mp4").exists():
         ff("-f", "lavfi", "-i", "color=c=black:size=640x360:rate=30,format=gray,geq=lum='16+219*mod(floor(X/4)+floor(Y/4)\\,2)'", "-f", "lavfi", "-i", "sine=frequency=330:sample_rate=44100",
            "-t", "12", "-af", "volume=0.1", "-pix_fmt", "yuv420p", "-c:v", "libx264", "-preset", "veryfast", "-crf", "10", "-g", "30", "-c:a", "aac", "-b:a", "96k", str(out / "karo.mp4"))

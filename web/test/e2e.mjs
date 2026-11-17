@@ -127,6 +127,16 @@ try {
     step('Automatisch freistellen (MediaPipe, WebCodecs)', m.status === 'done' && r.width === 1280 && r.height === 720 && r.duration > 5,
       {status: m.status, error: m.error, secs: Math.round((Date.now() - t1) / 1000), res: r.uri ? {w: r.width, h: r.height, dur: r.duration, audio: r.hasAudio} : null});
   }
+  // Person im Bild halten (2.39): dieselbe Personenerkennung liefert Masken über die Zeit; die Oberfläche rechnet daraus den Kameraweg
+  {
+    const m = await ev(async () => {
+      const id = TS.personTrack(P.sources[0].uri);
+      for (let i = 0; i < 1200; i++){ const j = JSON.parse(TS.job(id)); if (j.status !== 'running'){ if (j.status !== 'done') return {status: j.status, error: j.error};
+        const r = j.result, s = Folgen.samples(r); return {status: 'done', step: r.step, n: r.n, w: r.w, h: r.h, len: atob(r.data).length, seen: s.x.filter(v => v >= 0).length}; } await new Promise(r => setTimeout(r, 500)); }
+      return {status: 'timeout'};
+    }).catch(e => ({status: 'error', error: String(e && e.message || e)}));
+    step('Person im Bild halten: Masken aus dem Browser (MediaPipe)', m.status === 'done' && m.w === 32 && m.h === 18 && m.n > 10 && m.len === m.n * 32 * 18, m);
+  }
   await exportAs('audio', 'out.mp3', 'mp3');
   await exportAs('audio', 'out.wav', 'wav');
   fs.writeFileSync(path.join(OUT, 'expected.json'), JSON.stringify({total: cut.total, title: {at: 0.4, dur: 2.5}}));

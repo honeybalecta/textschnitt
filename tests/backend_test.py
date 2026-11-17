@@ -1500,7 +1500,93 @@ def stimmen_238():
     chk("Ton für die Stimmen: Die Oberfläche bekommt stimmen.js ausgeliefert", (T.WEB_DIR / "stimmen.js").is_file() and '"stimmen.js"' in Path(T.__file__).read_text(encoding="utf-8") and 'src="stimmen.js"' in (T.WEB_DIR / "index.html").read_text(encoding="utf-8"))
 
 
-PARTS = (speichern_und_fassungen, speicher, sicherung, projektpakete, kleine_helfer, quellen_und_belege, schrift_im_export, transkript, export_231, untertitel_effekte, ton_234, belege_235, bild_236, uebergabe_237, stimmen_238, neue_versionen, bericht_und_protokoll)
+def folgen_239():
+    """2.39: Masken der Person über die Zeit (person_track_job) – Zeitraster, Lage, Lücke, Abbruch – und ein Export, dessen Ausschnitt
+    über viele Keyframes wandert. An Stelle des Personen-Modells erkennt eine Farbprobe die Figur (magenta)."""
+    import base64
+    import numpy as np
+    vd = TMP / "folgen"
+    vd.mkdir(parents=True, exist_ok=True)
+    W, H, FPS = 640, 360, 30
+
+    def ff(*a):
+        subprocess.run([T.FFMPEG, "-v", "error", "-y", *a], check=True, capture_output=True)
+    video = vd / "figur.mp4"    # 8 s: Figur steht 2 s bei 0,25, wandert in 4 s nach 0,75; zwischen 6,5 und 7,5 s ist sie weg
+    x = "if(lt(t,2),0.25,if(lt(t,6),0.25+0.5*(t-2)/4,0.75))*640"
+    ff("-f", "lavfi", "-i", f"color=c=0x505050:s={W}x{H}:r={FPS}", "-f", "lavfi", "-i", f"color=c=0xE020E0:s=80x240:r={FPS}", "-filter_complex",
+       f"[0:v][1:v]overlay=x='{x}-40':y=60:enable='not(between(t,6.5,7.5))'[v]", "-map", "[v]", "-t", "8", "-pix_fmt", "yuv420p", "-c:v", "libx264", "-crf", "12", "-g", "15", str(video))
+
+    def fake(jb, mw, mh):
+        def alpha(rgb):
+            r, g, b = (rgb[..., k].astype(np.int16) for k in range(3))
+            return ((r > 150) & (g < 110) & (b > 150)).astype(np.float32)
+        return alpha
+    real = T.person_alpha_fn
+    T.person_alpha_fn = fake
+    try:
+        j = job()
+        r = T.person_track_job(j, str(video))
+        d = np.frombuffer(base64.b64decode(r["data"]), np.uint8).reshape(r["n"], r["h"], r["w"]).astype(float)
+        chk("Person verfolgen: alle 0,25 s eine Maske mit 32 × 18 Feldern", r["step"] == 0.25 and (r["w"], r["h"]) == (32, 18) and 31 <= r["n"] <= 33 and j["progress"] > 0.9, (r["step"], r["n"]))
+
+        def cx(k):
+            c = d[k].sum(axis=0)
+            return float((c * (np.arange(32) + 0.5)).sum() / c.sum() / 32) if c.sum() > 0 else -1.0
+        got = [round(cx(k), 3) for k in (2, 8, 16, 24, 31)]
+        chk("Person verfolgen: Die Lage der Figur stimmt zu jeder Zeit (0,25 → 0,75 der Bildbreite)", all(abs(g - w) < 0.03 for g, w in zip(got, (0.25, 0.25, 0.5, 0.75, 0.75))), got)
+        chk("Person verfolgen: Solange niemand im Bild ist, bleibt die Maske leer", d[27].sum() == 0 and d[28].sum() == 0 and d[25].sum() > 0)
+        rows = np.flatnonzero(d[4].sum(axis=1) > 0)
+        chk("Person verfolgen: Die Maske steht aufrecht (Figur von 17 % bis 83 % der Höhe)", abs(rows[0] / 18 - 60 / 360) < 0.07 and abs((rows[-1] + 1) / 18 - 300 / 360) < 0.07, (int(rows[0]), int(rows[-1])))
+        jc = job()
+        jc["cancel"] = True
+        try:
+            T.person_track_job(jc, str(video))
+            err = ""
+        except Exception as e:  # noqa: BLE001
+            err = str(e)
+        chk("Person verfolgen: Abbruch beendet den Auftrag", err == "Abgebrochen", err)
+        png = vd / "bild.png"
+        ff("-f", "lavfi", "-i", "color=c=0x2040C0:s=320x180", "-frames:v", "1", str(png))
+        try:
+            T.person_track_job(job(), str(png))
+            err = ""
+        except Exception as e:  # noqa: BLE001
+            err = str(e)
+        chk("Person verfolgen: Ein Standbild wird mit einer Meldung abgelehnt", "nur in Videos" in err, err)
+    finally:
+        T.person_alpha_fn = real
+
+    # Export: Hochformat aus dem Querformat, der Ausschnitt folgt der Figur über 41 Keyframes
+    OW, OH, sc, wf = 360, 640, 3.1605, 1.0     # eingepasst füllt das Video die Breite der Leinwand (wf = 1); mit sc füllt es die Höhe
+
+    def person(t):
+        return 0.25 if t < 2 else 0.25 + 0.5 * (t - 2) / 4 if t < 6 else 0.75
+    kf = [{"t": round(k * 0.15, 3), "tx": round(-(person(k * 0.15) - 0.5) * sc * wf, 4), "ty": 0, "sc": sc} for k in range(41)]
+    plan = {"format": "video", "name": "folgen", "width": OW, "height": OH, "fps": FPS, "total": 6.0, "quality": "hoch", "burn": False, "audioFormat": "wav", "overlays": [],
+            "segments": [{"kind": "main", "src": 0, "uri": str(video), "in": 0, "out": 6.0, "zooms": [], "hasAudio": False, "hasVideo": True, "speed": 1, "vol": 1,
+                          "bright": 0, "contrast": 0, "sat": 0, "gray": False, "tx": kf[0]["tx"], "ty": 0, "sc": sc, "kf": kf}],
+            "sources": [{"uri": str(video), "name": "figur.mp4", "duration": 8, "width": W, "height": H, "fps": FPS, "hasAudio": False, "hasVideo": True}]}
+    res = T.export_job(job(), plan)
+    raw = subprocess.run([T.FFMPEG, "-v", "error", "-i", res["playable"], "-an", "-vf", "scale=90:160", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], capture_output=True, check=True).stdout
+    fr = np.frombuffer(raw, np.uint8).reshape(-1, 160, 90, 3).astype(int)
+    pos = []
+    for n in (15, 45, 90, 120, 150, 175):
+        m = (fr[n][..., 0] > 150) & (fr[n][..., 1] < 110) & (fr[n][..., 2] > 150)
+        pos.append(round(float((m.sum(axis=0) * (np.arange(90) + 0.5)).sum() / max(1, m.sum()) / 90), 3))
+    chk("Export mit 41 Keyframes: Die Figur bleibt über den ganzen Gang in der Bildmitte", len(fr) >= 178 and all(abs(p - 0.5) < 0.03 for p in pos), pos)
+    chk("Export mit 41 Keyframes: Hochformat in voller Höhe (Figur von 17 % bis 83 %)", (lambda m: abs(np.flatnonzero(m.sum(axis=1))[0] / 160 - 60 / 360) < 0.03 and abs((np.flatnonzero(m.sum(axis=1))[-1] + 1) / 160 - 300 / 360) < 0.03)((fr[45][..., 0] > 150) & (fr[45][..., 1] < 110) & (fr[45][..., 2] > 150)))
+    for f in res.get("files") or [res["playable"]]:
+        Path(f).unlink(missing_ok=True)
+    T.person_alpha_fn = fake
+    try:
+        st = T.folgen_selftest()
+    finally:
+        T.person_alpha_fn = real
+    chk("Der Selbsttest der App besteht (hier mit der Farbprobe an Stelle des Modells) und räumt auf", st.get("ok") is True and not list(Path(tempfile.gettempdir()).glob("honeycut_selbsttest_*")), st)
+    chk("Die Oberfläche bekommt folgen.js ausgeliefert", (T.WEB_DIR / "folgen.js").is_file() and '"folgen.js"' in Path(T.__file__).read_text(encoding="utf-8") and 'src="folgen.js"' in (T.WEB_DIR / "index.html").read_text(encoding="utf-8"))
+
+
+PARTS = (speichern_und_fassungen, speicher, sicherung, projektpakete, kleine_helfer, quellen_und_belege, schrift_im_export, transkript, export_231, untertitel_effekte, ton_234, belege_235, bild_236, uebergabe_237, stimmen_238, folgen_239, neue_versionen, bericht_und_protokoll)
 for part in [p for p in PARTS if p.__name__ == MODE] or PARTS:
     print(f"── {part.__name__.replace('_', ' ')} ──", flush=True)
     part()

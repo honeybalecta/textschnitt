@@ -142,6 +142,9 @@ def selftest(out_path: str) -> int:
         rep["uebergabe"] = T.uebergabe_selftest()
         if not rep["uebergabe"].get("ok"):
             raise RuntimeError(f"Die Übergabe im Heimnetz antwortet nicht wie erwartet: {rep['uebergabe']}")
+        rep["folgen"] = T.folgen_selftest()
+        if not rep["folgen"].get("ok"):
+            raise RuntimeError(f"Die Masken für „Person im Bild halten“ kommen nicht wie erwartet: {rep['folgen']}")
         rep["stimmen"] = T.stimmen_selftest()
         if not rep["stimmen"].get("ok"):
             raise RuntimeError(f"Der Ton für das Erkennen der Personen kommt nicht wie erwartet: {rep['stimmen']}")

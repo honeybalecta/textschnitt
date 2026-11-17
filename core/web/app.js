@@ -1107,7 +1107,7 @@ function tokMarks(){ const o = {}; for (const t of tokens) if (t.spk || t.ks || 
 // Zum Stand gehören auch Format, Bildausschnitt und die Lautstärke der Hauptvideos (fm, fr, sv). Sie fehlten: „Rückgängig“
 // nach einem Formatwechsel, nach dem Verschieben des Ausschnitts oder nach „Alle angleichen“ tat nichts bzw. nur die Hälfte.
 function snapshot(){ return JSON.stringify({d:[...deleted], t:P.trims, c:P.cues, i:P.items, a:P.adj, x:P.dels, y:P.splits, s:P.sub_style, e:P.edits, m:P.moves, k:P.speakers, w:tokMarks(), f:P.slides, wm:P.watermark || null, tr:P.trans || null,
-  fm:P.format || null, fr:P.frame || null, sv:P.sources.map(x => x.vol == null ? null : x.vol), mk:P.marks || [], tl:P.textline || null, rf:P.refs || [], ss:P.srcStyle || null, lw:P.lower || null, cl:P.clipList || [], pt:P.part || null, ps:P.partStyle || null, au:P.audio || null, pg:P.progress || null, co:P.color || null, ck:P.checks || [], kw:P.kw || []}); }
+  fm:P.format || null, fr:P.frame || null, sv:P.sources.map(x => x.vol == null ? null : x.vol), mk:P.marks || [], tl:P.textline || null, rf:P.refs || [], ss:P.srcStyle || null, lw:P.lower || null, cl:P.clipList || [], pt:P.part || null, ps:P.partStyle || null, au:P.audio || null, pg:P.progress || null, co:P.color || null, fo:P.follow || null, ck:P.checks || [], kw:P.kw || []}); }
 function restore(s){ const o = JSON.parse(s); deleted = new Set(o.d); P.trims = o.t; P.cues = o.c; P.items = o.i; P.adj = o.a; P.dels = o.x || []; P.splits = o.y || [];
   if (o.s) P.sub_style = o.s; P.edits = o.e || {}; P.moves = o.m || [];
   const fmCh = 'fm' in o && (P.format || null) !== (o.fm || null), frCh = 'fr' in o && JSON.stringify(P.frame || null) !== JSON.stringify(o.fr || null);
@@ -1128,6 +1128,7 @@ function restore(s){ const o = JSON.parse(s); deleted = new Set(o.d); P.trims = 
   if ('pg' in o){ if (o.pg) P.progress = o.pg; else delete P.progress; }
   const coCh = 'co' in o && JSON.stringify(P.color || null) !== JSON.stringify(o.co || null);
   if ('co' in o){ if (o.co) P.color = o.co; else delete P.color; }
+  if ('fo' in o){ if (o.fo) P.follow = o.fo; else delete P.follow; }
   if ('ck' in o) P.checks = o.ck || [];
   if ('kw' in o) P.kw = o.kw || [];
   if (o.f) P.slides = o.f; if (o.k) P.speakers = o.k;
@@ -2290,7 +2291,7 @@ function placeBox(W, H){
   let r = null;
   if (curPip){ const it = curPip, v = PipDrag.on && PipDrag.it === it ? PipDrag : elVals(it, outPos - pipTarget.at);
     r = elRect(it, v, W, H); if (!r){ const c = coverVals(it); r = {cx: W / 2, cy: H / 2, w: c.w * W, h: c.w * W / elAspect(it)}; } }
-  else if (mainBoxOn()){ const f = frameFx(PipDrag.on && PipDrag.main ? {tx: PipDrag.tx, ty: PipDrag.ty, sc: PipDrag.sc} : mainFx()), [wf, hf] = mainFit();
+  else if (mainBoxOn()){ const f = mainTot(timeline[TL.sel.i], outToSrcT(outPos), PipDrag.on && PipDrag.main ? {tx: PipDrag.tx, ty: PipDrag.ty, sc: PipDrag.sc} : null), [wf, hf] = mainFit();
     r = {cx: (0.5 + f.tx) * W, cy: (0.5 + f.ty) * H, w: f.sc * W * wf, h: f.sc * H * hf}; }
   if (Crop.it) r = null;
   box.classList.toggle('hidden', !r); box.classList.toggle('main', !curPip && !!r);
@@ -2585,8 +2586,8 @@ function updateZoom(){
 // Leinwand bearbeiten: Die Bühne zeigt das ganze Ausgangsbild, die Leinwand liegt als verschiebbarer Rahmen darüber
 let CanvasEdit = false;
 function applyMainTransform(){
-  const g = timeline[curSeg]; if (!g || g.kind !== 'main' || CanvasEdit){ V.style.transform = ''; if (vKey) vKey.canvas.style.transform = ''; return; }
-  const z = zoomAt(vT()), f = frameFx(PipDrag.on && PipDrag.main ? {tx: PipDrag.tx, ty: PipDrag.ty, sc: PipDrag.sc} : mainFxAt(g, vT()));
+  const g = timeline[curSeg]; if (!g || g.kind !== 'main' || CanvasEdit){ V.style.transform = ''; if (vKey) vKey.canvas.style.transform = ''; if (CanvasEdit && followOn() && window.placeCanvasBox) placeCanvasBox(); return; }
+  const z = zoomAt(vT()), f = mainTot(g, vT(), PipDrag.on && PipDrag.main ? {tx: PipDrag.tx, ty: PipDrag.ty, sc: PipDrag.sc} : null);
   const tx = f.tx || 0, ty = f.ty || 0, sc = f.sc || 1, parts = [];
   if (tx || ty) parts.push(`translate(${(tx * 100).toFixed(3)}%, ${(ty * 100).toFixed(3)}%)`);
   if (Math.abs(sc - 1) > 1e-3) parts.push(`scale(${sc.toFixed(4)})`);
@@ -5604,11 +5605,11 @@ function planSeg(g, a, b, vo){
   const s = P.sources[g.si], off = s.off;
   const zs = P.items.filter(z => z.type === 'zoom' && z.at < b && z.at + z.dur > a)
     .map(z => ({at:r3(z.at - off), dur:z.dur, kind:z.kind, strength:z.strength, cx:z.cx, cy:z.cy}));
-  const fx = g.fx || FX_DEF;
+  const fx = g.fx || FX_DEF, fk = followKf(g, a, b), fkMove = fk && fk.some(k => k.tx !== fk[0].tx || k.ty !== fk[0].ty || k.sc !== fk[0].sc);
   return {kind:'main', src:g.si, uri:s.uri, in:r3(a - off), out:r3(b - off), zooms:zs, hasAudio: s.hasAudio !== false, hasVideo: hasVid(s),
     speed:+(fx.speed || 1), vol:+((fx.vol ?? 1) * srcVol(g.si)).toFixed(3), bright:+(fx.bright || 0), contrast:+(fx.contrast || 0), sat:+(fx.sat || 0), gray:!!fx.gray,
-    ...(f2 => ({tx:r3(f2.tx || 0), ty:r3(f2.ty || 0), sc:+(f2.sc || 1).toFixed(4)}))(frameFx({tx:+(fx.tx || 0), ty:+(fx.ty || 0), sc:+(fx.sc || 1)})),
-    ...(kf => kf ? {kf: kf.map(k => { const f2 = frameFx({tx:+(k.tx || 0), ty:+(k.ty || 0), sc:+(k.sc || 1)}); return {t:r3(fxItemOf(g).at + k.t - a), tx:r3(f2.tx || 0), ty:r3(f2.ty || 0), sc:+(f2.sc || 1).toFixed(4)}; })} : {})(mainKf(g)),
+    ...(f2 => ({tx:r3(f2.tx || 0), ty:r3(f2.ty || 0), sc:+(f2.sc || 1).toFixed(4)}))(fk ? fk[0] : frameFx({tx:+(fx.tx || 0), ty:+(fx.ty || 0), sc:+(fx.sc || 1)})),
+    ...(kf => fk ? (fkMove ? {kf: fk} : {}) : kf ? {kf: kf.map(k => { const f2 = frameFx({tx:+(k.tx || 0), ty:+(k.ty || 0), sc:+(k.sc || 1)}); return {t:r3(fxItemOf(g).at + k.t - a), tx:r3(f2.tx || 0), ty:r3(f2.ty || 0), sc:+(f2.sc || 1).toFixed(4)}; })} : {})(mainKf(g)),
     ...(w => w ? {wb: w} : {})(wbGains(fx)),
     ...(k => k ? {key: planKey(k, true)} : {})(mainKeyOf(g)),
     ...(vo && s.hasAudio !== false && !s.noAudio ? {voice: voicePlan(g)} : {})};
@@ -6941,7 +6942,7 @@ function joinPlan(){
 const TO = $('#transOv'), TV = $('#tv'), TI = $('#ti');
 function joinCss(g, t){   // Lage, Zoom und Farben, wie sie das Hauptbild für Abschnitt g zur Quellzeit t hätte
   if (g.kind !== 'main') return {transform: '', filter: ''};
-  const z = zoomAt(t), f = frameFx(mainFxAt(g, t)), tx = f.tx || 0, ty = f.ty || 0, sc = f.sc || 1, parts = [];
+  const z = zoomAt(t), f = mainTot(g, t), tx = f.tx || 0, ty = f.ty || 0, sc = f.sc || 1, parts = [];
   if (tx || ty) parts.push(`translate(${(tx * 100).toFixed(3)}%, ${(ty * 100).toFixed(3)}%)`);
   if (Math.abs(sc - 1) > 1e-3) parts.push(`scale(${sc.toFixed(4)})`);
   if (z.s > 1.001) parts.push(`translate(${(-(z.cx - 0.5) * (z.s - 1) * 100).toFixed(3)}%, ${(-(z.cy - 0.5) * (z.s - 1) * 100).toFixed(3)}%) scale(${z.s.toFixed(4)})`);
@@ -7526,6 +7527,86 @@ function openMarker(id){
   $('#mkxZoom').onchange = e => { st.zoom = e.target.checked; };
   window.addEventListener('resize', fit);
   img.onload = fit; img.onerror = () => { toast('Das Bild lässt sich nicht laden'); close(); }; img.src = MEDIA(orig.uri);
+}
+
+// ───────── Person im Bild halten (2.39, E5) ─────────
+// Je Aufnahme liegt die Lage der Person über die Zeit im Projekt (s.track, aus den Masken der Plattform). Daraus entsteht ein
+// ruhiger Kameraweg (folgen.js). Ist P.follow.on gesetzt, rückt der Ausschnitt der Person nach – waagerecht, wo das Bild breiter
+// ist als die Leinwand, sonst senkrecht. Vorschau und Exportplan fragen dafür mainTot statt frameFx(mainFxAt(…)).
+const FOLLOW_Y = 0.4;   // senkrecht: Kopf und Schultern auf 40 % der Bildhöhe
+const followOn = () => !!(P && P.follow && P.follow.on && window.Folgen);
+function camOf(s){
+  if (!s || !s.track) return null;
+  if (s._cam === undefined || s._camOf !== s.track){ Object.defineProperty(s, '_cam', {value: Folgen.path(s.track), writable: true, enumerable: false, configurable: true}); Object.defineProperty(s, '_camOf', {value: s.track, writable: true, enumerable: false, configurable: true}); }
+  return s._cam || null;
+}
+// Spielraum des Hauptbilds über die Leinwand hinaus (Anteil der Leinwand je Seite)
+function followRoom(g, sc){ const [wf, hf] = fitFracOf(P.sources[g.si]); return {wf, hf, mx: (sc * wf - 1) / 2, my: (sc * hf - 1) / 2}; }
+// Lage und Größe des Hauptbilds insgesamt: Ausschnitt des Projekts, Lage des Abschnitts (own oder aus Anpassung/Keyframes), Person
+function mainTot(g, t, own){
+  const v = own || mainFxAt(g, t), f = frameFx(v);
+  if (!followOn() || !g || g.kind !== 'main') return f;
+  const s = P.sources[g.si], cam = camOf(s); if (!cam) return f;
+  const sc = f.sc || 1, R = followRoom(g, sc), p = Folgen.at(cam, t - s.off);
+  if (R.mx > 0.004) return {...f, tx: clamp(-(p.x - 0.5) * sc * R.wf + (v.tx || 0), -R.mx, R.mx)};
+  if (R.my > 0.004) return {...f, ty: clamp(FOLLOW_Y - 0.5 - (p.y - 0.5) * sc * R.hf + (v.ty || 0), -R.my, R.my)};
+  return f;
+}
+// Keyframes für den Exportplan: Stützpunkte des Kamerawegs zwischen den Quellzeiten a und b, dazu die Keyframes von Hand
+function followKf(g, a, b){
+  if (!followOn() || g.kind !== 'main') return null;
+  const s = P.sources[g.si], cam = camOf(s); if (!cam) return null;
+  const R = followRoom(g, frameFx(mainFxAt(g, a)).sc || 1); if (R.mx <= 0.004 && R.my <= 0.004) return null;
+  const own = mainKf(g), it = own ? fxItemOf(g) : null; let tol = 0.004, ts;
+  for (let n = 0; n < 8; n++){ ts = Folgen.keys(cam, a - s.off, b - s.off, tol).map(t => t + s.off); if (ts.length <= 48) break; tol *= 1.6; }
+  if (own) for (const k of own){ const t = it.at + k.t; if (t > a + 0.01 && t < b - 0.01) ts.push(t); }
+  ts = [...new Set(ts.map(t => r3(t)))].sort((p, q) => p - q);
+  return ts.map(t => { const f = mainTot(g, t); return {t: r3(t - a), tx: +(f.tx || 0).toFixed(4), ty: +(f.ty || 0).toFixed(4), sc: +(f.sc || 1).toFixed(4)}; });
+}
+// Aufnahmen der Hauptspur mit Bild, die im Schnitt vorkommen
+const followSources = () => [...new Set(timeline.filter(g => g.kind === 'main').map(g => g.si))].map(k => P.sources[k]).filter(s => s && hasVid(s) && !isImg(s));
+function followState(){   // für die Anzeige im Clip-Reiter
+  if (!P) return {can: false, on: false, text: ''};
+  const g = timeline.find(x => x.kind === 'main'), can = !!(TS.personTrack && window.Folgen && g);
+  if (!can) return {can, on: false, text: ''};
+  const R = followRoom(g, (P.frame && P.frame.sc) || 1), room = R.mx > 0.004 || R.my > 0.004, on = followOn();
+  const none = on ? followSources().filter(s => s.track && !camOf(s)).length : 0;
+  return {can, on, room, text: !on ? '' : !room ? 'Der Ausschnitt zeigt das ganze Bild. Zum Folgen ein schmaleres Format wählen oder hineinzoomen.'
+    : none ? (none === 1 ? 'In einer Aufnahme war keine Person zu erkennen; dort bleibt der Ausschnitt stehen.' : `In ${none} Aufnahmen war keine Person zu erkennen; dort bleibt der Ausschnitt stehen.`)
+    : R.mx > 0.004 ? 'Der Ausschnitt folgt der Person nach links und rechts. Einen einzelnen Clip im Bild ziehen verschiebt ihn zusätzlich.' : 'Der Ausschnitt folgt der Person nach oben und unten.'};
+}
+function followRefresh(){ applyMainTransform(); placeBox(); if (window.placeCanvasBox) placeCanvasBox(); if (window.renderClip && tab === 'clip') renderClip(); }
+let followJob = null;
+function followTrack(s, onP){
+  return new Promise((res, rej) => { let id; try { id = TS.personTrack(s.uri); } catch(e){ return rej(e); }
+    followJob = id;
+    watchJob(id, j => onP(j.progress || 0, j.message || ''), j => { followJob = null; const r = j.result;
+      if (!r || !r.n) return rej(new Error('Das Video ließ sich nicht auswerten')); try { res(Folgen.samples(r)); } catch(e){ rej(e); } },
+      j => { followJob = null; rej(new Error(j && j.status === 'cancelled' ? 'Abgebrochen' : (j && j.error) || 'Das Video ließ sich nicht auswerten')); }); });
+}
+async function followSet(on){
+  if (!P) return;
+  if (!on){ if (P.follow){ commit(() => { delete P.follow; }, false); followRefresh(); toast('Der Ausschnitt steht wieder fest'); } return; }
+  if (!TS.personTrack || !window.Folgen) return toast('„Person im Bild halten“ braucht die aktuelle Fassung von HoneyCut');
+  const pid = P.id, need = followSources().filter(s => !s.track);
+  if (need.length){
+    let stopped = false;
+    const m = hcModal(`<div id="foBox"><h3>Person im Bild halten</h3><p class="muted small">HoneyCut sucht die Person im Video und merkt sich, wo sie steht. Das geschieht einmal je Aufnahme.</p>
+      <p id="foMsg" aria-live="polite">Person wird gesucht …</p><progress id="foBar" max="1" value="0" style="width:100%"></progress>
+      <div class="row" style="margin-top:12px"><button class="btn" id="foStop" style="margin-left:auto">Abbrechen</button></div></div>`);
+    m.querySelector('#foStop').onclick = () => { stopped = true; if (followJob){ try { TS.cancel(followJob); } catch(_){} } if ($('#foBox')) closeHcModal(); };
+    try {
+      for (let k = 0; k < need.length; k++){ const s = need[k];
+        const tr = await followTrack(s, (p, msg) => { const b = $('#foBar'), t = $('#foMsg'); if (b) b.value = (k + clamp(p, 0, 1)) / need.length; if (t) t.textContent = (need.length > 1 ? `Aufnahme ${k + 1} von ${need.length}: ` : '') + (msg || 'Person wird gesucht …'); });
+        if (stopped || !P || P.id !== pid) return;
+        s.track = tr; }
+    } catch(e){ if (stopped) return; if ($('#foBox')) closeHcModal(); hcLog('Person im Bild halten: ' + (e && e.message)); followRefresh(); return toast('Person im Bild halten fehlgeschlagen: ' + ((e && e.message) || 'unbekannter Fehler')); }
+    if ($('#foBox')) closeHcModal();
+  }
+  if (!P || P.id !== pid) return;
+  commit(() => { P.follow = {on: true}; }, false); followRefresh();
+  const st = followState(), found = followSources().some(s => camOf(s));
+  toast(!found ? 'Es war keine Person zu erkennen' : !st.room ? 'Gemerkt – der Ausschnitt folgt, sobald das Format schmaler ist als das Video' : 'Der Ausschnitt folgt jetzt der Person');
 }
 
 // ───────── Personen automatisch erkennen (2.38, C7) ───────── Der Ton kommt von der jeweiligen Plattform (TS.voicePcm), die Rechnung steckt in stimmen.js

@@ -855,6 +855,39 @@ export async function autoMatte(file, job){
   return {blob, opfsName: handle ? handle.name : null, width: W, height: H, fps: +fps.toFixed(3), duration: +(+dur).toFixed(3), hasAudio: !!a, frames: n};
 }
 
+// Person im Bild halten (2.39): in festen Abständen ein verkleinertes Bild, die Maske der Person auf 32 × 18 Felder gemittelt.
+// Aus den Masken rechnet die Oberfläche den Kameraweg (core/web/folgen.js). seg0: eigener Segmentierer (für die Prüfläufe).
+export async function personTrack(file, job, seg0){
+  const v = await videoTrack(file); if (!v) throw new Error('Die Person lässt sich nur in Videos verfolgen.');
+  const seg = seg0 || await segmenter(job);
+  const W = await v.getDisplayWidth(), H = await v.getDisplayHeight(), dur = await inputOf(file).input.computeDuration();
+  if (!(dur > 0)) throw new Error('Das Video ließ sich nicht lesen.');
+  const GW = 32, GH = 18, step = Math.max(0.25, Math.ceil(dur / 2400 * 20) / 20), n = Math.max(1, Math.floor(dur / step));
+  const k = Math.min(1, 384 / Math.max(W, H)), sw = Math.max(32, Math.round(W * k)), sh = Math.max(32, Math.round(H * k));
+  const small = document.createElement('canvas'); small.width = sw; small.height = sh; const sctx = small.getContext('2d', {alpha: false, willReadFrequently: true});
+  const out = new Uint8Array(n * GW * GH), sum = new Float32Array(GW * GH), cnt = new Uint16Array(GW * GH);
+  const off = await firstTs(file), times = Array.from({length: n}, (_, i) => i * step), sink = new CanvasSink(v, {width: sw, height: sh, fit: 'fill', poolSize: 2});
+  job.message = 'Person wird gesucht …';
+  let i = 0, last = -1;
+  for await (const fr of sink.canvasesAtTimestamps(times.map(t => off + t))){
+    if (job.cancel) throw new Error('Abgebrochen');
+    if (fr){
+      sctx.drawImage(fr.canvas, 0, 0, sw, sh);
+      const ms = Math.max(last + 1, Math.round(times[i] * 1000)); last = ms;
+      const res = seg.segmentForVideo(small, ms);
+      try {
+        const m = res.confidenceMasks && res.confidenceMasks[0];
+        if (m){ const f = m.getAsFloat32Array(), mw = m.width, mh = m.height; sum.fill(0); cnt.fill(0);
+          for (let y = 0; y < mh; y++){ const gy = Math.min(GH - 1, Math.floor(y * GH / mh)) * GW; for (let x = 0; x < mw; x++){ const c = gy + Math.min(GW - 1, Math.floor(x * GW / mw)); sum[c] += f[y * mw + x]; cnt[c]++; } }
+          for (let c = 0; c < GW * GH; c++) out[i * GW * GH + c] = cnt[c] ? Math.round(clamp(sum[c] / cnt[c], 0, 1) * 255) : 0; }
+      } finally { if (res.close) res.close(); }
+    }
+    i++; job.progress = Math.min(0.99, i / n); if (i % 8 === 0) job.message = `Person wird gesucht … ${Math.round(i * step)} von ${Math.round(dur)} s`;
+  }
+  let bin = ''; for (let p = 0; p < out.length; p += 0x8000) bin += String.fromCharCode.apply(null, out.subarray(p, p + 0x8000));
+  return {step, w: GW, h: GH, n, data: btoa(bin)};
+}
+
 export async function makeProxy(file, job){
   await ensureEncoders();
   let handle = null, writable = null, target;

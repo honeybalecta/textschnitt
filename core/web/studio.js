@@ -1390,6 +1390,7 @@ function renderClip(){
   $$('#clipFmt button').forEach(b => b.classList.toggle('on', (b.dataset.v || null) === (P.format || null)));
   const F = P.frame || {sc:1, tx:0, ty:0}, mx = Math.max(coverSc() * 2.5, 3);
   $('#clipZoom').value = Math.round(zoomToSl(F.sc || 1)); $('#clipZoomV').textContent = Math.round((F.sc || 1) * 100) + ' %';
+  { const fs = followState(); $('#clipFollowRow').classList.toggle('hidden', !fs.can); $('#clipFollow').checked = fs.on; $('#clipFollowInfo').textContent = fs.text; $('#clipFollowInfo').classList.toggle('hidden', !fs.text); }
   $$('#clipLooks button').forEach(b => b.classList.toggle('on', b.dataset.look === S().look)); renderLooks();   // eigene Looks hinter den mitgelieferten
   $$('#clipColors button').forEach(b => b.classList.toggle('on', (b.dataset.c || '').toLowerCase() === (S().color || '').toLowerCase()));
   const hook = P.items.find(x => x.type === 'title' && x.hook); if (document.activeElement !== $('#clipHook')) $('#clipHook').value = hook ? hook.text : '';
@@ -1452,6 +1453,7 @@ const zoomToSl = sc => sc <= 1 ? 30 * Math.log(sc / ZMIN) / Math.log(1 / ZMIN) :
 const slToZoom = v => v <= 30 ? ZMIN * Math.pow(1 / ZMIN, v / 30) : Math.pow(zmax(), (v - 30) / 70);
 $('#clipZoom').oninput = e => { const F = {...(P.frame || {sc:1, tx:0, ty:0})}; let sc = slToZoom(+e.target.value); if (Math.abs(sc - 1) < 0.03) sc = 1; if (Math.abs(sc - coverSc()) < 0.04 * coverSc()) sc = coverSc();
   F.sc = sc; setFrame(F, true); $('#clipZoomV').textContent = Math.round(F.sc * 100) + ' %'; };
+$('#clipFollow').onchange = e => { const on = e.target.checked; followSet(on).then(() => renderClip()); };
 $('#clipZoom').onpointerdown = () => { $('#clipZoom')._b = snapshot(); };
 $('#clipZoom').onchange = () => { if ($('#clipZoom')._b){ undo.push($('#clipZoom')._b); redo = []; $('#clipZoom')._b = null; } changed(false); renderClip(); };
 // Im Bild ziehen verschiebt den Ausschnitt (nur im Clip-Reiter, sonst gilt das normale Verhalten)
@@ -1481,12 +1483,15 @@ $('#clipZoom').onchange = () => { if ($('#clipZoom')._b){ undo.push($('#clipZoom
 // ── Leinwand (Seitenverhältnis) im Studio: ein Format für das ganze Video, der Ausschnitt gilt für alle Schnitte ──
 // Rahmenrechnung: Leinwand W×H, Video darin eingepasst (Anteil wf/hf), vergrößert um F.sc, verschoben um F.tx/F.ty (Anteil von W/H).
 // Im Ausgangsbild (0…1) ist die Leinwand dann 1/(wf·sc) breit, 1/(hf·sc) hoch, Mitte bei 0,5 − tx/(wf·sc) bzw. 0,5 − ty/(hf·sc).
-function cvRect(){ const F = P.frame || {sc:1, tx:0, ty:0}, [wf, hf] = fitFrac(), k = F.sc || 1;
+function cvRect(F0){ const F = F0 || P.frame || {sc:1, tx:0, ty:0}, [wf, hf] = fitFrac(), k = F.sc || 1;
   const w = 1 / (wf * k), h = 1 / (hf * k); return {w, h, x: 0.5 - (F.tx || 0) / (wf * k) - w / 2, y: 0.5 - (F.ty || 0) / (hf * k) - h / 2}; }
 function cvFromRect(r){ const [wf, hf] = fitFrac(), k = 1 / (wf * r.w); return clampFrame({sc: k, tx: (0.5 - (r.x + r.w / 2)) * wf * k, ty: (0.5 - (r.y + r.h / 2)) * hf * k}); }
 function placeCanvasBox(){
   const b = $('#canvasBox'); if (!CanvasEdit || !P.format){ b.classList.add('hidden'); return; }
-  const r = cvRect(); Object.assign(b.style, {left: r.x * 100 + '%', top: r.y * 100 + '%', width: r.w * 100 + '%', height: r.h * 100 + '%'});
+  // „Person im Bild halten“: Der Rahmen zeigt den Ausschnitt an der Abspiellinie
+  const g = followOn() ? timeline[curSeg] : null, f = g && g.kind === 'main' ? mainTot(g, vT()) : null;
+  const r = cvRect(f ? {sc: (P.frame && P.frame.sc) || 1, tx: f.tx || 0, ty: f.ty || 0} : null); Object.assign(b.style, {left: r.x * 100 + '%', top: r.y * 100 + '%', width: r.w * 100 + '%', height: r.h * 100 + '%'});
+  b.classList.toggle('follow', !!f);
   b.querySelector('.cv-lbl').textContent = P.format; b.classList.remove('hidden');
 }
 function setCanvasEdit(on){
@@ -1501,6 +1506,8 @@ function openCanvas(){
     <div class="seg-ctl" id="cvFmt">${FMTS.map(([v, l]) => `<button data-v="${v}">${l}</button>`).join('')}</div>
     <div class="row wrap" id="cvBtns" style="margin-top:8px"><button class="btn small" data-fr="fill">Füllen</button><button class="btn small" data-fr="fit">Ganzes Bild</button><button class="btn small" data-fr="c">Mittig</button></div>
     <label class="field"><span>Größe des Ausschnitts <b id="cvZoomV"></b></span><input type="range" id="cvZoom" min="0" max="100"></label>
+    <label class="row" id="cvFollowRow" title="Der Ausschnitt rückt der Person nach, wenn sie sich im Bild bewegt"><input type="checkbox" id="cvFollow"> Person im Bild halten</label>
+    <p class="muted small hidden" id="cvFollowInfo"></p>
     <p class="muted small" id="cvNote"></p>
     <div class="row" style="margin-top:12px"><button class="btn primary" id="cvOk" style="margin-left:auto">Fertig</button></div>`;
   openSheet(true);
@@ -1508,7 +1515,9 @@ function openCanvas(){
     const on = !!P.format; $('#cvBtns').classList.toggle('hidden', !on); $('#cvZoom').closest('label').classList.toggle('hidden', !on);
     const F = P.frame || {sc:1}; $('#cvZoom').value = Math.round(zoomToSl(F.sc || 1)); $('#cvZoomV').textContent = Math.round((F.sc || 1) * 100) + ' %';
     $('#cvNote').textContent = on ? 'Vorschau: ganzes Ausgangsbild mit Rahmen. „Fertig“ zeigt wieder das Ergebnis.' : 'Originalformat: Das Video behält sein eigenes Seitenverhältnis.';
+    { const fs = followState(); $('#cvFollowRow').classList.toggle('hidden', !fs.can || !on); $('#cvFollow').checked = fs.on; $('#cvFollowInfo').textContent = fs.text; $('#cvFollowInfo').classList.toggle('hidden', !fs.text || !on); }
     placeCanvasBox(); };
+  $('#cvFollow').onchange = e => { followSet(e.target.checked).then(() => { if ($('#cvFollow')) paint(); }); };
   $('#cvFmt').onclick = e => { const b = e.target.closest('button'); if (!b) return;
     commit(() => { P.format = b.dataset.v || null; P.frame = P.format ? clampFrame({sc: coverSc(), tx: 0, ty: 0}) : null; }, true);
     renderExportForm(); if (window.slSyncAll) slSyncAll(); setCanvasEdit(true); paint(); toast(P.format ? `Leinwand ${P.format}` : 'Originalformat'); };

@@ -113,5 +113,19 @@ T.whisper_available = lambda: True
 T.models_list = lambda: [{"name": "small", "label": "small – schnell", "sizeMb": 480, "installed": True, "bundled": True, "recommended": True}]
 T.transcribe_job = fake_transcribe
 
+
+def fake_person_alpha(job, mw, mh):
+    """An Stelle des Personen-Modells (wird in den Prüfläufen nicht geladen): Die Figur der Testmedien ist magenta."""
+    import numpy as np
+
+    def alpha(rgb):
+        r, g, b = (rgb[..., k].astype(np.int16) for k in range(3))
+        return ((r > 150) & (g < 110) & (b > 150)).astype(np.float32)
+    return alpha
+
+
+if hasattr(T, "person_alpha_fn"):   # frühere Fassungen (Vergleichslauf) kennen „Person im Bild halten“ noch nicht
+    T.person_alpha_fn = fake_person_alpha
+
 if __name__ == "__main__":
     T.main()

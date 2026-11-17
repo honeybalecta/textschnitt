@@ -292,6 +292,8 @@
         <span class="muted small">Im Bild ziehen verschiebt den Ausschnitt; Mausrad, zwei Finger oder der Regler zoomen. Einzelne Clips: auf der Zeitleiste antippen und den Rahmen ziehen.</span>
         <div class="row wrap"><button class="btn small" data-fr="l">◀ Links</button><button class="btn small" data-fr="c">Mitte</button><button class="btn small" data-fr="r">Rechts ▶</button><button class="btn small" data-fr="fit">Ganzes Bild</button><button class="btn small" data-fr="fill">Füllen</button><button class="btn small" id="clipCanvas">▭ Rahmen im Gesamtbild</button></div>
         <label class="field"><span>Zoom <b id="clipZoomV"></b></span><input type="range" id="clipZoom" min="0" max="100" value="0"></label>
+        <label class="row" id="clipFollowRow" title="Der Ausschnitt rückt der Person nach, wenn sie sich im Bild bewegt"><input type="checkbox" id="clipFollow"> Person im Bild halten</label>
+        <span class="muted small hidden" id="clipFollowInfo"></span>
       </div>
       <div class="card stack">
         <h4>Untertitel</h4>
@@ -540,6 +542,7 @@
 <script src="icons.js"></script>
 <script src="chroma.js"></script>
 <script src="stimmen.js"></script>
+<script src="folgen.js"></script>
 <script src="bridge-http.js"></script>
 <script src="app.js"></script>
 <script src="studio.js"></script>

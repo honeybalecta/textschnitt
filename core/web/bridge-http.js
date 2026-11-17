@@ -62,6 +62,7 @@
     view: path => { call('POST', 'open', {path}); },
     keepAwake: () => {},
     envelope: uri => jobOf(call('POST', 'envelope', {uri})),
+    personTrack: uri => jobOf(call('POST', 'persontrack', {uri})),   // Masken der Person über die Zeit: Ergebnis {step, w, h, n, data}
     voicePcm: uri => jobOf(call('POST', 'voicepcm', {uri})),   // Ton für das Trennen der Stimmen: Ergebnis {url} mit 16 kHz, mono, 16 Bit
     // Datei aus HoneyDeck speichern: Dialog im Backend, Rückgabe = Meldung für den Hinweis
     saveFile: (name, mime, b64) => { try { const r = JSON.parse(call('POST', 'savefile', {name, data: b64})); return r.ok ? 'Gespeichert: ' + r.path : ''; } catch(e){ return 'Speichern fehlgeschlagen: ' + e.message; } },
