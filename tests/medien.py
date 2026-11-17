@@ -10,6 +10,8 @@
    wackel.mp4 (4 s): ein stehendes Wolkenmuster mit wanderndem Ausschnitt für das Beruhigen,
    gespraech.mp4 (gut 1 min): drei künstliche Stimmen im Wechsel für das Erkennen der Personen (gespraech.json nennt die Lösung);
    mit einem ffmpeg, das flite kennt, zusätzlich stimmen-flite.wav mit drei Sprachsynthese-Stimmen,
+   kamera.mp4 und mikrofon.wav: dasselbe Gespräch einmal mit Hall, Rauschen und leise (Kamera) und einmal sauber, 3,2 s früher
+   gestartet (externes Mikrofon) – für „Zweite Tonquelle angleichen“,
    person.mp4 (24 s): eine Figur in Magenta wandert vor grauem Grund von links nach rechts – für „Person im Bild halten“
    (das Test-Backend erkennt die Figur an ihrer Farbe),
    drei kurze Einspieler (broll1–3.mp4), acht Folienbilder und ein Logo.
@@ -405,6 +407,23 @@ def person(out: Path) -> None:
     print("person.mp4 24.0 s")
 
 
+# Prüfmedien für „Zweite Tonquelle angleichen“ (2.41): Der Ton von gespraech.mp4 dient als Szene. Das „Mikrofon“ lief 3,2 s vor der
+# Kamera an und nimmt sauber auf; die „Kamera“ hört dasselbe mit Hall, Rauschen und leiser.
+MIK_VOR = 3.2
+
+
+def kamera(out: Path) -> None:
+    szene = out / "_szene.wav"
+    ff("-i", str(out / "gespraech.mp4"), "-vn", "-ac", "1", "-ar", "48000", str(szene))
+    ff("-i", str(szene), "-af", f"adelay={int(MIK_VOR * 1000)}:all=1,apad=pad_dur=2", "-c:a", "pcm_s16le", str(out / "mikrofon.wav"))
+    ff("-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30", "-i", str(szene), "-filter_complex",
+       "[1:a]aecho=0.8:0.6:45|110:0.35|0.2,volume=0.4[e];anoisesrc=color=pink:amplitude=0.01:sample_rate=48000[n];[e][n]amix=inputs=2:duration=first:normalize=0[a]",
+       "-map", "0:v", "-map", "[a]", "-shortest", "-c:v", "libx264", "-preset", "veryfast", "-crf", "30", "-g", "30", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", str(out / "kamera.mp4"))
+    (out / "kamera.words.json").write_text((out / "gespraech.words.json").read_text(encoding="utf-8"), encoding="utf-8")
+    szene.unlink()
+    print("kamera.mp4, mikrofon.wav")
+
+
 def ff(*args: str) -> None:
     subprocess.run(["ffmpeg", "-v", "error", "-y", *args], check=True)
 
@@ -441,6 +460,8 @@ def main(out: Path) -> None:
         gespraech(out)
     if not (out / "stimmen-flite.wav").exists():
         stimmen_flite(out)
+    if not all((out / f).exists() for f in ("kamera.mp4", "kamera.words.json", "mikrofon.wav")):
+        kamera(out)
     if not all((out / f).exists() for f in ("person.mp4", "person.words.json")):
         person(out)
     if not (out / "karo.mp4").exists():

@@ -148,6 +148,9 @@ def selftest(out_path: str) -> int:
         rep["kerne"] = [f for f in ("stimmen.js", "folgen.js", "skript.js") if (T.WEB_DIR / f).is_file()]
         if len(rep["kerne"]) != 3:
             raise RuntimeError(f"Rechenkerne der Oberfläche fehlen im Paket: {rep['kerne']}")
+        rep["tonquelle"] = T.tonquelle_selftest()
+        if not rep["tonquelle"].get("ok"):
+            raise RuntimeError(f"Zweite Tonquelle angleichen arbeitet nicht wie erwartet: {rep['tonquelle']}")
         rep["stimmen"] = T.stimmen_selftest()
         if not rep["stimmen"].get("ok"):
             raise RuntimeError(f"Der Ton für das Erkennen der Personen kommt nicht wie erwartet: {rep['stimmen']}")

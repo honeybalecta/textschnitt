@@ -1147,6 +1147,7 @@ function openFxItem(it){
     <p class="muted small">Gilt für den gewählten Bereich (${fmtS(itemOutRange(it)[0])} – ${fmtS(itemOutRange(it)[1])}). Lautstärke über 100 % hört man erst im Export.${P.color && colorAny(P.color) ? ' Die Farbwerte kommen zu „Farbe für das ganze Video“ hinzu.' : ''}</p>
     <div id="fxKeyHost"></div>
     <div id="fxStabHost"></div>
+    <div id="fxMicHost"></div>
     <div class="row" style="margin-top:12px"><button class="btn" id="fxReset">Zurücksetzen</button><button class="btn danger" id="fxDel">Entfernen</button><button class="btn primary" id="fxOk" style="margin-left:auto">Fertig</button></div>`;
   const keySrc = () => { const g = timeline[segAtOut(Math.max(itemOutRange(it)[0], Math.min(outPos, itemOutRange(it)[1] - 0.01)))]; return g && g.kind === 'main' ? g.si : (timeline.find(x => x.kind === 'main') || {}).si; };
   const keyUi = keyBlock($('#fxKeyHost'), {main: true, get: () => it.fx.key || null, set: k => { it.fx.key = k; }, el: () => V,
@@ -1154,6 +1155,7 @@ function openFxItem(it){
     orig: () => { const si = keySrc(), s = si != null && P.sources[si]; return s && s.matte && s.orig ? s.orig : null; }, time: () => { const si = keySrc(), s = si != null && P.sources[si]; return s ? clamp(outToSrcT(outPos) - s.off, 0, Math.max(0, s.duration - 0.1)) : 0; },
     applyMatte: m => swapSource(keySrc(), m), restoreOrig: () => restoreSource(keySrc())});
   const stabUi = stabBlock($('#fxStabHost'), {si: keySrc});
+  const micUi = micBlock($('#fxMicHost'), {si: keySrc, changed: () => { if (stabUi) stabUi.paint(); }});
   openSheet(true);
   const before = snapshot();
   const refresh = () => { seekOut(outPos, false); drawKeyFrames(); };

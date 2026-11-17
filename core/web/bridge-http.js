@@ -49,6 +49,7 @@
     gpu: () => call('GET', 'gpu'),   // Grafikkarte für den Export: {state: pending|ready, name, label}
     makeProxy: uri => jobOf(call('POST', 'proxy', {uri})),
     autoMatte: uri => jobOf(call('POST', 'matte', {uri})),
+    audioSync: (uri, audio) => jobOf(call('POST', 'audiosync', {uri, audio})),   // Ton eines externen Mikrofons an das Video angleichen: Ergebnis = Kopie mit neuem Ton
     stabilize: (uri, level) => jobOf(call('POST', 'stabilize', {uri, level})),
     // Übergabe im Heimnetz (am Handy weiterschneiden): Empfang öffnen (spec = Paket des angebotenen Projekts als JSON oder ''), Stand, schließen, Empfangenes übernehmen
     handoverStart: spec => call('POST', 'handover/start', spec ? '{"spec":' + spec + '}' : '{}'),

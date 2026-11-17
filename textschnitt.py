@@ -37,7 +37,7 @@ os.environ.setdefault("HF_HUB_DISABLE_IMPLICIT_TOKEN", "1")
 import warnings  # noqa: E402
 warnings.filterwarnings("ignore", module="huggingface_hub")
 
-VERSION = "2.40.0"
+VERSION = "2.41.0"
 APP_DIR = Path(__file__).resolve().parent
 FROZEN = bool(getattr(sys, "frozen", False))          # als installierte .exe gebaut
 RES_DIR = Path(getattr(sys, "_MEIPASS", APP_DIR))      # mitgelieferte Dateien (Oberfläche, ffmpeg, Modelle)
@@ -299,13 +299,35 @@ def run_ffmpeg(args: list[str], total: float, job: dict | None, base: float = 0.
     t = threading.Thread(target=lambda: err.extend(p.stderr.readlines()), daemon=True)
     t.start()
     # Wächter: kommt minutenlang kein Fortschritt, wird ffmpeg beendet und der Fehler gemeldet statt ewig zu warten
-    state = {"last": time.time(), "pos": -1, "stuck": False, "t0": time.time()}
+    state = {"last": time.time(), "pos": -1, "stuck": False, "t0": time.time(), "stopping": False}
+
+    def stop():
+        """ffmpeg beenden: erst höflich, nach drei Sekunden hart. Kurz nach dem Start bleibt ffmpeg nach der höflichen Aufforderung
+        mitunter stehen, statt sich zu beenden – der Auftrag liefe dann nach „Abbrechen“ für immer weiter (unter Linux und macOS
+        beobachtet; unter Windows beendet terminate() den Prozess ohnehin sofort)."""
+        if state["stopping"]:
+            return
+        state["stopping"] = True
+        try:
+            p.terminate()
+        except OSError:
+            pass
+
+        def hard():
+            try:
+                p.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                try:
+                    p.kill()
+                except OSError:
+                    pass
+        threading.Thread(target=hard, daemon=True).start()
 
     def watchdog():
         while p.poll() is None:
             time.sleep(2)
             if job and job["cancel"]:
-                p.terminate()
+                stop()
                 return
             if time.time() - state["last"] > 240:
                 state["stuck"] = True
@@ -324,7 +346,7 @@ def run_ffmpeg(args: list[str], total: float, job: dict | None, base: float = 0.
                     el = int(time.time() - state["t0"])
                     job["message"] = f"Exportiere … {int(job['progress'] * 100)} % · läuft seit {el // 60}:{el % 60:02d}"
         if job and job["cancel"]:
-            p.terminate()
+            stop()
     p.wait()
     t.join(timeout=2)
     if job and job["cancel"]:
@@ -594,6 +616,177 @@ def envelope_job(job: dict, path: str):
         return {"env": envelope(read_wav16k(wav)), "astart": info.get("audioStart", 0.0), "padded": True}
     finally:
         wav.unlink(missing_ok=True)
+
+
+# ───────────────────────────── Zweite Tonquelle angleichen (2.41) ─────────────────────────────
+SYNC_SR = 8000          # Abtastrate für den Vergleich der beiden Tonspuren
+SYNC_FINE = 0.08        # die Feinmessung sucht ± so viele Sekunden um den groben Versatz
+SYNC_DRIFT_MIN = 0.02   # ab dieser Abweichung über die gemeinsame Länge (Sekunden) wird die Geschwindigkeit des Mikrofons angepasst
+
+
+def _sync_read(path: str, job: dict | None, base: float, span: float):
+    """Ton als float32 mit SYNC_SR, mono – ab Beginn der Datei (Zeit 0), wie ihn auch die Transkription liest."""
+    import numpy as np
+    info = probe(path)
+    raw = Path(tempfile.gettempdir()) / f"honeycut_sync_{uuid.uuid4().hex[:8]}.pcm"
+    try:
+        run_ffmpeg(["-i", path, "-vn", "-af", "aresample=async=1:first_pts=0", "-ac", "1", "-ar", str(SYNC_SR), "-c:a", "pcm_s16le", "-f", "s16le", str(raw)], float(info["duration"] or 1), job, base, span)
+        return np.frombuffer(raw.read_bytes(), dtype="<i2").astype(np.float32) / 32768.0
+    finally:
+        raw.unlink(missing_ok=True)
+
+
+def sync_measure(cam, mic, sr: int = SYNC_SR) -> dict:
+    """Wo liegt die Mikrofon-Aufnahme auf der Zeitachse der Kamera? Rückgabe {offset, drift, score, ratio, overlap, windows}:
+    offset – die Zeit 0 des Mikrofons liegt bei dieser Kamerazeit (Sekunden; negativ: das Mikrofon lief schon vorher),
+    drift – das Mikrofon läuft je Sekunde um so viel auseinander (Uhren zweier Geräte), score/ratio – wie eindeutig die Stelle ist.
+
+    Grob: Lautstärkeverläufe (10 ms) beider Aufnahmen übereinanderschieben – das verträgt verschiedene Mikrofone, Pegel und Hall.
+    Fein: in mehreren Fenstern die Wellenformen selbst vergleichen (GCC-PHAT) und daraus Versatz und Auseinanderlaufen bestimmen."""
+    import numpy as np
+    hop = sr // 100
+
+    def env(x):
+        n = len(x) // hop
+        e = np.log((x[: n * hop].reshape(n, hop).astype(np.float64) ** 2).mean(axis=1) + 1e-9)
+        k = 200                                               # langsamen Verlauf (2 s) abziehen: Es zählen die Silben, nicht der Pegel
+        pad = np.pad(e, (k // 2, k - k // 2 - 1), mode="edge")
+        cs = np.cumsum(np.insert(pad, 0, 0.0))
+        e = e - (cs[k:] - cs[:-k]) / k
+        return np.clip((e - e.mean()) / (e.std() + 1e-9), -3, 3)
+    ea, eb = env(cam), env(mic)
+    if len(ea) < 100 or len(eb) < 100:
+        raise ValueError("Für den Vergleich braucht es mindestens eine Sekunde Ton in beiden Aufnahmen.")
+    n = 1 << int(np.ceil(np.log2(len(ea) + len(eb))))
+    c = np.fft.irfft(np.fft.rfft(ea, n) * np.conj(np.fft.rfft(eb, n)), n)
+    lags = np.concatenate([np.arange(0, len(ea)), np.arange(-(n - len(ea)), 0)])     # Versatz in 10-ms-Schritten zu jedem Feld von c
+    ok = (lags > -len(eb)) & (lags < len(ea))
+    over = np.where(lags >= 0, np.minimum(len(ea) - lags, len(eb)), np.minimum(len(eb) + lags, len(ea))).astype(np.float64)
+    need = max(100.0, 0.1 * min(len(ea), len(eb)))            # mindestens eine Sekunde und ein Zehntel der kürzeren Aufnahme gemeinsam
+    ok &= over >= need
+    val = np.where(ok, c / np.sqrt(np.maximum(over, 1.0)), -np.inf)
+    k0 = int(np.argmax(val))
+    lag0 = int(lags[k0])
+    fin = val[ok]
+    score = float((val[k0] - fin.mean()) / (fin.std() + 1e-9))
+    far = ok & (np.abs(lags - lag0) > 50)
+    ratio = float(val[k0] / max(1e-9, val[far].max())) if far.any() else 99.0
+    overlap = float(over[k0]) / 100.0
+    # Feinmessung: Fenster von 4 s über den gemeinsamen Bereich
+    a0 = max(0, lag0 * hop)                                   # Beginn des gemeinsamen Bereichs in der Kamera
+    b0 = max(0, -lag0 * hop)                                  # … und im Mikrofon
+    common = int(min(len(cam) - a0, len(mic) - b0))
+    win, m = 4 * sr, int(SYNC_FINE * sr)
+    count = int(min(16, max(1, common // win)))
+    pts = []
+    for q in range(count):
+        s = int((common - win) * (q + 0.5) / count) if common > win else 0
+        xa, xb = cam[a0 + s: a0 + s + win].astype(np.float64), mic[b0 + s: b0 + s + win].astype(np.float64)
+        L = min(len(xa), len(xb))
+        if L < sr // 2 or xa[:L].std() < 1e-4 or xb[:L].std() < 1e-4:
+            continue
+        nf = 1 << int(np.ceil(np.log2(2 * L)))
+        X = np.fft.rfft(xa[:L], nf) * np.conj(np.fft.rfft(xb[:L], nf))
+        g = np.fft.irfft(X / (np.abs(X) + 1e-9), nf)
+        g = np.concatenate([g[-m:], g[: m + 1]])              # Versätze −m … +m
+        p = int(np.argmax(g))
+        d = float(p - m)
+        if 0 < p < len(g) - 1:                                # Scheitel zwischen den Abtastwerten
+            y0, y1, y2 = g[p - 1], g[p], g[p + 1]
+            den = y0 - 2 * y1 + y2
+            if abs(den) > 1e-12:
+                d += 0.5 * (y0 - y2) / den
+        sharp = float(g[p] / (np.abs(g).mean() + 1e-9))
+        if sharp >= 6:
+            pts.append(((a0 + s + win / 2) / sr, lag0 * hop / sr + d / sr))
+    offset, drift = lag0 * hop / sr, 0.0
+    if pts:
+        ts, os_ = np.array([p[0] for p in pts]), np.array([p[1] for p in pts])
+        if len(pts) >= 4 and ts[-1] - ts[0] >= 30:
+            sl = [(os_[j] - os_[i]) / (ts[j] - ts[i]) for i in range(len(pts)) for j in range(i + 1, len(pts)) if ts[j] - ts[i] >= 10]
+            drift = float(np.median(sl)) if sl else 0.0       # Theil-Sen: verträgt einzelne Fehlmessungen
+            if abs(drift) * overlap < SYNC_DRIFT_MIN or abs(drift) > 0.002:
+                drift = 0.0
+        offset = float(np.median(os_ - drift * ts)) / (1 - drift)   # Kamerazeit, zu der das Mikrofon beginnt
+    return {"offset": round(offset, 5), "drift": round(drift, 8), "score": round(score, 2), "ratio": round(ratio, 3), "overlap": round(overlap, 2), "windows": len(pts), "tried": count}
+
+
+def sync_ok(m: dict) -> bool:
+    """Passt die Stelle eindeutig? Der Lautstärkeverlauf muss klar herausstechen (bei kurzen Aufnahmen genügt ein deutlicher
+    Abstand zur zweitbesten Stelle), und die Wellenformen müssen sich in mindestens einem Viertel der Fenster decken."""
+    return m["windows"] >= max(1, m["tried"] / 4) and (m["score"] >= 8 or (m["score"] >= 5 and m["ratio"] >= 1.5))
+
+
+def audio_sync_job(job: dict, path: str, audio: str):
+    """Zweite Tonquelle angleichen: misst, wo die Aufnahme des externen Mikrofons zum Ton der Kamera passt, und erzeugt eine Kopie
+    des Videos mit dem Ton des Mikrofons an der richtigen Stelle. Das Bild wird dabei unverändert übernommen (ohne neues Kodieren),
+    die Bildzeiten bleiben – Transkript und Schnitt gelten weiter."""
+    path, audio = norm_path(path), norm_path(audio)
+    info, ainfo = probe(path), probe(audio)
+    if not info["hasVideo"] or info["kind"] == "image":
+        raise ValueError("Der Ton lässt sich nur an ein Video angleichen.")
+    if not info["hasAudio"]:
+        raise ValueError("Das Video hat keinen eigenen Ton – daran lässt sich die zweite Aufnahme nicht ausrichten.")
+    if not ainfo["hasAudio"]:
+        raise ValueError("Die gewählte Datei enthält keinen Ton.")
+    dur = float(info["duration"] or 0)
+    out_dir = DATA_DIR / "mikrofon"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out = out_dir / (hashlib.sha1(f"{path}|{os.path.getmtime(path)}|{audio}|{os.path.getmtime(audio)}".encode("utf-8")).hexdigest()[:16] + ".mp4")
+    meta = out.with_suffix(".json")
+
+    def res(m):
+        return {**probe(str(out)), "name": Path(path).stem + " – Mikrofon", "orig": path, "mic": Path(audio).name, **m}
+    if out.exists() and out.stat().st_size > 0 and meta.exists():
+        try:
+            return res(json.loads(meta.read_text(encoding="utf-8")))
+        except (OSError, ValueError):
+            pass
+    job["message"] = "Ton der Kamera wird gelesen …"
+    cam = _sync_read(path, job, 0.0, 0.15)
+    if job["cancel"]:
+        raise RuntimeError("Abgebrochen")
+    job["message"] = "Ton des Mikrofons wird gelesen …"
+    mic = _sync_read(audio, job, 0.15, 0.15)
+    if job["cancel"]:
+        raise RuntimeError("Abgebrochen")
+    job["message"] = "Die beiden Aufnahmen werden verglichen …"
+    m = sync_measure(cam, mic)
+    del cam, mic
+    if not sync_ok(m):
+        raise ValueError("Die beiden Aufnahmen passen nicht erkennbar zusammen. Stammen sie vom selben Moment, und ist im Video der Ton der Kamera zu hören?")
+    off, drift = m["offset"], m["drift"]
+    chain = ["aresample=48000"]
+    if drift:
+        chain += [f"asetrate={48000 * (1 - drift):.4f}", "aresample=48000"]     # das Mikrofon auf die Uhr der Kamera bringen
+    if off > 0:
+        chain.append(f"adelay={off * 1000:.3f}:all=1")
+    elif off < 0:
+        chain += [f"atrim=start={-off:.5f}", "asetpts=PTS-STARTPTS"]
+    chain.append("apad")
+    tmp_out = out.with_suffix(".tmp.mp4")
+    job["message"] = "Das Video bekommt den Ton des Mikrofons …"
+    base = ["-i", path, "-i", audio, "-filter_complex", f"[1:a:0]{','.join(chain)}[a]", "-map", "0:v:0", "-map", "[a]", "-t", f"{dur:.3f}"]
+    tail = ["-c:a", "aac", "-b:a", "256k", "-movflags", "+faststart", str(tmp_out)]
+    try:
+        try:
+            run_ffmpeg(base + ["-c:v", "copy"] + tail, dur, job, 0.3, 0.7)
+            how = "copy"
+        except RuntimeError as e:
+            if job["cancel"] or "Abgebrochen" in str(e):
+                raise
+            log(f"Ton angleichen: Bild ließ sich nicht unverändert übernehmen ({e}); wird neu kodiert")
+            job["message"] = "Das Video bekommt den Ton des Mikrofons (Bild wird neu kodiert) …"
+            run_ffmpeg(base + ["-c:v", "libx264", "-preset", "fast", "-crf", "16", "-pix_fmt", "yuv420p"] + tail, dur, job, 0.3, 0.7)
+            how = "encode"
+        if job["cancel"]:
+            raise RuntimeError("Abgebrochen")
+        tmp_out.replace(out)
+    finally:
+        tmp_out.unlink(missing_ok=True)
+    m = {**m, "video": how}
+    meta.write_text(json.dumps(m), encoding="utf-8")
+    return res(m)
 
 
 TRACK_W, TRACK_H = 32, 18     # Größe der Masken für „Person im Bild halten“
@@ -3716,6 +3909,32 @@ def uebergabe_selftest() -> dict:
     return out
 
 
+def tonquelle_selftest() -> dict:
+    """Probe für den Selbsttest der gebauten App (2.41): Zweite Tonquelle angleichen mit dem mitgelieferten ffmpeg – ein Rauschen mit
+    unregelmäßigem Lautstärkeverlauf als „Kamera“, dasselbe um eine Sekunde verzögert als „Mikrofon“; erwartet wird ein Versatz von
+    −1 s und ein unverändert übernommenes Bild."""
+    out: dict = {"ok": False}
+    tag = uuid.uuid4().hex[:8]
+    cam = Path(tempfile.gettempdir()) / f"honeycut_selbsttest_{tag}.mp4"
+    mic = Path(tempfile.gettempdir()) / f"honeycut_selbsttest_{tag}.wav"
+    made = None
+    try:
+        subprocess.run([FFMPEG, "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=10", "-f", "lavfi", "-i", "aevalsrc='(random(0)-0.5)*(0.05+0.95*lt(mod(t*t\\,1.7)\\,0.6))':s=16000",
+                        "-t", "10", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k", str(cam)], check=True, capture_output=True, **NOWIN)
+        subprocess.run([FFMPEG, "-v", "error", "-y", "-i", str(cam), "-vn", "-af", "adelay=1000:all=1", "-ac", "1", "-ar", "16000", str(mic)], check=True, capture_output=True, **NOWIN)
+        r = audio_sync_job({"id": "selbsttest", "cancel": False, "progress": 0.0, "message": "", "status": "running"}, str(cam), str(mic))
+        made = Path(r["uri"])
+        out.update(versatz=r["offset"], bild=r["video"], dauer=r["duration"])
+        out["ok"] = bool(abs(r["offset"] + 1.0) < 0.01 and r["video"] == "copy" and abs(r["duration"] - 10) < 0.3)
+    except Exception as e:
+        out["fehler"] = f"{type(e).__name__}: {e}"[:300]
+    finally:
+        for f in (cam, mic, made, made.with_suffix(".json") if made else None):
+            if f:
+                f.unlink(missing_ok=True)
+    return out
+
+
 def folgen_selftest() -> dict:
     """Probe für den Selbsttest der gebauten App (2.39): Das Personen-Modell rechnet Masken für „Person im Bild halten“ –
     zwei Sekunden Testbild ohne Person ergeben acht Masken mit 32 × 18 Feldern; folgen.js liegt bei der Oberfläche."""
@@ -4145,7 +4364,7 @@ def housekeeping() -> None:
     except OSError as e:
         log(f"Aufräumen (Vorschaubilder): {e!r}")
     try:   # liegengebliebene Teilstücke abgebrochener Vorgänge (älter als ein Tag)
-        for d, pat in ((DATA_DIR / "freigestellt", "*.tmp.mp4"), (DATA_DIR / "beruhigt", "*.tmp.mp4"), (DATA_DIR / "beruhigt", "*.trf"), (CACHE_DIR / "proxies", "*.tmp.mp4"),
+        for d, pat in ((DATA_DIR / "freigestellt", "*.tmp.mp4"), (DATA_DIR / "beruhigt", "*.tmp.mp4"), (DATA_DIR / "beruhigt", "*.trf"), (DATA_DIR / "mikrofon", "*.tmp.mp4"), (CACHE_DIR / "proxies", "*.tmp.mp4"),
                        (DATA_DIR / "models", "*.part"), (PROJ_DIR, "*.tmp")):
             for x in d.glob(pat) if d.is_dir() else []:
                 st = x.stat()
@@ -4346,6 +4565,10 @@ def storage_info() -> dict:
     groups.append({"key": "stab", "label": "Beruhigte Kopien", "bytes": sum(i["bytes"] for i in sb), "count": len(sb),
                    "freeable": sum(i["bytes"] for i in sb if not i["used"]), "nfree": sum(1 for i in sb if not i["used"]), "items": sb, "warn": True,
                    "hint": "Kopien von Videos mit ausgeglichenem Wackeln. Löschen lässt sich nur, was kein Projekt mehr verwendet."})
+    mc = files(DATA_DIR / "mikrofon", "*.mp4")
+    groups.append({"key": "mic", "label": "Kopien mit Mikrofon-Ton", "bytes": sum(i["bytes"] for i in mc), "count": len(mc),
+                   "freeable": sum(i["bytes"] for i in mc if not i["used"]), "nfree": sum(1 for i in mc if not i["used"]), "items": mc, "warn": True,
+                   "hint": "Kopien von Videos mit dem Ton eines externen Mikrofons. Löschen lässt sich nur, was kein Projekt mehr verwendet."})
     fol = DATA_DIR / "folien"
     sl = [x for d in (fol.iterdir() if fol.is_dir() else []) if d.is_dir() for x in d.glob("*.png")]
     old = [x for x in sl if x.name.startswith(SLIDE_OLD) and x.name not in refs and not _is_fresh(x)] if free_ok else []
@@ -4396,7 +4619,7 @@ def storage_clear(what: str, name: str = "") -> dict:
         for x in (d.iterdir() if d.is_dir() else []):
             if x.is_file() and ".tmp." not in x.name:   # ein Bild, das gerade entsteht, bleibt
                 kill(x)
-    elif what in ("proxies", "matte", "stab", "slides"):
+    elif what in ("proxies", "matte", "stab", "mic", "slides"):
         refs = storage_refs()   # frisch gerechnet; ein unlesbares Projekt bricht hier ab, bevor etwas gelöscht ist
         if what == "slides":
             fol = DATA_DIR / "folien"
@@ -4412,10 +4635,12 @@ def storage_clear(what: str, name: str = "") -> dict:
                 except OSError:
                     pass
         else:
-            d = CACHE_DIR / "proxies" if what == "proxies" else DATA_DIR / ("beruhigt" if what == "stab" else "freigestellt")
+            d = CACHE_DIR / "proxies" if what == "proxies" else DATA_DIR / ("beruhigt" if what == "stab" else "mikrofon" if what == "mic" else "freigestellt")
             for x in (d.glob("*.mp4") if d.is_dir() else []):
                 if x.name not in refs and ".tmp." not in x.name and (not name or x.name == name) and not _is_fresh(x):
                     kill(x)
+                    if what == "mic":
+                        kill(x.with_suffix(".json"))
     elif what == "model":
         if name not in [m[0] for m in MODELS] or name in bundled_models():
             raise ValueError("Dieses Modell lässt sich nicht löschen.")
@@ -5554,7 +5779,7 @@ def open_file(path: str):
 
 def app_info() -> dict:
     cc = capcut_drafts_dir()
-    return {"platform": "desktop", "version": VERSION, "exportFormats": ["video", "audio", "capcut", "concat"], "bus": True, "matte": matte_available(), "stabilize": True, "handover": True, "translate": translate_available(), "translatePairs": translate_pairs(),
+    return {"platform": "desktop", "version": VERSION, "exportFormats": ["video", "audio", "capcut", "concat"], "bus": True, "matte": matte_available(), "stabilize": True, "audiosync": True, "handover": True, "translate": translate_available(), "translatePairs": translate_pairs(),
             "capcutDir": str(cc) if cc else None, "concatDir": str(concat_root()),
             "whisper": whisper_available(), "os": platform.system()}
 
@@ -5929,6 +6154,9 @@ class Handler(BaseHTTPRequestHandler):
                 if not matte_available():
                     raise ValueError("Automatisches Freistellen braucht onnxruntime (in der installierten Version enthalten).")
                 job = run_job(new_job("matte"), matte_job, data["uri"])
+                return self._json({"job": job["id"]})
+            if rest == "api/audiosync":
+                job = run_job(new_job("audiosync"), audio_sync_job, data["uri"], data["audio"])
                 return self._json({"job": job["id"]})
             if rest == "api/stabilize":
                 job = run_job(new_job("stabilize"), stabilize_job, data["uri"], data.get("level") or 2)

@@ -2,6 +2,13 @@
 
 Was sich mit jeder Version von HoneyCut ändert. Die Windows-App zeigt diese Stichpunkte an, sobald eine neuere Version bereitsteht.
 
+## 2.41.0 · Zweite Tonquelle angleichen
+- Ton vom externen Mikrofon (Windows; Studio → Clip antippen → „Anpassen“ → „Ton vom externen Mikrofon“): Tonaufnahme wählen, und HoneyCut legt sie genau unter das Bild. Verglichen wird mit dem Ton der Kamera – ein Klatschen zum Angleichen braucht es dafür nicht
+- Es entsteht eine Kopie der Aufnahme mit dem neuen Ton; das Bild bleibt unverändert, Transkript und Schnitt gelten weiter. „Original zurück“ stellt den Ton der Kamera wieder her
+- Lief das Mikrofon früher an oder startete es später, gleicht HoneyCut das aus – ebenso Uhren, die bei langen Aufnahmen leicht auseinanderlaufen
+- Passt eine Aufnahme nicht zum Video, sagt HoneyCut das und lässt alles, wie es war
+- Reihenfolge: erst „Bild beruhigen“, dann den Ton angleichen. Die Kopien stehen unter „Speicher verwalten“
+
 ## 2.40.0 · Skript abgleichen
 - Skript abgleichen (Text-Reiter → „⋯“ → „Skript abgleichen“): Manuskript einfügen, und HoneyCut legt es Wort für Wort neben das Transkript. Schreibweisen, Großschreibung und Satzzeichen kommen aus dem Manuskript – auch Namen, gegenderte Formen und zusammengeschriebene Wörter
 - Frei gesprochen: Stellen ab drei Wörtern, die im Manuskript fehlen, sind im Text hinterlegt und stehen in einer Liste mit Sprung zur Stelle

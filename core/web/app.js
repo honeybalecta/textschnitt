@@ -2017,7 +2017,7 @@ function swapSource(si, m){
   if (vSi === si) vSi = -1;
   changed(true); seekOut(outPos, false); if (window.renderTimeline) renderTimeline();
 }
-function restoreSource(si){ const s = P.sources[si]; if (!s || !s.orig) return; s.uri = s.orig; delete s.orig; delete s.proxy; delete s.matte; delete s.stab; if (vSi === si) vSi = -1; changed(true); seekOut(outPos, false); if (window.renderTimeline) renderTimeline(); }
+function restoreSource(si){ const s = P.sources[si]; if (!s || !s.orig) return; s.uri = s.orig; delete s.orig; delete s.proxy; delete s.matte; delete s.stab; delete s.mic; delete s.micFrom; if (vSi === si) vSi = -1; changed(true); seekOut(outPos, false); if (window.renderTimeline) renderTimeline(); }
 // Einblendung: Clip gegen die freigestellte Kopie tauschen und die Kopie in die Ablage legen
 function swapClip(it, m){
   const old = it.clip; P.media ||= [];
@@ -8217,9 +8217,10 @@ function stabBlock(host, o){   // o: {si() → Nummer der Aufnahme}
   const src = () => { const si = o.si(); return si != null ? P.sources[si] : null; };
   const paint = () => { const s = src(), on = !!(s && s.stab), ok = !!(s && hasVid(s) && s.kind !== 'image'); if (on) level = clamp(+s.stab || 2, 1, 3);
     blk.querySelectorAll('.stLevel button').forEach(b => b.classList.toggle('on', +b.dataset.v === level));
-    q('.stGo').textContent = on ? '≋ Erneut ausgleichen' : '≋ Verwackeln ausgleichen'; q('.stGo').disabled = !ok || !!(s && s.matte);
-    q('.stOrig').classList.toggle('hidden', !on || !!(s && s.matte));
-    q('.stHint').textContent = s && s.matte ? 'Diese Aufnahme ist freigestellt. Erst beruhigen, dann freistellen: „Original zurück“ beim Freistellen nimmt beides zurück.'
+    q('.stGo').textContent = on ? '≋ Erneut ausgleichen' : '≋ Verwackeln ausgleichen'; q('.stGo').disabled = !ok || !!(s && (s.matte || s.mic));
+    q('.stOrig').classList.toggle('hidden', !on || !!(s && (s.matte || s.mic)));
+    q('.stHint').textContent = s && s.mic ? 'Diese Aufnahme trägt den Ton eines externen Mikrofons. Erst beruhigen, dann den Ton angleichen: „Original zurück“ beim Mikrofon-Ton nimmt beides zurück.'
+      : s && s.matte ? 'Diese Aufnahme ist freigestellt. Erst beruhigen, dann freistellen: „Original zurück“ beim Freistellen nimmt beides zurück.'
       : on ? `Die Aufnahme läuft als beruhigte Kopie (${STAB_LBL[level]}). Der Rand ist dafür leicht beschnitten.` : 'Gleicht Wackeln aus der Hand aus. Erzeugt einmalig eine Kopie der Aufnahme; der Rand wird dafür leicht beschnitten. Das dauert je nach Länge einige Minuten.'; };
   blk.querySelector('.stLevel').onclick = e => { const b = e.target.closest('button'); if (!b) return; e.stopPropagation(); level = +b.dataset.v; paint(); };
   q('.stGo').onclick = e => { e.stopPropagation(); const s = src(), si = o.si(); if (!s) return;
@@ -8233,6 +8234,45 @@ function stabBlock(host, o){   // o: {si() → Nummer der Aufnahme}
         swapSource(si, m); s.stab = level; delete s.matte; changed(true); end(); toast('Das Bild läuft jetzt ruhiger' + (m.method === 'deshake' ? ' (einfaches Verfahren)' : '')); },
       j => { end(); if (j.status !== 'cancelled') toast('Beruhigen fehlgeschlagen: ' + (j.error || '')); }); };
   q('.stOrig').onclick = e => { e.stopPropagation(); const si = o.si(); if (si == null) return; restoreSource(si); paint(); toast('Die Aufnahme läuft wieder im Original'); };
+  blk.addEventListener('click', e => { if (e.target.closest('button')) e.stopPropagation(); });
+  paint(); return {paint};
+}
+
+// ───────── Zweite Tonquelle angleichen (2.41, E10; Windows) ─────────
+// Die Aufnahme eines externen Mikrofons wird am Ton der Kamera ausgerichtet; es entsteht eine Kopie der Aufnahme mit dem neuen
+// Ton (Bild unverändert) und wird eingetauscht – Transkript und Schnitt bleiben. s.mic = {name, offset, drift} merkt, was geschah.
+function micBlock(host, o){   // o: {si() → Nummer der Aufnahme}
+  if (!CAP.audiosync || !TS.audioSync) return null;
+  host.insertAdjacentHTML('beforeend', `<div class="field micblk"><span>Ton vom externen Mikrofon</span>
+    <div class="row wrap"><button class="btn mcGo" type="button">Tonaufnahme wählen …</button><button class="btn mcOrig hidden" type="button">Original zurück</button><button class="btn mcStop hidden" type="button">Abbrechen</button></div>
+    <p class="muted small mcHint"></p><div class="keyProg mcProg hidden"><div class="prog"><i></i></div><span class="muted small"></span></div></div>`);
+  const blk = host.lastElementChild, q = s => blk.querySelector(s); let busy = false;
+  const src = () => { const si = o.si(); return si != null ? P.sources[si] : null; };
+  const sec = v => String(Math.abs(v) >= 10 ? Math.round(Math.abs(v)) : Math.round(Math.abs(v) * 10) / 10).replace('.', ',');
+  const paint = () => { const s = src(), on = !!(s && s.mic), ok = !!(s && hasVid(s) && s.kind !== 'image' && s.hasAudio !== false);
+    q('.mcGo').textContent = on ? 'Andere Tonaufnahme wählen …' : 'Tonaufnahme wählen …'; q('.mcGo').disabled = busy || (!ok && !on);
+    q('.mcOrig').classList.toggle('hidden', !on || busy);
+    q('.mcHint').textContent = on ? `Der Ton stammt aus „${s.mic.name}“. ${Math.abs(s.mic.offset) < 0.05 ? 'Mikrofon und Kamera starteten gleichzeitig.' : s.mic.offset < 0 ? `Das Mikrofon lief ${sec(s.mic.offset)} s vor der Kamera an.` : `Das Mikrofon startete ${sec(s.mic.offset)} s nach der Kamera.`}${s.mic.drift ? ' Die Uhren der beiden Geräte liefen leicht auseinander; das ist ausgeglichen.' : ''}`
+      : !ok ? 'Dafür braucht die Aufnahme ein Bild und den Ton der Kamera – an ihm richtet HoneyCut die zweite Aufnahme aus.'
+      : 'Legt die Aufnahme eines externen Mikrofons oder Rekorders genau unter das Bild. HoneyCut vergleicht sie mit dem Ton der Kamera und erzeugt eine Kopie der Aufnahme mit dem neuen Ton; Transkript und Schnitt bleiben.'; };
+  q('.mcGo').onclick = async e => { e.stopPropagation(); const s = src(), si = o.si(); if (!s || busy) return;
+    const m = asList(await pickMedia('audio'))[0]; if (!m) return;
+    if (m.kind === 'image' || m.hasAudio === false) return toast('Bitte eine Tonaufnahme wählen (oder ein Video mit Ton)');
+    if (P.sources[si] !== s) return;
+    busy = true; paint(); q('.mcStop').classList.remove('hidden'); q('.mcProg').classList.remove('hidden'); q('.mcProg i').style.width = '0%'; q('.mcProg span').textContent = 'Wird vorbereitet …';
+    const end = () => { busy = false; q('.mcStop').classList.add('hidden'); q('.mcProg').classList.add('hidden'); paint(); };
+    // Ausgangspunkt ist die Aufnahme ohne früheren Mikrofon-Ton: Der Vergleich braucht den Ton der Kamera
+    const from = s.mic && s.micFrom ? s.micFrom : s.uri;
+    let jid; try { jid = TS.audioSync(from, m.uri); } catch(err){ end(); return toast('Angleichen nicht möglich: ' + err.message); }
+    q('.mcStop').onclick = ev => { ev.stopPropagation(); TS.cancel(jid); };
+    watchJob(jid, j => { q('.mcProg i').style.width = Math.round((j.progress || 0) * 100) + '%'; q('.mcProg span').textContent = j.message || ''; },
+      j => { const r = j.result; if (!r || !r.uri){ end(); return toast('Das Angleichen hat nichts ergeben'); }
+        if (P.sources[si] !== s){ end(); return; }   // das Projekt wurde inzwischen gewechselt
+        const wasMatte = !!s.matte; s.micFrom = from; swapSource(si, r); if (!wasMatte) delete s.matte;
+        s.mic = {name: m.name || r.mic || 'Tonaufnahme', offset: +r.offset || 0, drift: +r.drift || 0}; changed(true); end(); if (o.changed) o.changed();
+        toast('Der Ton des Mikrofons liegt jetzt unter dem Bild'); },
+      j => { end(); if (j.status !== 'cancelled') toast('Angleichen fehlgeschlagen: ' + (j.error || '')); }); };
+  q('.mcOrig').onclick = e => { e.stopPropagation(); const si = o.si(); if (si == null) return; restoreSource(si); paint(); if (o.changed) o.changed(); toast('Die Aufnahme läuft wieder mit dem Ton der Kamera'); };
   blk.addEventListener('click', e => { if (e.target.closest('button')) e.stopPropagation(); });
   paint(); return {paint};
 }

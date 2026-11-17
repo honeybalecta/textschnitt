@@ -1597,7 +1597,132 @@ def skript_240():
     chk("Die Browser-Fassung nimmt die Rechenkerne in den Bau und in den Zwischenspeicher für den Betrieb ohne Netz", all(build.count(f'"{f}"') == 2 for f in ("stimmen.js", "folgen.js", "skript.js")))
 
 
-PARTS = (speichern_und_fassungen, speicher, sicherung, projektpakete, kleine_helfer, quellen_und_belege, schrift_im_export, transkript, export_231, untertitel_effekte, ton_234, belege_235, bild_236, uebergabe_237, stimmen_238, folgen_239, skript_240, neue_versionen, bericht_und_protokoll)
+def ton_241():
+    """2.41: Zweite Tonquelle angleichen – Versatz und Auseinanderlaufen messen (sync_measure) und die Kopie mit dem Ton des
+    Mikrofons erzeugen (audio_sync_job). Die „Szene“ ist sprachähnlicher Ton; die Kamera hört sie mit Hall, Rauschen und leiser."""
+    import wave
+    import numpy as np
+    vd = TMP / "mikrofon"
+    vd.mkdir(parents=True, exist_ok=True)
+    SR = 16000
+    rng = np.random.default_rng(41)
+
+    def ff(*a):
+        subprocess.run([T.FFMPEG, "-v", "error", "-y", *a], check=True, capture_output=True)
+
+    def szene(sec):   # Silben: kurze Klänge mit wechselnder Tonhöhe, dazwischen Pausen
+        x = np.zeros(int(sec * SR), np.float32)
+        t = 0.3
+        while t < sec - 1:
+            d = rng.uniform(0.08, 0.28)
+            n = int(d * SR)
+            f0 = rng.uniform(100, 240)
+            k = np.arange(n) / SR
+            s = sum(a * np.sin(2 * np.pi * f0 * h * k + rng.uniform(0, 6)) for h, a in ((1, .5), (2, .3), (3, .2), (5, .12), (7, .08))) + rng.normal(0, 0.05, n)
+            x[int(t * SR): int(t * SR) + n] += (s * np.hanning(n) * rng.uniform(0.3, 0.8)).astype(np.float32)
+            t += d + (rng.uniform(0.4, 1.2) if rng.random() < 0.15 else rng.uniform(0.02, 0.1))
+        return x
+
+    def kamera(x):    # Hall, Rauschen, leiser
+        ir = np.zeros(4000)
+        ir[0] = 1
+        for q in range(40):
+            ir[rng.integers(160, 4000)] += rng.uniform(-0.25, 0.25) * np.exp(-q / 15)
+        return (np.convolve(x, ir)[: len(x)] * 0.3 + rng.normal(0, 0.008, len(x))).astype(np.float32)
+
+    def schreibe(p, x):
+        with wave.open(str(p), "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(SR)
+            w.writeframes((np.clip(x, -1, 1) * 32767).astype("<i2").tobytes())
+
+    def lese(p):      # Ton einer Datei mit SR, mono, ab Zeit 0
+        raw = subprocess.run([T.FFMPEG, "-v", "error", "-i", str(p), "-vn", "-af", "aresample=async=1:first_pts=0", "-ac", "1", "-ar", str(SR), "-f", "s16le", "-"], capture_output=True, check=True).stdout
+        return np.frombuffer(raw, dtype="<i2").astype(np.float32) / 32768
+
+    def lage(a, b, span=0.2):   # um wie viele Sekunden liegt b gegenüber a später (größte Übereinstimmung der Wellenform)
+        n = min(len(a), len(b))
+        nf = 1 << int(np.ceil(np.log2(2 * n)))
+        c = np.fft.irfft(np.fft.rfft(b[:n], nf) * np.conj(np.fft.rfft(a[:n], nf)), nf)
+        m = int(span * SR)
+        g = np.concatenate([c[-m:], c[: m + 1]])
+        return (int(np.argmax(g)) - m) / SR
+    S = szene(200)
+    # Fall 1: Die Kamera läuft von Szenenzeit 20 bis 80 s, das Mikrofon lief schon ab 12,6 s (7,4 s früher) bis 95 s
+    schreibe(vd / "kam1.wav", kamera(S[20 * SR: 80 * SR]))
+    schreibe(vd / "mik1.wav", S[int(12.6 * SR): 95 * SR])
+    video = vd / "kam1.mp4"
+    ff("-f", "lavfi", "-i", "testsrc2=size=320x180:rate=25", "-i", str(vd / "kam1.wav"), "-t", "60", "-pix_fmt", "yuv420p", "-c:v", "libx264", "-preset", "veryfast", "-g", "25", "-c:a", "aac", "-b:a", "128k", str(video))
+    m = T.sync_measure(T._sync_read(str(video), None, 0, 1), T._sync_read(str(vd / "mik1.wav"), None, 0, 1))
+    chk("Versatz messen: Das Mikrofon lief 7,4 s vor der Kamera an – auf eine Millisekunde genau, eindeutig", abs(m["offset"] + 7.4) < 0.0015 and m["drift"] == 0 and T.sync_ok(m) and m["windows"] >= 8, m)
+    j = job()
+    r = T.audio_sync_job(j, str(video), str(vd / "mik1.wav"))
+    out = Path(r["uri"]) if "uri" in r else None
+    chk("Angleichen: Es entsteht eine Kopie mit Namen, Herkunft und Messwerten", out is not None and out.is_file() and out.parent == T.DATA_DIR / "mikrofon" and r["name"] == "kam1 – Mikrofon" and r["orig"] == str(video) and r["mic"] == "mik1.wav"
+        and abs(r["offset"] + 7.4) < 0.0015 and r["video"] == "copy" and j["progress"] > 0.9, {k: r.get(k) for k in ("name", "mic", "offset", "video")})
+    chk("Angleichen: Länge, Bildgröße und Bildrate bleiben", abs(r["duration"] - 60) < 0.1 and (r["width"], r["height"]) == (320, 180) and abs(r["fps"] - 25) < 0.01 and r["hasAudio"], (r["duration"], r["fps"]))
+
+    def pakete(p):
+        o = subprocess.run([T.FFPROBE, "-v", "error", "-select_streams", "v:0", "-show_entries", "packet=pts_time,size", "-of", "csv=p=0", str(p)], capture_output=True, text=True, check=True).stdout
+        return [ln for ln in o.splitlines() if ln.strip()]
+    chk("Angleichen: Das Bild ist unverändert übernommen (dieselben Bildpakete zu denselben Zeiten)", pakete(video) == pakete(out) and len(pakete(out)) == 1500, len(pakete(out)))
+    neu = lese(out)
+    soll = S[20 * SR: 80 * SR]
+    chk("Angleichen: Der Ton des Mikrofons liegt genau unter dem Bild (Abweichung unter 2 ms) – ohne Hall und Rauschen der Kamera",
+        abs(lage(soll, neu)) <= 0.002 and float(np.corrcoef(soll[SR: 50 * SR], neu[SR + int(round(lage(soll, neu) * SR)): 50 * SR + int(round(lage(soll, neu) * SR))])[0, 1]) > 0.9, lage(soll, neu))
+    t0 = time.time()
+    r2 = T.audio_sync_job(job(), str(video), str(vd / "mik1.wav"))
+    chk("Ein zweiter Aufruf mit denselben Dateien liefert die vorhandene Kopie", r2["uri"] == r["uri"] and r2["offset"] == r["offset"] and time.time() - t0 < 2)
+    # Fall 2: Das Mikrofon startet 5,25 s nach der Kamera und endet vor ihr: Davor und danach ist Stille
+    schreibe(vd / "mik2.wav", S[int(25.25 * SR): 60 * SR])
+    r = T.audio_sync_job(job(), str(video), str(vd / "mik2.wav"))
+    neu = lese(r["uri"])
+    chk("Später gestartetes Mikrofon: richtig gelegt, davor und dahinter Stille, Länge wie das Video", abs(r["offset"] - 5.25) < 0.0015 and abs(lage(soll, neu)) <= 0.002
+        and float(np.abs(neu[: 5 * SR]).max()) < 0.01 and float(np.abs(neu[41 * SR: 59 * SR]).max()) < 0.01 and float(np.abs(neu[6 * SR: 39 * SR]).max()) > 0.1 and abs(r["duration"] - 60) < 0.1, (r["offset"], lage(soll, neu)))
+    # Fall 3: lange Aufnahme, die Uhr des Mikrofons läuft 200 Millionstel schneller: Am Ende lägen sonst 35 ms dazwischen
+    schreibe(vd / "kam3.wav", kamera(S[10 * SR: 190 * SR]))
+    mic3 = S[int(6 * SR): int(198 * SR)]
+    d = 200e-6
+    n3 = int(len(mic3) * (1 - d))
+    schreibe(vd / "mik3.wav", np.interp(np.arange(n3) / (1 - d), np.arange(len(mic3)), mic3).astype(np.float32))
+    video3 = vd / "kam3.mp4"
+    ff("-f", "lavfi", "-i", "testsrc2=size=320x180:rate=25", "-i", str(vd / "kam3.wav"), "-t", "180", "-pix_fmt", "yuv420p", "-c:v", "libx264", "-preset", "ultrafast", "-g", "50", "-c:a", "aac", "-b:a", "128k", str(video3))
+    r = T.audio_sync_job(job(), str(video3), str(vd / "mik3.wav"))
+    neu, soll3 = lese(r["uri"]), S[10 * SR: 190 * SR]
+    anf, end = lage(soll3[5 * SR: 25 * SR], neu[5 * SR: 25 * SR]), lage(soll3[155 * SR: 175 * SR], neu[155 * SR: 175 * SR])
+    chk("Auseinanderlaufende Uhren: erkannt (200 Millionstel) und ausgeglichen – Anfang und Ende liegen beide auf 3 ms genau", abs(r["drift"] - d) < 3e-5 and abs(r["offset"] + 4.0) < 0.003 and abs(anf) <= 0.003 and abs(end) <= 0.003, (r["drift"], r["offset"], anf, end))
+    # Fehlerfälle
+    schreibe(vd / "fremd.wav", szene(40))
+
+    def fehler(*a):
+        try:
+            T.audio_sync_job(job(), *a)
+            return ""
+        except Exception as e:  # noqa: BLE001
+            return str(e)
+    before_n = len(list((T.DATA_DIR / "mikrofon").glob("*")))
+    chk("Eine fremde Aufnahme wird mit einer Meldung abgelehnt, es entsteht keine Datei", "passen nicht erkennbar zusammen" in fehler(str(video), str(vd / "fremd.wav")) and len(list((T.DATA_DIR / "mikrofon").glob("*"))) == before_n)
+    stumm = vd / "stumm.mp4"
+    ff("-f", "lavfi", "-i", "testsrc2=size=320x180:rate=25", "-t", "3", "-pix_fmt", "yuv420p", "-c:v", "libx264", "-preset", "ultrafast", str(stumm))
+    chk("Ein Video ohne eigenen Ton und eine Datei ohne Ton werden mit einer Meldung abgelehnt", "keinen eigenen Ton" in fehler(str(stumm), str(vd / "mik1.wav")) and "keinen Ton" in fehler(str(video), str(stumm)))
+    jc = job()
+    jc["cancel"] = True
+    try:
+        T.audio_sync_job(jc, str(video), str(vd / "fremd.wav"))
+        err = ""
+    except Exception as e:  # noqa: BLE001
+        err = str(e)
+    chk("Abbruch beendet den Auftrag ohne Reste", "Abgebrochen" in err and not list((T.DATA_DIR / "mikrofon").glob("*.tmp.mp4")) and not list(Path(tempfile.gettempdir()).glob("honeycut_sync_*")), err)
+    sel = T.tonquelle_selftest()
+    chk("Der Selbsttest der App besteht und räumt auf", sel.get("ok") is True and not list(Path(tempfile.gettempdir()).glob("honeycut_selbsttest_*")) and len(list((T.DATA_DIR / "mikrofon").glob("*.mp4"))) == 3, sel)
+    # Speicher verwalten
+    st = T.storage_info() if hasattr(T, "storage_info") else None
+    grp = next((g for g in (st or {}).get("groups", []) if g.get("key") == "mic"), None)
+    chk("Speicher verwalten kennt die Kopien mit Mikrofon-Ton", grp is not None and grp["count"] == 3 and grp["bytes"] > 0, grp and (grp["count"], grp["bytes"]))
+
+
+PARTS = (speichern_und_fassungen, speicher, sicherung, projektpakete, kleine_helfer, quellen_und_belege, schrift_im_export, transkript, export_231, untertitel_effekte, ton_234, belege_235, bild_236, uebergabe_237, stimmen_238, folgen_239, skript_240, ton_241, neue_versionen, bericht_und_protokoll)
 for part in [p for p in PARTS if p.__name__ == MODE] or PARTS:
     print(f"── {part.__name__.replace('_', ' ')} ──", flush=True)
     part()
