@@ -2,6 +2,12 @@
 
 Was sich mit jeder Version von HoneyCut ändert. Die Windows-App zeigt diese Stichpunkte an, sobald eine neuere Version bereitsteht.
 
+## 2.42.1 · Android: Export bricht seltener ab
+
+- **Mehr Geduld beim Export (Android):** Bisher brach der Export ab, sobald zehn Sekunden lang kein fertiges Bild ankam („ERROR_CODE_MUXING_TIMEOUT“). An schweren Stellen wartet HoneyCut jetzt eine Minute.
+- **Fehlermeldung mit Ort:** Bleibt ein Export trotzdem stehen, nennt die Meldung die Stelle im Video und was dort liegt (Clip, Bilder, Videos auf anderen Spuren, Übergang).
+- **Person freistellen (Android):** dieselbe längere Wartezeit.
+
 ## 2.42.0 · Studio aufgeräumt
 - Vorschau: Die Knöpfe links und rechts neben dem Bild sind weg. Unter dem Bild steht eine Leiste mit Abspielen, vorigem und nächstem Schnitt, Zeitstrahl, Zeit, „Ansicht“ und Vollbild – jeder Knopf einmal
 - Menü „Ansicht“ (Auge): Untertitel ein- und ausblenden, Schrift der Untertitel, Schutzzonen, letzten Schnitt anhören, Einzelbilder

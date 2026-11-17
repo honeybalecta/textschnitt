@@ -67,6 +67,7 @@ object Matte {
         val t = Transformer.Builder(ctx)
             .setEncoderFactory(encoders)
             .setVideoMimeType(MimeTypes.VIDEO_H264).setAudioMimeType(MimeTypes.AUDIO_AAC)
+            .setMaxDelayBetweenMuxerSamplesMs(60_000L)   // die Personenerkennung braucht auf langsamen Geräten länger je Bild
             .addListener(object : Transformer.Listener {
                 override fun onCompleted(composition: Composition, exportResult: ExportResult) {
                     tmp.renameTo(out); job.done(result())

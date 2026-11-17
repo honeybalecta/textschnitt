@@ -76,6 +76,7 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
     private fun us(sec: Double) = (sec * 1_000_000).roundToLong()
 
     private companion object {
+        const val STALL_MS = 60_000L   // so lange darf zwischen zwei fertigen Bildern nichts ankommen
         /** Kurze Ton-Blende an jeder Schnittkante der Hauptspur (wie unter Windows und im Browser), in Sekunden. */
         const val CUT_FADE = 0.008
     }
@@ -399,11 +400,17 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
             .setEncoderFactory(encoders)
             .setVideoMimeType(MimeTypes.VIDEO_H264)
             .setAudioMimeType(MimeTypes.AUDIO_AAC)
+            // Media3 bricht ab, wenn zehn Sekunden lang kein fertiges Bild ankommt. Schwere Stellen (viele Ebenen, hohe Auflösung,
+            // Wechsel zwischen Clips) brauchen auf manchen Geräten länger – deshalb eine Minute Geduld.
+            .setMaxDelayBetweenMuxerSamplesMs(STALL_MS)
             .addListener(object : Transformer.Listener {
                 override fun onCompleted(composition: Composition, exportResult: ExportResult) = finish()
                 override fun onError(composition: Composition, exportResult: ExportResult, exportException: ExportException) {
                     outFile.delete()
-                    job.fail(IllegalStateException("Export fehlgeschlagen: ${exportException.errorCodeName} – ${exportException.cause?.message ?: exportException.message}"))
+                    val stall = exportException.errorCode == ExportException.ERROR_CODE_MUXING_TIMEOUT
+                    val was = if (stall) "Der Export ist stehen geblieben: ${STALL_MS / 1000} Sekunden lang kam kein fertiges Bild mehr an"
+                              else "Export fehlgeschlagen: ${exportException.errorCodeName} – ${exportException.cause?.message ?: exportException.message}"
+                    job.fail(IllegalStateException(was + stelle() + (if (stall) " (${exportException.errorCodeName})" else "")))
                 }
             })
             .build()
@@ -414,11 +421,50 @@ class Exporter(private val ctx: Context, private val plan: JSONObject, private v
         poll()
     }
 
+    // Für Fehlermeldungen: wo im Video der Export zuletzt war und was dort liegt (Clip, Ebenen, Übergang) – auf wenige Sekunden genau
+    private var lastProgress = 0
+    private fun stelle(): String = runCatching {
+        val total = plan.optDouble("total", 0.0)
+        if (total <= 0) return@runCatching ""
+        val t = total * lastProgress / 100.0
+        val teile = ArrayList<String>()
+        val segs = plan.optJSONArray("segments")
+        if (segs != null && !audioOnly) {
+            var c = 0.0
+            for (i in 0 until segs.length()) {
+                val s = segs.getJSONObject(i)
+                val d = (s.optDouble("out", 0.0) - s.optDouble("in", 0.0)) / s.optDouble("speed", 1.0).coerceIn(0.25, 4.0)
+                if (t < c + d + 0.5 || i == segs.length() - 1) { teile.add("Clip ${i + 1} von ${segs.length()}"); break }
+                c += d
+            }
+        }
+        val ovs = plan.optJSONArray("overlays")
+        if (ovs != null) {
+            var bild = 0; var video = 0; var ton = 0
+            for (i in 0 until ovs.length()) {
+                val o = ovs.getJSONObject(i); val at = o.optDouble("at", 0.0); val d = o.optDouble("out", 0.0) - o.optDouble("in", 0.0)
+                if (t < at - 3 || t > at + d + 3) continue
+                if (o.optString("mode") == "audio") ton++ else if (o.optBoolean("image")) bild++ else video++
+            }
+            if (video > 0) teile.add(if (video == 1) "ein Video auf einer Spur darüber" else "$video Videos auf Spuren darüber")
+            if (bild > 0) teile.add(if (bild == 1) "ein Bild oder eine Folie" else "$bild Bilder oder Folien")
+            if (ton > 0) teile.add(if (ton == 1) "eine Tonspur" else "$ton Tonspuren")
+        }
+        val trans = plan.optJSONArray("trans")
+        if (trans != null) for (i in 0 until trans.length()) {
+            val at = trans.getJSONObject(i).optDouble("at", -99.0); val d = trans.getJSONObject(i).optDouble("d", 0.0)
+            if (t >= at - 3 && t <= at + d + 3) { teile.add("ein Übergang"); break }
+        }
+        val m = (t / 60).toInt(); val sek = (t % 60).toInt()
+        ". Stelle im Video: etwa $m:${sek.toString().padStart(2, '0')}" + (if (teile.isEmpty()) "" else " (dort: " + teile.joinToString(", ") + ")")
+    }.getOrDefault("")
+
     private fun poll() {
         val t = transformer ?: return
         if (job.status != "running") return
         val holder = ProgressHolder()
         if (t.getProgress(holder) == Transformer.PROGRESS_STATE_AVAILABLE) {
+            lastProgress = holder.progress
             job.progress = holder.progress / 100.0 * 0.97
             job.message = "Exportiere … ${holder.progress} %"
         }
