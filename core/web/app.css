@@ -1348,3 +1348,14 @@ label.col input{width:100%}
 .tl-hbar.off{visibility:hidden}
 #proj.tl-min .tl-hbar{display:none}
 @media (max-width: 700px){ .transport .t-cut{display:none} .tl-bar .tl-time{display:none} .tl-bar #tlOut,.tl-bar #tlIn{display:none} }
+
+/* Titelbild mit Vorlage (2.43) */
+.ct-prev{max-height:34vh}
+.ct-tpls{display:flex;gap:8px;overflow-x:auto;padding:2px 0 10px;scrollbar-width:thin}
+.ct-tpls button{flex:none;width:132px;padding:0;border:2px solid var(--line);border-radius:8px;background:var(--p1,#1c1c1a);color:var(--mute);cursor:pointer;overflow:hidden;font-size:11px;text-align:left}
+.ct-tpls button canvas{display:block;width:100%;height:74px;object-fit:contain;background:#000}
+.ct-tpls button span{display:block;padding:4px 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ct-tpls button.on{border-color:var(--acc);color:var(--fg)}
+@media (max-width:759px){ .ct-prev{max-height:24vh} }
+.sheet.passive:has(#ctPrev){max-height:64vh}
+@media (min-width:760px) and (min-height:600px){ .sheet.passive:has(#ctPrev){max-height:calc(100vh - 88px)} }

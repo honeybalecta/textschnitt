@@ -5409,7 +5409,8 @@ function openCover(){
     <label class="row" style="margin-top:10px"><input type="checkbox" id="cvTitles"> Titel und Textzeile aus dem Video zeigen</label>
     <label class="row"><input type="checkbox" id="cvSubs"> Untertitel zeigen</label>
     <p class="muted small">Gezeigt wird das Bild an der Abspiellinie samt Einblendungen und Wasserzeichen. Für ein anderes Bild die Abspiellinie verschieben, die Vorschau zieht nach. Die Titelzeile übernimmt Farben und Schrift vom Designprofil der Folien.</p>
-    <div class="row" style="margin-top:12px"><span class="muted small" id="cvMsg" style="flex:1;min-width:0"></span><button class="btn" id="cvNo">Schließen</button><button class="btn primary" id="cvSave">Speichern …</button></div>`;
+    <div class="row" style="margin-top:12px"><span class="muted small" id="cvMsg" style="flex:1;min-width:0"></span><button class="btn small" id="cvTpl" title="Vorlagen aus HoneyThumb: Person freistellen, eigener Hintergrund, Titel">Mit Vorlage …</button><button class="btn" id="cvNo">Schließen</button><button class="btn primary" id="cvSave">Speichern …</button></div>`;
+  $('#cvTpl').onclick = () => { closeSheet(); if (window.openCoverTpl) openCoverTpl(); };
   $('#cvText').value = cs.text || ''; $('#cvPos').value = cs.pos || (port ? 'mitte' : 'unten'); $('#cvTitles').checked = cs.titles !== false; $('#cvSubs').checked = !!cs.subs;
   $('#cvFmt').value = pref.fmt === 'jpg' ? 'jpg' : 'png'; if (pref.small && small) $('#cvSize').value = String(small);
   const opts = () => ({text: $('#cvText').value, pos: $('#cvPos').value, titles: $('#cvTitles').checked, subs: $('#cvSubs').checked});

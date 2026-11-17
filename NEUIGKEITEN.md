@@ -2,6 +2,15 @@
 
 Was sich mit jeder Version von HoneyCut ändert. Die Windows-App zeigt diese Stichpunkte an, sobald eine neuere Version bereitsteht.
 
+## 2.43.0 · Titelbild mit Vorlage
+
+- **Titelbild mit Vorlage** (Export → „Titelbild mit Vorlage …“, auch über „Titelbild“ → „Mit Vorlage …“): Das Bild an der Abspiellinie kommt in eine der zehn Vorlagen aus HoneyThumb. HoneyCut stellt die Person frei und setzt sie vor den Hintergrund der Vorlage, dazu Titel, Rubrik und Akzentfarbe.
+- **Eigener Hintergrund:** wie in der Vorlage, das Videobild weichgezeichnet, ein eigenes Bild oder eine Farbe.
+- **Person einpassen:** Größe und Lage nach links oder rechts mit zwei Reglern.
+- **Formate:** 16:9, 9:16, 1:1 und 4:5; Speichern als JPG (für YouTube unter 2 MB gehalten) oder PNG.
+- **Weiter in HoneyThumb:** „Für HoneyThumb sichern“ legt eine `.honeythumb`-Datei ab. In HoneyThumb lassen sich dann Ebenen, Formen und die Maske bearbeiten.
+- Die Personenerkennung wird beim ersten Mal aus dem Netz geladen (ca. 10 MB). Das Bild bleibt auf dem Gerät.
+
 ## 2.42.1 · Android: Export bricht seltener ab
 
 - **Mehr Geduld beim Export (Android):** Bisher brach der Export ab, sobald zehn Sekunden lang kein fertiges Bild ankam („ERROR_CODE_MUXING_TIMEOUT“). An schweren Stellen wartet HoneyCut jetzt eine Minute.
