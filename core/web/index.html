@@ -220,9 +220,9 @@
       </div>
       <div class="card stack" id="spkCard">
         <h3>Sprecher:innen</h3>
-        <p class="muted small">Im Text Wörter markieren und mit „👤 Person“ zuordnen. Hier bekommt jede Person ihre eigenen Untertitel – alles auf „wie alle“ folgt der Grundeinstellung oben, so bleibt das Bild einheitlich und nur z. B. die Farbe wechselt.</p>
+        <p class="muted small">„Personen erkennen“ ordnet die Wörter anhand der Stimmen zu; einzelne Stellen im Text markieren und mit „👤 Person“ ändern. Hier bekommt jede Person ihre eigenen Untertitel – alles auf „wie alle“ folgt der Grundeinstellung oben, so bleibt das Bild einheitlich und nur z. B. die Farbe wechselt.</p>
         <div id="spkList"></div>
-        <div class="row wrap"><button class="btn" id="spkAdd">＋ Person</button><button class="btn" id="spkSame" title="Alle Abweichungen entfernen – alle Personen sehen wieder gleich aus">Alle angleichen</button><button class="btn" id="lowerBtn" title="Name und Funktion als Einblendung: Übersicht, Lage und Größe">Bauchbinden …</button></div>
+        <div class="row wrap"><button class="btn" id="spkAuto" title="Stimmen vergleichen und die Wörter den Personen zuordnen">Personen erkennen …</button><button class="btn" id="spkAdd">＋ Person</button><button class="btn" id="spkSame" title="Alle Abweichungen entfernen – alle Personen sehen wieder gleich aus">Alle angleichen</button><button class="btn" id="lowerBtn" title="Name und Funktion als Einblendung: Übersicht, Lage und Größe">Bauchbinden …</button></div>
       </div>
       <div class="card stack" id="trCard">
         <h3>Übersetzung</h3>
@@ -539,6 +539,7 @@
 <div class="toast" id="toast"></div>
 <script src="icons.js"></script>
 <script src="chroma.js"></script>
+<script src="stimmen.js"></script>
 <script src="bridge-http.js"></script>
 <script src="app.js"></script>
 <script src="studio.js"></script>

@@ -169,6 +169,11 @@ try {
   const reopened = await page.waitForFunction(() => P && tokens.length > 0 && document.querySelector('#v').src.startsWith('blob:'), null, {timeout: 20000}).then(() => true, () => false);
   step('Nach Neuladen: Projekt da, Zugriff wiederhergestellt', listed === 1 && dlg && reopened, {listed, dlg, reopened});
 
+  // Personen erkennen (2.38): Der Ton kommt im Browser aus der eigenen Dekodierung und geht an denselben Rechenkern wie überall
+  const vc = await ev(async () => { const words = voiceWords(), pcm = await voiceAudio(P.sources[0].uri, () => {}); const r = await Stimmen.run([{pcm}], words, {});
+    return {ready: voiceReady(), words: words.length, sec: +(pcm.length / 16000).toFixed(1), float: pcm instanceof Float32Array, count: r ? r.count : -1}; }).catch(e => ({error: String(e && e.message || e)}));
+  step('Personen erkennen: Ton aus dem Browser erreicht den Rechenkern', !!vc.ready && vc.words > 0 && vc.sec > 1 && vc.count >= 1, vc);
+
   // Service Worker & Isolation (schnellere Spracherkennung ohne Grafikkarte)
   const p2 = await ctx.newPage();
   await p2.goto(BASE);

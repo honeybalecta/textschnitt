@@ -142,6 +142,9 @@ def selftest(out_path: str) -> int:
         rep["uebergabe"] = T.uebergabe_selftest()
         if not rep["uebergabe"].get("ok"):
             raise RuntimeError(f"Die Übergabe im Heimnetz antwortet nicht wie erwartet: {rep['uebergabe']}")
+        rep["stimmen"] = T.stimmen_selftest()
+        if not rep["stimmen"].get("ok"):
+            raise RuntimeError(f"Der Ton für das Erkennen der Personen kommt nicht wie erwartet: {rep['stimmen']}")
         # Export über die Grafikkarte: Das mitgelieferte ffmpeg muss die Encoder von Nvidia, Intel und AMD kennen; die Suche nach
         # einer nutzbaren Grafikkarte darf auf einem Rechner ohne sie nichts finden und nicht scheitern.
         enc = subprocess.run([T.FFMPEG, "-hide_banner", "-encoders"], capture_output=True, text=True, **T.NOWIN).stdout

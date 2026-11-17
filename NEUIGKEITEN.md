@@ -2,6 +2,14 @@
 
 Was sich mit jeder Version von HoneyCut ändert. Die Windows-App zeigt diese Stichpunkte an, sobald eine neuere Version bereitsteht.
 
+## 2.38.0 · Personen erkennen
+- Personen erkennen (Untertitel → Sprecher:innen → „Personen erkennen …“): HoneyCut vergleicht den Klang der Stimmen und ordnet jedes Wort einer Person zu. Die Personen heißen zunächst „Person 1“, „Person 2“ und so weiter; Namen, Funktion und Gestaltung trägst du wie gewohnt ein
+- Die Zahl der Personen schätzt HoneyCut selbst. Klingen zwei Stimmen sehr ähnlich oder ist die Aufnahme kurz, hilft die feste Vorgabe (2 bis 6)
+- Angelegte Personen bleiben erhalten: Wer schon Wörter von Hand zugeordnet hat, behält diese Person für die passende Stimme. „Rückgängig“ nimmt das Erkennen in einem Schritt zurück
+- Untertitel teilen sich an den Wechseln, Bauchbinden und Textfassung folgen der Zuordnung. Einzelne Stellen änderst du weiter im Text mit „👤 Person“
+- Läuft auf dem Gerät, ohne Netz und ohne Modell zum Nachladen – unter Windows, in der Android-App und im Browser. Eine halbe Stunde Gespräch braucht am Computer weniger als eine halbe Minute
+- Grenzen: Reden zwei Menschen gleichzeitig, entscheidet sich HoneyCut für eine Stimme. Geprüft ist das Erkennen bisher mit künstlichen Stimmen; Rückmeldungen zu echten Gesprächen sind willkommen
+
 ## 2.37.0 · Am Handy weiterschneiden
 - Ans Handy übergeben (Windows → Android-App): Im Export-Reiter, im Menü der Projektliste oder über „Handy“ auf der Startseite zeigt HoneyCut einen QR-Code. Mit der Kamera des Handys scannen, auf der Seite „In HoneyCut öffnen“ antippen – das Projekt landet samt Videos, Bildern und Schriften in der App. Computer und Handy müssen im selben WLAN sein
 - Und zurück: Am Handy „An den Computer zurückgeben“ wählen, am Computer „Übernehmen“. In der Regel geht nur der Schnitt zurück; die Videos hat der Computer schon

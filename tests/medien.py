@@ -8,6 +8,8 @@
    karo.mp4 (12 s): ein Schachbrett aus 4 Pixel großen Feldern – daran messen die Prüfungen, wo im fertigen Bild gemittelt wurde,
    gruen.mp4 (10 s): Greenscreen mit einem Feld in der Mitte (erst mit Farbstich, dann neutral) für Farbe und Hintergründe,
    wackel.mp4 (4 s): ein stehendes Wolkenmuster mit wanderndem Ausschnitt für das Beruhigen,
+   gespraech.mp4 (gut 1 min): drei künstliche Stimmen im Wechsel für das Erkennen der Personen (gespraech.json nennt die Lösung);
+   mit einem ffmpeg, das flite kennt, zusätzlich stimmen-flite.wav mit drei Sprachsynthese-Stimmen,
    drei kurze Einspieler (broll1–3.mp4), acht Folienbilder und ein Logo.
 Aufruf: python3 tests/medien.py <Zielordner>   – vorhandene Dateien bleiben stehen."""
 import array
@@ -253,6 +255,136 @@ def takt(out: Path) -> None:
     print("takt.mp4", f"{TAKT_S} s")
 
 
+# Prüfmedium zum Erkennen der Personen (2.38): drei künstliche Stimmen. Jede hat eine eigene Grundtonhöhe und einen eigenen
+# „Rachenraum“ (Lage der Formanten); die Vokale wechseln von Silbe zu Silbe. (Grundton in Hz, Faktor der Formanten, Pegel)
+STIMMEN = [(112, 1.0, 1.0), (205, 1.2, 0.7), (150, 0.86, 0.85)]
+VOKALE = [(730, 1090, 2440), (270, 2290, 3010), (390, 1990, 2550), (570, 840, 2410), (300, 870, 2240), (520, 1600, 2500)]
+GESPRAECH = [   # (Stimme, Satz, Pause danach)
+    (0, "Heute sprechen wir über die Mieten in unserer Stadt.", 0.5), (0, "Zu Gast sind zwei Menschen aus der Nachbarschaft.", 0.7),
+    (1, "Danke für die Einladung.", 0.4), (1, "Bei uns im Haus steigt die Miete seit Jahren.", 0.6),
+    (2, "Das kenne ich gut.", 0.3), (2, "Unsere Hausgemeinschaft hat sich deshalb zusammengetan und einen Brief geschrieben.", 0.8),
+    (0, "Was stand in dem Brief?", 0.5),
+    (2, "Wir fordern eine Rücknahme der Erhöhung und ein Gespräch mit der Verwaltung.", 0.6),
+    (1, "Genau.", 0.3), (1, "Allein hätte ich mich das kaum getraut.", 0.5), (1, "Zusammen ging es leichter als gedacht.", 0.7),
+    (0, "Wie hat die Verwaltung reagiert?", 0.5),
+    (2, "Erst kam keine Antwort.", 0.3), (2, "Nach zwei Wochen haben wir alle gemeinsam im Büro gestanden.", 0.6),
+    (0, "Und dann?", 0.4),
+    (1, "Dann gab es plötzlich einen Termin.", 0.5), (1, "Die Erhöhung liegt inzwischen auf Eis.", 0.8),
+    (0, "Was ratet ihr anderen Häusern?", 0.5),
+    (2, "Redet mit euren Nachbarinnen und Nachbarn und fangt klein an.", 0.5),
+    (1, "Und schreibt alles auf, was die Verwaltung sagt.", 0.7),
+    (0, "Vielen Dank euch beiden.", 0.4), (0, "Nächste Woche geht es an dieser Stelle um Nebenkosten.", 1.0),
+]
+
+
+def gespraech(out: Path) -> None:
+    rnd = random.Random(38)
+    audio = [rnd.gauss(0, 0.0012) for _ in range(int(0.6 * SR))]
+    words, truth = [], []
+    for who, satz, pause in GESPRAECH:
+        f0, tract, gain = STIMMEN[who]
+        for w in satz.split():
+            t0 = len(audio) / SR
+            kern = w.strip(".,?!")
+            silben = max(1, round(len(kern) / 3))
+            for s in range(silben):
+                n = int(rnd.uniform(0.11, 0.17) * SR)
+                fm = VOKALE[rnd.randrange(len(VOKALE))]
+                res = []   # drei Resonatoren (zweipolig), Bandbreite wächst mit der Frequenz
+                for k, f in enumerate(fm):
+                    fc, bw = f * tract, 60 + 40 * k
+                    r = math.exp(-math.pi * bw / SR)
+                    res.append([2 * r * math.cos(2 * math.pi * fc / SR), -r * r, 0.0, 0.0, (1.0, 0.6, 0.3)[k]])
+                per, ph = SR / (f0 * rnd.uniform(0.96, 1.04)), 0.0
+                for i in range(n):
+                    ph += 1.0
+                    x = rnd.gauss(0, 0.02)
+                    if ph >= per:
+                        ph -= per
+                        x += 1.0
+                    y = 0.0
+                    for q in res:
+                        v = x + q[0] * q[2] + q[1] * q[3]
+                        q[3], q[2] = q[2], v
+                        y += q[4] * v
+                    env = min(1.0, i / (0.015 * SR), (n - i) / (0.02 * SR))
+                    audio.append(0.035 * gain * env * y + rnd.gauss(0, 0.0012))
+            t1 = len(audio) / SR
+            words.append({"text": " " + w, "start": round(t0, 3), "end": round(t1, 3), "prob": 0.9})
+            truth.append(who)
+            audio.extend(rnd.gauss(0, 0.0012) for _ in range(int(rnd.uniform(0.03, 0.07) * SR)))
+        audio.extend(rnd.gauss(0, 0.0012) for _ in range(int(pause * SR)))
+    audio.extend(rnd.gauss(0, 0.0012) for _ in range(SR))
+    pcm = array.array("h", (max(-32767, min(32767, int(x * 32767))) for x in audio))
+    if sys.byteorder == "big":
+        pcm.byteswap()
+    wav = out / "gespraech.wav"
+    with wave.open(str(wav), "wb") as f:
+        f.setnchannels(1)
+        f.setsampwidth(2)
+        f.setframerate(SR)
+        f.writeframes(pcm.tobytes())
+    (out / "gespraech.words.json").write_text(json.dumps(words, ensure_ascii=False), encoding="utf-8")
+    (out / "gespraech.json").write_text(json.dumps({"stimmen": len(STIMMEN), "wer": truth}), encoding="utf-8")
+    length = len(audio) / SR
+    ff("-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30", "-i", str(wav), "-t", f"{length:.2f}", "-c:v", "libx264", "-preset", "veryfast", "-crf", "30", "-g", "30",
+       "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", str(out / "gespraech.mp4"))
+    wav.unlink()
+    print("gespraech.mp4", f"{length:.1f} s")
+
+
+FLITE = [("slt", "we need to talk about wages and rent in this city"), ("rms", "the numbers from last year tell a different story"),
+         ("awb", "people are organizing in their neighborhoods right now"), ("slt", "how would that work in practice"),
+         ("rms", "the union has been saying this for years and nobody listened"), ("awb", "I was there on monday and saw it with my own eyes"),
+         ("slt", "housing is a right and the market has failed"), ("rms", "so what should people do tomorrow morning"),
+         ("awb", "join a union and talk to your neighbors"), ("slt", "that sounds good to me"), ("rms", "the press reported it very differently"),
+         ("awb", "solidarity means that nobody is left alone when the pressure rises"), ("slt", "let me finish my point please"),
+         ("rms", "we looked at the data from twelve regions and the pattern is the same everywhere"), ("awb", "exactly and that is why we went on strike"),
+         ("slt", "the strike was a success because everyone stood together"), ("rms", "I think the question is who pays for the crisis"),
+         ("awb", "there is a long history behind this decision")]
+
+
+def stimmen_flite(out: Path) -> None:
+    """Drei Stimmen der Sprachsynthese flite im Wechsel – nur, wenn das ffmpeg hier flite kennt. Die Wortzeiten sind gleichmäßig über den Satz verteilt."""
+    r = subprocess.run(["ffmpeg", "-hide_banner", "-filters"], capture_output=True, text=True)
+    if " flite " not in r.stdout:
+        print("stimmen-flite.wav: ausgelassen (ffmpeg ohne flite)")
+        return
+    order = sorted({v for v, _ in FLITE})
+    pcm, words, truth = array.array("h", [0] * (SR // 2)), [], []
+    tmp, txt = out / "_flite.wav", out / "_flite.txt"
+    for voice, satz in FLITE:
+        txt.write_text(satz, encoding="utf-8")
+        ff("-f", "lavfi", "-i", f"flite=textfile={txt}:voice={voice}", "-ar", str(SR), "-ac", "1", str(tmp))
+        with wave.open(str(tmp), "rb") as f:
+            a = array.array("h", f.readframes(f.getnframes()))
+        if sys.byteorder == "big":
+            a.byteswap()
+        loud = [i for i, x in enumerate(a) if abs(x) > 400]
+        a = a[max(0, loud[0] - 160): loud[-1] + 160] if loud else a
+        t0, d, ws = len(pcm) / SR, len(a) / SR, satz.split()
+        tot, c = sum(len(w) + 1 for w in ws), 0.0
+        for w in ws:
+            part = (len(w) + 1) / tot * d
+            words.append({"text": " " + w, "start": round(t0 + c, 3), "end": round(t0 + c + part * 0.95, 3), "prob": 0.9})
+            truth.append(order.index(voice))
+            c += part
+        words[-1]["text"] += "."
+        pcm.extend(a)
+        pcm.extend([0] * int(0.4 * SR))
+    tmp.unlink(missing_ok=True)
+    txt.unlink(missing_ok=True)
+    if sys.byteorder == "big":
+        pcm.byteswap()
+    with wave.open(str(out / "stimmen-flite.wav"), "wb") as f:
+        f.setnchannels(1)
+        f.setsampwidth(2)
+        f.setframerate(SR)
+        f.writeframes(pcm.tobytes())
+    (out / "stimmen-flite.json").write_text(json.dumps({"stimmen": len(order), "wer": truth, "words": words}), encoding="utf-8")
+    print("stimmen-flite.wav", f"{len(pcm) / SR:.1f} s")
+
+
 def ff(*args: str) -> None:
     subprocess.run(["ffmpeg", "-v", "error", "-y", *args], check=True)
 
@@ -285,6 +417,10 @@ def main(out: Path) -> None:
         ton(out)
     if not all((out / f).exists() for f in ("takt.mp4", "takt.words.json")):
         takt(out)
+    if not all((out / f).exists() for f in ("gespraech.mp4", "gespraech.words.json", "gespraech.json")):
+        gespraech(out)
+    if not (out / "stimmen-flite.wav").exists():
+        stimmen_flite(out)
     if not (out / "karo.mp4").exists():
         ff("-f", "lavfi", "-i", "color=c=black:size=640x360:rate=30,format=gray,geq=lum='16+219*mod(floor(X/4)+floor(Y/4)\\,2)'", "-f", "lavfi", "-i", "sine=frequency=330:sample_rate=44100",
            "-t", "12", "-af", "volume=0.1", "-pix_fmt", "yuv420p", "-c:v", "libx264", "-preset", "veryfast", "-crf", "10", "-g", "30", "-c:a", "aac", "-b:a", "96k", str(out / "karo.mp4"))

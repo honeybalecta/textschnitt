@@ -222,6 +222,25 @@ class Bridge(private val act: MainActivity) {
         JSONObject().put("env", Transcriber.envelope(audio))
     }.id
 
+    /** Ton für das Trennen der Stimmen (stimmen.js): 16 kHz, mono, 16 Bit als Datei im Zwischenspeicher; Ergebnis {url}. */
+    @JavascriptInterface
+    fun voicePcm(uri: String): String = Jobs.start {
+        ctx.cacheDir.listFiles()?.filter { f -> f.name.startsWith("stimmen-") && f.name.endsWith(".pcm") }?.forEach { f -> f.delete() }
+        val audio = AudioDecoder.decode(ctx, Uri.parse(uri), it, 0.9)
+        val out = File(ctx.cacheDir, "stimmen-" + java.util.UUID.randomUUID().toString().take(8) + ".pcm")
+        val buf = ByteArray(1 shl 16)
+        java.io.BufferedOutputStream(java.io.FileOutputStream(out)).use { o ->
+            var n = 0
+            for (x in audio) {
+                val v = (x * 32767f).toInt().coerceIn(-32768, 32767)
+                buf[n++] = (v and 0xff).toByte(); buf[n++] = ((v shr 8) and 0xff).toByte()
+                if (n == buf.size) { o.write(buf, 0, n); n = 0 }
+            }
+            if (n > 0) o.write(buf, 0, n)
+        }
+        JSONObject().put("url", "media?f=" + java.net.URLEncoder.encode(out.absolutePath, "UTF-8")).put("bytes", out.length())
+    }.id
+
     @JavascriptInterface
     fun exportVideo(plan: String): String {
         val job = Jobs.create()

@@ -346,6 +346,13 @@
       return {ranges: out};
     });
   }
+  // Ton für das Trennen der Stimmen (stimmen.js): bleibt im Speicher, die Oberfläche holt ihn mit voicePcmTake ab
+  const voice = new Map();
+  function voicePcm(uri){
+    const file = need(uri);
+    return newJob(async job => { const eng = await E(); const pcm = await eng.decodeAudio(file, 16000, p => job.progress = p, job); voice.clear(); voice.set(job.id, pcm); return {mem: job.id}; });
+  }
+  function voicePcmTake(id){ const pcm = voice.get(id) || null; voice.delete(id); return pcm; }
   function envelope(uri){
     const file = need(uri);
     return newJob(async job => { const eng = await E(); const pcm = await eng.decodeAudio(file, 16000, p => job.progress = p, job); return {env: eng.envelopeB64(eng.envelopeDb(pcm))}; });
@@ -510,7 +517,7 @@
     deleteProject: id => { projects.delete(id); summaries.delete(id); idb('projects', 'readwrite', s => s.delete(id)).catch(() => {}); },
     models: () => JSON.stringify(modelsList()),
     downloadModel: name => newJob(async job => { await loadModel(name, job, 0, 1); return {}; }),
-    transcribe, transcribeRanges, exportVideo, makeProxy, autoMatte, translate, envelope, exportPackage, importPackage,
+    transcribe, transcribeRanges, exportVideo, makeProxy, autoMatte, translate, envelope, voicePcm, voicePcmTake, exportPackage, importPackage,
     // Erzeugtes Bild (Folie): sofort nutzbar, im Hintergrund dauerhaft im Browser-Speicher (OPFS) abgelegt
     saveImage(name, b64, width, height, project){
       const bin = atob(String(b64).split(',').pop()), u8 = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);

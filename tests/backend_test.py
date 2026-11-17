@@ -1451,7 +1451,56 @@ def uebergabe_237():
     T.import_root = root0
 
 
-PARTS = (speichern_und_fassungen, speicher, sicherung, projektpakete, kleine_helfer, quellen_und_belege, schrift_im_export, transkript, export_231, untertitel_effekte, ton_234, belege_235, bild_236, uebergabe_237, neue_versionen, bericht_und_protokoll)
+def stimmen_238():
+    """2.38: Ton für das Erkennen der Personen – 16 kHz, mono, 16 Bit, ab Bildbeginn; die Datei verschwindet nach dem Abholen."""
+    import numpy as np
+    vd = TMP / "stimmen"
+    vd.mkdir(parents=True, exist_ok=True)
+
+    def ff(*a):
+        subprocess.run([T.FFMPEG, "-v", "error", "-y", *a], check=True, capture_output=True)
+    video = vd / "ton.mp4"      # 3 s Bild, Stereo-Ton mit 44,1 kHz: links 440 Hz, rechts still
+    ff("-f", "lavfi", "-i", "testsrc2=size=320x180:rate=30", "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=44100", "-t", "3", "-af", "volume=0.5,pan=stereo|c0=c0|c1=0*c0",   # Scheitel 0,0625 links → gemischt rund 0,031
+       "-pix_fmt", "yuv420p", "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", "-b:a", "128k", str(video))
+    j = T.new_job("voicepcm")
+    r = T.voice_pcm_job(j, str(video))
+    f = T.VOICE_PCM.get(j["id"])
+    chk("Ton für die Stimmen: Der Auftrag nennt die Adresse zum Abholen und die Größe", r["url"] == "api/pcm?id=" + j["id"] and f is not None and f.is_file() and r["bytes"] == f.stat().st_size, r)
+    a = np.frombuffer(f.read_bytes(), dtype="<i2").astype(np.float64) / 32768
+    chk("Ton für die Stimmen: 16 kHz, mono – drei Sekunden ergeben rund 48 000 Werte", abs(len(a) - 48000) < 1700, len(a))
+    spec = np.abs(np.fft.rfft(a[8000:8000 + 16000] * np.hanning(16000)))
+    chk("Ton für die Stimmen: Der Ton von 440 Hz kommt an (beide Kanäle gemischt)", abs(int(spec.argmax()) - 440) <= 2 and 0.02 < np.abs(a[8000:24000]).max() < 0.05, (int(spec.argmax()), round(float(np.abs(a[8000:24000]).max()), 3)))
+    spaet = vd / "spaet.mp4"    # der Ton beginnt 1 s nach dem Bild: Die Stille davor gehört in die Datei, sonst lägen die Wörter falsch
+    ff("-f", "lavfi", "-i", "testsrc2=size=320x180:rate=30", "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=44100", "-filter_complex", "[1:a]adelay=1000:all=1,volume=0.5[a]", "-map", "0:v", "-map", "[a]", "-t", "3",
+       "-pix_fmt", "yuv420p", "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", str(spaet))
+    j2 = T.new_job("voicepcm")
+    T.voice_pcm_job(j2, str(spaet))
+    b = np.frombuffer(T.VOICE_PCM[j2["id"]].read_bytes(), dtype="<i2").astype(np.float64) / 32768
+    first = int(np.argmax(np.abs(b) > 0.05))
+    chk("Ton für die Stimmen: Zeiten zählen ab Bildbeginn (Ton setzt nach 1 s ein)", abs(first / 16000 - 1.0) < 0.08, round(first / 16000, 3))
+    stumm = vd / "stumm.mp4"
+    ff("-f", "lavfi", "-i", "testsrc2=size=320x180:rate=30", "-t", "1", "-pix_fmt", "yuv420p", "-c:v", "libx264", "-preset", "veryfast", str(stumm))
+    j3 = T.new_job("voicepcm")
+    try:
+        T.voice_pcm_job(j3, str(stumm))
+        err = ""
+    except Exception as e:  # noqa: BLE001
+        err = str(e) or "Fehler"
+    left = (Path(tempfile.gettempdir()) / f"honeycut_stimmen_{j3['id']}.pcm")
+    chk("Ton für die Stimmen: Ein Video ohne Ton endet mit einer Meldung, ohne Datei zu hinterlassen", bool(err) and not left.exists() and j3["id"] not in T.VOICE_PCM, err[:80])
+    # Aufräumen: Dateien, deren Auftrag es nicht mehr gibt, verschwinden beim nächsten Lauf
+    T.JOBS.pop(j["id"], None)
+    j4 = T.new_job("voicepcm")
+    T.voice_pcm_job(j4, str(video))
+    chk("Ton für die Stimmen: Liegen gebliebene Dateien früherer Läufe werden beim nächsten Lauf gelöscht", not f.exists() and j["id"] not in T.VOICE_PCM and T.VOICE_PCM[j4["id"]].is_file())
+    for jj in (j2, j4):
+        T.VOICE_PCM.pop(jj["id"]).unlink(missing_ok=True)
+    st = T.stimmen_selftest()
+    chk("Ton für die Stimmen: Der Selbsttest der App besteht und räumt auf", st.get("ok") is True and not list(Path(tempfile.gettempdir()).glob("honeycut_selbsttest_*")), st)
+    chk("Ton für die Stimmen: Die Oberfläche bekommt stimmen.js ausgeliefert", (T.WEB_DIR / "stimmen.js").is_file() and '"stimmen.js"' in Path(T.__file__).read_text(encoding="utf-8") and 'src="stimmen.js"' in (T.WEB_DIR / "index.html").read_text(encoding="utf-8"))
+
+
+PARTS = (speichern_und_fassungen, speicher, sicherung, projektpakete, kleine_helfer, quellen_und_belege, schrift_im_export, transkript, export_231, untertitel_effekte, ton_234, belege_235, bild_236, uebergabe_237, stimmen_238, neue_versionen, bericht_und_protokoll)
 for part in [p for p in PARTS if p.__name__ == MODE] or PARTS:
     print(f"── {part.__name__.replace('_', ' ')} ──", flush=True)
     part()

@@ -3027,6 +3027,7 @@ $('#selSpk').onclick = e => {
 function renderSpeakers(){
   const box = $('#spkList'); if (!box || !P) return; box.innerHTML = '';
   $('#spkSame').classList.toggle('hidden', !P.speakers.some(sp => sp.st && Object.keys(sp.st).length));
+  if ($('#spkAuto')) $('#spkAuto').classList.toggle('hidden', !voiceReady() || !tokens.some(t => t.type === 'word' && t.ws != null));
   if (!P.speakers.length){ box.innerHTML = '<p class="muted small">Noch keine Personen.</p>'; return; }
   const fontOpts = () => '<option value="__">wie alle</option>' + FONTS.concat(userFonts).map(f => `<option value="${esc(f.key)}">${esc(f.label)}</option>`).join('');
   for (const sp of P.speakers){
@@ -3065,6 +3066,7 @@ function renderSpeakers(){
   }
 }
 $('#spkAdd').onclick = async () => { const sp = await newSpeaker(); if (sp){ changed(false); renderSpeakers(); toast('Jetzt im Text Wörter markieren und mit „👤 Person“ zuordnen'); } };
+if ($('#spkAuto')) $('#spkAuto').onclick = () => voiceDialog();
 $('#spkSame').onclick = () => { commit(() => P.speakers.forEach(sp => sp.st = {}), false); styleOverlay(); renderSpeakers(); toast('Alle Personen sehen wieder gleich aus'); };
 
 // ── Text eines Bereichs korrigieren ──
@@ -7524,6 +7526,83 @@ function openMarker(id){
   $('#mkxZoom').onchange = e => { st.zoom = e.target.checked; };
   window.addEventListener('resize', fit);
   img.onload = fit; img.onerror = () => { toast('Das Bild lässt sich nicht laden'); close(); }; img.src = MEDIA(orig.uri);
+}
+
+// ───────── Personen automatisch erkennen (2.38, C7) ───────── Der Ton kommt von der jeweiligen Plattform (TS.voicePcm), die Rechnung steckt in stimmen.js
+const voiceReady = () => !!(TS.voicePcm && window.Stimmen);
+// Wörter mit Ton in Sprechreihenfolge: Aufnahme, Beginn und Ende in der Aufnahme, Satzende
+function voiceWords(){
+  const list = [];
+  for (const t of tokens){ if (t.type !== 'word' || t.ws == null || t.src == null) continue; const s = P.sources[t.src]; if (!s || s.noAudio || s.hasAudio === false) continue;
+    list.push({i: t.i, src: t.src, a: Math.max(0, t.ws - s.off), b: Math.max(0, t.we - s.off), end: /[.!?…]["'»«“”)\]]*\s*$/.test(t.text || '')}); }
+  return list;
+}
+let voiceJobId = null;
+function voiceAudio(uri, onP){
+  return new Promise((res, rej) => { let id; try { id = TS.voicePcm(uri); } catch(e){ return rej(e); }
+    voiceJobId = id;
+    watchJob(id, j => onP(j.progress || 0), async j => { voiceJobId = null;
+      try { const r = j.result || {};
+        if (r.mem && TS.voicePcmTake){ const pcm = TS.voicePcmTake(r.mem); if (!pcm) throw new Error('Der Ton liegt nicht mehr vor'); return res(pcm); }
+        const rsp = await fetch(r.url, {cache: 'no-store'}); if (!rsp.ok) throw new Error('Der Ton ließ sich nicht laden');
+        const buf = await rsp.arrayBuffer(); res(new Int16Array(buf, 0, buf.byteLength >> 1)); } catch(e){ rej(e); } },
+      j => { voiceJobId = null; rej(new Error(j && j.status === 'cancelled' ? 'Abgebrochen' : (j && j.error) || 'Der Ton ließ sich nicht lesen')); }); });
+}
+// Ergebnis übernehmen: Stimmen auf vorhandene Personen legen (meiste gemeinsame Wörter), sonst angelegte freie Personen nutzen, sonst neue anlegen
+function voiceApply(words, r){
+  const K = r.count, hit = [], pairs = [], taken = new Set(), map = new Array(K).fill(null);
+  for (let k = 0; k < K; k++) hit.push(new Map());
+  words.forEach((w, j) => { const k = r.spk[j], id = tokens[w.i].spk; if (k >= 0 && id && spkOf(id)) hit[k].set(id, (hit[k].get(id) || 0) + 1); });
+  hit.forEach((m, k) => m.forEach((c, id) => pairs.push({k, id, c}))); pairs.sort((a, b) => b.c - a.c);
+  for (const p of pairs) if (!map[p.k] && !taken.has(p.id)){ map[p.k] = p.id; taken.add(p.id); }
+  const usedIds = new Set(tokens.map(t => t.spk).filter(Boolean)); let made = 0;
+  commit(() => {
+    for (let k = 0; k < K; k++){ if (map[k]) continue;
+      let sp = P.speakers.find(x => !taken.has(x.id) && !usedIds.has(x.id));
+      if (!sp){ let n = P.speakers.length + 1; while (P.speakers.some(x => x.name === `Person ${n}`)) n++; sp = {id: newId(), name: `Person ${n}`, st: {}}; P.speakers.push(sp); made++; }
+      map[k] = sp.id; taken.add(sp.id); }
+    const of = new Map(); words.forEach((w, j) => { if (r.spk[j] >= 0) of.set(w.i, map[r.spk[j]]); });
+    let cur = null, first = null; for (const t of tokens){ if (of.has(t.i)){ cur = of.get(t.i); if (!first) first = cur; } }
+    cur = first;   // Wörter ohne eigenen Ton (von Hand ergänzt) folgen der Person davor
+    for (const t of tokens){ if (t.type === 'pause' && !(P.edits && P.edits[t.i])) continue; if (of.has(t.i)) cur = of.get(t.i); if (cur) t.spk = cur; }
+    splitCuesBySpeaker();
+  }, false);
+  styleOverlay(); renderSpeakers(); renderTranscript(); if (tab === 'subs') renderSubs(); lowerChanged();
+  return {count: K, made};
+}
+function voiceDialog(){
+  if (!P) return;
+  if (!voiceReady()) return toast('Das Erkennen der Personen braucht die aktuelle Fassung von HoneyCut');
+  const words = voiceWords(); if (words.length < 20) return toast('Dafür braucht es ein Transkript mit Ton');
+  const had = tokens.some(t => t.spk), pid = P.id; let stopped = false, busy = false;
+  const m = hcModal(`<div id="vcBox"><h3>Personen erkennen</h3>
+    <div id="vcSetup"><p class="muted small">HoneyCut vergleicht den Klang der Stimmen und ordnet jedes Wort einer Person zu. Das geschieht auf diesem Gerät, ohne Netz.</p>
+      <label class="row">Wie viele Personen sprechen? <select id="vcN"><option value="0">selbst schätzen</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option><option value="6">6</option></select></label>
+      <p class="muted small">${had ? 'Die bisherige Zuordnung wird ersetzt. Angelegte Personen behalten Namen und Gestaltung. „Rückgängig“ stellt den alten Stand wieder her.' : 'Die Personen heißen zunächst „Person 1“, „Person 2“ und so weiter. Die Namen trägst du anschließend bei den Sprecher:innen ein.'}</p>
+      <p class="muted small">Am besten klappt es mit klar getrennten Wortbeiträgen. Reden zwei Menschen gleichzeitig oder klingen sie sehr ähnlich, hilft die feste Anzahl; einzelne Stellen änderst du im Text mit „👤 Person“.</p>
+      <div class="row" style="margin-top:12px"><button class="btn" id="vcNo">Abbrechen</button><button class="btn primary" id="vcGo" style="margin-left:auto">Erkennen</button></div></div>
+    <div id="vcLive" class="hidden"><p id="vcMsg" aria-live="polite">Ton wird gelesen …</p><progress id="vcBar" max="1" value="0" style="width:100%"></progress>
+      <div class="row" style="margin-top:12px"><button class="btn" id="vcStop" style="margin-left:auto">Abbrechen</button></div></div></div>`);
+  const q = id => m.querySelector('#' + id);
+  const close = () => { stopped = true; if (voiceJobId){ try { TS.cancel(voiceJobId); } catch(_){} } if ($('#vcBox')) closeHcModal(); };
+  q('vcNo').onclick = close; q('vcStop').onclick = close;
+  q('vcGo').onclick = async () => {
+    if (busy) return; busy = true; const n = +q('vcN').value || 0;
+    q('vcSetup').classList.add('hidden'); q('vcLive').classList.remove('hidden');
+    const msg = s => { if (q('vcMsg')) q('vcMsg').textContent = s; }, bar = v => { if (q('vcBar')) q('vcBar').value = clamp(v, 0, 1); };
+    try {
+      const used = [...new Set(words.map(w => w.src))], sources = [];
+      for (let k = 0; k < used.length; k++){ msg(used.length > 1 ? `Ton wird gelesen (${k + 1} von ${used.length}) …` : 'Ton wird gelesen …');
+        sources[used[k]] = {pcm: await voiceAudio(P.sources[used[k]].uri, p => bar(0.5 * (k + p) / used.length))}; if (stopped) return; }
+      msg('Stimmen werden verglichen …');
+      const r = await Stimmen.run(sources, words, {count: n, onProgress: p => bar(0.5 + 0.5 * p), cancelled: () => stopped});
+      if (stopped || !r || !P || P.id !== pid) return;
+      if ($('#vcBox')) closeHcModal();
+      if (r.count < 2) return toast(r.count ? 'Zu hören ist eine einzige Stimme. Sprechen mehrere Personen, gib die Anzahl vor.' : 'Im Ton war zu wenig Sprache zu finden');
+      const res = voiceApply(words, r);
+      toast(`${res.count} Personen erkannt – Namen bei den Sprecher:innen eintragen`);
+    } catch(e){ if (stopped) return; if ($('#vcBox')) closeHcModal(); hcLog('Personen erkennen: ' + (e && e.message)); toast('Personen erkennen fehlgeschlagen: ' + ((e && e.message) || 'unbekannter Fehler')); }
+  };
 }
 
 // ───────── Übergabe im Heimnetz (2.37): am Handy weiterschneiden (G7) ─────────

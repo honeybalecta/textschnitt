@@ -37,7 +37,7 @@ os.environ.setdefault("HF_HUB_DISABLE_IMPLICIT_TOKEN", "1")
 import warnings  # noqa: E402
 warnings.filterwarnings("ignore", module="huggingface_hub")
 
-VERSION = "2.37.0"
+VERSION = "2.38.0"
 APP_DIR = Path(__file__).resolve().parent
 FROZEN = bool(getattr(sys, "frozen", False))          # als installierte .exe gebaut
 RES_DIR = Path(getattr(sys, "_MEIPASS", APP_DIR))      # mitgelieferte Dateien (Oberfläche, ffmpeg, Modelle)
@@ -594,6 +594,29 @@ def envelope_job(job: dict, path: str):
         return {"env": envelope(read_wav16k(wav)), "astart": info.get("audioStart", 0.0), "padded": True}
     finally:
         wav.unlink(missing_ok=True)
+
+
+VOICE_PCM: dict = {}   # Job-Kennung → Datei mit dem Ton für das Trennen der Stimmen (wird nach dem Abholen gelöscht)
+
+
+def voice_pcm_job(job: dict, path: str):
+    """Ton einer Aufnahme als 16 kHz, mono, 16 Bit – so, wie ihn auch die Transkription liest. Die Oberfläche holt die
+    Datei über api/pcm ab und trennt damit die Stimmen (core/web/stimmen.js)."""
+    path = norm_path(path)
+    info = probe(path)
+    job["message"] = "Ton wird gelesen …"
+    for old, f in list(VOICE_PCM.items()):          # liegen gebliebene Dateien früherer Läufe
+        if old not in JOBS or time.time() - JOBS[old].get("started", 0) > 3600:
+            Path(f).unlink(missing_ok=True)
+            VOICE_PCM.pop(old, None)
+    out = Path(tempfile.gettempdir()) / f"honeycut_stimmen_{job['id']}.pcm"
+    try:
+        run_ffmpeg(["-i", path, "-vn", "-af", "aresample=async=1:first_pts=0", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", "-f", "s16le", str(out)], info["duration"], job)
+    except BaseException:
+        out.unlink(missing_ok=True)
+        raise
+    VOICE_PCM[job["id"]] = out
+    return {"url": "api/pcm?id=" + job["id"], "bytes": out.stat().st_size}
 
 
 # ───────────────────────────── Mehrere Fenster: Nachrichten zwischen den Fenstern ─────────────────────────────
@@ -3611,6 +3634,26 @@ def uebergabe_selftest() -> dict:
     return out
 
 
+def stimmen_selftest() -> dict:
+    """Probe für den Selbsttest der gebauten App (2.38): Das mitgelieferte ffmpeg liefert den Ton für das Erkennen der Personen
+    (16 kHz, mono, 16 Bit), und der Rechenkern stimmen.js liegt bei der Oberfläche."""
+    out: dict = {"ok": False}
+    wav = Path(tempfile.gettempdir()) / f"honeycut_selbsttest_{uuid.uuid4().hex[:8]}.wav"
+    job = {"id": "selbsttest" + uuid.uuid4().hex[:6], "cancel": False, "progress": 0.0, "message": "", "status": "running"}
+    try:
+        subprocess.run([FFMPEG, "-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=44100:duration=1", "-ac", "2", str(wav)], check=True, capture_output=True, **NOWIN)
+        r = voice_pcm_job(job, str(wav))
+        f = VOICE_PCM.pop(job["id"])
+        out.update(bytes=r["bytes"], kern=(WEB_DIR / "stimmen.js").is_file())
+        f.unlink(missing_ok=True)
+        out["ok"] = bool(abs(r["bytes"] - 32000) < 2000 and out["kern"])
+    except Exception as e:
+        out["fehler"] = f"{type(e).__name__}: {e}"[:300]
+    finally:
+        wav.unlink(missing_ok=True)
+    return out
+
+
 # ───────────────────────────── Projekte ─────────────────────────────
 
 BACKUP_DIR = DATA_DIR / "sicherungen"   # frühere Fassungen der Projekte (je Projekt ein Ordner, gepackt)
@@ -5555,6 +5598,15 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(fonts_list())
             if rest == "api/handover/state":
                 return self._json(handover_state())
+            if rest == "api/pcm":
+                f = VOICE_PCM.get(q.get("id", ""))
+                if not f or not f.is_file():
+                    return self._json({"error": "Nicht gefunden"}, 404)
+                try:
+                    return self._send(200, f.read_bytes(), "application/octet-stream")
+                finally:
+                    f.unlink(missing_ok=True)
+                    VOICE_PCM.pop(q.get("id", ""), None)
             if rest.startswith("deck/"):
                 d = deck_dir()
                 sub = rest[5:] or "index.html"
@@ -5564,7 +5616,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not str(f).startswith(str(d.resolve())) or not f.is_file():
                     return self._json({"error": "Nicht gefunden"}, 404)
                 return self._send(200, f.read_bytes(), DECK_TYPES.get(f.suffix.lower(), "application/octet-stream"))
-            if rest in ("", "index.html", "app.js", "studio.js", "slides.js", "deck-host.js", "app.css", "bridge-http.js", "icons.js", "chroma.js"):
+            if rest in ("", "index.html", "app.js", "studio.js", "slides.js", "deck-host.js", "app.css", "bridge-http.js", "icons.js", "chroma.js", "stimmen.js"):
                 f = WEB_DIR / (rest or "index.html")
                 ctype = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
                          ".css": "text/css; charset=utf-8"}[f.suffix]
@@ -5752,6 +5804,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"job": job["id"]})
             if rest == "api/envelope":
                 job = run_job(new_job("envelope"), envelope_job, data["uri"])
+                return self._json({"job": job["id"]})
+            if rest == "api/voicepcm":
+                job = run_job(new_job("voicepcm"), voice_pcm_job, data["uri"])
                 return self._json({"job": job["id"]})
             if rest == "api/window":
                 pid, view = re.sub(r"[^A-Za-z0-9_-]", "", data.get("project", "")), data.get("view", "text")
