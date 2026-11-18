@@ -5629,6 +5629,7 @@ function buildPlan(dry){   // dry: nur nachsehen (z. B. für das Titelbild) – 
     width:o.x.clip.width, height:o.x.clip.height, rotation:o.x.clip.rotation || 0}))
     .concat(dry ? [] : decoPlan(W, H)).concat(dry ? [] : lowerPlan(W, H)).concat(dry ? [] : partPlan(W, H)).concat(wmPlan(W, H))
     .concat(dry ? [] : markPlan(W, H)).concat(dry ? [] : progPlan(W, H))
+    .concat(dry || exFmt !== 'video' || !window.coverFirstPlan ? [] : coverFirstPlan(W, H))   // Titelbild als erstes Bild des Videos (titelbild.js)
     .concat(audios.map(a => ({mode:'audio', image:false, uri:a.x.clip.uri, in:r3(a.x.in), out:r3(a.x.in + (a.end - a.at)), at:r3(a.at), track:a.x.track || 1, vol:+(a.x.vol ?? 1), hasAudio:true, ...(dk && ducks(a.x) ? {duck: true} : {})})));
   const cl = S().enabled !== false && P.cues.length ? computedCues() : [], ctr = trTexts(cl), emo = [];
   const cues = cl.length ? cl.map((x, k) => { const [cx, cy0] = cueXY(x.c), sy = x.c.x == null && window.subSlideY ? subSlideY(x.s, x.e) : null, cy = sy ?? cy0, o = {start:r3(x.s), end:r3(x.e), text:wrapText(x.text), x:cx, y:cy};

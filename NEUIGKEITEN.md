@@ -2,6 +2,12 @@
 
 Was sich mit jeder Version von HoneyCut ändert. Die Windows-App zeigt diese Stichpunkte an, sobald eine neuere Version bereitsteht.
 
+## 2.44.0 · Titelbild im Video, Markenunterlagen, Pinselbalken
+
+- **Titelbild als erstes Bild des Videos** (Export → „Titelbild mit Vorlage …“ → „Als erstes Bild ins Video legen“): Das fertige Titelbild liegt im exportierten Video auf dem ersten Bild – über allem, nur ein Bild lang. Der Ton läuft von Anfang an. Auf den Plattformen lässt sich so das erste Bild als Titelbild wählen, ohne es eigens hochzuladen. Gilt für den Export als Video.
+- **Markenunterlagen aus HoneyThumb** („Markenunterlagen laden …“ im selben Blatt): Die in HoneyThumb gesicherte Datei bringt Auflagen mit – etwa ein Banner, das immer obenauf liegt –, dazu Akzentfarbe und Schriften der Marke. Die Vorlagen ordnen Text und Person in der freien Fläche über der Auflage an. Die Unterlagen bleiben im Gerät, bis sie entfernt werden.
+- **Vier neue Vorlagen „Pinselbalken“:** Bild über die ganze Fläche, darauf leicht gedrehte Balken – Pinselstrich in der Akzentfarbe, kleines Wort auf Papier, schwarzer Balken – in rauer Schrift. Insgesamt vierzehn Vorlagen.
+
 ## 2.43.0 · Titelbild mit Vorlage
 
 - **Titelbild mit Vorlage** (Export → „Titelbild mit Vorlage …“, auch über „Titelbild“ → „Mit Vorlage …“): Das Bild an der Abspiellinie kommt in eine der zehn Vorlagen aus HoneyThumb. HoneyCut stellt die Person frei und setzt sie vor den Hintergrund der Vorlage, dazu Titel, Rubrik und Akzentfarbe.

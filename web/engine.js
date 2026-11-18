@@ -505,7 +505,7 @@ class Renderer {
     this.ctx = ctx; this.W = W; this.H = H; this.fps = fps; this.fileOf = fileOf;
     this.sinks = new Map();
     this.base = document.createElement('canvas'); this.base.width = W; this.base.height = H; this.bctx = this.base.getContext('2d', {alpha:false});
-    this.ovs = (plan.overlays || []).filter(o => o.mode !== 'audio').map(o => ({...o, at:+o.at, d: Math.max(0.05, o.out - o.in)})).sort((a, b) => (a.track || 1) - (b.track || 1) || a.at - b.at);
+    this.ovs = (plan.overlays || []).filter(o => o.mode !== 'audio').map(o => ({...o, at:+o.at, d: Math.max(o.first ? 0.001 : 0.05, o.out - o.in)})).sort((a, b) => (a.track || 1) - (b.track || 1) || a.at - b.at);
     this.ovState = new Map();
     // Unkenntlich gemachte Bereiche (plan.blurs): wirken auf alles Bildmaterial; Einblendungen mit top (Formen, Fortschrittsbalken) liegen darüber
     this.blurs = (plan.blurs || []).filter(b => b && +b.d > 0.02 && +b.w > 0).map(b => { const kf = Array.isArray(b.kf) && b.kf.length >= 2 ? b.kf.map(k => ({t:+k.t, x:+k.x, y:+k.y, w:+k.w})).sort((p, q) => p.t - q.t) : null;

@@ -1,4 +1,4 @@
-// Titelbild mit Vorlage (2.43): die abgespeckte Fassung von HoneyThumb im Export-Reiter. Bild an der Abspiellinie holen, Person
+// Titelbild mit Vorlage (2.43, 2.44: Markenunterlagen aus HoneyThumb, Pinselbalken, Titelbild als erstes Bild des Videos): die abgespeckte Fassung von HoneyThumb im Export-Reiter. Bild an der Abspiellinie holen, Person
 // freistellen (im Prüflauf mit einer eigenen Erkennung), Vorlage, Format, Texte, Hintergrund, Speichern als Bild und für HoneyThumb.
 import fs from 'node:fs';
 import path from 'node:path';
@@ -15,11 +15,11 @@ try {
   // Eigene Erkennung: eine Ellipse in der Bildmitte gilt als Person
   await ev(() => { window.__seg = 0; HoneyThumbCut.setSegmenter(cv => { window.__seg++; const w = 64, h = Math.round(64 * cv.height / cv.width), a = new Float32Array(w * h); for (let y = 0; y < h; y++) for (let x = 0; x < w; x++){ const dx = (x - w / 2) / (w * 0.22), dy = (y - h * 0.55) / (h * 0.42); a[y * w + x] = dx * dx + dy * dy < 1 ? 1 : 0; } return {data: a, w, h}; }); });
   await ev(() => setTab('export')); await sleep(500);
-  chk('Im Export-Reiter steht neben „Titelbild“ der Knopf „Titelbild mit Vorlage“', await ev(() => { const b = document.querySelector('#coverTplBtn'); return !!b && b.offsetParent !== null && /Vorlage/.test(b.textContent) && !!window.HoneyThumb && HoneyThumb.TEMPLATES.length === 10; }));
-  await page.click('#coverTplBtn'); await page.waitForFunction(() => document.querySelectorAll('#ctTpls canvas').length === 10 && HCTitelbild.state && HCTitelbild.state.cut, null, { timeout: 20000 });
+  chk('Im Export-Reiter steht neben „Titelbild“ der Knopf „Titelbild mit Vorlage“', await ev(() => { const b = document.querySelector('#coverTplBtn'); return !!b && b.offsetParent !== null && /Vorlage/.test(b.textContent) && !!window.HoneyThumb && HoneyThumb.TEMPLATES.length === 14; }));
+  await page.click('#coverTplBtn'); await page.waitForFunction(() => document.querySelectorAll('#ctTpls canvas').length === 14 && HCTitelbild.state && HCTitelbild.state.cut, null, { timeout: 20000 });
   const a = await ev(() => { const pv = document.querySelector('#ctPrev'), s = HCTitelbild.state, x = pv.getContext('2d').getImageData(0, 0, pv.width, pv.height).data; let lit = 0; for (let i = 0; i < x.length; i += 400) if (x[i] + x[i + 1] + x[i + 2] > 60) lit++;
     return { ratio: pv.width / pv.height, lit, frame: s.frame.slice(0, 22), cut: !!s.cut.img && !!s.cut.mask, seg: window.__seg, on: document.querySelector('#ctTpls .on')?.dataset.t, fmt: document.querySelector('#ctFmt').value, out: [...document.querySelector('#ctOut').options].map(o => o.textContent), cutBox: document.querySelector('#ctCut').checked }; });
-  chk('Das Blatt holt das Bild an der Abspiellinie, stellt die Person frei und zeigt Vorschau und zehn Vorlagen', Math.abs(a.ratio - 16 / 9) < 0.02 && a.lit > 100 && a.frame === 'data:image/jpeg;base64' && a.cut && a.seg === 1 && a.on === 'rechts' && a.cutBox, a);
+  chk('Das Blatt holt das Bild an der Abspiellinie, stellt die Person frei und zeigt Vorschau und vierzehn Vorlagen', Math.abs(a.ratio - 16 / 9) < 0.02 && a.lit > 100 && a.frame === 'data:image/jpeg;base64' && a.cut && a.seg === 1 && a.on === 'rechts' && a.cutBox, a);
   chk('Querformat-Video: Format 16:9 mit 1280 × 720 und 1920 × 1080', a.fmt === '16:9' && a.out.join('|') === '1280 × 720|1920 × 1080', a);
   await page.fill('#ctTitle', 'Wer hat das *gesagt*?'); await page.fill('#ctKicker', 'Analyse'); await sleep(300);
   const d1 = await ev(() => { const d = HCTitelbild.build(HCTitelbild.opts()), p = d.layers.find(l => l.slot === 'person'); return { title: d.layers.find(l => l.slot === 'title').text, kicker: d.layers.find(l => l.slot === 'kicker').text, mask: !!p.mask, src: p.src, keep: P.settings.coverTpl.title }; });
@@ -68,6 +68,53 @@ try {
   await page.click('#ctGrab'); await page.waitForFunction(() => /ohne Freistellung/.test(document.querySelector('#ctMsg').textContent), null, { timeout: 20000 });
   const e1 = await ev(() => { const p = HCTitelbild.build(HCTitelbild.opts()).layers.find(l => l.slot === 'person'); return { img: p.img, mask: p.mask || null, lit: document.querySelector('#ctPrev').width > 0 }; });
   chk('Findet die Erkennung keine Person, steht das Bild ohne Freistellung in der Vorlage, mit Hinweis', e1.img === 'f1' && e1.mask === null && e1.lit, e1);
+
+  // ═════════ Markenunterlagen aus HoneyThumb (2.44) ═════════
+  const marke = await ev(() => { const mk = (w, h, f) => { const c = document.createElement('canvas'); c.width = w; c.height = h; const x = c.getContext('2d'); x.fillStyle = '#14c850'; x.fillRect(0, h * (1 - f), w, h * f); return c.toDataURL('image/png'); };
+    return JSON.stringify({ app: 'honeythumb-marke', v: 1, brand: { id: 'b1', name: 'Testmarke', accentKey: 'gruen', fonts: { title: null, small: null } }, items: [
+      { id: 'o1', kind: 'overlay', name: 'Banner quer', img: mk(1280, 720, 0.25), formats: ['16:9'], auto: true }, { id: 'o2', kind: 'overlay', name: 'Banner hoch', img: mk(720, 1280, 0.2), formats: ['9:16'], auto: true },
+      { id: 'x1', kind: 'overlay', name: 'Fremd', img: 'https://example.org/a.png', formats: ['16:9'], auto: true }, { id: 'p1', kind: 'person', name: 'Wer', pics: [] }] }); });
+  await page.setInputFiles('#ctBrandFile', { name: 'Markenunterlagen-Testmarke.json', mimeType: 'application/json', buffer: Buffer.from(marke) });
+  await page.waitForFunction(() => /Testmarke.*geladen/.test(document.querySelector('#ctMsg').textContent), null, { timeout: 15000 }); await sleep(300);
+  const b1 = await ev(() => { const d = HCTitelbild.build(HCTitelbild.opts()), F = HoneyThumb.format(d.format), l = d.layers.at(-1), t = d.layers.find(x => x.slot === 'title'); return { n: HCTitelbild.brand.overlays.length, txt: document.querySelector('#ctBrand').textContent, top: !!l.top, name: l.name, lock: !!l.lock, asset: /^data:image\/png/.test(d.assets[l.img] || ''), titleEnd: (t.y + t.h) / F.h, acc: document.querySelector('#ctAcc').value, ov: document.querySelector('#ctOv').checked && getComputedStyle(document.querySelector('#ctOvL')).display !== 'none' }; });
+  chk('„Markenunterlagen laden“ nimmt die Auflagen der Marke (keine fremden Adressen): Die Auflage fürs Querformat liegt obenauf, der Titel endet darüber, die Akzentfarbe der Marke ist gewählt', b1.n === 2 && /Testmarke/.test(b1.txt) && /Banner quer/.test(b1.txt) && b1.top && b1.name === 'Banner quer' && b1.lock && b1.asset && b1.titleEnd < 0.76 && b1.acc === 'gruen' && b1.ov, b1);
+  const b2 = await ev(async () => { const d = HCTitelbild.build(HCTitelbild.opts()); await HoneyThumb.load(d); const c = HoneyThumb.render(d, 640), all = c.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, c.width, c.height).data, px = (fx, fy) => { const i = (Math.round(fy * c.height) * c.width + Math.round(fx * c.width)) * 4; return [all[i], all[i + 1], all[i + 2]]; }; return { unten: px(0.5, 0.95), oben: px(0.02, 0.05) }; });
+  chk('Im Bild steht das Banner unten über allem', b2.unten[1] > 170 && b2.unten[0] < 60 && !(b2.oben[1] > 170 && b2.oben[0] < 60), b2);
+  await page.selectOption('#ctFmt', '9:16'); await sleep(400);
+  const b3 = await ev(() => { const d = HCTitelbild.build(HCTitelbild.opts()); return { name: d.layers.at(-1).name, txt: document.querySelector('#ctBrand').textContent }; });
+  await page.selectOption('#ctFmt', '1:1'); await sleep(400);
+  const b4 = await ev(() => { const d = HCTitelbild.build(HCTitelbild.opts()); return { top: d.layers.some(l => l.top), txt: document.querySelector('#ctBrand').textContent, ovL: getComputedStyle(document.querySelector('#ctOvL')).display }; });
+  chk('Je Format gilt die passende Auflage; ohne passende bleibt das Titelbild frei', b3.name === 'Banner hoch' && /Banner hoch/.test(b3.txt) && !b4.top && /keine Auflage/.test(b4.txt) && b4.ovL === 'none', { b3, b4 });
+  await page.selectOption('#ctFmt', '16:9'); await sleep(300); await page.click('#ctOv'); await sleep(300);
+  const b5 = await ev(() => HCTitelbild.build(HCTitelbild.opts()).layers.some(l => l.top)); await page.click('#ctOv'); await sleep(300);
+  chk('Der Haken „Auflage der Marke“ nimmt sie heraus und setzt sie wieder ein', b5 === false && await ev(() => HCTitelbild.build(HCTitelbild.opts()).layers.some(l => l.top)));
+  await page.click('#ctTpls [data-t="pinsel"]'); await sleep(400);
+  const b6 = await ev(() => { const d = HCTitelbild.build(HCTitelbild.opts()), g = s => d.layers.find(l => l.slot === s); return { t: g('title').box.style, k: g('kicker').font, s: g('sub').box.style, c: g('title').box.c.toLowerCase(), top: !!d.layers.at(-1).top }; });
+  chk('Vorlage „Pinselbalken unten“: Pinselstrich in der Akzentfarbe, Schreibmaschine auf Papier, schwarzer Balken – unter der Auflage', b6.t === 'brush' && b6.k === 'typewriter' && b6.s === 'torn' && b6.c === '#5db37a' && b6.top, b6);
+
+  // ═════════ Titelbild als erstes Bild des Videos (2.44) ═════════
+  await page.click('#ctFirst'); await page.waitForFunction(() => /ersten Bild des Videos/.test(document.querySelector('#ctMsg').textContent), null, { timeout: 20000 });
+  const c1 = await ev(() => { exFmt = 'video'; const c = P.settings.coverFirst, [W, H] = outSize(), plan = buildPlan(), o = plan.overlays ? plan.overlays.filter(x => x.first) : (plan.ovs || []).filter(x => x.first), dry = buildPlan(true), all = dry.overlays || dry.ovs || []; exFmt = 'capcut'; const cc = buildPlan(); exFmt = 'video';
+    return { on: c.on, uri: !!c.uri, ar: c.w / c.h, out: [W, H], o: o[0] || null, n: o.length, dry: all.some(x => x.first), cc: (cc.overlays || cc.ovs || []).some(x => x.first), fps: plan.fps }; });
+  chk('Der Haken legt das Titelbild in der Größe des Videos beim Projekt ab; der Exportplan trägt es als Bild über allem, vom Anfang an weniger als ein Bild lang', c1.on && c1.uri && Math.abs(c1.ar - c1.out[0] / c1.out[1]) < 0.01 && c1.n === 1 && c1.o.at === 0 && c1.o.in === 0 && c1.o.out > 0.001 && c1.o.out < 1 / c1.fps && c1.o.top === true && c1.o.image === true && c1.o.w === 1 && c1.o.x === 0.5 && c1.o.track === 199 && !c1.dry && !c1.cc, c1);
+  await page.click('#ctNo'); await sleep(400);
+  const ex = await ev(async () => { P.settings.level = false; exFmt = 'video'; const plan = buildPlan(); plan.name = 'titelbild-erstes-bild'; const id = TS.exportVideo(JSON.stringify(plan));
+    for (;;){ await new Promise(r => setTimeout(r, 200)); const j = JSON.parse(TS.job(id)); if (j.status === 'done') return { ok: true, file: j.result.playable, total: plan.total, fps: plan.fps }; if (j.status === 'error') return { ok: false, error: j.error }; } });
+  if (ex.ok){ const { execFileSync } = await import('node:child_process');
+    const px = n => { const b = execFileSync('ffmpeg', ['-v', 'error', '-i', ex.file, '-an', '-vf', `select=eq(n\\,${n}),scale=64:36`, '-frames:v', '1', '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-'], { maxBuffer: 1 << 22 }), at = (x, y) => [...b.subarray((y * 64 + x) * 3, (y * 64 + x) * 3 + 3)]; return at(32, 33); };
+    const gruen = p => p[1] > 150 && p[0] < 90 && p[2] < 140, f0 = px(0), f1 = px(1), f5 = px(5);
+    const pr = JSON.parse(execFileSync('ffprobe', ['-v', 'error', '-show_entries', 'stream=codec_type,start_time,duration,nb_frames', '-of', 'json', ex.file]).toString()).streams, v = pr.find(x => x.codec_type === 'video'), au = pr.find(x => x.codec_type === 'audio');
+    chk('Im fertigen Video zeigt genau das erste Bild das Titelbild (Banner unten), ab dem zweiten läuft das Video', gruen(f0) && !gruen(f1) && !gruen(f5), { f0, f1, f5 });
+    chk('Länge und Ton bleiben, wie sie sind: Der Ton beginnt am Anfang und ist so lang wie das Video', !!au && Math.abs(+au.start_time) < 0.05 && Math.abs(+v.start_time) < 0.05 && Math.abs(+au.duration - +v.duration) < 0.1 && +v.duration >= ex.total - 0.1, { v, au, total: ex.total });
+    fs.rmSync(ex.file, { force: true }); }
+  else chk('Der Export mit Titelbild läuft durch', false, ex);
+  await ev(() => setTab('export')); await sleep(300); await page.click('#coverTplBtn'); await page.waitForSelector('#ctTpls canvas'); await sleep(700);
+  const c2 = await ev(() => ({ first: document.querySelector('#ctFirst').checked, brand: document.querySelector('#ctBrand').textContent }));
+  await page.click('#ctFirst'); await sleep(400);
+  const c3 = await ev(() => { exFmt = 'video'; const p = buildPlan(); return { on: !!P.settings.coverFirst.on, plan: (p.overlays || p.ovs || []).some(x => x.first) }; });
+  chk('Beim Wiederöffnen sind Haken und Markenunterlagen noch da; ohne Haken trägt der Plan kein Titelbild mehr', c2.first && /Testmarke/.test(c2.brand) && !c3.on && !c3.plan, { c2, c3 });
+  await page.click('#ctBrandOff'); await sleep(400);
+  chk('„Entfernen“ nimmt die Markenunterlagen wieder heraus', await ev(() => !HCTitelbild.brand && !HCTitelbild.build(HCTitelbild.opts()).layers.some(l => l.top) && /keine geladen/.test(document.querySelector('#ctBrand').textContent)));
   await page.click('#ctNo');
 } catch (e) { chk('Ablauf ohne Abbruch', false, String(e && e.stack || e).slice(0, 700)); }
 finally { if (nid) await dropScratch(page, nid).catch(() => {}); }

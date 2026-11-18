@@ -12,6 +12,7 @@
 @font-face{font-family:"TSF-archivo";src:url(fonts/ArchivoBlack-Regular.ttf)}
 @font-face{font-family:"TSF-lora";src:url(fonts/Lora-Bold.ttf)}
 @font-face{font-family:"TSF-playfair";src:url(fonts/PlayfairDisplay-ExtraBold.ttf)}
+@font-face{font-family:"TSF-typewriter";src:url(fonts/LMMonoLt10-Bold.otf)}
 
 :root{
   --rh:22px; --mh:64px; --oh:38px; --fh:26px; --th:28px;

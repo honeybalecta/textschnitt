@@ -12,6 +12,8 @@
   let custom = null, segP = null;
   // Eigene Erkennung einsetzen (HoneyCut, Prüfläufe): fn(Leinwand) → {data: Float32Array, w, h}, Werte 0…1 = Person
   const setSegmenter = fn => { custom = fn; };
+  // Lädt die Erkennung nicht, liegt es fast immer am Netz – das sagt die Meldung dann auch
+  function hint(e){ const t = String((e && e.message) || e); if (/fetch|import|network|load|Failed/i.test(t)){ const n = new Error('Die Personenerkennung ließ sich nicht laden. Beim ersten Freistellen braucht HoneyThumb eine Internetverbindung.'); n.cause = e; throw n; } throw e; }
   async function mediapipe(msg){
     if (!segP) segP = (async () => {
       msg && msg('Lade Personenerkennung (einmalig, ca. 10 MB) …');
@@ -20,7 +22,7 @@
       let last = null;
       for (const m of MODELS) for (const d of ['GPU', 'CPU']){ try { return await make(m, d); } catch(e){ last = e; } }
       throw last || new Error('Die Personenerkennung ließ sich nicht laden.');
-    })().catch(e => { segP = null; throw e; });
+    })().catch(e => { segP = null; hint(e); });
     const seg = await segP;
     return c => { const res = seg.segment(c); try { const m = res.confidenceMasks && res.confidenceMasks[0]; if (!m) throw new Error('Die Personenerkennung hat nichts geliefert.'); return {data: new Float32Array(m.getAsFloat32Array()), w: m.width, h: m.height}; } finally { if (res.close) res.close(); } };
   }

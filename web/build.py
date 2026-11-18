@@ -52,7 +52,7 @@ for p in ort:
 (OUT / "vendor" / "ort" / "files.json").write_text(json.dumps(names))
 print("ONNX-Runtime:", ", ".join(names) or "– (wird vom CDN geladen)")
 
-fonts = sorted("fonts/" + p.name for p in (CORE / "fonts").iterdir() if p.suffix == ".ttf")
+fonts = sorted("fonts/" + p.name for p in (CORE / "fonts").iterdir() if p.suffix in (".ttf", ".otf"))
 shell = ["./", "index.html", "app.js", "studio.js", "slides.js", "deck-host.js", "app.css", "icons.js", "chroma.js", "stimmen.js", "folgen.js", "skript.js", "thumb-engine.js", "thumb-cut.js", "titelbild.js", "web.css", "bridge-browser.js", "engine.js", "asr-worker.js",
          "manifest.webmanifest", "icon.svg", "icon-192.png", "icon-512.png", "vendor/media.js", "vendor/asr.js"] + fonts
 sw = (WEB / "sw.js").read_text().replace("__VERSION__", VERSION + "-" + subprocess.run(

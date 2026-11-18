@@ -37,7 +37,7 @@ os.environ.setdefault("HF_HUB_DISABLE_IMPLICIT_TOKEN", "1")
 import warnings  # noqa: E402
 warnings.filterwarnings("ignore", module="huggingface_hub")
 
-VERSION = "2.43.0"
+VERSION = "2.44.0"
 APP_DIR = Path(__file__).resolve().parent
 FROZEN = bool(getattr(sys, "frozen", False))          # als installierte .exe gebaut
 RES_DIR = Path(getattr(sys, "_MEIPASS", APP_DIR))      # mitgelieferte Dateien (Oberfläche, ffmpeg, Modelle)
@@ -2734,7 +2734,7 @@ def build_graph(plan: dict, with_video: bool, ass_name: str | None):
                 cur = blur_graph(blurs, cur, parts, inputs, W, H, fps_s, float(plan.get("total") or 0))
                 blurs = []
             at, inn, out = float(o["at"]), float(o["in"]), float(o["out"])
-            d = max(0.05, out - inn)
+            d = max(0.001 if o.get("first") else 0.05, out - inn)   # das Titelbild als erstes Bild (first) steht nur ein Bild lang
             g = ovl_geom(o, W, H)
             if g and g["anim"]:
                 x, y = f"'{g['x']}'", f"'{g['y']}'"

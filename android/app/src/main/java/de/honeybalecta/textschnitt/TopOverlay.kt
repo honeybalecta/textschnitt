@@ -63,7 +63,8 @@ class TopOverlay(private val items: List<Item>, private val w: Int, private val 
                     val items = list.sortedBy { it.optDouble("at", 0.0) }.mapNotNull { o ->
                         val at = o.optDouble("at", 0.0); val dur = minOf(o.optDouble("out", 0.0) - o.optDouble("in", 0.0), total - at)
                         val path = runCatching { Uri.parse(o.optString("uri")).path }.getOrNull()
-                        if (dur <= 0.02 || path == null || path.isEmpty() || !o.has("w")) null else {
+                        // Das Titelbild als erstes Bild des Videos (first) steht nur ein Bild lang – kürzer als jede andere Einblendung
+                        if (dur <= (if (o.optBoolean("first")) 0.001 else 0.02) || path == null || path.isEmpty() || !o.has("w")) null else {
                             val kfA = o.optJSONArray("kf")
                             val kf: List<FloatArray> = if (kfA == null || kfA.length() < 2) emptyList() else (0 until kfA.length()).mapNotNull { kfA.optJSONObject(it) }
                                 .map { floatArrayOf(it.optDouble("t", 0.0).toFloat(), it.optDouble("x", 0.5).toFloat(), it.optDouble("y", 0.5).toFloat(), it.optDouble("w", 1.0).toFloat()) }.sortedBy { it[0] }

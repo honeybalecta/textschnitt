@@ -30,8 +30,21 @@
     {k: 'anton', n: 'Anton', f: 'TSF-anton'}, {k: 'bebas', n: 'Bebas Neue', f: 'TSF-bebas'}, {k: 'archivo', n: 'Archivo Black', f: 'TSF-archivo'},
     {k: 'oswald', n: 'Oswald', f: 'TSF-oswald'}, {k: 'robotocondensed', n: 'Roboto Condensed', f: 'TSF-robotocondensed'},
     {k: 'inter', n: 'Inter', f: 'TSF-inter'}, {k: 'montserrat', n: 'Montserrat', f: 'TSF-montserrat'}, {k: 'poppins', n: 'Poppins', f: 'TSF-poppins'},
-    {k: 'lora', n: 'Lora', f: 'TSF-lora'}, {k: 'playfair', n: 'Playfair Display', f: 'TSF-playfair'},
+    {k: 'lora', n: 'Lora', f: 'TSF-lora'}, {k: 'playfair', n: 'Playfair Display', f: 'TSF-playfair'}, {k: 'typewriter', n: 'Schreibmaschine', f: 'TSF-typewriter'},
   ];
+  // Eigene Schriften (aus den Markenunterlagen oder aus einer Datei .honeythumb): Kennung „u:ID“, als data-URL; sie reisen im Titelbild mit (doc.fonts)
+  const userFonts = new Map(), FONT_URL = /^data:font\/[a-z0-9]+;base64,[A-Za-z0-9+/=]+$/, FONT_KEY = /^u:[\w-]{1,40}$/;
+  async function addFont(key, n, url){
+    if (userFonts.has(key)) return key; if (!FONT_KEY.test(key) || !FONT_URL.test(url) || typeof FontFace === 'undefined') throw new Error('Das ist keine lesbare Schriftdatei.');
+    const f = 'HTU-' + key.slice(2), ff = new FontFace(f, `url(${url})`); try { await ff.load(); } catch(_){ throw new Error('Das ist keine lesbare Schriftdatei.'); }
+    document.fonts.add(ff); userFonts.set(key, {n: String(n || 'Schrift').slice(0, 60), url}); FONTS.push({k: key, n: userFonts.get(key).n, f, user: true}); return key;
+  }
+  // Nur die eigenen Schriften im Titelbild behalten, die ein Text nutzt
+  function packFonts(doc){ const out = {}; for (const L of doc.layers){ const k = L.type === 'text' && L.font; if (!k || !FONT_KEY.test(k) || out[k]) continue; const u = userFonts.get(k) || (doc.fonts || {})[k]; if (u) out[k] = {n: u.n, url: u.url}; }
+    if (Object.keys(out).length) doc.fonts = out; else delete doc.fonts; return doc; }
+  // Zufall mit festem Startwert: dasselbe Muster bei jedem Zeichnen
+  function rng(seed){ let a = (seed >>> 0) || 1; return () => { a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+  const hash = s => { let h = 2166136261; for (let i = 0; i < s.length; i++){ h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; };
   const fam = k => (FONTS.find(f => f.k === k) || FONTS[0]).f;
   const uid = () => Math.random().toString(36).slice(2, 10);
   const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -48,7 +61,7 @@
     if (cache.has(url)) return Promise.resolve(cache.get(url));
     return new Promise((res, rej) => { const im = new Image(); im.onload = () => { cache.set(url, im); res(im); }; im.onerror = () => rej(new Error('Das Bild lässt sich nicht lesen.')); im.src = url; });
   }
-  async function load(doc){ await Promise.all(Object.values(doc.assets || {}).map(u => decode(u).catch(() => null))); await fonts(); return doc; }
+  async function load(doc){ await Promise.all(Object.values(doc.assets || {}).map(u => decode(u).catch(() => null))); await fonts(); for (const [k, v] of Object.entries(doc.fonts || {})) await addFont(k, v && v.n, v && v.url).catch(() => null); return doc; }
   const imgOf = (doc, id) => (id && doc.assets && cache.get(doc.assets[id])) || null;
   function addAsset(doc, url){ doc.assets = doc.assets || {}; for (const [k, v] of Object.entries(doc.assets)) if (v === url) return k; const id = 'a' + uid(); doc.assets[id] = url; return id; }
   // Bilder, die keine Ebene mehr nutzt, aus dem Dokument nehmen
@@ -108,20 +121,57 @@
     }
     return {size, lines, widest, total, lhPx: size * s * lh, padPx: pad * size * s, sp: ctx.measureText(' ').width, shrunk: size < (L.size || 80) - 0.01};
   }
+  // Balken hinter dem Text als Pinselstrich („brush“) oder gerissenes Papier („torn“): unruhige Kanten, Flecken, kleine Fehlstellen
+  function barPath(g, x, y, w, h, style, R, u){
+    const pts = [], edge = (x0, y0, x1, y1, nx, ny, amp, step) => { const n = Math.max(2, Math.round(Math.hypot(x1 - x0, y1 - y0) / step)); for (let i = 0; i < n; i++){ const t = i / n, d = (R() * 2 - 1) * amp; pts.push([x0 + (x1 - x0) * t + nx * d, y0 + (y1 - y0) * t + ny * d]); } };
+    // Pinselstrich: Ober- und Unterkante fast gerade, die Enden weich gewellt (wenige Stützwerte, dazwischen sanft überblendet) – die Borsten kommen in drawBar dazu
+    const wave = (x0, y0, x1, y1, amp, step) => { const n = Math.max(4, Math.round(Math.hypot(x1 - x0, y1 - y0) / step)), k = 5, c = []; for (let i = 0; i <= Math.ceil(n / k) + 1; i++) c.push(R() * 2 - 1);
+      for (let i = 0; i < n; i++){ const t = i / n, a = Math.floor(i / k), f = (1 - Math.cos((i % k) / k * Math.PI)) / 2, d = (c[a] * (1 - f) + c[a + 1] * f) * amp + (R() - 0.5) * amp * 0.18; pts.push([x0 + (x1 - x0) * t + d, y0 + (y1 - y0) * t]); } };
+    if (style === 'brush'){ const e = u * 0.3;
+      edge(x - e * 0.3, y, x + w + e * 0.3, y, 0, 1, u * 0.022, u * 0.3); wave(x + w + e * 0.3, y, x + w + e * 0.3, y + h, e * 0.4, u * 0.035);
+      edge(x + w + e * 0.3, y + h, x - e * 0.3, y + h, 0, 1, u * 0.022, u * 0.3); wave(x - e * 0.3, y + h, x - e * 0.3, y, e * 0.4, u * 0.035); }
+    else { const a = u * 0.04, st = u * 0.09; edge(x, y, x + w, y, 0, 1, a, st); edge(x + w, y, x + w, y + h, 1, 0, a, st); edge(x + w, y + h, x, y + h, 0, 1, a, st); edge(x, y + h, x, y, 1, 0, a, st); }
+    g.beginPath(); pts.forEach((p, i) => g[i ? 'lineTo' : 'moveTo'](p[0], p[1])); g.closePath();
+  }
+  // Kleine unregelmäßige Fehlstellen ausstanzen. edge: 0 = überall gleich, 1 = nur an den Enden
+  function speckle(g, x, y, w, h, R, n, r, edge){
+    g.save(); g.globalCompositeOperation = 'destination-out'; g.fillStyle = '#000';
+    for (let i = 0; i < n; i++){ let px = R(); if (R() < edge) px = R() < 0.5 ? Math.pow(R(), 2.2) * 0.3 : 1 - Math.pow(R(), 2.2) * 0.3; const rr = r * (0.25 + R() * R());
+      g.beginPath(); g.ellipse(x + px * w, y + R() * h, rr, rr * (0.4 + R() * 0.8), R() * Math.PI, 0, Math.PI * 2); g.fill(); }
+    g.restore();
+  }
+  function drawBar(ctx, x, y, w, h, box, R, u){
+    const pad = Math.ceil(u * 0.5), c = mkCanvas(w + 2 * pad, h + 2 * pad), g = c.getContext('2d'), col = box.c, dark = lum(/^#[0-9a-f]{6}$/i.test(col) ? col : '#888888') < 0.5, brush = box.style === 'brush';
+    g.translate(pad, pad); barPath(g, 0, 0, w, h, box.style, R, u); g.fillStyle = col; g.fill();
+    // Borsten: schmale Ausläufer an beiden Enden des Pinselstrichs
+    if (brush) for (let i = 0, n = Math.round(h / u * 9); i < n; i++){ const th = u * (0.018 + R() * 0.05), len = u * (0.1 + R() * R() * 0.4), yy = R() * (h - th), left = R() < 0.5; rr(g, left ? -u * 0.1 - len : w + u * 0.1 - u * 0.05, yy, len + u * 0.05, th, th / 2); g.fill(); }
+    barPath(g, 0, 0, w, h, box.style, rng(1 + Math.floor(R() * 1e9)), u); g.save(); g.clip();
+    if (brush){ g.strokeStyle = rgba('#000000', 0.16); g.lineCap = 'round'; for (let i = 0, n = Math.round(h / u * 14); i < n; i++){ const yy = R() * h, x0 = R() * w, len = (0.15 + R() * 0.6) * w; g.lineWidth = u * (0.01 + R() * 0.035); g.globalAlpha = 0.4 + R() * 0.6; g.beginPath(); g.moveTo(x0, yy); g.lineTo(x0 + len, yy + (R() - 0.5) * u * 0.04); g.stroke(); } g.globalAlpha = 1; }
+    g.fillStyle = brush ? rgba('#000000', 0.22) : rgba(dark ? '#FFFFFF' : '#000000', 0.07);
+    for (let i = 0, n = Math.round(w * h / (u * u) * (brush ? 9 : 5)); i < n; i++){ const rr = u * (brush ? 0.02 + R() * 0.06 : 0.05 + R() * 0.16); g.beginPath(); g.ellipse(R() * w, R() * h, rr, rr * (0.5 + R()), R() * 3, 0, Math.PI * 2); g.fill(); }
+    g.restore(); speckle(g, -pad * 0.4, 0, w + pad * 0.8, h, R, Math.round(w * h / (u * u) * (brush ? 26 : 16)), u * 0.035, 0.75);
+    ctx.drawImage(c, x - pad, y - pad);
+  }
   function drawText(ctx, L, s, acc){
     const w = L.w * s, h = L.h * s, T = textLayout(ctx, L, s), f = fam(L.font), m = ctx.measureText('Hg');
     const asc = m.fontBoundingBoxAscent || T.size * s * 0.8, desc = m.fontBoundingBoxDescent || T.size * s * 0.2;
     const top = -h / 2 + (L.valign === 't' ? 0 : L.valign === 'b' ? h - T.total : (h - T.total) / 2);
     const lx = l => L.align === 'c' ? -l.w / 2 : L.align === 'r' ? w / 2 - T.padPx - l.w : -w / 2 + T.padPx;
-    ctx.font = `${T.size * s}px "${f}"`; ctx.textBaseline = 'alphabetic'; ctx.textAlign = 'left'; ctx.lineJoin = 'round';
-    if (L.box && L.box.c){ ctx.fillStyle = L.box.c; const gap = T.size * s * 0.06, r = (L.box.round || 0) * s;
-      if (L.box.mode === 'block'){ const x0 = Math.min(...T.lines.map(lx)) - T.padPx; rr(ctx, x0, top - T.padPx * 0.5, T.widest + 2 * T.padPx, T.total + T.padPx, r); ctx.fill(); }
-      else T.lines.forEach((l, i) => { if (!l.t.length) return; rr(ctx, lx(l) - T.padPx, top + i * T.lhPx + gap, l.w + 2 * T.padPx, T.lhPx - 2 * gap, r); ctx.fill(); }); }
-    const pass = fn => T.lines.forEach((l, i) => { let x = lx(l); const y = top + i * T.lhPx + (T.lhPx - (asc + desc)) / 2 + asc; for (const t of l.t){ let px = x; for (const q of t.p){ fn(q, px, y); px += q.pw; } x += t.tw + T.sp; } });
-    if (L.shadow && L.shadow.b >= 0 && L.shadow.c){ ctx.save(); ctx.shadowColor = L.shadow.c; ctx.shadowBlur = (L.shadow.b || 0) * s; ctx.shadowOffsetX = (L.shadow.x || 0) * s; ctx.shadowOffsetY = (L.shadow.y || 0) * s;
-      ctx.fillStyle = L.color || PAL.cream; pass((t, x, y) => ctx.fillText(t.s, x, y)); ctx.restore(); }
-    if (L.stroke && L.stroke.w > 0){ ctx.strokeStyle = L.stroke.c || PAL.ink; ctx.lineWidth = L.stroke.w * 2 * s; pass((t, x, y) => ctx.strokeText(t.s, x, y)); }
-    pass((t, x, y) => { ctx.fillStyle = t.a ? (L.accent || acc) : (L.color || PAL.cream); ctx.fillText(t.s, x, y); });
+    const R = rng(L.seed || hash(String(L.text || '') + '|' + (L.slot || '')));
+    if (L.box && L.box.c){ const gap = T.size * s * 0.06, r = (L.box.round || 0) * s, styled = L.box.style === 'brush' || L.box.style === 'torn', bar = (x, y, bw, bh) => { if (styled) drawBar(ctx, x, y, bw, bh, L.box, R, Math.min(bh, T.lhPx)); else { ctx.fillStyle = L.box.c; rr(ctx, x, y, bw, bh, r); ctx.fill(); } };
+      if (L.box.mode === 'block') bar(Math.min(...T.lines.map(lx)) - T.padPx, top - T.padPx * 0.5, T.widest + 2 * T.padPx, T.total + T.padPx);
+      else T.lines.forEach((l, i) => { if (!l.t.length) return; bar(lx(l) - T.padPx, top + i * T.lhPx + gap, l.w + 2 * T.padPx, T.lhPx - 2 * gap); }); }
+    // Buchstaben: Kontur, dann Füllung. Raue Schrift entsteht auf einer eigenen Leinwand, aus der Fehlstellen gestanzt werden
+    const glyphs = g => { g.font = `${T.size * s}px "${f}"`; g.textBaseline = 'alphabetic'; g.textAlign = 'left'; g.lineJoin = 'round';
+      const pass = fn => T.lines.forEach((l, i) => { let x = lx(l); const y = top + i * T.lhPx + (T.lhPx - (asc + desc)) / 2 + asc; for (const t of l.t){ let px = x; for (const q of t.p){ fn(q, px, y); px += q.pw; } x += t.tw + T.sp; } });
+      if (L.stroke && L.stroke.w > 0){ g.strokeStyle = L.stroke.c || PAL.ink; g.lineWidth = L.stroke.w * 2 * s; pass((t, x, y) => g.strokeText(t.s, x, y)); }
+      pass((t, x, y) => { g.fillStyle = t.a ? (L.accent || acc) : (L.color || PAL.cream); g.fillText(t.s, x, y); }); };
+    const sh = L.shadow && L.shadow.b >= 0 && L.shadow.c, rough = clamp(+L.rough || 0, 0, 1);
+    if (!rough && !sh) glyphs(ctx);
+    else { const mg = Math.ceil(T.size * s * 0.35 + (L.stroke && L.stroke.w > 0 ? L.stroke.w * s : 0)), c = mkCanvas(w + 2 * mg, Math.max(h, T.total) + 2 * mg), g = c.getContext('2d'); g.translate(c.width / 2, c.height / 2); glyphs(g);
+      if (rough){ const u = T.size * s, x0 = Math.min(...T.lines.map(lx)); speckle(g, x0, top, T.widest, T.total, R, Math.round(T.widest * T.total / (u * u) * 260 * rough), u * 0.022, 0); }
+      ctx.save(); if (sh){ ctx.shadowColor = L.shadow.c; ctx.shadowBlur = (L.shadow.b || 0) * s; ctx.shadowOffsetX = (L.shadow.x || 0) * s; ctx.shadowOffsetY = (L.shadow.y || 0) * s; }
+      ctx.drawImage(c, -c.width / 2, -c.height / 2); ctx.restore(); }
     return T;
   }
 
@@ -185,7 +235,7 @@
   function render(doc, W, o = {}){
     const F = format(doc.format), s = W / F.w, H = Math.round(F.h * s), c = o.canvas || mkCanvas(W, H); c.width = W; c.height = H;
     const ctx = c.getContext('2d'), acc = doc.accent || ACCENTS[0].dark, info = {shrunk: []};
-    for (const L of doc.layers){
+    for (const L of ordered(doc.layers)){
       if (L.hide || (o.only && o.only !== L.id)) continue;
       ctx.save(); ctx.globalAlpha = L.op == null ? 1 : clamp(L.op, 0, 1);
       if (L.type === 'bg'){ drawBg(ctx, doc, L, W, H, s, o); ctx.restore(); continue; }
@@ -201,6 +251,33 @@
     }
     c._info = info; return c;
   }
+  // ───────── Auflagen: Bilder aus der Ablage, die immer ganz oben liegen (top: true) ─────────
+  // band: deckende Streifen des Bildes oben und unten (Anteil der Bildhöhe), ar: Seitenverhältnis, fmts: Formate, für die die Auflage gilt
+  const ordered = layers => layers.some((L, i) => L.top && layers.slice(i + 1).some(M => !M.top)) ? [...layers.filter(L => !L.top), ...layers.filter(L => L.top)] : layers;
+  function pinTop(doc){ doc.layers = ordered(doc.layers); return doc; }
+  // Deckende Streifen eines Bildes: Zeilen von oben und von unten, die zu mehr als der Hälfte decken
+  function bandOf(im){
+    const iw = im.naturalWidth || im.width, ih = im.naturalHeight || im.height, w = 48, h = clamp(ih, 8, 480), c = mkCanvas(w, h), x = c.getContext('2d', {willReadFrequently: true});
+    x.drawImage(im, 0, 0, w, h); const d = x.getImageData(0, 0, w, h).data, row = y => { let n = 0; for (let i = 0; i < w; i++) if (d[(y * w + i) * 4 + 3] > 128) n++; return n > w / 2; };
+    let t = 0, b = 0; while (t < h && row(t)) t++; if (t >= h) return {t: 0, b: 0}; while (b < h && row(h - 1 - b)) b++;
+    return {t: Math.round(t / h * 1000) / 1000, b: Math.round(b / h * 1000) / 1000};
+  }
+  // Anteil des Titelbilds, den die Auflagen oben und unten verdecken – dort legen die Vorlagen nichts hin
+  function topInset(layers, F){
+    let t = 0, b = 0;
+    for (const L of layers || []){ if (!L.top || L.hide || !L.band || !L.ar) continue;
+      const r = fitRect(L.ar, 1, L.w, L.h, L), y0 = L.y + L.h / 2 + r.y;
+      if (L.band.t > 0) t = Math.max(t, Math.min(y0 + L.band.t * r.h, L.y + L.h) / F.h);
+      if (L.band.b > 0) b = Math.max(b, (F.h - Math.max(y0 + (1 - L.band.b) * r.h, L.y)) / F.h); }
+    t = clamp(t, 0, 1); b = clamp(b, 0, 1); return t + b > 0.6 ? {t: 0, b: 0} : {t, b};
+  }
+  const fullTop = (L, F) => { L.x = 0; L.y = 0; L.w = F.w; L.h = F.h; return L; };
+  // Neue Auflage: füllt das ganze Titelbild, ist gesperrt und liegt obenauf. o: {lib, name, fmts, band, ar}
+  function overlayLayer(fmt, img, o = {}){
+    const F = format(fmt), band = o.band || {t: 0, b: 0};
+    return fullTop({id: uid(), type: 'img', user: true, top: true, lock: true, img, fit: 'cover', pos: {x: 0.5, y: band.b > band.t ? 1 : band.t > band.b ? 0 : 0.5}, ...o, band}, F);
+  }
+
   // Oberste Ebene an einer Stelle (Entwurfspixel); gedrehte Kästen werden mitgedreht
   function inside(L, x, y, pad = 0){ const cx = L.x + L.w / 2, cy = L.y + L.h / 2, a = -(L.rot || 0) * Math.PI / 180, dx = x - cx, dy = y - cy, lx = dx * Math.cos(a) - dy * Math.sin(a), ly = dx * Math.sin(a) + dy * Math.cos(a); return Math.abs(lx) <= L.w / 2 + pad && Math.abs(ly) <= L.h / 2 + pad; }
   function hit(doc, x, y){ for (let i = doc.layers.length - 1; i >= 0; i--){ const L = doc.layers[i]; if (L.type === 'bg' || L.hide || L.lock) continue; if (inside(L, x, y, 6)) return L; } return null; }
@@ -214,7 +291,41 @@
     const sh = (shape, x, y, w, h, o) => ({type: 'shape', shape, x, y, w, h, ...o});
     const bg = fill => ({type: 'bg', fill});
     const shadow = {b: 40, x: 0, y: 14, c: 'rgba(0,0,0,0.45)'};
+    // Pinselbalken: Bild über die ganze Fläche, darauf drei leicht gedrehte Balken – Pinselstrich in der Akzentfarbe, kleines Wort auf Papier, schwarzer Balken – in rauer Schrift
+    const P = (C, slot, x, y, w, h, o) => t(slot, x, y, w, h, {font: C.fT || 'anton', size: 200, color: PAL.white, rot: -3, rough: 0.45, lh: 1.0, box: slot === 'title' ? {c: C.acc, pad: 0.14, mode: 'block', style: 'brush'} : {c: PAL.ink, pad: 0.14, mode: 'block', style: 'torn'}, ...(slot === 'title' ? {text: 'ERSTE ZEILE', accent: PAL.ink} : {text: 'ZWEITE ZEILE'}), ...o});
+    const W = (C, x, y, w, h, o) => t('kicker', x, y, w, h, {text: 'gegen', font: C.fS || 'typewriter', size: 78, color: PAL.ink, upper: false, rot: -3, rough: 0.3, align: 'c', lh: 1.0, box: {c: '#E9E6E0', pad: 0.38, mode: 'block', style: 'torn'}, ...o});
+    const stack = (F, C, y0) => [P(C, 'title', F.w * 0.04, F.h * y0, F.w * 0.92, F.h * 0.14, {align: 'c', size: 190}), P(C, 'sub', F.w * 0.04, F.h * (y0 + 0.2), F.w * 0.92, F.h * 0.14, {align: 'c', size: 190}), W(C, F.w * 0.25, F.h * (y0 + 0.145), F.w * 0.5, F.h * 0.05, {})];
     return [
+      {id: 'pinsel', n: 'Pinselbalken unten', dark: true, needs: ['photo'], build: (F, C) => F.wide ? [
+        bg({kind: 'img', slot: 'photo', vig: 0.25}),
+        P(C, 'title', F.w * 0.02, F.h * 0.47, F.w * 0.72, F.h * 0.215, {}),
+        P(C, 'sub', F.w * 0.3, F.h * 0.725, F.w * 0.5, F.h * 0.215, {}),
+        W(C, F.w * 0.1, F.h * 0.745, F.w * 0.2, F.h * 0.09, {}),
+      ] : [bg({kind: 'img', slot: 'photo', vig: 0.25}), ...stack(F, C, 0.56)]},
+      {id: 'pinsel-m', n: 'Pinselbalken Mitte', dark: true, needs: ['photo'], build: (F, C) => F.wide ? [
+        bg({kind: 'img', slot: 'photo', vig: 0.25}),
+        P(C, 'title', F.w * 0.03, F.h * 0.42, F.w * 0.94, F.h * 0.23, {align: 'c', size: 230}),
+        P(C, 'sub', F.w * 0.2, F.h * 0.7, F.w * 0.6, F.h * 0.215, {align: 'c'}),
+        W(C, F.w * 0.4, F.h * 0.635, F.w * 0.2, F.h * 0.085, {}),
+      ] : [bg({kind: 'img', slot: 'photo', vig: 0.25}), ...stack(F, C, 0.36)]},
+      {id: 'pinsel-3', n: 'Pinselbalken, drei Zeilen', dark: true, needs: ['photo'], build: (F, C) => { const paper = {c: '#DEDBD5', pad: 0.14, mode: 'block', style: 'torn'}; return F.wide ? [
+        bg({kind: 'img', slot: 'photo', vig: 0.25}),
+        P(C, 'title', F.w * 0.33, F.h * 0.3, F.w * 0.64, F.h * 0.2, {text: 'ZWEITE ZEILE', box: {c: PAL.ink, pad: 0.14, mode: 'block', style: 'torn'}}),
+        P(C, 'sub', F.w * 0.3, F.h * 0.55, F.w * 0.64, F.h * 0.215, {text: 'DRITTE ZEILE', color: C.acc, box: paper}),
+        W(C, F.w * 0.3, F.h * 0.12, F.w * 0.5, F.h * 0.15, {text: 'ERSTE ZEILE', upper: true, size: 130, align: 'l', box: {...paper, pad: 0.2}}),
+      ] : [
+        bg({kind: 'img', slot: 'photo', vig: 0.25}),
+        P(C, 'title', F.w * 0.04, F.h * 0.5, F.w * 0.92, F.h * 0.13, {align: 'c', size: 180, text: 'ZWEITE ZEILE', box: {c: PAL.ink, pad: 0.14, mode: 'block', style: 'torn'}}),
+        P(C, 'sub', F.w * 0.04, F.h * 0.66, F.w * 0.92, F.h * 0.13, {align: 'c', size: 180, text: 'DRITTE ZEILE', color: C.acc, box: paper}),
+        W(C, F.w * 0.08, F.h * 0.4, F.w * 0.84, F.h * 0.08, {text: 'ERSTE ZEILE', upper: true, size: 110, box: {...paper, pad: 0.2}}),
+      ]; }},
+      {id: 'pinsel-p', n: 'Pinselbalken mit Person', dark: true, needs: ['person'], build: (F, C) => F.wide ? [
+        bg({kind: 'img', slot: 'photo', dim: 0.35, gray: true, vig: 0.3}),
+        im('person', -F.w * 0.02, F.h * 0.06, F.w * 0.44, F.h * 1.01, {shadow}),
+        P(C, 'title', F.w * 0.4, F.h * 0.2, F.w * 0.57, F.h * 0.215, {}),
+        P(C, 'sub', F.w * 0.46, F.h * 0.5, F.w * 0.5, F.h * 0.215, {}),
+        W(C, F.w * 0.42, F.h * 0.42, F.w * 0.2, F.h * 0.085, {}),
+      ] : [bg({kind: 'img', slot: 'photo', dim: 0.35, gray: true, vig: 0.3}), im('person', -F.w * 0.04, F.h * 0.44, F.w * 1.08, F.h * 0.61, {shadow}), ...stack(F, C, 0.06)]},
       {id: 'rechts', n: 'Person rechts', dark: true, needs: ['person'], build: (F, C) => F.wide ? [
         bg({kind: 'grad', a: PAL.ink, b: PAL.ink2, ang: 0, vig: 0.35}),
         im('person', F.w * 0.50, F.h * 0.05, F.w * 0.52, F.h * 1.02, {outline: {w: 9, c: PAL.cream}, shadow}),
@@ -335,7 +446,7 @@
   function derive(c){ const o = {...c}, auto = {}; if (!o.photo && o.person && o.person.img){ o.photo = o.person.src || o.person.img; auto.photo = true; } if (!(o.person && o.person.img) && o.photo){ o.person = {img: o.photo, mask: null}; auto.person = true; } return [o, auto]; }
   function fromTemplate(id, fmt, content0 = {}, base = {}){
     const [content, auto] = derive(content0);
-    const T = template(id) || TEMPLATES[0], F0 = format(fmt), F = {...F0, wide: F0.w / F0.h > 1.3}, a = accent(base.accentKey || 'rot'), C = {acc: a.dark, accL: a.light};
+    const T = template(id) || TEMPLATES[0], F0 = format(fmt), ins = topInset(base.extra, F0), fh = F0.h * (1 - ins.t - ins.b), oy = F0.h * ins.t, F = {...F0, h: fh, wide: F0.w / fh > 1.3}, a = accent(base.accentKey || 'rot'), tf = base.fonts || {}, own = k => FONTS.some(x => x.k === k) ? k : null, C = {acc: a.dark, accL: a.light, fT: own(tf.title), fS: own(tf.small)};
     const doc = {app: 'honeythumb', v: 1, id: base.id || uid(), name: base.name || 'Titelbild', format: F0.k, tpl: T.id, accentKey: a.k, accent: T.dark ? a.dark : a.light, assets: {...(base.assets || {})}, keep: {}, layers: [], updated: Date.now()};
     if (content.person && content.person.img && !auto.person) doc.keep.person = content.person; if (content.photo && !auto.photo) doc.keep.photo = content.photo;
     for (const k of ['title', 'kicker', 'sub']) if (content[k] != null) doc.keep[k] = content[k];   // Texte merken, auch wenn die Vorlage das Feld nicht hat
@@ -345,10 +456,14 @@
       else if (L.type === 'img'){ const c = content[L.slot]; if (L.slot === 'person' && c && c.img){ L.img = c.img; if (c.mask) L.mask = c.mask; if (c.src) L.src = c.src; } else if (c && L.slot !== 'person') L.img = c; if (L.img && auto[L.slot]) L.auto = true; }
       else if (L.type === 'text' && L.slot && content[L.slot] != null) L.text = content[L.slot];
       if (!L.slot) delete L.slot;
+      // Unter einer Auflage: die Vorlage rückt in die freie Fläche; Flächen am Rand reichen weiter bis zum Bildrand
+      if (L.type !== 'bg' && fh < F0.h){ const end = L.y + L.h >= fh - 1, start = L.y <= 1; L.y += oy;
+        if (L.type === 'shape' && L.shape === 'rect' && !L.rot){ if (end) L.h = F0.h - L.y; if (start){ L.h += L.y; L.y = 0; } } }
       doc.layers.push(L);
     }
     for (const L of base.extra || []) doc.layers.push(L);
-    return doc;
+    if (tf.title || tf.small) doc.tfonts = {title: tf.title || null, small: tf.small || null};
+    return packFonts(pinTop(doc));
   }
   // Was in den Feldern steht – zum Wechsel der Vorlage oder des Formats
   function contentOf(doc){
@@ -362,9 +477,11 @@
   // Andere Vorlage und/oder anderes Format; eigene Ebenen (ohne Feld) wandern maßstäblich mit
   function retemplate(doc, id, fmt){
     const F1 = format(doc.format), F2 = format(fmt || doc.format), k = Math.min(F2.w / F1.w, F2.h / F1.h), dx = (F2.w - F1.w * k) / 2, dy = (F2.h - F1.h * k) / 2;
-    if (!id && !doc.tpl){ const d = clone(doc); d.format = F2.k; d.layers = doc.layers.map(L => L.type === 'bg' ? clone(L) : scaled(L, k, dx, dy)); d.updated = Date.now(); return d; }
-    const extra = doc.layers.filter(L => !L.slot && L.type !== 'bg' && L.user).map(L => scaled(L, k, dx, dy));
-    const d = fromTemplate(id || doc.tpl, F2.k, contentOf(doc), {id: doc.id, name: doc.name, accentKey: doc.accentKey, assets: doc.assets, extra});
+    // Auflagen bleiben nur in ihren Formaten und füllen dort wieder das ganze Bild
+    const same = F1.k === F2.k, tops = doc.layers.filter(L => L.top && (same || !L.fmts || L.fmts.includes(F2.k))).map(L => same ? clone(L) : fullTop(clone(L), F2));
+    if (!id && !doc.tpl){ const d = clone(doc); d.format = F2.k; d.layers = [...doc.layers.filter(L => !L.top).map(L => L.type === 'bg' ? clone(L) : scaled(L, k, dx, dy)), ...tops]; d.updated = Date.now(); return prune(d); }
+    const extra = [...doc.layers.filter(L => !L.top && !L.slot && L.type !== 'bg' && L.user).map(L => scaled(L, k, dx, dy)), ...tops];
+    const d = fromTemplate(id || doc.tpl, F2.k, contentOf(doc), {id: doc.id, name: doc.name, accentKey: doc.accentKey, assets: doc.assets, extra, fonts: doc.tfonts}); if (doc.fonts) d.fonts = {...doc.fonts, ...(d.fonts || {})}; packFonts(d);
     return prune(d);
   }
   // Akzentfarbe tauschen: alle Stellen, die die bisherige Farbe (hell oder dunkel) tragen
@@ -379,6 +496,9 @@
   function newLayer(doc, type, o = {}){
     const F = format(doc.format), u = Math.min(F.w, F.h), dark = lum(bgColor(doc)) < 0.5, base = {id: uid(), type, user: true};
     if (type === 'text') return {...base, text: 'TEXT', x: F.w * 0.1, y: F.h * 0.38, w: F.w * 0.8, h: F.h * 0.24, font: 'anton', size: u * 0.2, color: dark ? PAL.cream : PAL.ink, align: 'c', valign: 'm', lh: 1.04, upper: true, fit: true, ...o};
+    if (type === 'bar'){ const k = o.kind, tf = doc.tfonts || {}, own = v => FONTS.some(x => x.k === v) ? v : null, small = k === 'paper'; delete o.kind;
+      return {...base, type: 'text', text: small ? 'gegen' : 'TEXT', x: F.w * (small ? 0.38 : 0.2), y: F.h * (small ? 0.455 : 0.4), w: F.w * (small ? 0.24 : 0.6), h: F.h * (small ? 0.09 : 0.2) * (F.w > F.h ? 1 : 0.6), font: small ? own(tf.small) || 'typewriter' : own(tf.title) || 'anton', size: u * (small ? 0.09 : 0.22),
+        color: small ? PAL.ink : PAL.white, align: 'c', valign: 'm', lh: 1.0, upper: !small, fit: true, rot: -3, rough: small ? 0.3 : 0.45, box: {c: k === 'brush' ? doc.accent || ACCENTS[0].dark : small ? '#E9E6E0' : PAL.ink, pad: small ? 0.38 : 0.14, mode: 'block', style: k === 'brush' ? 'brush' : 'torn'}, ...o}; }
     if (type === 'shape') return {...base, shape: 'rect', x: F.w / 2 - u * 0.15, y: F.h / 2 - u * 0.15, w: u * 0.3, h: o.shape === 'line' ? u * 0.03 : o.shape === 'arrow' ? u * 0.18 : u * 0.3, fill: doc.accent || ACCENTS[0].dark, ...o};
     if (type === 'icon') return {...base, icon: 'megafon', x: F.w / 2 - u * 0.15, y: F.h / 2 - u * 0.15, w: u * 0.3, h: u * 0.3, color: dark ? PAL.cream : PAL.ink, ...o};
     if (type === 'img'){ const r = o.ratio || 1, h = u * 0.7, w = Math.min(F.w * 0.9, h * r); delete o.ratio; return {...base, x: F.w / 2 - w / 2, y: F.h / 2 - w / r / 2, w, h: w / r, fit: 'contain', pos: {x: 0.5, y: 0.5}, ...o}; }
@@ -392,12 +512,14 @@
     for (const [k, v] of Object.entries(d.assets || {})) if (typeof v === 'string' && /^data:image\/(png|jpeg|webp|gif);base64,/.test(v)) out.assets[k] = v;
     for (const L of d.layers.slice(0, 200)){ if (!L || !['bg', 'img', 'text', 'shape', 'icon'].includes(L.type)) continue; const o = clone(L); o.id = uid(); delete o.auto;
       if (o.type !== 'bg'){ o.x = num(o.x, 0, -20000, 20000); o.y = num(o.y, 0, -20000, 20000); o.w = num(o.w, 100, 1, 20000); o.h = num(o.h, 100, 1, 20000); o.rot = num(o.rot, 0, -360, 360); }
-      if (o.type === 'text'){ o.text = String(o.text || '').slice(0, 2000); o.size = num(o.size, 80, 6, 4000); }
+      if (o.type === 'text'){ o.text = String(o.text || '').slice(0, 2000); o.size = num(o.size, 80, 6, 4000); if (o.rough != null) o.rough = num(o.rough, 0, 0, 1); }
       out.layers.push(o); }
+    for (const [k, v] of Object.entries(d.fonts || {}).slice(0, 8)) if (FONT_KEY.test(k) && v && FONT_URL.test(v.url || '')) (out.fonts ||= {})[k] = {n: String(v.n || 'Schrift').slice(0, 60), url: v.url};
+    if (d.tfonts && typeof d.tfonts === 'object') out.tfonts = {title: typeof d.tfonts.title === 'string' ? d.tfonts.title : null, small: typeof d.tfonts.small === 'string' ? d.tfonts.small : null};
     if (!out.layers.some(L => L.type === 'bg')) out.layers.unshift({id: uid(), type: 'bg', fill: {kind: 'color', c: PAL.ink}});
-    return prune(out);
+    return prune(pinTop(out));
   }
 
   G.HoneyThumb = {version: VERSION, PAL, ACCENTS, accent, FORMATS, format, FONTS, SHAPES, BG_KINDS, TEMPLATES, template, uid, clone, clamp, mix, rgba, lum,
-    decode, load, imgOf, addAsset, prune, fonts, cutout, render, hit, inside, textLayout, fromTemplate, contentOf, retemplate, recolor, newLayer, blank, parse, bgColor, mkCanvas};
+    decode, load, imgOf, addAsset, prune, fonts, addFont, packFonts, userFonts, FONT_URL, cutout, render, ordered, pinTop, bandOf, topInset, overlayLayer, fitRect, hit, inside, textLayout, fromTemplate, contentOf, retemplate, recolor, newLayer, blank, parse, bgColor, mkCanvas};
 })();

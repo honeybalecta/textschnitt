@@ -16,3 +16,9 @@ Alle Schriften stehen unter der SIL Open Font License 1.1 (OFL.txt) und stammen 
 | ArchivoBlack-Regular.ttf | Archivo Black | Regular |
 | Lora-Bold.ttf, Lora-UI.ttf | Lora | Bold / variabel |
 | PlayfairDisplay-ExtraBold.ttf | Playfair Display | ExtraBold |
+| Lora-Bold.ttf, Lora-UI.ttf | Lora | Bold / variabel |
+| PlayfairDisplay-ExtraBold.ttf | Playfair Display | ExtraBold |
+| LMMonoLt10-Bold.otf | Latin Modern Mono Light 10 Bold (GUST e-foundry) – in HoneyThumb „Schreibmaschine“ | unverändert |
+
+Latin Modern steht unter der GUST Font License (GFL, entspricht der LaTeX Project Public License 1.3c oder neuer):
+https://www.gust.org.pl/projects/e-foundry/licenses – die Datei ist unverändert übernommen.
