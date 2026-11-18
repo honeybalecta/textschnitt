@@ -5,7 +5,8 @@
    Wer mehr will (Ebenen, Formen, Maske nachbessern), sichert das Ergebnis als .honeythumb und öffnet es in HoneyThumb.
    Markenunterlagen aus HoneyThumb (Datei „Markenunterlagen-….json“) bringen Auflagen (etwa ein Banner, das immer obenauf liegt),
    die Akzentfarbe und die Schriften der Marke mit; sie liegen im Gerät (IndexedDB „honeycut-marke“).
-   „Als erstes Bild ins Video“ legt das fertige Titelbild als Bild über allem auf das erste Bild des Exports (coverFirstPlan). */
+   „Als erstes Bild ins Video“ legt das fertige Titelbild als Bild über allem auf das erste Bild des Exports (coverFirstPlan).
+   „Titelbild importieren“ nimmt dafür ein fertiges Bild aus einer Datei – im Ganzen, in der Größe des Videos (coverFirst.own). */
 (function(){
   const H = window.HoneyThumb, CUT = window.HoneyThumbCut; if (!H || !CUT) return;
   const DEF = {tpl: 'rechts', fmt: '', acc: 'rot', title: '', kicker: '', sub: '', cut: true, size: 1, shift: 0, bg: 'tpl', bgc: '#131312', ov: true};
@@ -33,6 +34,20 @@
   async function brandSet(b){ await kv('readwrite', s => b ? s.put(b, 'marke') : s.delete('marke')); await brandUse(b); }
   // Auflagen der Marke, die für dieses Format gelten und „immer dabei“ sind
   const tops = (fmt, assets) => !brand ? [] : brand.overlays.filter(o => o.auto && o.formats.includes(fmt) && H.imgOf({assets: {x: o.img}}, 'x')).map(o => { assets['ov-' + o.id] = o.img; return H.overlayLayer(fmt, 'ov-' + o.id, {lib: o.id, name: o.name, fmts: o.formats.slice(), band: o.band, ar: o.ar}); });
+
+  // ───────── Fertiges Titelbild aus einer Datei als erstes Bild des Videos ─────────
+  // Das Bild steht im Ganzen in der Größe des Videos; passt sein Format nicht, bleibt ringsum Schwarz statt eines Beschnitts.
+  async function importFirst(file){
+    if (!P || !TS.saveImage) throw new Error('Das geht in dieser Version nicht.');
+    if (!file || !(/^image\//.test(file.type) || /\.(png|jpe?g|webp)$/i.test(file.name))) throw new Error('Bitte ein Bild wählen (JPG, PNG oder WebP).');
+    const url = await new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(String(fr.result)); fr.onerror = () => rej(new Error('Die Datei lässt sich nicht lesen.')); fr.readAsDataURL(file); });
+    const im = await H.decode(url), [W, Hh] = outSize(), cv = H.mkCanvas(W, Hh), g = cv.getContext('2d'), k = Math.min(W / im.naturalWidth, Hh / im.naturalHeight), w = im.naturalWidth * k, h = im.naturalHeight * k;
+    g.fillStyle = '#000'; g.fillRect(0, 0, W, Hh); g.imageSmoothingQuality = 'high'; g.drawImage(im, (W - w) / 2, (Hh - h) / 2, w, h);
+    const out = cv.toDataURL('image/png'), m = J(TS.saveImage(`titelbild-eigen-${hashStr(out.slice(0, 4000) + out.length + out.slice(-4000))}.png`, out, W, Hh, P.id)); if (!m || !m.uri) throw new Error('Das Bild ließ sich nicht ablegen.');
+    const name = String(file.name || 'Bild').slice(0, 80), fit = Math.abs(im.naturalWidth / im.naturalHeight - W / Hh) < 0.02;
+    P.settings.coverFirst = {on: true, own: true, name, uri: m.uri, w: W, h: Hh}; clearTimeout(saveT); saveT = setTimeout(saveNow, 300);
+    return `„${name}“ liegt beim nächsten Export als Video auf dem ersten Bild` + (fit ? '.' : ' – im Ganzen, mit schwarzem Rand, weil es ein anderes Format hat als das Video.');
+  }
 
   // Das Bild an der Abspiellinie, wie die Bühne es zeigt (ohne Schrift), längste Seite höchstens 1600
   async function grab(){
@@ -81,6 +96,7 @@
       </div>
       <div class="row wrap" style="margin-top:10px"><span class="muted small" id="ctBrand" style="flex:1;min-width:140px"></span><label class="row" id="ctOvL"><input type="checkbox" id="ctOv"> Auflage der Marke</label><label class="btn small">Markenunterlagen laden …<input type="file" id="ctBrandFile" accept=".json,application/json" hidden></label><button class="btn small" id="ctBrandOff">Entfernen</button></div>
       <label class="row" id="ctFirstL" style="margin-top:10px" title="Das Titelbild liegt im exportierten Video auf dem ersten Bild – über allem, nur ein Bild lang. Der Ton läuft von Anfang an. So lässt es sich auf jeder Plattform als Titelbild wählen, ohne es eigens hochzuladen."><input type="checkbox" id="ctFirst"> Als erstes Bild ins Video legen (nur ein Bild lang, der Ton läuft normal)</label>
+      <div class="row wrap" id="ctOwnRow" style="margin-top:6px"><span class="muted small" id="ctOwn" style="flex:1;min-width:140px"></span><label class="btn small" title="Ein fertiges Titelbild aus einer Datei im Ganzen auf das erste Bild des Videos legen">Fertiges Titelbild importieren …<input type="file" id="ctOwnFile" accept="image/*" hidden></label><button class="btn small" id="ctOwnOff">Entfernen</button></div>
       <div class="grid2">
         <label>Dateiart <select id="ctType"><option value="jpg">JPG (klein, für YouTube)</option><option value="png">PNG (verlustfrei)</option></select></label>
         <label>Größe <select id="ctOut"></select></label>
@@ -90,7 +106,9 @@
     const msg = t => { const m = $('#ctMsg'); if (m) m.textContent = t || ''; };
     $('#ctFmt').value = o0.fmt; $('#ctAcc').value = o0.acc; $('#ctTitle').value = o0.title; $('#ctKicker').value = o0.kicker; $('#ctSub').value = o0.sub; $('#ctCut').checked = !!o0.cut;
     $('#ctSize').value = o0.size; $('#ctShift').value = o0.shift; $('#ctBg').value = o0.bg; $('#ctBgc').value = o0.bgc; $('#ctOv').checked = o0.ov !== false;
-    $('#ctFirst').checked = !!(P.settings.coverFirst && P.settings.coverFirst.on); if (!TS.saveImage) $('#ctFirstL').style.display = 'none';
+    $('#ctFirst').checked = !!(P.settings.coverFirst && P.settings.coverFirst.on && !P.settings.coverFirst.own); if (!TS.saveImage){ $('#ctFirstL').style.display = 'none'; $('#ctOwnRow').style.display = 'none'; }
+    const ownShow = () => { const c = P.settings.coverFirst, own = !!(c && c.on && c.own); $('#ctOwn').textContent = own ? `Erstes Bild des Videos: importiertes Titelbild „${c.name || 'Bild'}“` : ''; $('#ctOwnOff').style.display = own ? '' : 'none'; };
+    ownShow();
     let pref = {}; try { pref = JSON.parse(localStorage.getItem('hc-cover')) || {}; } catch(_){} $('#ctType').value = pref.tplType === 'png' ? 'png' : 'jpg';
     let tpl = o0.tpl, open = true, busy = false, again = false, stripT = 0;
     const read = () => ({tpl, fmt: $('#ctFmt').value, acc: $('#ctAcc').value, title: $('#ctTitle').value, kicker: $('#ctKicker').value, sub: $('#ctSub').value, cut: $('#ctCut').checked, size: +$('#ctSize').value, shift: +$('#ctShift').value, bg: $('#ctBg').value, bgc: $('#ctBgc').value, ov: $('#ctOv').checked});
@@ -119,7 +137,7 @@
 
     // Titelbild als erstes Bild des Videos: das fertige Bild in der Größe des Videos beim Projekt ablegen
     const first = async quiet => { if (!TS.saveImage) return; const on = $('#ctFirst') ? $('#ctFirst').checked : !!(P.settings.coverFirst && P.settings.coverFirst.on);
-      if (!on){ if (P.settings.coverFirst && P.settings.coverFirst.on){ P.settings.coverFirst = {on: false}; clearTimeout(saveT); saveT = setTimeout(saveNow, 300); } return; }
+      if (!on){ if (P.settings.coverFirst && P.settings.coverFirst.on && !P.settings.coverFirst.own){ P.settings.coverFirst = {on: false}; clearTimeout(saveT); saveT = setTimeout(saveNow, 300); } return; }
       if (!st) return;
       try { const [W, Hh] = outSize(), d = build(read()); await H.load(d); const F = H.format(d.format), w = Math.round(Math.max(W, Hh * F.w / F.h) / 2) * 2, cv = H.render(d, Math.min(2560, w)), url = cv.toDataURL('image/png');
         const m = J(TS.saveImage(`titelbild-${hashStr(url.slice(0, 4000) + url.length + url.slice(-4000))}.png`, url, cv.width, cv.height, P.id)); if (!m || !m.uri) throw new Error('nicht gespeichert');
@@ -128,7 +146,9 @@
       catch(e){ if (!quiet) msg('Das Titelbild ließ sich nicht fürs Video ablegen: ' + ((e && e.message) || e)); hcLog('Titelbild als erstes Bild: ' + ((e && e.message) || e)); } };
     $('#ctFirst').addEventListener('change', async () => { const c = $('#ctFirst');
       if (c.checked){ const [W, Hh] = outSize(), fit = H.FORMATS.find(f => Math.abs(f.w / f.h - W / Hh) < 0.02); if (fit && $('#ctFmt').value !== fit.k){ $('#ctFmt').value = fit.k; keep(); show(); sizes(); await paint(); strip(); } }
-      await first(false); });
+      await first(false); ownShow(); });
+    $('#ctOwnFile').addEventListener('change', async e => { const f = e.target.files[0]; e.target.value = ''; if (!f) return; try { const t = await importFirst(f); $('#ctFirst').checked = false; ownShow(); msg(t); } catch(err){ msg((err && err.message) || 'Das Bild lässt sich nicht lesen.'); } });
+    $('#ctOwnOff').onclick = () => { P.settings.coverFirst = {on: false}; clearTimeout(saveT); saveT = setTimeout(saveNow, 300); ownShow(); msg('Das importierte Titelbild liegt nicht mehr auf dem ersten Bild.'); };
     $('#ctBrandFile').addEventListener('change', async e => { const f = e.target.files[0]; e.target.value = ''; if (!f) return;
       try { msg('Lese die Markenunterlagen …'); const b = await brandRead(await f.text()); await brandSet(b); $('#ctAcc').value = b.accentKey; $('#ctOv').checked = true; keep(); show(); await paint(); strip(); msg(`Markenunterlagen „${b.name}“ geladen` + (b.overlays.length ? ` – ${b.overlays.length === 1 ? 'eine Auflage' : b.overlays.length + ' Auflagen'}` : '') + (b.fontFiles.length ? `, ${b.fontFiles.length === 1 ? 'eine Schrift' : b.fontFiles.length + ' Schriften'}` : '') + '.'); }
       catch(err){ msg((err && err.message) || 'Die Datei lässt sich nicht lesen.'); } });
@@ -148,7 +168,7 @@
       catch(e){ msg('Das Bild ließ sich nicht speichern: ' + ((e && e.message) || e)); hcLog('Titelbild mit Vorlage: ' + ((e && e.message) || e)); }
       b.disabled = false; };
     $('#ctFile').onclick = async () => { try { const d = H.prune(await doc()), m = await saveBlob(safe(P.name) + ' – Titelbild.honeythumb', new Blob([JSON.stringify(d)], {type: 'application/json'})); msg(m ? m + ' – in HoneyThumb über „Öffnen“ laden.' : 'Nicht gespeichert.'); } catch(e){ msg('Die Datei ließ sich nicht sichern: ' + ((e && e.message) || e)); } };
-    sheetOnClose = () => { if (P.settings.coverFirst && P.settings.coverFirst.on && st) first(true);   // letzter Stand des Titelbilds fürs Video
+    sheetOnClose = () => { if (P.settings.coverFirst && P.settings.coverFirst.on && !P.settings.coverFirst.own && st) first(true);   // letzter Stand des Titelbilds fürs Video
       open = false; clearTimeout(stripT); };
     body.onclick = null; sheetItem = null; sizes(); show(); openSheet(true);
     if (window.slFonts) try { await slFonts(slProfile()); } catch(_){}
@@ -160,6 +180,9 @@
     const a = c.w / c.h, fps = Math.max(1, +(primary().fps) || 30);
     return [{mode: 'pip', image: true, uri: c.uri, in: 0, out: Math.round(0.6 / fps * 10000) / 10000, at: 0, x: 0.5, y: 0.5, w: +Math.max(1, Hh * a / W).toFixed(4), aspect: +a.toFixed(5), track: 199, vol: 0, hasAudio: false, width: c.w, height: c.h, rotation: 0, top: true, first: true}]; };
   window.openCoverTpl = openCoverTpl;
-  window.HCTitelbild = {build: o => build({...DEF, ...o}), get state(){ return st; }, set state(v){ st = v; }, opts, get brand(){ return brand; }, brandRead, brandSet, brandReady};
+  window.HCTitelbild = {build: o => build({...DEF, ...o}), get state(){ return st; }, set state(v){ st = v; }, opts, get brand(){ return brand; }, brandRead, brandSet, brandReady, importFirst};
+  // Im Export-Reiter: fertiges Titelbild direkt importieren
+  const imp = document.querySelector('#coverImportFile'); if (imp) imp.addEventListener('change', async e => { const f = e.target.files[0]; e.target.value = ''; if (!f) return; try { toast(await importFirst(f)); } catch(err){ toast((err && err.message) || 'Das Bild lässt sich nicht lesen.'); } });
+  if (imp && !TS.saveImage) imp.closest('label').style.display = 'none';
   const b = document.querySelector('#coverTplBtn'); if (b) b.onclick = openCoverTpl;
 })();

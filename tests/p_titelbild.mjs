@@ -113,6 +113,32 @@ try {
   await page.click('#ctFirst'); await sleep(400);
   const c3 = await ev(() => { exFmt = 'video'; const p = buildPlan(); return { on: !!P.settings.coverFirst.on, plan: (p.overlays || p.ovs || []).some(x => x.first) }; });
   chk('Beim Wiederöffnen sind Haken und Markenunterlagen noch da; ohne Haken trägt der Plan kein Titelbild mehr', c2.first && /Testmarke/.test(c2.brand) && !c3.on && !c3.plan, { c2, c3 });
+  // ═════════ Fertiges Titelbild importieren (2.45) ═════════
+  const bild = async (w, h, col) => Buffer.from((await ev(([w, h, col]) => { const c = document.createElement('canvas'); c.width = w; c.height = h; const x = c.getContext('2d'); x.fillStyle = col; x.fillRect(0, 0, w, h); return c.toDataURL('image/png'); }, [w, h, col])).split(',')[1], 'base64');
+  await page.setInputFiles('#ctOwnFile', { name: 'Mein Titelbild.png', mimeType: 'image/png', buffer: await bild(1280, 720, '#e61ec8') });
+  await page.waitForFunction(() => /Mein Titelbild.*ersten Bild/.test(document.querySelector('#ctMsg').textContent), null, { timeout: 15000 });
+  const o1 = await ev(() => { exFmt = 'video'; const c = P.settings.coverFirst, [W, H] = outSize(), p = buildPlan(), f = p.overlays.filter(x => x.first); return { own: c.own, on: c.on, name: c.name, dims: [c.w, c.h], out: [W, H], n: f.length, w: f[0] && f[0].w, box: document.querySelector('#ctFirst').checked, info: document.querySelector('#ctOwn').textContent, msg: document.querySelector('#ctMsg').textContent }; });
+  chk('„Fertiges Titelbild importieren“ legt das Bild in der Größe des Videos ab und trägt es als erstes Bild in den Plan; das Blatt nennt es', o1.own && o1.on && o1.name === 'Mein Titelbild.png' && o1.dims.join() === o1.out.join() && o1.n === 1 && o1.w === 1 && !o1.box && /Mein Titelbild/.test(o1.info) && !/Rand/.test(o1.msg), o1);
+  await page.click('#ctNo'); await sleep(400);
+  chk('Schließen des Blatts ersetzt das importierte Bild nicht durch das Titelbild aus der Vorlage', await ev(() => P.settings.coverFirst.own === true && /titelbild-eigen-/.test(P.settings.coverFirst.uri)));
+  const ex2 = await ev(async () => { P.settings.level = false; exFmt = 'video'; const plan = buildPlan(); plan.name = 'titelbild-importiert'; const id = TS.exportVideo(JSON.stringify(plan));
+    for (;;){ await new Promise(r => setTimeout(r, 200)); const j = JSON.parse(TS.job(id)); if (j.status === 'done') return { ok: true, file: j.result.playable }; if (j.status === 'error') return { ok: false, error: j.error }; } });
+  if (ex2.ok){ const { execFileSync } = await import('node:child_process');
+    const px = n => { const b = execFileSync('ffmpeg', ['-v', 'error', '-i', ex2.file, '-an', '-vf', `select=eq(n\\,${n}),scale=64:36`, '-frames:v', '1', '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-'], { maxBuffer: 1 << 22 }), at = (x, y) => [...b.subarray((y * 64 + x) * 3, (y * 64 + x) * 3 + 3)]; return [at(3, 3), at(32, 18), at(60, 33)]; };
+    const mag = p => p[0] > 170 && p[1] < 90 && p[2] > 140, f0 = px(0), f1 = px(1);
+    chk('Im fertigen Video füllt das importierte Bild das erste Bild ganz aus; das zweite Bild ist wieder das Video', f0.every(mag) && !f1.every(mag), { f0, f1 }); fs.rmSync(ex2.file, { force: true }); }
+  else chk('Der Export mit importiertem Titelbild läuft durch', false, ex2);
+  // Anderes Format: im Ganzen mit schwarzem Rand; über den Export-Reiter
+  await ev(() => setTab('export')); await sleep(300);
+  await page.setInputFiles('#coverImportFile', { name: 'Quadrat.png', mimeType: 'image/png', buffer: await bild(600, 600, '#e61ec8') }); await page.waitForFunction(() => P.settings.coverFirst && P.settings.coverFirst.name === 'Quadrat.png', null, { timeout: 15000 }); await sleep(200);
+  const o2 = await ev(() => { const c = P.settings.coverFirst, [W, H] = outSize(); return { dims: [c.w, c.h], out: [W, H], own: c.own, uri: c.uri, toastText: (document.querySelector('#toast') || {}).textContent || '' }; });
+  { const { execFileSync } = await import('node:child_process'); const file = decodeURIComponent(String(o2.uri).replace(/^file:\/\//, ''));
+    const b = fs.existsSync(file) ? execFileSync('ffmpeg', ['-v', 'error', '-i', file, '-vf', 'scale=64:36', '-frames:v', '1', '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-'], { maxBuffer: 1 << 22 }) : null, at = (x, y) => b ? [...b.subarray((y * 64 + x) * 3, (y * 64 + x) * 3 + 3)] : null;
+    o2.rand = at(2, 18); o2.mitte = at(32, 18); }
+  chk('Über „Titelbild importieren“ im Export-Reiter: Ein Bild in anderem Format steht im Ganzen in der Größe des Videos, mit schwarzem Rand', o2.own && o2.dims.join() === o2.out.join() && !!o2.rand && o2.rand.every(v => v < 25) && o2.mitte[0] > 170 && o2.mitte[1] < 90 && /Rand/.test(o2.toastText), o2);
+  await page.click('#coverTplBtn'); await page.waitForSelector('#ctTpls canvas'); await sleep(700);
+  await page.click('#ctOwnOff'); await sleep(300);
+  chk('„Entfernen“ nimmt das importierte Titelbild wieder vom ersten Bild', await ev(() => { exFmt = 'video'; return !P.settings.coverFirst.on && !buildPlan().overlays.some(x => x.first) && document.querySelector('#ctOwn').textContent === ''; }));
   await page.click('#ctBrandOff'); await sleep(400);
   chk('„Entfernen“ nimmt die Markenunterlagen wieder heraus', await ev(() => !HCTitelbild.brand && !HCTitelbild.build(HCTitelbild.opts()).layers.some(l => l.top) && /keine geladen/.test(document.querySelector('#ctBrand').textContent)));
   await page.click('#ctNo');

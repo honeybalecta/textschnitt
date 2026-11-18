@@ -2,6 +2,11 @@
 
 Was sich mit jeder Version von HoneyCut ändert. Die Windows-App zeigt diese Stichpunkte an, sobald eine neuere Version bereitsteht.
 
+## 2.45.0 · Fertiges Titelbild importieren
+
+- **Titelbild importieren** (Export → „Titelbild importieren …“, auch im Blatt „Titelbild mit Vorlage“): Ein fertiges Bild aus einer Datei liegt im exportierten Video im Ganzen auf dem ersten Bild – über allem, nur ein Bild lang, der Ton läuft normal. Hat es ein anderes Format als das Video, bleibt ringsum Schwarz; beschnitten wird nichts.
+- „Entfernen“ im Blatt „Titelbild mit Vorlage“ nimmt es wieder heraus; der Haken „Als erstes Bild ins Video legen“ ersetzt es durch das Titelbild aus der Vorlage.
+
 ## 2.44.0 · Titelbild im Video, Markenunterlagen, Pinselbalken
 
 - **Titelbild als erstes Bild des Videos** (Export → „Titelbild mit Vorlage …“ → „Als erstes Bild ins Video legen“): Das fertige Titelbild liegt im exportierten Video auf dem ersten Bild – über allem, nur ein Bild lang. Der Ton läuft von Anfang an. Auf den Plattformen lässt sich so das erste Bild als Titelbild wählen, ohne es eigens hochzuladen. Gilt für den Export als Video.
