@@ -27,6 +27,7 @@ Die Plattformen stellen dem Kern dieselbe Schnittstelle `window.TS` bereit (Date
 
 - Aufnahme mit `getUserMedia`/`MediaRecorder`: jede Kamera, die das System als Webcam kennt (eingebaut, USB, DJI im Webcam-Modus, Aufnahmekarten), Mikrofon frei wählbar, bis 4K. Jedes Stück zwischen „Aufnehmen“ und „Pause“ ist ein Take; am Computer liegt er als MP4 in „Dokumente\HoneyRec Aufnahmen\<Datum Name>“.
 - Skript wie im Souffleur (optional), Medien zum Reagieren und Zeigen (Videos, Ton, Bilder, Präsentationen als Bilder), Bildschirm mitaufnehmen (am Computer).
+- Dokumente (seit 2.47): PDF über pdf.js (`core/web/vendor`, Apache-2.0), Text und – als Ersatz – Word/PowerPoint/OpenDocument in `core/web/rec-docs.js`; am Computer wandelt `api/rec/convert` Office-Dateien über Microsoft Office (PowerShell/COM) oder LibreOffice in PDF. Seiten kommen als Bilder ins Projekt. Eingebauter Browser: Windows eigenes pywebview-Fenster (`api/rec/browser`), Android `InAppBrowser.kt`.
 - Läuft ein Medium mit eigenem Ton, wird das Mikrofon nicht aufgenommen (abschaltbar über „Mikro auch bei Medien mit Ton aufnehmen“); Bilder schalten nie stumm.
 - „Fertig → HoneyCut“: Takes werden Quellen, entfernte Teile `P.dels`, Einblendungen Elemente (`it.rec`) an der Stelle der Aufnahme, das Skript `P.script`. Alles Weitere wie bei jedem Projekt.
 

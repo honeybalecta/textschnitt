@@ -43,6 +43,10 @@ CLIP_TYPES = ("Videos und Bilder (*.mp4;*.mov;*.mkv;*.m4v;*.webm;*.avi;*.jpg;*.j
 # Medienablage: mehrere Videos, Bilder und Tondateien auf einmal
 CLIPS_TYPES = ("Videos Bilder und Ton (*.mp4;*.mov;*.mkv;*.m4v;*.webm;*.avi;*.jpg;*.jpeg;*.png;*.webp;*.bmp;*.gif;*.mp3;*.wav;*.m4a;*.flac;*.aac;*.ogg)",
                "Alle Dateien (*.*)")
+# HoneyRec: Medien und Dokumente auf einmal (pywebview braucht die Endungen ohne Leerzeichen, durch Semikolon getrennt)
+REC_TYPES = ("Medien und Dokumente (*.mp4;*.mov;*.mkv;*.m4v;*.webm;*.avi;*.jpg;*.jpeg;*.png;*.webp;*.bmp;*.gif;*.mp3;*.wav;*.m4a;*.flac;*.aac;*.ogg;"
+             "*.pdf;*.pptx;*.ppt;*.pps;*.ppsx;*.odp;*.docx;*.doc;*.odt;*.rtf;*.txt;*.md;*.csv;*.html;*.htm;*.xlsx;*.xls;*.ods)",
+             "PDF und Dokumente (*.pdf;*.pptx;*.ppt;*.docx;*.doc;*.odt;*.odp;*.rtf;*.txt;*.md)", "Alle Dateien (*.*)")
 PACKAGE_TYPES = ("HoneyCut Projekt (*.honeycut)", "Alle Dateien (*.*)")
 BACKUP_TYPES = ("HoneyCut Sicherung (*.zip)", "Alle Dateien (*.*)")
 
@@ -260,8 +264,8 @@ def main():
     kinds = {"rec" if REC_MODE else "cut": window}   # je Art das zuletzt geöffnete Fenster
 
     def pick(kind: str):
-        multi = kind in ("videos", "clips", "font")
-        types = {"font": FONT_TYPES, "clip": CLIP_TYPES, "clips": CLIPS_TYPES, "package": PACKAGE_TYPES, "backup": BACKUP_TYPES}.get(kind, VIDEO_TYPES)
+        multi = kind in ("videos", "clips", "font", "rec")
+        types = {"font": FONT_TYPES, "clip": CLIP_TYPES, "clips": CLIPS_TYPES, "rec": REC_TYPES, "package": PACKAGE_TYPES, "backup": BACKUP_TYPES}.get(kind, VIDEO_TYPES)
         try:
             res = window.create_file_dialog(webview.OPEN_DIALOG, allow_multiple=multi, file_types=types)
         except Exception:
@@ -342,7 +346,49 @@ def main():
             return None
         return res[0] if isinstance(res, (list, tuple)) else res
 
-    T.APP_HOOKS.update(pick=pick, focus=focus, open_files=open_files, open_window=open_window, fullscreen=fullscreen, save_any=save_any, save=save)
+    # HoneyRec: eingebauter Browser – ein eigenes Fenster des Programms, gesteuert aus der Leiste in HoneyRec.
+    # Links, die ein neues Fenster öffnen wollen, bleiben in diesem Fenster (der Standardbrowser wird nie aufgerufen).
+    BROWSER_TITLE = "HoneyRec – Browser"
+    browser_state = {"w": None, "url": ""}
+    keep_inside = ("(function(){if(window.__hrB)return;window.__hrB=1;"
+                   "document.addEventListener('click',function(e){var a=e.target&&e.target.closest&&e.target.closest('a[target]');"
+                   "if(a&&a.href){a.removeAttribute('target');}},true);"
+                   "window.open=function(u){if(u){location.href=u;}return window;};})()")
+
+    def browser(action: str, url: str = ""):
+        w = browser_state["w"]
+        try:
+            if action == "open":
+                if not url.lower().startswith(("http://", "https://")):
+                    return {"ok": False, "error": "Nur Webadressen"}
+                browser_state["url"] = url
+                if w is None:
+                    w = webview.create_window(BROWSER_TITLE, url, width=1280, height=860, min_size=(640, 420), text_select=True)
+                    browser_state["w"] = w
+                    w.events.shown += lambda: fenster_einrichten(w, BROWSER_TITLE, False)
+                    w.events.loaded += lambda: (w.evaluate_js(keep_inside), browser_state.update(url=w.get_current_url() or browser_state["url"]))
+                    w.events.closed += lambda: browser_state.update(w=None)
+                else:
+                    w.load_url(url)
+                    bring(w)
+                return {"ok": True, "open": True, "url": url}
+            if w is None:
+                return {"ok": action == "close", "open": False, "url": ""}
+            if action in ("back", "forward", "reload"):
+                w.evaluate_js({"back": "history.back()", "forward": "history.forward()", "reload": "location.reload()"}[action])
+            elif action == "close":
+                w.destroy()
+                browser_state["w"] = None
+                return {"ok": True, "open": False, "url": ""}
+            elif action == "show":
+                bring(w)
+            return {"ok": True, "open": True, "url": w.get_current_url() or browser_state["url"]}
+        except Exception as e:  # noqa: BLE001
+            T.log(f"Browser: {e!r}")
+            browser_state["w"] = None
+            return {"ok": False, "error": str(e)}
+
+    T.APP_HOOKS.update(pick=pick, browser=browser, focus=focus, open_files=open_files, open_window=open_window, fullscreen=fullscreen, save_any=save_any, save=save)
     if args:  # beim Start übergebene Dateien öffnen, sobald die Oberfläche geladen ist
         window.events.loaded += lambda: threading.Timer(0.8, T.handle_open_paths, args=(args,)).start()
 

@@ -37,7 +37,7 @@ os.environ.setdefault("HF_HUB_DISABLE_IMPLICIT_TOKEN", "1")
 import warnings  # noqa: E402
 warnings.filterwarnings("ignore", module="huggingface_hub")
 
-VERSION = "2.46.0"
+VERSION = "2.47.0"
 APP_DIR = Path(__file__).resolve().parent
 FROZEN = bool(getattr(sys, "frozen", False))          # als installierte .exe gebaut
 RES_DIR = Path(getattr(sys, "_MEIPASS", APP_DIR))      # mitgelieferte Dateien (Oberfläche, ffmpeg, Modelle)
@@ -69,6 +69,9 @@ IMG_EXT = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif", ".heic", ".tif", ".
 VIDEO_EXT = "*.mp4 *.mov *.mkv *.m4v *.webm *.avi *.mts *.m2ts *.wmv *.flv *.3gp"
 AUDIO_EXT = "*.mp3 *.wav *.m4a *.flac *.aac *.ogg *.opus"
 IMAGE_EXT = "*.jpg *.jpeg *.png *.webp *.bmp *.gif"
+# HoneyRec: Dokumente auf der Medienbühne (PDF direkt, Office über Office/LibreOffice, Text in der Oberfläche)
+DOC_EXT = "*.pdf *.txt *.md *.csv *.json *.html *.htm *.rtf *.docx *.doc *.odt *.pptx *.ppt *.pps *.ppsx *.odp *.xlsx *.xls *.ods"
+OFFICE_SUFFIX = {".docx", ".doc", ".odt", ".rtf", ".pptx", ".ppt", ".pps", ".ppsx", ".odp", ".xlsx", ".xls", ".ods"}
 
 
 # ───────────────────────────── Hilfsfunktionen ─────────────────────────────
@@ -5178,10 +5181,10 @@ def open_dialog_backup() -> str | None:
 # ───────────────────────────── Dateiauswahl, Ordner öffnen ─────────────────────────────
 
 def pick_files(kind: str) -> list[str]:
-    multi = kind in ("videos", "clips")
+    multi = kind in ("videos", "clips", "rec")
     if APP_HOOKS.get("pick"):
         return APP_HOOKS["pick"](kind) or []
-    types = ("Schriften|*.ttf *.otf" if kind == "font" else f"Video und Audio|{VIDEO_EXT} {AUDIO_EXT}" if kind not in ("clip", "clips") else f"Videos, Bilder und Ton|{VIDEO_EXT} {IMAGE_EXT} {AUDIO_EXT}" if kind == "clips" else f"Videos und Bilder|{VIDEO_EXT} {IMAGE_EXT}")
+    types = (f"Medien und Dokumente|{VIDEO_EXT} {IMAGE_EXT} {AUDIO_EXT} {DOC_EXT}" if kind == "rec" else "Schriften|*.ttf *.otf" if kind == "font" else f"Video und Audio|{VIDEO_EXT} {AUDIO_EXT}" if kind not in ("clip", "clips") else f"Videos, Bilder und Ton|{VIDEO_EXT} {IMAGE_EXT} {AUDIO_EXT}" if kind == "clips" else f"Videos und Bilder|{VIDEO_EXT} {IMAGE_EXT}")
     label, pattern = types.split("|")
     code = ("import tkinter as tk, json\nfrom tkinter import filedialog\nr=tk.Tk();r.withdraw()\nr.attributes('-topmost',True)\n"
             f"f=filedialog.{'askopenfilenames' if multi else 'askopenfilename'}(title='Datei wählen',filetypes=[({label!r},{pattern!r}),('Alle','*.*')])\n"
@@ -5237,7 +5240,11 @@ def picked_media(kind: str):
     if kind == "font":
         return font_import(paths)
     out = []
+    doc_suffixes = {"." + e.lstrip("*.") for e in DOC_EXT.split()}
     for p in paths:
+        if kind == "rec" and Path(p).suffix.lower() in doc_suffixes:   # HoneyRec: Dokument, die Oberfläche zeigt es selbst an
+            out.append({"uri": allow(p), "name": Path(p).name, "kind": "doc", "size": Path(p).stat().st_size})
+            continue
         try:
             m = probe(p)
             if kind == "videos" and m["kind"] == "image":
@@ -5251,7 +5258,7 @@ def picked_media(kind: str):
             log(f"Datei nicht lesbar: {p}: {e}")
     if not out:
         return None
-    return out if kind in ("videos", "clips") else out[0]
+    return out if kind in ("videos", "clips", "rec") else out[0]
 
 
 # ───────────────────────────── Projektpakete (.honeycut) ─────────────────────────────
@@ -5387,6 +5394,103 @@ def rec_close_job(job: dict, rid: str, meta: dict):
     info["name"] = out.stem
     log(f"HoneyRec: {out.name} gesichert ({info.get('duration')} s)")
     return info
+
+
+def rec_office_tools() -> list[str]:
+    """Was auf diesem Rechner Office-Dateien in PDF umwandeln kann (für die Anzeige in HoneyRec)."""
+    out = []
+    if sys.platform == "win32":
+        try:
+            import winreg
+            for prog in ("PowerPoint.Application", "Word.Application"):
+                try:
+                    winreg.CloseKey(winreg.OpenKey(winreg.HKEY_CLASSES_ROOT, prog))
+                    out.append(prog.split(".")[0])
+                except OSError:
+                    pass
+        except Exception:  # noqa: BLE001
+            pass
+    if soffice_path():
+        out.append("LibreOffice")
+    return out
+
+
+def soffice_path() -> str | None:
+    cands = [shutil.which("soffice"), shutil.which("libreoffice")]
+    for base in (os.environ.get("ProgramFiles", ""), os.environ.get("ProgramFiles(x86)", "")):
+        if base:
+            cands.append(str(Path(base) / "LibreOffice" / "program" / "soffice.exe"))
+    return next((c for c in cands if c and Path(c).is_file()), None)
+
+
+_OFFICE_PS = r"""
+$ErrorActionPreference = 'Stop'
+$src = $env:HR_SRC; $out = $env:HR_OUT; $ext = [IO.Path]::GetExtension($src).ToLower()
+if (@('.pptx', '.ppt', '.pps', '.ppsx', '.odp') -contains $ext) {
+  $app = New-Object -ComObject PowerPoint.Application
+  $p = $app.Presentations.Open($src, -1, 0, 0)
+  $p.SaveAs($out, 32); $p.Close()
+  if ($app.Presentations.Count -eq 0) { $app.Quit() }
+} elseif (@('.xlsx', '.xls', '.ods') -contains $ext) {
+  $app = New-Object -ComObject Excel.Application; $app.DisplayAlerts = $false
+  $w = $app.Workbooks.Open($src, 0, $true); $w.ExportAsFixedFormat(0, $out); $w.Close($false)
+  if ($app.Workbooks.Count -eq 0) { $app.Quit() }
+} else {
+  $app = New-Object -ComObject Word.Application; $app.DisplayAlerts = 0
+  $d = $app.Documents.Open($src, $false, $true, $false); $d.ExportAsFixedFormat($out, 17); $d.Close(0)
+  if ($app.Documents.Count -eq 0) { $app.Quit() }
+}
+"""
+
+
+def rec_convert_job(job: dict, uri: str) -> dict:
+    """Word, PowerPoint, Excel und OpenDocument für die Anzeige in HoneyRec als PDF ablegen – über das installierte
+    Microsoft Office (unsichtbar, die Datei wird nur gelesen) oder LibreOffice. Das Ergebnis bleibt zwischengespeichert."""
+    src = Path(norm_path(uri))
+    if norm_path(str(src)) not in ALLOWED or not src.is_file():
+        raise ValueError("Datei nicht freigegeben.")
+    st = src.stat()
+    key = hashlib.sha1(f"{src}|{st.st_mtime}|{st.st_size}".encode("utf-8")).hexdigest()[:16]
+    d = DATA_DIR / "honeyrec-pdf"
+    d.mkdir(parents=True, exist_ok=True)
+    out = d / f"{key}.pdf"
+    res = lambda: {"uri": allow(out), "name": src.stem + ".pdf", "kind": "doc"}  # noqa: E731
+    if out.is_file() and out.stat().st_size:
+        return res()
+    job["message"] = "Wird für die Anzeige umgewandelt …"
+    errs = []
+    if sys.platform == "win32" and any(t in rec_office_tools() for t in ("PowerPoint", "Word")):
+        try:
+            env = dict(os.environ, HR_SRC=str(src), HR_OUT=str(out))
+            r = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", _OFFICE_PS],
+                               capture_output=True, text=True, encoding="utf-8", errors="replace", env=env, timeout=240, stdin=subprocess.DEVNULL, **NOWIN)
+            if r.returncode:
+                errs.append("Office: " + (r.stderr or r.stdout).strip()[-300:])
+        except Exception as e:  # noqa: BLE001
+            errs.append(f"Office: {e!r}")
+    if not (out.is_file() and out.stat().st_size) and soffice_path():
+        job["message"] = "Wird mit LibreOffice umgewandelt …"
+        import tempfile
+        with tempfile.TemporaryDirectory(prefix="honeyrec_lo_") as tmp:
+            try:
+                r = subprocess.run([soffice_path(), "--headless", "--norestore", "--nolockcheck", f"-env:UserInstallation={Path(tmp, 'profil').as_uri()}",
+                                    "--convert-to", "pdf", "--outdir", tmp, str(src)], capture_output=True, text=True, encoding="utf-8",
+                                   errors="replace", timeout=240, stdin=subprocess.DEVNULL, **NOWIN)
+                made = Path(tmp) / (src.stem + ".pdf")
+                if made.is_file():
+                    shutil.move(str(made), str(out))
+                else:
+                    errs.append("LibreOffice: " + (r.stderr or r.stdout).strip()[-300:])
+            except Exception as e:  # noqa: BLE001
+                errs.append(f"LibreOffice: {e!r}")
+    if out.is_file() and out.stat().st_size:
+        log(f"HoneyRec: {src.name} als PDF für die Anzeige umgewandelt")
+        return res()
+    if errs:
+        log("HoneyRec: Umwandeln fehlgeschlagen – " + " | ".join(errs))
+    raise RuntimeError("Für die Originalansicht von Word-, PowerPoint- und Excel-Dateien braucht HoneyRec Microsoft Office oder LibreOffice auf diesem Rechner. "
+                       "Gezeigt wird eine vereinfachte Fassung (nur Text)." if not errs else
+                       "Die Datei ließ sich nicht umwandeln – gezeigt wird eine vereinfachte Fassung (nur Text).")
 
 
 def rec_selftest() -> dict:
@@ -6091,10 +6195,10 @@ class Handler(BaseHTTPRequestHandler):
                 if not str(f).startswith(str(d.resolve())) or not f.is_file():
                     return self._json({"error": "Nicht gefunden"}, 404)
                 return self._send(200, f.read_bytes(), DECK_TYPES.get(f.suffix.lower(), "application/octet-stream"))
-            if rest in ("", "index.html", "app.js", "studio.js", "slides.js", "deck-host.js", "app.css", "bridge-http.js", "icons.js", "chroma.js", "stimmen.js", "folgen.js", "skript.js", "thumb-engine.js", "thumb-cut.js", "titelbild.js", "rec.html", "rec.js", "rec.css", "rec-logo.svg"):
+            if rest in ("", "index.html", "app.js", "studio.js", "slides.js", "deck-host.js", "app.css", "bridge-http.js", "icons.js", "chroma.js", "stimmen.js", "folgen.js", "skript.js", "thumb-engine.js", "thumb-cut.js", "titelbild.js", "rec.html", "rec.js", "rec-docs.js", "rec.css", "rec-logo.svg", "vendor/pdf.min.mjs", "vendor/pdf.worker.min.mjs"):
                 f = WEB_DIR / (rest or "index.html")
                 ctype = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
-                         ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml"}[f.suffix]
+                         ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".mjs": "text/javascript; charset=utf-8"}[f.suffix]
                 return self._send(200, f.read_bytes(), ctype)
             if rest == "media":
                 p = norm_path(q.get("u") or q.get("f") or "")
@@ -6338,6 +6442,14 @@ class Handler(BaseHTTPRequestHandler):
                 except TypeError:
                     return self._json({"ok": False})
                 return self._json({"ok": True})
+            if rest == "api/rec/convert":
+                job = run_job(new_job("recconvert"), rec_convert_job, str(data.get("uri") or ""))
+                return self._json({"job": job["id"]})
+            if rest == "api/rec/browser":   # eingebauter Browser (nur in der Windows-App)
+                fn = APP_HOOKS.get("browser")
+                if not fn:
+                    return self._json({"ok": False})
+                return self._json(fn(str(data.get("action") or ""), str(data.get("url") or "")))
             if rest == "api/rec/orphans":
                 return self._json(rec_orphans(str(data.get("session") or "")))
             if rest == "api/rec/dir":

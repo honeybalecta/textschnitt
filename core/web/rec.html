@@ -49,7 +49,7 @@
     <div class="stage" id="stage">
       <div class="stage-empty" id="stageEmpty">
         <p><strong>Medien zum Reagieren und Zeigen</strong></p>
-        <p class="muted">Videos, Tonaufnahmen, Bilder und Präsentationen (als Bilder) hier laden – auch während der Aufnahme. Was du hier abspielst oder zeigst, landet später an genau der Stelle im Projekt.</p>
+        <p class="muted">Videos, Tonaufnahmen, Bilder, PDFs, Präsentationen und Textdokumente hier laden – auch während der Aufnahme. Was du hier abspielst oder zeigst, landet später an genau der Stelle im Projekt.</p>
       </div>
       <div class="stage-on hidden" id="stageOn"></div>
       <div class="stage-ctl hidden" id="stageCtl">
@@ -63,10 +63,18 @@
     </div>
     <div class="mbar">
       <button class="sbtn" id="addMedia">+ Medien laden</button>
+      <button class="sbtn" id="brBtn" title="Webseiten direkt in HoneyRec öffnen">Browser</button>
       <button class="sbtn" id="scrBtn" title="Einen Bildschirm, ein Fenster oder einen Tab mitaufnehmen">Bildschirm mitaufnehmen</button>
       <label class="mini" title="Standard: Solange ein Medium mit Ton läuft, nimmt HoneyRec dein Mikrofon nicht auf – so landet der Ton aus den Lautsprechern nicht doppelt in der Aufnahme."><input type="checkbox" id="micDuring"> Mikro auch bei Medien mit Ton aufnehmen</label>
       <div class="grow"></div>
       <label class="mini" title="Wie das Medium später im Video erscheint">Im Video <select id="mMode"><option value="broll">bildfüllend</option><option value="pip">als Bild im Bild</option></select></label>
+    </div>
+    <div class="brbar hidden" id="brBar">
+      <button class="sbtn" id="brBack" title="Zurück">◀</button><button class="sbtn" id="brFwd" title="Vor">▶</button><button class="sbtn" id="brReload" title="Neu laden">⟳</button>
+      <input id="brUrl" placeholder="Adresse oder Suchbegriff" autocomplete="off" spellcheck="false" enterkeyhint="go">
+      <button class="sbtn" id="brGo">Öffnen</button>
+      <button class="sbtn" id="brRec" title="Das Browserfenster als Bildschirm mitaufnehmen">Mitaufnehmen</button>
+      <button class="sbtn" id="brClose" title="Browser schließen">✕</button>
     </div>
     <div class="mlist" id="mList"></div>
     <div class="scr hidden" id="scrBox"><video id="scrV" muted playsinline autoplay></video><div><strong>Bildschirm wird mitaufgenommen</strong><p class="muted small" id="scrInfo">Läuft mit, solange die Aufnahme läuft.</p><button class="sbtn" id="scrStop">Beenden</button></div></div>
@@ -143,6 +151,7 @@
 
 <div class="toast" id="toast"></div>
 <script src="bridge-http.js"></script>
+<script src="rec-docs.js"></script>
 <script src="rec.js"></script>
 </body>
 </html>

@@ -31,10 +31,16 @@ class Bridge(private val act: MainActivity) {
         val mimes = when (kind) {
             "clip" -> arrayOf("video/*", "image/*")
             "clips" -> arrayOf("video/*", "image/*", "audio/*")
+            // HoneyRec: Medien und Dokumente (PDF, Text, Word, PowerPoint, OpenDocument)
+            "rec" -> arrayOf("video/*", "image/*", "audio/*", "application/pdf", "text/*", "application/rtf", "application/msword", "application/vnd.ms-powerpoint",
+                "application/vnd.ms-excel", "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                "application/vnd.openxmlformats-officedocument.presentationml.presentation", "application/vnd.openxmlformats-officedocument.presentationml.slideshow",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.oasis.opendocument.text",
+                "application/vnd.oasis.opendocument.presentation", "application/vnd.oasis.opendocument.spreadsheet")
             "font" -> arrayOf("font/*", "application/x-font-ttf", "application/x-font-otf", "application/font-sfnt", "application/vnd.ms-opentype", "application/octet-stream")
             else -> arrayOf("video/*")
         }
-        main.post { act.launchPicker(mimes, kind == "videos" || kind == "clips" || kind == "font") }
+        main.post { act.launchPicker(mimes, kind == "videos" || kind == "clips" || kind == "font" || kind == "rec") }
     }
 
     // ── Eigene Schriften (für alle Projekte) ──
@@ -87,9 +93,10 @@ class Bridge(private val act: MainActivity) {
             return
         }
         uris.forEach { runCatching { ctx.contentResolver.takePersistableUriPermission(it, Intent.FLAG_GRANT_READ_URI_PERMISSION) } }
-        val multi = pickKind == "videos" || pickKind == "clips"
+        val multi = pickKind == "videos" || pickKind == "clips" || pickKind == "rec"
+        val rec = pickKind == "rec"
         Thread {
-            val infos = uris.mapNotNull { Probe.probe(ctx, it) }
+            val infos = uris.mapNotNull { u -> (if (rec) docOf(u) else null) ?: Probe.probe(ctx, u) }
             val res = when {
                 infos.isEmpty() -> null
                 multi -> JSONArray(infos).toString()
@@ -97,6 +104,18 @@ class Bridge(private val act: MainActivity) {
             }
             js("TSApp.onPicked(${q(id)}, ${if (res == null) "null" else q(res)})")
         }.start()
+    }
+
+    /** HoneyRec: Dokumente zeigt die Oberfläche selbst an (pdf.js, Text) – hier nur Name und Art. */
+    private fun docOf(u: Uri): JSONObject? {
+        val mime = mimeOf(ctx, u) ?: ""
+        if (mime.startsWith("video/") || mime.startsWith("audio/") || mime.startsWith("image/")) return null
+        val name = ctx.contentResolver.query(u, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c -> if (c.moveToFirst()) c.getString(0) else null } ?: "Dokument"
+        val docExt = setOf("pdf", "txt", "md", "csv", "json", "html", "htm", "rtf", "docx", "doc", "odt", "pptx", "ppt", "pps", "ppsx", "odp", "xlsx", "xls", "ods")
+        val isDoc = mime == "application/pdf" || mime.startsWith("text/") || mime.contains("officedocument") || mime.contains("opendocument") ||
+            mime.contains("msword") || mime.contains("ms-powerpoint") || mime.contains("ms-excel") || name.substringAfterLast('.', "").lowercase() in docExt
+        if (!isDoc) return null
+        return JSONObject().put("uri", u.toString()).put("name", name).put("kind", "doc").put("mime", mime)
     }
 
     // ── Projektpakete (.honeycut): auf einem anderen Gerät weiterarbeiten ──
@@ -285,6 +304,12 @@ class Bridge(private val act: MainActivity) {
         runCatching { Rec.close(ctx, id, JSONObject(meta.ifBlank { "{}" }), job) }.onFailure { job.fail(it) }
         return job.id
     }
+
+    private val browser by lazy { InAppBrowser(act) }
+
+    /** Eingebauter Browser für HoneyRec (Links aus Dokumenten, Webseiten zum Zeigen). */
+    @JavascriptInterface
+    fun recBrowser(action: String, url: String): String = runCatching { browser.call(action, url) }.getOrElse { JSONObject().put("ok", false).put("error", it.message).toString() }
 
     @JavascriptInterface
     fun recDir(session: String, open: Boolean): String = (if (session.isBlank()) Rec.root(ctx) else Rec.dir(ctx, session)).absolutePath

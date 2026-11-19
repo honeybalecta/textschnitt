@@ -99,6 +99,8 @@
     recClose: (id, meta) => jobOf(call('POST', 'rec/close', {id, meta: JSON.parse(meta || '{}')})),
     recOrphans: session => call('POST', 'rec/orphans', {session}),
     openRec: () => { try { return !!JSON.parse(call('POST', 'rec/window', {})).ok; } catch(_){ return false; } },
+    recConvert: uri => jobOf(call('POST', 'rec/convert', {uri})),   // Office-Datei → PDF für die Anzeige
+    recBrowser: (action, url) => call('POST', 'rec/browser', {action, url}),
     recDir: (session, open) => { try { return JSON.parse(call('POST', 'rec/dir', {session: session || '', open: !!open})).dir || ''; } catch(_){ return ''; } },
     openWindow: (project, view) => { try { return JSON.parse(call('POST', 'window', {project, view})).url || ''; } catch(_){ return ''; } },
   };

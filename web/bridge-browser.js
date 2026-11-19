@@ -90,6 +90,10 @@
     package: {'application/octet-stream':['.honeycut']},
     clips:  {'video/*':['.mp4','.mov','.m4v','.webm','.mkv'], 'image/*':['.jpg','.jpeg','.png','.webp','.gif','.avif'], 'audio/*':['.mp3','.m4a','.wav','.aac','.ogg','.opus','.flac']},
     video:  {'video/*':['.mp4','.mov','.m4v','.webm','.mkv']},
+    // HoneyRec: Medien und Dokumente
+    rec:    {'video/*':['.mp4','.mov','.m4v','.webm','.mkv'], 'image/*':['.jpg','.jpeg','.png','.webp','.gif','.avif'], 'audio/*':['.mp3','.m4a','.wav','.aac','.ogg','.opus','.flac'],
+             'application/pdf':['.pdf'], 'text/plain':['.txt','.md','.csv','.json','.html','.htm','.rtf'],
+             'application/octet-stream':['.docx','.doc','.odt','.pptx','.ppt','.pps','.ppsx','.odp','.xlsx','.xls','.ods']},
     font:   {'font/ttf':['.ttf'], 'font/otf':['.otf']},
   };
   // Eigene Schriften: im Browser gespeichert, für alle Projekte
@@ -112,7 +116,7 @@
     const acc = ACCEPT[kind] || ACCEPT.videos;
     if (window.showOpenFilePicker){
       try {
-        const hs = await showOpenFilePicker({multiple, types:[{description: kind === 'package' ? 'HoneyCut-Projekt' : kind === 'clip' || kind === 'clips' ? 'Videos und Bilder' : 'Videos und Audio', accept: acc}], excludeAcceptAllOption:false, id:'textschnitt'});
+        const hs = await showOpenFilePicker({multiple, types:[{description: kind === 'package' ? 'HoneyCut-Projekt' : kind === 'rec' ? 'Medien und Dokumente' : kind === 'clip' || kind === 'clips' ? 'Videos und Bilder' : 'Videos und Audio', accept: acc}], excludeAcceptAllOption:false, id:'textschnitt'});
         return Promise.all(hs.map(async h => ({file: await h.getFile(), handle: h})));
       } catch(e){ if (e && e.name === 'AbortError') return []; /* sonst: klassische Auswahl */ }
     }
@@ -140,10 +144,12 @@
   async function pick(reqId, kind){
     let out = [];
     try {
-      const list = await pickFiles(kind, kind === 'videos' || kind === 'clips');
+      const list = await pickFiles(kind, kind === 'videos' || kind === 'clips' || kind === 'rec');
       if (list.length) showBusy('Dateien werden gelesen …');
-      const eng = list.length ? await E() : null;
+      const eng = list.length && !(kind === 'rec' && window.RecDocs && list.every(x => RecDocs.kindOf({name: x.file.name, mime: x.file.type}))) ? await E() : null;
       for (const {file, handle} of list){
+        // HoneyRec: Dokumente zeigt die Seite selbst an (pdf.js, Text)
+        if (kind === 'rec' && window.RecDocs && RecDocs.kindOf({name: file.name, mime: file.type})){ out.push({uri: registerFile(file, handle), name: file.name, kind: 'doc', mime: file.type, size: file.size}); continue; }
         try {
           const m = await eng.probe(file);
           if (kind === 'videos' && m.kind === 'image') continue;
@@ -156,7 +162,7 @@
     } catch(e){ console.error(e); }
     hideBusy();
     requestPersist();
-    TSApp.onPicked(reqId, out.length ? JSON.stringify(kind === 'videos' || kind === 'clips' ? out : out[0]) : null);
+    TSApp.onPicked(reqId, out.length ? JSON.stringify(kind === 'videos' || kind === 'clips' || kind === 'rec' ? out : out[0]) : null);
   }
 
   // ───────── Zugriff nach dem Neuladen wiederherstellen ─────────
@@ -613,7 +619,7 @@
     } catch(e){ console.error(e); }
     try { hasGpu = !!(navigator.gpu && await Promise.race([navigator.gpu.requestAdapter(), new Promise(r => setTimeout(() => r(null), 1500))])); } catch(_){}
     window.TS_DECK_BASE = '../honeydeck/';   // HoneyDeck: eigene Seite honeybalecta.github.io/honeydeck/
-    if (window.TS_REC) await loadScript('rec.js');   // HoneyRec: eigene Seite, ohne den Schnitt-Kern
+    if (window.TS_REC){ await loadScript('rec-docs.js'); await loadScript('rec.js'); }   // HoneyRec: eigene Seite, ohne den Schnitt-Kern
     else { await loadScript('app.js'); await loadScript('studio.js'); await loadScript('slides.js'); await loadScript('deck-host.js'); }
     // Hinweise auf der Startseite
     const home = $('#home .home-body');

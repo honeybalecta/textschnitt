@@ -158,7 +158,7 @@ class LocalServer(private val ctx: Context) {
     private fun asset(out: OutputStream, path: String) {
         if (path.contains("..")) { send(out, 404, "Not Found", "text/plain", ByteArray(0)); return }
         val type = when (path.substringAfterLast('.')) {
-            "html" -> "text/html; charset=utf-8"; "js" -> "application/javascript; charset=utf-8"; "css" -> "text/css; charset=utf-8"
+            "html" -> "text/html; charset=utf-8"; "js", "mjs" -> "application/javascript; charset=utf-8"; "css" -> "text/css; charset=utf-8"
             "svg" -> "image/svg+xml"; "png" -> "image/png"; "ttf" -> "font/ttf"; "otf" -> "font/otf"
             "txt", "md" -> "text/plain; charset=utf-8"; else -> "application/octet-stream"
         }

@@ -2,6 +2,14 @@
 
 Was sich mit jeder Version von HoneyCut ändert. Die Windows-App zeigt diese Stichpunkte an, sobald eine neuere Version bereitsteht.
 
+## 2.47.0 · HoneyRec: PDF, Präsentationen, Dokumente und eingebauter Browser
+
+- **PDF in HoneyRec:** PDFs lassen sich wie Medien laden und Seite für Seite zeigen (Pfeiltasten, Bild↑/Bild↓, Presenter). Links im PDF sind anklickbar; Verweise innerhalb des PDFs springen auf die Seite.
+- **PowerPoint, Word, Excel und OpenDocument:** Am Computer zeigt HoneyRec das Original – umgewandelt über das installierte Microsoft Office oder LibreOffice, unsichtbar im Hintergrund, die Datei wird nur gelesen. Ohne Office sowie auf dem Handy und im Browser erscheint eine vereinfachte Fassung mit dem Text, Folie für Folie bzw. Seite für Seite. Animationen aus PowerPoint laufen nicht mit.
+- **Textdateien** (TXT, Markdown, CSV, HTML, RTF) erscheinen als lesbare Seiten im HoneyCut-Stil; Webadressen im Text sind anklickbar.
+- **Ins Video:** Jede Seite oder Folie, die während der Aufnahme zu sehen ist, kommt als Bild an genau dieser Stelle ins Projekt, wie bei Bildern und Präsentationen bisher. Dokumente schalten das Mikrofon nie stumm.
+- **Eingebauter Browser:** Knopf „Browser“ oder ein Link im Dokument öffnet die Seite in HoneyRec – am Computer in einem eigenen Fenster „HoneyRec – Browser“ (mit Zurück, Vor, Neu laden), auf dem Handy über der App. Der eigene Browser bleibt dabei zu. Am Computer nimmt „Mitaufnehmen“ das Browserfenster als Bildschirm mit auf. In der Browser-Fassung öffnet sich ein neuer Tab.
+
 ## 2.46.0 · HoneyRec: aufnehmen mit Skript, Medien und Bildschirm
 
 - **HoneyRec** ist das neue Aufnahmeprogramm zu HoneyCut – mit eigenem Symbol (Windows: Startmenü „HoneyRec“, Android: eigenes Startsymbol, Browser: `rec.html`) und über „● Aufnehmen“ auf der Projektliste. Es nimmt mit jeder Kamera auf, die der Computer kennt: eingebaute Kameras, Webcams und Kameras, die per USB als Webcam laufen (etwa DJI), dazu Aufnahmekarten. Kamera, Mikrofon, Auflösung (bis 4K) und Bilder pro Sekunde lassen sich wählen; der Pegel des Mikrofons steht oben.

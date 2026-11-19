@@ -111,6 +111,17 @@ body.live .cam-box{box-shadow:0 0 0 3px var(--rot)}
 .mitem:hover .x{display:block}
 .mitem.on{border-color:var(--rot);box-shadow:0 0 0 1px var(--rot)}
 .mitem .au{display:flex;align-items:center;justify-content:center;height:64px;font-size:28px;color:var(--rot);background:var(--surface-2)}
+.stage.docmode .stage-on{position:relative}
+.docwrap{position:absolute;inset:0}
+.docwrap canvas{display:block}
+.docwrap .links{position:absolute;inset:0;pointer-events:none}
+.doclink{position:absolute;pointer-events:auto;border-radius:3px;cursor:pointer}
+.doclink:hover{background:rgba(229,64,42,.18);outline:2px solid rgba(229,64,42,.7)}
+.doc-err{color:var(--sand);padding:20px;text-align:center}
+.mitem .au.doc{font:800 18px var(--ui);color:var(--anthrazit);background:var(--creme);letter-spacing:.02em}
+.brbar{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.brbar .sbtn{height:32px;padding:0 10px;font-size:13px}
+.brbar input{flex:1;min-width:160px;min-height:32px;padding:4px 10px}
 .scr{display:flex;gap:10px;align-items:center;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:8px}
 .scr video{width:160px;aspect-ratio:16/9;background:#000;border-radius:8px;object-fit:contain}
 .scr p{margin:2px 0 6px}

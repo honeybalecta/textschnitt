@@ -84,7 +84,7 @@
     const srcs = readyTakes().map(t => {
       const s = old.get(t.src.uri) || {...t.src, tr: false};
       for (const [a, b] of t.dels) dels.push([r3(off + a), r3(off + b)]);
-      for (const e of t.ev) if (e.t1 > e.t0 + 0.05) items.push(evItem(e, off, t));
+      for (const e of t.ev) if (e.t1 > e.t0 + 0.05 && e.clip) items.push(evItem(e, off, t));
       off += +t.src.duration || 0; return s;
     });
     P.sources = keep.concat(srcs);
@@ -236,7 +236,7 @@
       P.rec.takes.push(take);
       live = {take, R, open: null};
       document.body.classList.add('live'); paintRec();
-      if (M.cur && (M.cur.clip.kind === 'image' || (M.el && !M.el.paused))) openEv();   // was schon läuft oder zu sehen ist, gehört ab jetzt dazu
+      if (M.cur && (M.cur.doc || M.cur.clip.kind === 'image' || (M.el && !M.el.paused))) openEv();   // was schon läuft oder zu sehen ist, gehört ab jetzt dazu
       if (Scr.stream) startScreenSeg();
       renderTakes(); tickClock();
     } catch(e){ toast(e.message || 'Aufnahme ließ sich nicht starten'); log('Start: ' + e.message); live = null; document.body.classList.remove('live'); }
@@ -275,10 +275,10 @@
 
   // ───────── Bildschirm mitaufnehmen ─────────
   const Scr = {stream: null, seg: null, n: 0};
-  async function startScreen(){
+  async function startScreen(win){
     if (!md || !md.getDisplayMedia) return toast('Hier lässt sich kein Bildschirm aufnehmen – das geht in HoneyRec am Computer');
-    if (Scr.stream) return stopScreen();
-    try { Scr.stream = await md.getDisplayMedia({video: {frameRate: {ideal: 30}}, audio: false}); }
+    if (Scr.stream){ if (win === true) return toast('Es läuft schon eine Bildschirmaufnahme – erst beenden, dann das Browserfenster wählen'); return stopScreen(); }
+    try { Scr.stream = await md.getDisplayMedia({video: {frameRate: {ideal: 30}, ...(win === true ? {displaySurface: 'window'} : {})}, audio: false}); }
     catch(e){ if (e.name !== 'NotAllowedError') toast('Bildschirmaufnahme nicht möglich: ' + e.message); return; }
     const tr = Scr.stream.getVideoTracks()[0]; tr.onended = () => stopScreen();
     $('#scrV').srcObject = Scr.stream; $('#scrBox').classList.remove('hidden'); $('#scrBtn').classList.add('on'); $('#scrBtn').textContent = 'Bildschirm beenden';
@@ -310,22 +310,24 @@
   // Ein Eintrag ist ein Video, eine Tonaufnahme, ein Bild oder eine Bilderreihe (Präsentation, mehrere Bilder auf einmal geladen).
   const M = {list: [], cur: null, page: 0, el: null};
   async function addMedia(){
-    const got = await pick('clips'); const list = !got ? [] : Array.isArray(got) ? got : [got]; if (!list.length) return;
+    const got = await pick('rec'); const list = !got ? [] : Array.isArray(got) ? got : [got]; if (!list.length) return;
+    const isDoc = m => m.kind === 'doc' || (window.RecDocs && RecDocs.kindOf(m) && m.kind !== 'video' && m.kind !== 'audio' && m.kind !== 'image');
     const imgs = list.filter(m => m.kind === 'image'), rest = list.filter(m => m.kind !== 'image');
-    for (const m of rest) M.list.push({mid: newId(), clip: m, pages: null});
+    for (const m of rest) M.list.push(isDoc(m) ? {mid: newId(), clip: {...m, kind: 'doc'}, doc: true, imgs: {}} : {mid: newId(), clip: m, pages: null});
     if (imgs.length > 1) M.list.push({mid: newId(), clip: imgs[0], pages: imgs, name: `Präsentation (${imgs.length} Bilder)`});
     else if (imgs.length) M.list.push({mid: newId(), clip: imgs[0], pages: null});
     renderMedia(); saveMediaList();
     if (!M.cur) show(M.list[M.list.length - 1], false);
   }
-  function saveMediaList(){ if (P){ P.rec.media = M.list.map(x => ({mid: x.mid, clip: x.clip, pages: x.pages, name: x.name})); save(); } }
-  const kindLbl = x => x.pages ? 'Präsentation' : x.clip.kind === 'image' ? 'Bild' : x.clip.kind === 'audio' || x.clip.hasVideo === false ? 'Ton' : 'Video';
+  function saveMediaList(){ if (P){ P.rec.media = M.list.map(x => ({mid: x.mid, clip: x.clip, pages: x.pages, name: x.name, doc: x.doc, imgs: x.imgs, n: x.n})); save(); } }
+  const docLbl = x => { const e = RecDocs.EXT(x.clip.name); return RecDocs.isSlides(x.clip) ? 'Folien' : e === 'pdf' ? 'PDF' : RecDocs.kindOf(x.clip) === 'text' ? 'Text' : 'Dokument'; };
+  const kindLbl = x => x.doc ? docLbl(x) : x.pages ? 'Präsentation' : x.clip.kind === 'image' ? 'Bild' : x.clip.kind === 'audio' || x.clip.hasVideo === false ? 'Ton' : 'Video';
   function renderMedia(){
     const box = $('#mList'); box.innerHTML = '';
     for (const x of M.list){
       const b = document.createElement('div'); b.className = 'mitem' + (M.cur === x ? ' on' : ''); b.tabIndex = 0; b.title = x.name || x.clip.name;
       const k = kindLbl(x), au = k === 'Ton';
-      b.innerHTML = (au ? '<div class="au">♪</div>' : x.clip.kind === 'image' ? `<img src="${esc(MEDIA(x.clip.uri))}" alt="">` : `<video preload="metadata" muted src="${esc(MEDIA(x.clip.uri))}#t=1"></video>`)
+      b.innerHTML = (x.doc ? `<div class="au doc">${esc(k)}</div>` : au ? '<div class="au">♪</div>' : x.clip.kind === 'image' ? `<img src="${esc(MEDIA(x.clip.uri))}" alt="">` : `<video preload="metadata" muted src="${esc(MEDIA(x.clip.uri))}#t=1"></video>`)
         + `<span class="kind">${k}</span><span class="nm">${esc(x.name || x.clip.name || '')}</span><button class="x" title="Aus der Liste nehmen">✕</button>`;
       b.onclick = e => { if (e.target.closest('.x')){ if (M.cur === x) hide(); M.list = M.list.filter(y => y !== x); renderMedia(); saveMediaList(); return; } show(x, false); };
       box.append(b);
@@ -339,12 +341,14 @@
     M.cur = x; M.page = 0; paintStage(play);
     renderMedia();
   }
-  function hide(){ if (M.el && !M.el.paused) M.el.pause(); closeEv(live, nowT()); M.cur = null; M.el = null; $('#stageOn').innerHTML = ''; $('#stageOn').classList.add('hidden'); $('#stageCtl').classList.add('hidden'); renderMedia(); gate(); }
-  const curClip = () => M.cur ? (M.cur.pages ? M.cur.pages[M.page] : M.cur.clip) : null;
+  function hide(){ if (M.el && !M.el.paused) M.el.pause(); closeEv(live, nowT()); M.cur = null; M.el = null; $('#stage').classList.remove('docmode'); $('#stageOn').innerHTML = ''; $('#stageOn').classList.add('hidden'); $('#stageCtl').classList.add('hidden'); renderMedia(); gate(); }
+  const curClip = () => M.cur ? (M.cur.doc ? (M.cur.imgs || {})[M.page] || null : M.cur.pages ? M.cur.pages[M.page] : M.cur.clip) : null;
   function paintStage(play){
-    const x = M.cur, c = curClip(), on = $('#stageOn'); on.innerHTML = ''; on.classList.remove('hidden'); $('#stageCtl').classList.remove('hidden');
+    const x = M.cur, on = $('#stageOn'); on.innerHTML = ''; on.classList.remove('hidden'); $('#stageCtl').classList.remove('hidden');
+    if (x.doc) return paintDoc(x);
+    const c = curClip();
     const img = c.kind === 'image', au = !img && (c.kind === 'audio' || c.hasVideo === false);
-    $('#mPrev').classList.toggle('hidden', !x.pages); $('#mNext').classList.toggle('hidden', !x.pages);
+    $('#mPrev').classList.toggle('hidden', !x.pages); $('#mNext').classList.toggle('hidden', !x.pages); $('#stage').classList.remove('docmode');
     $('#mPlay').classList.toggle('hidden', img); $('#mSeek').classList.toggle('hidden', img);
     M.el = null;
     if (img){ const im = new Image(); im.src = MEDIA(c.uri); on.append(im); $('#mTime').textContent = x.pages ? `Bild ${M.page + 1} von ${x.pages.length}` : 'Bild'; if (live) openEv(); gate(); return; }
@@ -362,6 +366,84 @@
     paintPlay(); paintTime();
     if (play) el.play().catch(() => {});
   }
+  // ── Dokumente: PDF, Text, Word, PowerPoint (rec-docs.js) ──
+  const docs = new Map();   // mid → Promise<Dokument>
+  let docNoted = false;
+  function ensureDoc(x){
+    if (!docs.has(x.mid)) docs.set(x.mid, RecDocs.load(x.clip, MEDIA, {
+      convert: TS.recConvert ? m => watchJob(TS.recConvert(m.uri), j => { if (M.cur === x && j.message) $('#mTime').textContent = j.message; }) : null,
+      onConvertFail: e => toast(e.message, 7000),
+    }).then(d => { x.n = d.n; saveMediaList(); return d; }, e => { docs.delete(x.mid); throw e; }));
+    return docs.get(x.mid);
+  }
+  async function paintDoc(x){
+    const on = $('#stageOn'), st = $('#stage'); st.classList.add('docmode');
+    $('#mPlay').classList.add('hidden'); $('#mSeek').classList.add('hidden');
+    on.innerHTML = '<div class="docwrap"><canvas></canvas><div class="links"></div></div>';
+    $('#mTime').textContent = 'Wird geladen …'; gate();
+    let d; try { d = await ensureDoc(x); } catch(e){ if (M.cur === x){ on.innerHTML = `<p class="doc-err">${esc(e.message || 'Das Dokument ließ sich nicht öffnen')}</p>`; $('#mTime').textContent = ''; } return; }
+    if (M.cur !== x) return;
+    if (d.note && !docNoted){ docNoted = true; toast(PLAT === 'desktop' ? 'Vereinfachte Ansicht (nur Text). Mit Microsoft Office oder LibreOffice auf dem Rechner zeigt HoneyRec das Original.' : 'Vereinfachte Ansicht (nur Text). Für das Original die Datei als PDF speichern.', 7000); }
+    const pg = M.page = clamp(M.page, 0, d.n - 1), many = d.n > 1;
+    $('#mPrev').classList.toggle('hidden', !many); $('#mNext').classList.toggle('hidden', !many);
+    $('#mTime').textContent = `${RecDocs.isSlides(x.clip) ? 'Folie' : 'Seite'} ${pg + 1} von ${d.n}` + (d.note ? ' · vereinfacht' : '');
+    const wrap = on.querySelector('.docwrap'), cv = wrap.querySelector('canvas'), dpr = Math.min(2, devicePixelRatio || 1);
+    const W = Math.max(50, on.clientWidth), H = Math.max(50, on.clientHeight);
+    cv.style.width = W + 'px'; cv.style.height = H + 'px';
+    if (live) openEv();
+    const r = await d.draw(pg, cv, Math.round(W * dpr), Math.round(H * dpr), '#000'); if (!r || M.cur !== x || M.page !== pg) return;
+    const box = wrap.querySelector('.links'); box.innerHTML = '';
+    let ls = []; try { ls = await d.links(pg); } catch(e){ log('Links: ' + e.message); }
+    for (const l of ls){
+      const a = document.createElement('a'); a.href = '#'; a.className = 'doclink'; a.title = l.url || `Zu Seite ${l.page + 1}`;
+      a.style.cssText = `left:${(r.x + l.r[0] * r.w) / dpr}px;top:${(r.y + l.r[1] * r.h) / dpr}px;width:${l.r[2] * r.w / dpr}px;height:${l.r[3] * r.h / dpr}px`;
+      a.onclick = e => { e.preventDefault(); if (l.url) openBrowser(l.url); else if (l.page != null){ page(l.page - M.page); } };
+      box.append(a);
+    }
+    if (!(x.imgs || {})[pg]) pageImage(x, pg).catch(() => {});   // Bild der Seite für das Projekt schon vorbereiten
+  }
+  // Seite als Bild ablegen (für die Einblendung im Projekt): eingepasst in 1920×1080, ohne Rand
+  const imgBusy = new Map();
+  function pageImage(x, i){
+    x.imgs ||= {}; if (x.imgs[i]) return Promise.resolve(x.imgs[i]);
+    const key = x.mid + ':' + i; if (imgBusy.has(key)) return imgBusy.get(key);
+    const pr = (async () => {
+      const d = await ensureDoc(x), [pw, ph] = await d.size(i), s = Math.min(1920 / pw, 1080 / ph), W = Math.round(pw * s), H = Math.round(ph * s);
+      const cv = document.createElement('canvas'); await d.draw(i, cv, W, H, '#fff');
+      const stem = String(x.clip.name || 'Dokument').replace(/\.[^.]+$/, '').replace(/[^\w\-]+/g, '_').slice(0, 40);
+      const m = J(TS.saveImage(`${stem}-${pad(i + 1)}-${x.mid}.png`, cv.toDataURL('image/png'), W, H, P ? P.id : 'honeyrec'));
+      if (!m || !m.uri) throw new Error('Seitenbild ließ sich nicht speichern');
+      m.name = `${x.clip.name} · ${RecDocs.isSlides(x.clip) ? 'Folie' : 'Seite'} ${i + 1}`;
+      x.imgs[i] = m; saveMediaList(); return m;
+    })();
+    imgBusy.set(key, pr); pr.finally(() => imgBusy.delete(key)); return pr;
+  }
+  addEventListener('resize', () => { if (M.cur && M.cur.doc){ clearTimeout(paintDoc.t); paintDoc.t = setTimeout(() => { if (M.cur && M.cur.doc) paintDoc(M.cur); }, 200); } });
+
+  // ── Eingebauter Browser: Windows eigenes Fenster „HoneyRec – Browser“, Android eingeblendeter Browser, sonst neuer Tab ──
+  function normUrl(u){
+    u = String(u || '').trim(); if (!u) return '';
+    if (/^[a-z][a-z0-9+.-]*:/i.test(u)) return u;
+    if (/^[^\s]+\.[^\s]{2,}(\/|$)/.test(u)) return 'https://' + u;
+    return 'https://duckduckgo.com/?q=' + encodeURIComponent(u);
+  }
+  function browserCall(action, url){ if (!TS.recBrowser) return null; try { return J(TS.recBrowser(action, url || '')); } catch(_){ return null; } }
+  function openBrowser(url){
+    url = normUrl(url); if (!url) return;
+    if (!/^https?:/i.test(url)) return toast('Diese Adresse lässt sich hier nicht öffnen');
+    const r = browserCall('open', url);
+    $('#brBar').classList.remove('hidden'); $('#brUrl').value = url; $('#brBtn').classList.add('on');
+    if (!r || !r.ok){ window.open(url, '_blank', 'noopener'); return; }
+  }
+  $('#brBtn').onclick = () => { const bar = $('#brBar'), on = bar.classList.toggle('hidden'); $('#brBtn').classList.toggle('on', !on); if (!on) setTimeout(() => $('#brUrl').focus(), 30); };
+  $('#brGo').onclick = () => openBrowser($('#brUrl').value);
+  $('#brUrl').addEventListener('keydown', e => { if (e.key === 'Enter') openBrowser($('#brUrl').value); });
+  for (const [id, act] of [['#brBack', 'back'], ['#brFwd', 'forward'], ['#brReload', 'reload']]) $(id).onclick = () => { const r = browserCall(act); if (r && r.url) $('#brUrl').value = r.url; };
+  $('#brClose').onclick = () => { browserCall('close'); $('#brBar').classList.add('hidden'); $('#brBtn').classList.remove('on'); };
+  $('#brRec').onclick = () => { toast('Im Auswahlfenster „HoneyRec – Browser“ wählen', 5000); startScreen(true); };
+  if (PLAT !== 'desktop') $('#brRec').classList.add('hidden');
+  if (!TS.recBrowser) for (const id of ['#brBack', '#brFwd', '#brReload']) $(id).classList.add('hidden');   // Browser-Fassung: Seiten öffnen sich in einem neuen Tab
+
   function paintPlay(){ $('#mPlay').textContent = M.el && !M.el.paused ? '❚❚' : '▶'; $('#stage').classList.toggle('playing', !!(M.el && !M.el.paused)); }
   function paintTime(){ const el = M.el; if (!el) return; const d = el.duration || 0; $('#mTime').textContent = `${fmt(el.currentTime)} / ${fmt(d)}`; if (!seekDrag) $('#mSeek').value = d ? Math.round(el.currentTime / d * 1000) : 0; }
   let seekDrag = false;
@@ -369,12 +451,15 @@
   $('#mSeek').addEventListener('input', () => { const el = M.el; if (el && el.duration) el.currentTime = $('#mSeek').value / 1000 * el.duration; });
   $('#mSeek').addEventListener('change', () => { seekDrag = false; });
   function mediaPlay(){ if (!M.el) return; if (M.el.paused) M.el.play().catch(e => toast('Abspielen nicht möglich: ' + e.message)); else M.el.pause(); }
-  function page(d){ const x = M.cur; if (!x){ return; } if (!x.pages){ if (M.el) M.el.currentTime = clamp(M.el.currentTime + d * 5, 0, M.el.duration || 0); return; }
+  function page(d){ const x = M.cur; if (!x){ return; }
+    if (x.doc){ if (!x.n) return; const n = clamp(M.page + d, 0, x.n - 1); if (n === M.page) return; closeEv(live, nowT()); M.page = n; paintDoc(x); return; }
+    if (!x.pages){ if (M.el) M.el.currentTime = clamp(M.el.currentTime + d * 5, 0, M.el.duration || 0); return; }
     const n = clamp(M.page + d, 0, x.pages.length - 1); if (n === M.page) return; closeEv(live, nowT()); M.page = n; paintStage(false); }
   // Ereignisse: Beginn und Ende dessen, was während eines Takes zu sehen bzw. zu hören war
   function openEv(){
     if (!live || !M.cur) return; closeEv(live, nowT());
-    const c = curClip(); live.open = {id: newId(), k: 'm', mid: M.cur.mid, clip: c, t0: r3(nowT()), in: c.kind === 'image' ? 0 : r3(M.el ? M.el.currentTime : 0), mode: SET.mode};
+    const x = M.cur, c = curClip(), e = live.open = {id: newId(), k: 'm', mid: x.mid, clip: c, t0: r3(nowT()), in: !c || c.kind === 'image' ? 0 : r3(M.el ? M.el.currentTime : 0), mode: SET.mode};
+    if (x.doc && !c){ e.page = M.page; pageImage(x, M.page).then(m => { e.clip = m; save(); }).catch(err => log('Seitenbild: ' + err.message)); }
   }
   function closeEv(L, t){
     if (!L || !L.open) return; const e = L.open; L.open = null;
@@ -544,7 +629,7 @@
   $('#recBtn').onclick = toggleRec;
   $('#doneBtn').onclick = finish;
   $('#addMedia').onclick = addMedia;
-  $('#scrBtn').onclick = startScreen;
+  $('#scrBtn').onclick = () => startScreen();
   $('#scrStop').onclick = stopScreen;
   $('#mPlay').onclick = mediaPlay; $('#mPrev').onclick = () => page(-1); $('#mNext').onclick = () => page(1); $('#mOff').onclick = hide;
   $('#micDuring').checked = !!SET.micDuring; $('#micDuring').onchange = e => { SET.micDuring = e.target.checked; saveSet(); gate(); };

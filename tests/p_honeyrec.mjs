@@ -28,6 +28,44 @@ const SKRIPT = '# Einstieg\nDie Mieten in München sind seit 2015 um 42 Prozent 
 const CLIP = MEDIA + 'ton-rec.webm';
 if (!fs.existsSync(CLIP)) execFileSync('ffmpeg', ['-y', '-v', 'error', '-i', MEDIA + 'ton.mp4', '-t', '12', '-vf', 'scale=640:-2', '-c:v', 'libvpx-vp9', '-deadline', 'realtime', '-cpu-used', '8', '-b:v', '600k', '-c:a', 'libopus', CLIP]);
 
+// ── Testdokumente ohne Hilfsprogramme: PDF von Hand (zwei Seiten, Link nach außen und auf Seite 2), Markdown, Word und PowerPoint als ZIP ──
+function pdfFile(file){
+  const objs = [], add = s => { objs.push(s); return objs.length; };
+  const font = add('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>');
+  const c1 = 'BT /F1 48 Tf 72 500 Td (Bericht Seite 1) Tj ET BT /F1 24 Tf 72 420 Td (Mehr unter example.org) Tj ET BT /F1 24 Tf 72 360 Td (Weiter zu Seite 2) Tj ET';
+  const c2 = 'BT /F1 48 Tf 72 500 Td (Bericht Seite 2) Tj ET';
+  const s1 = add(`<< /Length ${c1.length} >>\nstream\n${c1}\nendstream`), s2 = add(`<< /Length ${c2.length} >>\nstream\n${c2}\nendstream`);
+  const pagesId = objs.length + 3, p1 = objs.length + 1, p2 = objs.length + 2;
+  add(`<< /Type /Page /Parent ${pagesId} 0 R /MediaBox [0 0 842 595] /Resources << /Font << /F1 ${font} 0 R >> >> /Contents ${s1} 0 R /Annots [<< /Type /Annot /Subtype /Link /Rect [66 410 380 450] /Border [0 0 0] /A << /S /URI /URI (https://example.org/) >> >> << /Type /Annot /Subtype /Link /Rect [66 350 330 390] /Border [0 0 0] /Dest [${p2} 0 R /Fit] >>] >>`);
+  add(`<< /Type /Page /Parent ${pagesId} 0 R /MediaBox [0 0 842 595] /Resources << /Font << /F1 ${font} 0 R >> >> /Contents ${s2} 0 R >>`);
+  add(`<< /Type /Pages /Kids [${p1} 0 R ${p2} 0 R] /Count 2 >>`);
+  const cat = add(`<< /Type /Catalog /Pages ${pagesId} 0 R >>`);
+  let out = '%PDF-1.4\n'; const offs = [];
+  objs.forEach((o, i) => { offs.push(out.length); out += `${i + 1} 0 obj\n${o}\nendobj\n`; });
+  const x = out.length; out += `xref\n0 ${objs.length + 1}\n0000000000 65535 f \n` + offs.map(o => String(o).padStart(10, '0') + ' 00000 n \n').join('');
+  out += `trailer\n<< /Size ${objs.length + 1} /Root ${cat} 0 R >>\nstartxref\n${x}\n%%EOF\n`;
+  fs.writeFileSync(file, out, 'latin1');
+}
+const CRC = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++){ let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return b => { let c = ~0; for (const x of b) c = t[(c ^ x) & 255] ^ (c >>> 8); return ~c >>> 0; }; })();
+function zipFile(file, entries){   // ungepackt (Methode 0) – reicht für den Ersatz-Leser in rec-docs.js
+  const parts = [], cen = []; let off = 0;
+  for (const [name, text] of Object.entries(entries)){
+    const nb = Buffer.from(name), data = Buffer.from(text), crc = CRC(data), h = Buffer.alloc(30);
+    h.writeUInt32LE(0x04034b50, 0); h.writeUInt16LE(20, 4); h.writeUInt32LE(crc, 14); h.writeUInt32LE(data.length, 18); h.writeUInt32LE(data.length, 22); h.writeUInt16LE(nb.length, 26);
+    const c = Buffer.alloc(46); c.writeUInt32LE(0x02014b50, 0); c.writeUInt16LE(20, 4); c.writeUInt16LE(20, 6); c.writeUInt32LE(crc, 16); c.writeUInt32LE(data.length, 20); c.writeUInt32LE(data.length, 24); c.writeUInt16LE(nb.length, 28); c.writeUInt32LE(off, 42);
+    parts.push(h, nb, data); cen.push(c, nb); off += 30 + nb.length + data.length;
+  }
+  const cd = Buffer.concat(cen), e = Buffer.alloc(22); e.writeUInt32LE(0x06054b50, 0); e.writeUInt16LE(cen.length / 2, 8); e.writeUInt16LE(cen.length / 2, 10); e.writeUInt32LE(cd.length, 12); e.writeUInt32LE(off, 16);
+  fs.writeFileSync(file, Buffer.concat([...parts, cd, e]));
+}
+const W = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"', A = 'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"';
+const DOCS = { pdf: MEDIA + 'rec-bericht.pdf', md: MEDIA + 'rec-notizen.md', docx: MEDIA + 'rec-text.docx', pptx: MEDIA + 'rec-folien.pptx' };
+pdfFile(DOCS.pdf);
+fs.writeFileSync(DOCS.md, '# Notizen\n\nErster Punkt mit Link www.example.org\n\n## Zweiter Abschnitt\n' + 'Viel Text zum Umbrechen auf mehrere Seiten. '.repeat(160));
+zipFile(DOCS.docx, { 'word/document.xml': `<w:document ${W}><w:body><w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Quellen</w:t></w:r></w:p><w:p><w:r><w:t>Die Mieten sind gestiegen.</w:t></w:r></w:p></w:body></w:document>` });
+zipFile(DOCS.pptx, { 'ppt/slides/slide1.xml': `<p:sld ${A}><a:p><a:r><a:t>Mieten in München</a:t></a:r></a:p><a:p><a:r><a:t>Seit 2015 um 42 Prozent</a:t></a:r></a:p></p:sld>`,
+  'ppt/slides/slide2.xml': `<p:sld ${A}><a:p><a:r><a:t>Forderung</a:t></a:r></a:p><a:p><a:r><a:t>Mietendeckel jetzt</a:t></a:r></a:p></p:sld>` });
+
 try {
   await page.addInitScript(() => { if (!localStorage.getItem('hr-set')) localStorage.setItem('hr-set', JSON.stringify({ count: false, res: 720, fps: 30 })); });
   await page.goto(REC);
@@ -45,7 +83,7 @@ try {
   await page.keyboard.press('ArrowDown'); await sleep(100);
   chk('Pfeil nach unten schiebt das Skript eine Zeile weiter', (await ev(() => document.querySelector('#skView').scrollTop)) > y0);
   // Medien: Video mit Ton, zwei Bilder (= Präsentation)
-  setPick({ clips: [CLIP, MEDIA + 'logo.png', MEDIA + 'wackel.png'] });
+  setPick({ rec: [CLIP, MEDIA + 'logo.png', MEDIA + 'wackel.png'] });
   await page.click('#addMedia');
   await page.waitForFunction(() => document.querySelectorAll('.mitem').length === 2);
   const kinds = await ev(() => [...document.querySelectorAll('.mitem .kind')].map(x => x.textContent));
@@ -122,13 +160,56 @@ try {
   await page.selectOption('#mMode', 'broll');
   await shot('4_takes');
 
+
+  // ── Dokumente: PDF (Seiten, Links), Markdown, Word, PowerPoint – und der eingebaute Browser ──
+  setPick({ rec: [DOCS.pdf, DOCS.md, DOCS.docx, DOCS.pptx] });
+  await page.click('#addMedia');
+  await page.waitForFunction(() => document.querySelectorAll('.mitem').length === 6, null, { timeout: 10000 });
+  const dk = await ev(() => [...document.querySelectorAll('.mitem .kind')].slice(2).map(x => x.textContent));
+  chk('Dokumente lassen sich laden: PDF, Text, Word, PowerPoint', dk.join('|') === 'PDF|Text|Dokument|Folien', dk);
+  await page.click('.mitem >> nth=2'); await page.waitForFunction(() => /Seite 1 von 2/.test(document.querySelector('#mTime').textContent) && document.querySelectorAll('.doclink').length, null, { timeout: 15000 });
+  const lk = await ev(() => [...document.querySelectorAll('.doclink')].map(a => a.title));
+  chk('PDF: Seite 1 von 2 mit Link nach außen und Verweis auf Seite 2', lk.includes('https://example.org/') && lk.includes('Zu Seite 2'), lk);
+  chk('PDF-Seite ist gezeichnet (nicht leer)', await ev(() => { const c = document.querySelector('.docwrap canvas'), g = c.getContext('2d'), d = g.getImageData(0, 0, c.width, c.height).data; let w = 0, k = 0, o = 0; for (let i = 0; i < d.length; i += 4 * 97){ if (d[i] > 240 && d[i + 1] > 240) w++; else if (d[i] < 60 && d[i + 1] < 60 && d[i + 2] < 60) k++; else o++; } return w > 50 && k + o > 5; }));
+  await page.click('.doclink[title="Zu Seite 2"]'); await sleep(400);
+  chk('Verweis im PDF springt auf Seite 2', /Seite 2 von 2/.test(await ev(() => document.querySelector('#mTime').textContent)));
+  await page.keyboard.press('PageUp'); await sleep(300);
+  // Link nach außen: eingebauter Browser (hier im Test-Backend ohne Fenster → neuer Tab)
+  const pop = page.waitForEvent('popup', { timeout: 5000 }).catch(() => null);
+  await page.click('.doclink[title="https://example.org/"]'); const pp = await pop;
+  chk('Link aus dem PDF öffnet den Browser (Leiste mit Adresse; ohne Windows-Fenster ein neuer Tab)', !!pp && await ev(() => !document.querySelector('#brBar').classList.contains('hidden') && document.querySelector('#brUrl').value === 'https://example.org/'));
+  if (pp) await pp.close().catch(() => {});
+  chk('Backend ohne Programmfenster meldet „kein eingebauter Browser“', (await ev(() => TS.recBrowser('open', 'https://example.org/'))).includes('"ok": false'));
+  await page.fill('#brUrl', 'honeybalecta.de'); const pop2 = page.waitForEvent('popup', { timeout: 5000 }).catch(() => null); await page.click('#brGo'); const pp2 = await pop2;
+  chk('Adresse ohne https:// wird ergänzt', !!pp2 && (await ev(() => document.querySelector('#brUrl').value)) === 'https://honeybalecta.de'); if (pp2) await pp2.close().catch(() => {});
+  await page.click('#brClose');
+  // Aufnahme mit PDF-Seiten → Einblendungen als Bilder
+  await page.click('#recBtn'); await sleep(900); await page.keyboard.press('PageDown'); await sleep(900); await page.click('#recBtn');
+  await page.waitForFunction(() => { const t = HoneyRec.P.rec.takes.slice(-1)[0]; return t && t.src && t.ev.filter(e => e.k === 'm').length >= 2 && t.ev.every(e => e.clip); }, null, { timeout: 30000 });
+  P = await R(); const dt = P.rec.takes.slice(-1)[0], di = P.items.filter(i => i.rec && i.clip && / · Seite /.test(i.clip.name));
+  chk('PDF-Seiten werden als Bilder ins Projekt gelegt, je Seite eine Einblendung an ihrer Stelle', dt.ev.filter(e => e.k === 'm').length === 2 && di.length >= 2 && di.every(i => i.clip.kind === 'image' && Math.abs(Math.max(i.clip.width / 1920, i.clip.height / 1080) - 1) < 0.01) && fs.existsSync(di[0].clip.uri), {ev: dt.ev.length, di: di.map(i => [i.clip.name, i.clip.width, i.clip.height, i.clip.kind, i.clip.uri])});
+  chk('Dokumente schalten das Mikrofon nie stumm', !(await muted()).badge);
+  // Text und Office
+  await page.click('.mitem >> nth=3'); await page.waitForFunction(() => /Seite 1 von \d/.test(document.querySelector('#mTime').textContent), null, { timeout: 10000 });
+  const mdn = +(/von (\d+)/.exec(await ev(() => document.querySelector('#mTime').textContent)) || [0, 0])[1];
+  chk('Markdown: auf mehrere Seiten umbrochen, Adresse im Text ist ein Link', mdn >= 2 && await ev(() => [...document.querySelectorAll('.doclink')].some(a => a.title === 'https://www.example.org')), mdn);
+  await page.click('.mitem >> nth=4'); await page.waitForFunction(() => /Seite 1 von 1/.test(document.querySelector('#mTime').textContent), null, { timeout: 120000 });
+  chk('Word: wird angezeigt (Original über LibreOffice/Office, sonst vereinfacht)', true, await ev(() => document.querySelector('#mTime').textContent));
+  await page.click('.mitem >> nth=5'); await page.waitForFunction(() => /Folie 1 von 2/.test(document.querySelector('#mTime').textContent), null, { timeout: 120000 });
+  chk('PowerPoint: zwei Folien, weiterschalten wie bei einer Präsentation', true);
+  await page.keyboard.press('ArrowRight'); await sleep(300);
+  chk('Pfeil nach rechts: Folie 2 von 2', /Folie 2 von 2/.test(await ev(() => document.querySelector('#mTime').textContent)));
+  await shot('7_dokument');
+  P = await R();
+  chk('Dokumente bleiben in der Sitzung gemerkt (Art, Seitenzahl, Seitenbilder)', P.rec.media.filter(m => m.doc).length === 4 && P.rec.media.find(m => m.doc && /\.pdf$/.test(m.clip.name)).n === 2);
+
   // ── Fertig → HoneyCut ──
-  const pid = P.id;
+  const pid = P.id, nSrc = P.sources.length;
   await page.click('#doneBtn');
   await page.waitForFunction(id => typeof P !== 'undefined' && P && P.id === id, pid, { timeout: 20000 });
   await sleep(800);
   const hc = await ev(() => ({ n: P.sources.length, items: P.items.length, dels: P.dels.length, script: P.script && P.script.text, house: 'houseNew' in P, rec: P.rec && P.rec.done, tab, hash: location.hash }));
-  chk('„Fertig“ öffnet die Aufnahme in HoneyCut als normales Projekt (Quellen, Elemente, Schnitte, Skript)', hc.n === 3 && hc.items >= 5 && hc.dels === 2 && hc.script === SKRIPT && !hc.house && hc.rec && !hc.hash, hc);
+  chk('„Fertig“ öffnet die Aufnahme in HoneyCut als normales Projekt (Quellen, Elemente, Schnitte, Skript)', hc.n === nSrc && hc.items >= 7 && hc.dels === 2 && hc.script === SKRIPT && !hc.house && hc.rec && !hc.hash, hc);
   await ev(() => setTab('studio')); await sleep(1200); await shot('5_honeycut');
   chk('Studio zeigt Hauptspur und Einblendungen ohne Fehler', await ev(() => document.querySelectorAll('.blk').length >= 6));
 
@@ -140,7 +221,7 @@ try {
   await page.click(`#resume [data-id="${pid}"]`); await sleep(400);
   await page.click('#recBtn'); await sleep(1200); await page.click('#recBtn'); await waitTakes(1);
   P = await R();
-  chk('Weiter aufnehmen: Take 4 kommt als vierte Quelle dazu, Bisheriges (Elemente, Schnitte) bleibt', P.sources.length === 4 && P.sources[3].name === 'Take 04' && P.items.length === hc.items && P.dels.length === 2 && P.rec.fixed === 3, { n: P.sources.length, items: P.items.length, dels: P.dels, fixed: P.rec.fixed });
+  chk('Weiter aufnehmen: Der neue Take kommt als weitere Quelle hinten dazu, Bisheriges (Elemente, Schnitte) bleibt', P.sources.length === nSrc + 1 && P.sources[nSrc].name === `Take ${String(nSrc + 1).padStart(2, '0')}` && P.items.length === hc.items && P.dels.length === 2 && P.rec.fixed === nSrc, { n: P.sources.length, items: P.items.length, dels: P.dels, fixed: P.rec.fixed });
 
   // ── Schmaler Bildschirm (Handy hochkant) ──
   await page.setViewportSize({ width: 412, height: 860 }); await sleep(300); await shot('6_handy');
