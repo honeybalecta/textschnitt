@@ -2,6 +2,10 @@
 
 Was sich mit jeder Version von HoneyCut ändert. Die Windows-App zeigt diese Stichpunkte an, sobald eine neuere Version bereitsteht.
 
+## 2.49.0 · HoneyRec auf Foldables
+
+- **Außenbildschirm (Foldables im Buchformat, Android):** Aufgeklappt zeigt HoneyRec oben den Knopf „Außenbildschirm“. Damit zieht HoneyRec auf den kleinen Bildschirm außen, der auf derselben Seite liegt wie die Hauptkameras: Du siehst dich, das Skript und die Steuerung wie im zugeklappten Zustand, aufgenommen wird mit der Hauptkamera. „Innenbildschirm“ oder Zuklappen beendet das, die vorige Kamera ist wieder eingestellt. Der Knopf erscheint nur auf Geräten, die Android diese Möglichkeit geben (etwa neuere Galaxy Z Fold und Pixel Fold).
+
 ## 2.48.0 · HoneyRec: Bildregie, Mauszeiger, große Medienbühne
 
 - **Bildregie:** HoneyRec setzt Kamera und Medienbühne live zu einem fertigen Bild zusammen. Sechs Anordnungen per Klick oder Taste 1–6: nur ich, Medium groß und ich klein, ich groß und Medium klein, nebeneinander (halb und halb), Medium ⅔ und ich ⅓, nur Medium. Die Ecke für das kleine Bild ist wählbar. Ohne Medium auf der Bühne zeigt das Bild die Kamera. Wechsel sind auch während der Aufnahme möglich.

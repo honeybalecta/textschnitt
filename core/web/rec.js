@@ -22,7 +22,7 @@
 
   // ───────── Einstellungen (pro Gerät) ─────────
   const SET_KEY = 'hr-set';
-  const SET = Object.assign({cam: '', mic: '', res: 1080, fps: 30, ns: false, mirror: true, count: true, micDuring: false, mode: 'broll', regie: true, layout: 'medium-pip', corner: 'ur', fmt: '16:9', mouse: true, big: true, docFit: 'page', skSize: 38, skSpeed: 40, skMirror: false, skHide: false},
+  const SET = Object.assign({cam: '', mic: '', res: 1080, fps: 30, ns: false, mirror: true, count: true, micDuring: false, facing: '', mode: 'broll', regie: true, layout: 'medium-pip', corner: 'ur', fmt: '16:9', mouse: true, big: true, docFit: 'page', skSize: 38, skSpeed: 40, skMirror: false, skHide: false},
     J(localStorage.getItem(SET_KEY)) || {});
   const saveSet = () => { try { localStorage.setItem(SET_KEY, JSON.stringify(SET)); } catch(_){} };
 
@@ -33,6 +33,8 @@
     onPause(){ saveNow(); },
     onBack(){ for (const v of ['#tkVeil', '#skVeil', '#setVeil']) if (!$(v).classList.contains('hidden')){ $(v).classList.add('hidden'); return true; } return !!live; },
     onOpenFiles(){}, onHandover(){},
+    // Foldable: Außenbildschirm an/aus (Android meldet den Stand)
+    onRear(st){ paintRear(st); },
     onSwitch(){ if (live || countT){ toast('Erst die Aufnahme pausieren – dann geht es zu HoneyCut'); return 'stay'; } saveNow(); stopTracks(Dev.cam); stopTracks(Dev.mic); return 'go'; },
   };
   const pick = kind => new Promise(res => { const id = newId(); pending.set(id, res); TS.pick(id, kind); });
@@ -117,7 +119,7 @@
     if (live) return toast('Während der Aufnahme lässt sich das Gerät nicht wechseln');
     stopTracks(Dev.cam); stopTracks(Dev.mic); Dev.cam = Dev.mic = null;
     const H = +SET.res, W = Math.round(H * 16 / 9);
-    const vc = {width: {ideal: W}, height: {ideal: H}, frameRate: {ideal: +SET.fps}};
+    const vc = {width: {ideal: W}, height: {ideal: H}, frameRate: {ideal: +SET.fps}, ...(SET.facing ? {facingMode: {ideal: SET.facing}} : {})};
     try { Dev.cam = await md.getUserMedia({video: SET.cam ? {...vc, deviceId: {exact: SET.cam}} : vc, audio: false}); }
     catch(e){
       try { Dev.cam = await md.getUserMedia({video: vc, audio: false}); if (SET.cam) toast('Die gewählte Kamera ist nicht verfügbar – die Standardkamera ist aktiv'); }
@@ -836,5 +838,19 @@
   if (TS.keepAwake) try { TS.keepAwake(true); } catch(_){}
 
   paintPromptStyle(); paintRegie(); paintBig(); regieLoop(); renderStart(); renderScript(); openDevices();
+  // ───────── Foldables im Buchformat: Bedienung auf dem Außenbildschirm, Aufnahme mit der Hauptkamera ─────────
+  let rearPrev = null;
+  function paintRear(st){
+    st = st || {}; const b = $('#rearBtn'), ok = st.status === 'available' || st.status === 'active', on = st.status === 'active';
+    b.classList.toggle('hidden', !ok); b.textContent = on ? 'Innenbildschirm' : 'Außenbildschirm'; b.classList.toggle('on', on);
+    if (st.error) toast('Außenbildschirm: ' + st.error, 6000);
+    if (on && !rearPrev){ rearPrev = {cam: SET.cam, facing: SET.facing}; SET.cam = ''; SET.facing = 'environment'; document.body.classList.add('rear'); openDevices();
+      toast('HoneyRec läuft auf dem Außenbildschirm – aufgenommen wird mit der Hauptkamera', 5000); }
+    else if (!on && rearPrev){ SET.cam = rearPrev.cam; SET.facing = rearPrev.facing; rearPrev = null; document.body.classList.remove('rear'); saveSet(); openDevices(); }
+  }
+  if (TS.recRear){ try { paintRear(J(TS.recRear('state'))); } catch(_){} }
+  $('#rearBtn').onclick = () => { if (live) return toast('Erst die Aufnahme pausieren, dann den Bildschirm wechseln');
+    const st = J(TS.recRear(rearPrev ? 'off' : 'on')); if (st && st.status === 'unavailable') toast('Dafür das Handy ganz aufklappen'); };
+
   window.HoneyRec = {get P(){ return P; }, regen, SET, Mouse, drawProg};   // für Tests
 })();

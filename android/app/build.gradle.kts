@@ -66,4 +66,7 @@ dependencies {
     implementation("com.google.mlkit:translate:17.0.3")
     implementation("androidx.core:core-ktx:1.16.0")
     implementation("androidx.activity:activity-ktx:1.10.1")
+    // HoneyRec auf Foldables: App auf den Außenbildschirm (Rear Display Mode), Aufnahme mit der Hauptkamera
+    implementation("androidx.window:window:1.2.0")
+    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
 }

@@ -311,6 +311,10 @@ class Bridge(private val act: MainActivity) {
     @JavascriptInterface
     fun recBrowser(action: String, url: String): String = runCatching { browser.call(action, url) }.getOrElse { JSONObject().put("ok", false).put("error", it.message).toString() }
 
+    /** Foldables: Außenbildschirm verwenden („on“/„off“/„state“), Rückmeldung zusätzlich über TSApp.onRear. */
+    @JavascriptInterface
+    fun recRear(action: String): String = runCatching { act.rear.call(action) }.getOrElse { JSONObject().put("status", "unsupported").toString() }
+
     @JavascriptInterface
     fun recDir(session: String, open: Boolean): String = (if (session.isBlank()) Rec.root(ctx) else Rec.dir(ctx, session)).absolutePath
 

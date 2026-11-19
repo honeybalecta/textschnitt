@@ -28,6 +28,8 @@ class MainActivity : ComponentActivity() {
     lateinit var web: WebView
         private set
     private lateinit var bridge: Bridge
+    lateinit var rear: RearDisplay
+        private set
     private lateinit var server: LocalServer
 
     private val picker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
@@ -117,6 +119,7 @@ class MainActivity : ComponentActivity() {
             allowContentAccess = false
             textZoom = 100
         }
+        rear = RearDisplay(this)
         bridge = Bridge(this)
         web.addJavascriptInterface(bridge, "TS")
         web.webChromeClient = object : WebChromeClient() {
