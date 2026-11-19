@@ -256,6 +256,33 @@ try {
   await ev(() => document.exitFullscreen()); await sleep(300);
   await shot('8_regie');
 
+
+  // ── Pegel: Pegel in HoneyRec, Begrenzung, Einmessen ──
+  await page.click('#setBtn');
+  chk('Einstellungen: Pegel in HoneyRec (0 dB), Einmessen, automatisch anpassen', await ev(() => document.querySelector('#gainSl').value === '0' && !!document.querySelector('#lvlCheck') && !document.querySelector('#agcOn').checked));
+  const ratio = () => ev(async () => { const M = HoneyRec.Mix, a = new Float32Array(2048), b = new Float32Array(2048); let r = 0, p = 0;
+    for (let i = 0; i < 12; i++){ M.raw.getFloatTimeDomainData(a); M.post.getFloatTimeDomainData(b); r = Math.max(r, ...a.map(Math.abs)); p = Math.max(p, ...b.map(Math.abs)); await new Promise(z => setTimeout(z, 50)); } return [r, p]; });
+  await page.locator('#gainSl').fill('-20'); await sleep(300);
+  const [r20, p20] = await ratio();
+  chk('Pegel −20 dB: Was aufgenommen wird, ist zehnmal leiser als der Eingang', r20 > 0.01 && Math.abs(p20 / r20 - 0.1) < 0.03, [r20, p20]);
+  await page.locator('#gainSl').fill('12'); await sleep(300);
+  const [r12, p12] = await ratio();
+  chk('Pegel +12 dB: Begrenzung hält die Spitzen unter 0 dB', p12 <= 0.94 && p12 > 0.5, [r12, p12]);
+  const einmessen = async () => { await ev(() => { document.querySelector('#lvlInfo').textContent = ''; }); await page.click('#lvlCheck');
+    await page.waitForFunction(() => /Passt|Übersteuert|Kaum/.test(document.querySelector('#lvlInfo').textContent), null, { timeout: 12000 }); };
+  // Der Test-Eingang von Chromium kommt übersteuert an (wie das DJI-Mic) → Hinweis statt Pegel
+  await einmessen();
+  chk('Einmessen: übersteuerter Eingang wird erkannt', await ev(() => /^Übersteuert schon am Eingang/.test(document.querySelector('#lvlInfo').textContent)));
+  // sauberer Eingang mit Spitzen bei 0,3
+  await ev(() => { const M = HoneyRec.Mix, o = M.ac.createOscillator(), g = M.ac.createGain(); g.gain.value = 0.3; o.connect(g); o.start();
+    M.mic.disconnect(); g.connect(M.raw); g.connect(M.gain); M.mic = g; });
+  await einmessen();
+  const li = await ev(() => [document.querySelector('#lvlInfo').textContent, HoneyRec.SET.gainDb]);
+  await sleep(300); const [rr, pq] = await ratio();
+  chk('Einmessen: Pegel so gesetzt, dass Spitzen um −9 dB liegen', /^Passt/.test(li[0]) && pq > 0.2 && pq < 0.6, { li, rr, pq });
+  chk('Pegel bleibt gemerkt', await ev(() => JSON.parse(localStorage.getItem('hr-set')).gainDb === HoneyRec.SET.gainDb));
+  await page.locator('#gainSl').fill('0'); await page.click('#setOk');
+
   // ── Fertig → HoneyCut ──
   const pid = P.id, nSrc = P.sources.length;
   await page.click('#doneBtn');

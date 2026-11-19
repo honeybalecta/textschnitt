@@ -101,6 +101,7 @@
     openRec: () => { try { return !!JSON.parse(call('POST', 'rec/window', {})).ok; } catch(_){ return false; } },
     recConvert: uri => jobOf(call('POST', 'rec/convert', {uri})),   // Office-Datei → PDF für die Anzeige
     recBrowser: (action, url) => call('POST', 'rec/browser', {action, url}),
+    recMicVol: (name, volume) => fetch(api + 'rec/micvol', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({name, volume: volume == null || volume < 0 ? null : volume})}).then(r => r.text()),   // Windows: Eingangslautstärke des Geräts
     recDir: (session, open) => { try { return JSON.parse(call('POST', 'rec/dir', {session: session || '', open: !!open})).dir || ''; } catch(_){ return ''; } },
     openWindow: (project, view) => { try { return JSON.parse(call('POST', 'window', {project, view})).url || ''; } catch(_){ return ''; } },
   };

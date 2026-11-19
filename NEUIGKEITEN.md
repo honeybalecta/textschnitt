@@ -2,6 +2,14 @@
 
 Was sich mit jeder Version von HoneyCut ändert. Die Windows-App zeigt diese Stichpunkte an, sobald eine neuere Version bereitsteht.
 
+## 2.50.0 · HoneyRec: Pegel im Griff
+
+- **Übersteuerung erkennen:** Kommt der Ton schon übersteuert vom Gerät an (etwa ein DJI Mic, das über die Kamera läuft), zeigt die Pegelanzeige „ÜBERSTEUERT“ und HoneyRec meldet sich einmal mit einem Hinweis. Ein Klick auf die Pegelanzeige öffnet die Einstellungen.
+- **Pegel am Gerät (Windows):** In den Einstellungen unter „Pegel“ lässt sich die Eingangslautstärke des gewählten Mikrofons direkt in Windows senken – derselbe Regler wie in den Windows-Toneinstellungen. Nur hier lässt sich eine Übersteuerung beheben, die schon im Gerät entsteht.
+- **Pegel in HoneyRec:** Regler von −30 bis +12 dB für das, was aufgenommen wird; eine weiche Begrenzung hält die Spitzen unter 0 dB. Gilt mit und ohne Bildregie, am Computer, auf dem Handy und im Browser.
+- **Pegel einmessen:** Fünf Sekunden normal sprechen, HoneyRec stellt den Pegel so ein, dass die Spitzen um −9 dB liegen. Übersteuert der Eingang schon, senkt HoneyRec unter Windows den Pegel am Gerät auf die Hälfte und bittet um ein zweites Einmessen; sonst gibt es einen Hinweis.
+- **Pegel automatisch anpassen:** Wahlweise regelt das System die Lautstärke selbst (Automatik des Browsers bzw. von Android). Standard bleibt aus, weil die Automatik leise Stellen hochzieht und Pausen rauschen lässt.
+
 ## 2.49.0 · HoneyRec auf Foldables
 
 - **Außenbildschirm (Foldables im Buchformat, Android):** Aufgeklappt zeigt HoneyRec oben den Knopf „Außenbildschirm“. Damit zieht HoneyRec auf den kleinen Bildschirm außen, der auf derselben Seite liegt wie die Hauptkameras: Du siehst dich, das Skript und die Steuerung wie im zugeklappten Zustand, aufgenommen wird mit der Hauptkamera. „Innenbildschirm“ oder Zuklappen beendet das, die vorige Kamera ist wieder eingestellt. Der Knopf erscheint nur auf Geräten, die Android diese Möglichkeit geben (etwa neuere Galaxy Z Fold und Pixel Fold).

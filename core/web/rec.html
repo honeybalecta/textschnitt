@@ -14,7 +14,7 @@
   <div class="rname" id="rName" title="Name der Aufnahme – klicken zum Umbenennen"></div>
   <div class="rstate" id="rState"><span class="dot"></span><span id="rClock">0:00</span><span class="muted" id="rTake"></span></div>
   <button class="rbtn rec" id="recBtn" title="Aufnahme starten (R)"><span class="ico"></span><span class="lbl">Aufnehmen</span></button>
-  <div class="meter" id="meter" title="Pegel des Mikrofons"><i></i><b class="hidden" id="muteBadge">Mikro stumm – Medium läuft</b></div>
+  <div class="meter" id="meter" title="Pegel des Mikrofons"><i></i><b class="hidden" id="muteBadge">Mikro stumm – Medium läuft</b><b class="hidden clip" id="clipBadge">Übersteuert – Pegel senken</b></div>
   <div class="grow"></div>
   <button class="rbtn hidden" id="rearBtn" title="Foldable aufgeklappt: Bedienung auf den Außenbildschirm, Aufnahme mit der Hauptkamera">Außenbildschirm</button>
   <button class="ibtn" id="setBtn" title="Kamera, Mikrofon und Einstellungen">⚙</button>
@@ -119,6 +119,14 @@
       <label class="field">Bilder pro Sekunde<select id="fpsSel"><option value="25">25</option><option value="30">30</option><option value="50">50</option><option value="60">60</option></select></label>
     </div>
     <p class="muted small" id="camInfo"></p>
+    <h2>Pegel</h2>
+    <div class="grid2">
+      <label class="field" id="devVolWrap">Pegel am Gerät (Windows) <span class="mono" id="devVolVal"></span><input type="range" id="devVol" min="0" max="100" step="1"></label>
+      <label class="field">Pegel in HoneyRec <span class="mono" id="gainVal"></span><input type="range" id="gainSl" min="-30" max="12" step="1"></label>
+    </div>
+    <div class="row"><button class="sbtn" id="lvlCheck">Pegel einmessen</button><span class="small" id="lvlInfo"></span></div>
+    <label class="row"><input type="checkbox" id="agcOn"> Pegel automatisch anpassen (gleicht laut und leise aus; hilft, wenn das Gerät zu heiß liefert)</label>
+    <p class="muted small">Kommt der Ton schon übersteuert an – etwa ein Funkmikrofon an der Kamera –, hilft nur weniger Pegel vor HoneyRec: „Pegel am Gerät“, die Verstärkung am Mikrofon bzw. in der Kamera oder „Pegel automatisch anpassen“. Der Pegel in HoneyRec und die eingebaute Begrenzung kurz vor 0 dB schützen danach vor neuen Spitzen.</p>
     <label class="row"><input type="checkbox" id="nsOn"> Störgeräusche dämpfen (für laute Räume; sonst bleibt der Ton unbearbeitet)</label>
     <label class="row"><input type="checkbox" id="mirrorOn"> Kamerabild in der Vorschau spiegeln (die Aufnahme bleibt richtig herum)</label>
     <label class="row"><input type="checkbox" id="countOn"> Vor jedem Take 3 Sekunden herunterzählen</label>

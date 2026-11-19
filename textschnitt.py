@@ -37,7 +37,7 @@ os.environ.setdefault("HF_HUB_DISABLE_IMPLICIT_TOKEN", "1")
 import warnings  # noqa: E402
 warnings.filterwarnings("ignore", module="huggingface_hub")
 
-VERSION = "2.49.0"
+VERSION = "2.50.0"
 APP_DIR = Path(__file__).resolve().parent
 FROZEN = bool(getattr(sys, "frozen", False))          # als installierte .exe gebaut
 RES_DIR = Path(getattr(sys, "_MEIPASS", APP_DIR))      # mitgelieferte Dateien (Oberfläche, ffmpeg, Modelle)
@@ -5493,6 +5493,66 @@ def rec_convert_job(job: dict, uri: str) -> dict:
                        "Die Datei ließ sich nicht umwandeln – gezeigt wird eine vereinfachte Fassung (nur Text).")
 
 
+_MICVOL_PS = r"""
+$ErrorActionPreference = 'Stop'
+Add-Type -TypeDefinition @'
+using System; using System.Runtime.InteropServices;
+[StructLayout(LayoutKind.Sequential)] public struct PK { public Guid fmt; public int pid; }
+[StructLayout(LayoutKind.Sequential)] public struct PV { public ushort vt; public ushort r1, r2, r3; public IntPtr p; public IntPtr p2; }
+[Guid("886d8eeb-8cf2-4446-8d02-cdba1dbdcf99"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+public interface IPS { int GetCount(out int c); int GetAt(int i, out PK k); int GetValue(ref PK k, out PV v); }
+[Guid("D666063F-1587-4E43-81F1-B948E807363F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+public interface IMMD { int Activate(ref Guid iid, int ctx, IntPtr p, [MarshalAs(UnmanagedType.IUnknown)] out object o); int OpenPropertyStore(int a, out IPS s); }
+[Guid("0BD7A1BE-7A1A-44DB-8397-CC5392387B5E"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+public interface IMMDC { int GetCount(out uint c); int Item(uint i, out IMMD d); }
+[Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+public interface IMMDE { int EnumAudioEndpoints(int flow, int mask, out IMMDC c); }
+[Guid("5CDF2C82-841E-4546-9722-0CF74078229A"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+public interface IAEV { int R1(IntPtr p); int R2(IntPtr p); int GetChannelCount(out uint c); int SetMasterVolumeLevel(float db, ref Guid g);
+  int SetMasterVolumeLevelScalar(float v, ref Guid g); int GetMasterVolumeLevel(out float db); int GetMasterVolumeLevelScalar(out float v); }
+[ComImport, Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")] public class MMDE { }
+public static class HrMic {
+  public static string Run(string want, float set) {
+    var en = (IMMDE)new MMDE(); IMMDC col; en.EnumAudioEndpoints(1, 1, out col); uint n; col.GetCount(out n);
+    var key = new PK { fmt = new Guid("a45c254e-df1c-4efd-8020-67d146a850e0"), pid = 14 };
+    string best = null; IAEV vol = null; string names = "";
+    for (uint i = 0; i < n; i++) {
+      IMMD d; col.Item(i, out d); IPS ps; d.OpenPropertyStore(0, out ps); PV v; ps.GetValue(ref key, out v);
+      string name = v.vt == 31 ? Marshal.PtrToStringUni(v.p) : ""; names += name + "|";
+      if (name.Length == 0) continue;
+      string a = name.ToLowerInvariant(), w = want.ToLowerInvariant();
+      if (a == w || a.Contains(w) || w.Contains(a)) { object o; var iid = typeof(IAEV).GUID; d.Activate(ref iid, 23, IntPtr.Zero, out o); vol = (IAEV)o; best = name; if (a == w) break; }
+    }
+    if (vol == null) return "{\"found\":false,\"names\":\"" + names.Replace("\\", "/").Replace("\"", "'") + "\"}";
+    var g = Guid.Empty; if (set >= 0) vol.SetMasterVolumeLevelScalar(Math.Min(1f, set / 100f), ref g);
+    float s, db; vol.GetMasterVolumeLevelScalar(out s); vol.GetMasterVolumeLevel(out db);
+    return "{\"found\":true,\"name\":\"" + best.Replace("\\", "/").Replace("\"", "'") + "\",\"volume\":" + Math.Round(s * 100).ToString(System.Globalization.CultureInfo.InvariantCulture) + ",\"db\":" + Math.Round(db, 1).ToString(System.Globalization.CultureInfo.InvariantCulture) + "}";
+  }
+}
+'@
+[Console]::OutputEncoding = [Text.Encoding]::UTF8
+[HrMic]::Run($env:HR_MIC, [float]$env:HR_SET)
+"""
+
+
+def rec_micvol(name: str, volume=None) -> dict:
+    """Windows: Eingangslautstärke eines Aufnahmegeräts (wie in den Sound-Einstellungen) lesen oder setzen.
+    Bei Kameras mit angestecktem Funkmikrofon kommt der Ton oft zu heiß an; hier lässt er sich vor dem Übersteuern senken."""
+    if sys.platform != "win32":
+        return {"found": False, "unsupported": True}
+    want = re.sub(r"\s*\([0-9a-f]{4}:[0-9a-f]{4}\)\s*$", "", str(name or ""), flags=re.I).strip()   # Chrome hängt USB-Kennungen an
+    if not want:
+        return {"found": False}
+    env = dict(os.environ, HR_MIC=want, HR_SET=str(-1 if volume is None else max(0.0, min(100.0, float(volume)))))
+    r = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", _MICVOL_PS],
+                       capture_output=True, text=True, encoding="utf-8", errors="replace", env=env, timeout=60, stdin=subprocess.DEVNULL, **NOWIN)
+    out = (r.stdout or "").strip().splitlines()
+    try:
+        return json.loads(out[-1]) if out else {"found": False, "error": (r.stderr or "")[-300:]}
+    except Exception:  # noqa: BLE001
+        return {"found": False, "error": ((r.stderr or "") + (r.stdout or ""))[-300:]}
+
+
 def rec_selftest() -> dict:
     """HoneyRec im Build: Aufnahmen, wie sie WebView2 liefert (WebM mit VP9/Opus und fragmentiertes MP4 mit H.264/AAC),
     stückweise anhängen und abschließen – am Ende muss je eine normale MP4 mit Bild, Ton und Länge stehen."""
@@ -6450,6 +6510,8 @@ class Handler(BaseHTTPRequestHandler):
                 if not fn:
                     return self._json({"ok": False})
                 return self._json(fn(str(data.get("action") or ""), str(data.get("url") or "")))
+            if rest == "api/rec/micvol":
+                return self._json(rec_micvol(str(data.get("name") or ""), data.get("volume")))
             if rest == "api/rec/orphans":
                 return self._json(rec_orphans(str(data.get("session") or "")))
             if rest == "api/rec/dir":

@@ -22,7 +22,7 @@
 
   // ───────── Einstellungen (pro Gerät) ─────────
   const SET_KEY = 'hr-set';
-  const SET = Object.assign({cam: '', mic: '', res: 1080, fps: 30, ns: false, mirror: true, count: true, micDuring: false, facing: '', mode: 'broll', regie: true, layout: 'medium-pip', corner: 'ur', fmt: '16:9', mouse: true, big: true, docFit: 'page', skSize: 38, skSpeed: 40, skMirror: false, skHide: false},
+  const SET = Object.assign({cam: '', mic: '', res: 1080, fps: 30, ns: false, mirror: true, count: true, micDuring: false, facing: '', gainDb: 0, agc: false, mode: 'broll', regie: true, layout: 'medium-pip', corner: 'ur', fmt: '16:9', mouse: true, big: true, docFit: 'page', skSize: 38, skSpeed: 40, skMirror: false, skHide: false},
     J(localStorage.getItem(SET_KEY)) || {});
   const saveSet = () => { try { localStorage.setItem(SET_KEY, JSON.stringify(SET)); } catch(_){} };
 
@@ -125,7 +125,7 @@
       try { Dev.cam = await md.getUserMedia({video: vc, audio: false}); if (SET.cam) toast('Die gewählte Kamera ist nicht verfügbar – die Standardkamera ist aktiv'); }
       catch(e2){ camMsg(e2.name === 'NotAllowedError' ? 'Kein Zugriff auf die Kamera. Bitte den Zugriff erlauben und HoneyRec neu öffnen.' : 'Keine Kamera gefunden. Ist sie angeschlossen und nicht in einem anderen Programm geöffnet?'); log('Kamera: ' + e2.name + ' ' + e2.message); }
     }
-    const ac0 = {echoCancellation: false, noiseSuppression: !!SET.ns, autoGainControl: false, sampleRate: {ideal: 48000}, channelCount: {ideal: 2}};
+    const ac0 = {echoCancellation: false, noiseSuppression: !!SET.ns, autoGainControl: !!SET.agc, sampleRate: {ideal: 48000}, channelCount: {ideal: 2}};
     try { Dev.mic = await md.getUserMedia({audio: SET.mic ? {...ac0, deviceId: {exact: SET.mic}} : ac0, video: false}); }
     catch(e){ try { Dev.mic = await md.getUserMedia({audio: ac0, video: false}); } catch(e2){ toast('Kein Mikrofon verfügbar – aufgenommen wird nur das Bild'); log('Mikrofon: ' + e2.name); } }
     if (Dev.cam){ $('#camV').srcObject = Dev.cam; camMsg(''); }
@@ -154,15 +154,24 @@
       ac.createMediaStreamSource(stream).connect(an); Dev.ac = ac; Dev.an = an; Dev.buf = new Float32Array(an.fftSize); } catch(_){}
   }
   let peakHold = 0;
-  (function meterLoop(){
+  // Übersteuerung am Eingang: Spitzen am Anschlag, bevor HoneyRec etwas am Ton ändert (Gerät liefert zu heiß)
+  const Clip = {hits: [], warned: false, raw: 0};
+  const peakOf = an => { if (!an.buf || an.buf.length !== an.fftSize) an.buf = new Float32Array(an.fftSize); an.getFloatTimeDomainData(an.buf); let p = 0; for (const x of an.buf) p = Math.max(p, Math.abs(x)); return p; };
+  requestAnimationFrame(function meterLoop(){   // erster Durchlauf erst nach dem Laden (Mischpult steht weiter unten)
     requestAnimationFrame(meterLoop);
-    const an = Dev.an, m = $('#meter'); if (!an) return;
-    if (Dev.ac.state === 'suspended') return;
-    an.getFloatTimeDomainData(Dev.buf); let pk = 0; for (const x of Dev.buf) pk = Math.max(pk, Math.abs(x));
+    const post = Mix.post || Dev.an, raw = Mix.raw || Dev.an, m = $('#meter'); if (!post) return;
+    const ctx = Mix.post ? Mix.ac : Dev.ac; if (!ctx || ctx.state === 'suspended') return;
+    const pk = peakOf(post), rp = Clip.raw = peakOf(raw), now = performance.now();
+    if (rp >= 0.985 && !mutedNow()){ Clip.hits.push(now); }
+    Clip.hits = Clip.hits.filter(t => now - t < 3000);
+    const clipping = Clip.hits.length >= 4;
     const db = 20 * Math.log10(pk || 1e-6); peakHold = Math.max(db, peakHold - 0.6);
     m.querySelector('i').style.width = clamp((peakHold + 60) / 60 * 100, 0, 100) + '%';
-    m.classList.toggle('hot', peakHold > -3);
-  })();
+    m.classList.toggle('hot', peakHold > -3 || clipping);
+    const cb = $('#clipBadge'); cb.classList.toggle('hidden', !clipping);
+    if (clipping && !Clip.warned){ Clip.warned = true; toast('Der Ton kommt übersteuert an – unter ⚙ den Pegel senken (am besten „Pegel am Gerät“) oder „Pegel einmessen“', 8000); }
+  });
+  const mutedNow = () => !!(Dev.mic && Dev.mic.getAudioTracks().some(t => !t.enabled));
   document.addEventListener('pointerdown', () => { if (Dev.ac && Dev.ac.state === 'suspended') Dev.ac.resume().catch(() => {}); }, true);
 
   // ───────── Mikrofon während Medien mit Ton ─────────
@@ -239,7 +248,8 @@
         R = startRecorder(new MediaStream([ps.getVideoTracks()[0], ...aud]), `Take ${pad(n)}`, vbr(Math.min(pw, ph), +SET.fps));
         take = {id: newId(), n, src: null, dels: [], ev: [], at: Date.now(), w: pw, h: ph, regie: {fmt: SET.fmt, lay: [[0, curLayout()]]}};
       } else {
-        const tracks = [v, ...(Dev.mic ? Dev.mic.getAudioTracks() : [])];
+        if (Mix.ac && Mix.ac.state === 'suspended') await Mix.ac.resume().catch(() => {});
+        const tracks = [v, ...(Mix.post && Mix.dest ? Mix.dest.stream.getAudioTracks() : Dev.mic ? Dev.mic.getAudioTracks() : [])];
         R = startRecorder(new MediaStream(tracks), `Take ${pad(n)}`, vbr(s.height || +SET.res, s.frameRate || +SET.fps));
         take = {id: newId(), n, src: null, dels: [], ev: [], at: Date.now(), w: s.width, h: s.height};
       }
@@ -542,9 +552,22 @@
   function regieLoop(){ clearInterval(Prog.timer); Prog.timer = 0; if (SET.regie) Prog.timer = setInterval(drawProg, 1000 / (+SET.fps > 30 ? 30 : +SET.fps || 30)); }
   // Ton fürs Programm: Mikrofon (stumm, solange ein Medium mit Ton läuft) und Ton des Mediums
   const Mix = {ac: null, dest: null, mic: null};
-  function mixInit(){ if (Mix.ac || !SET.regie) return; try { Mix.ac = new (window.AudioContext || window.webkitAudioContext)({sampleRate: 48000}); Mix.dest = Mix.ac.createMediaStreamDestination(); } catch(e){ Mix.ac = null; log('Mischpult: ' + e.message); } }
-  function mixMic(){ if (!Mix.ac) return; try { if (Mix.mic) Mix.mic.disconnect(); } catch(_){} Mix.mic = null;
-    if (Dev.mic && Dev.mic.getAudioTracks().length) try { Mix.mic = Mix.ac.createMediaStreamSource(Dev.mic); Mix.mic.connect(Mix.dest); } catch(e){ log('Mikrofon ins Programm: ' + e.message); } }
+  function mixInit(){ if (Mix.ac) return; try { Mix.ac = new (window.AudioContext || window.webkitAudioContext)({sampleRate: 48000}); Mix.dest = Mix.ac.createMediaStreamDestination(); } catch(e){ Mix.ac = null; log('Mischpult: ' + e.message); } }
+  // Mikrofon: Eingang → Pegel (dB, einstellbar) → weiche Begrenzung kurz vor 0 dB → Aufnahme. Gilt mit und ohne Bildregie.
+  const dbLin = d => Math.pow(10, d / 20);
+  const softCurve = (() => { const n = 4096, c = new Float32Array(n); for (let i = 0; i < n; i++){ const x = i / (n - 1) * 2 - 1, a = Math.abs(x), k = 0.75;
+    c[i] = Math.sign(x) * (a <= k ? a : k + (0.93 - k) * Math.tanh((a - k) / (0.93 - k))); } return c; })();
+  function mixMic(){ if (!Mix.ac) return; for (const n of ['mic', 'gain', 'lim']) try { if (Mix[n]) Mix[n].disconnect(); } catch(_){} Mix.mic = Mix.gain = Mix.lim = Mix.raw = Mix.post = null;
+    if (!(Dev.mic && Dev.mic.getAudioTracks().length)) return;
+    try {
+      const ac = Mix.ac; Mix.mic = ac.createMediaStreamSource(Dev.mic);
+      Mix.raw = ac.createAnalyser(); Mix.raw.fftSize = 2048; Mix.mic.connect(Mix.raw);
+      Mix.gain = ac.createGain(); Mix.gain.gain.value = dbLin(+SET.gainDb || 0);
+      Mix.lim = ac.createWaveShaper(); Mix.lim.curve = softCurve; Mix.lim.oversample = 'none';   // ohne Überabtastung: Spitzen bleiben sicher unter 0,93
+      Mix.post = ac.createAnalyser(); Mix.post.fftSize = 2048;
+      Mix.mic.connect(Mix.gain); Mix.gain.connect(Mix.lim); Mix.lim.connect(Mix.dest); Mix.lim.connect(Mix.post);
+    } catch(e){ log('Mikrofon ins Programm: ' + e.message); Mix.raw = Mix.post = null; } }
+  function setGain(d){ SET.gainDb = clamp(Math.round(d), -30, 12); saveSet(); if (Mix.gain) Mix.gain.gain.setTargetAtTime(dbLin(SET.gainDb), Mix.ac.currentTime, 0.02); paintLevel(); }
   function mixMedia(el){ mixInit(); if (!Mix.ac) return; try { const n = Mix.ac.createMediaElementSource(el); n.connect(Mix.dest); n.connect(Mix.ac.destination); } catch(e){ log('Medium ins Programm: ' + e.message); } }
   const wake = () => { if (Mix.ac && Mix.ac.state === 'suspended') Mix.ac.resume().catch(() => {}); };
   document.addEventListener('pointerdown', wake, true); document.addEventListener('keydown', wake, true);
@@ -796,7 +819,7 @@
   // Einstellungen
   $('#setBtn').onclick = () => { $('#setVeil').classList.remove('hidden'); $('#resSel').value = String(SET.res); $('#fpsSel').value = String(SET.fps); $('#nsOn').checked = !!SET.ns; $('#mirrorOn').checked = !!SET.mirror; $('#countOn').checked = !!SET.count;
     const dir = TS.recDir ? TS.recDir(P ? P.rec.dir : '', false) : ''; $('#dirInfo').textContent = dir ? `Die Takes liegen als MP4 in: ${dir}` : PLAT === 'android' ? 'Die Takes liegen im Speicher der App und erscheinen in HoneyCut.' : 'Die Takes liegen im Speicher dieses Browsers.';
-    $('#dirOpen').classList.toggle('hidden', !(TS.recDir && PLAT === 'desktop')); $('#regieOn').checked = !!SET.regie; $('#fmtSel').value = SET.fmt; fillDevices(); camInfo(); };
+    $('#dirOpen').classList.toggle('hidden', !(TS.recDir && PLAT === 'desktop')); paintLevel(); $('#lvlInfo').textContent = ''; readDevVol(); $('#regieOn').checked = !!SET.regie; $('#fmtSel').value = SET.fmt; fillDevices(); camInfo(); };
   $('#dirOpen').onclick = () => TS.recDir(P ? P.rec.dir : '', true);
   $('#setOk').onclick = () => $('#setVeil').classList.add('hidden');
   const reopen = () => { saveSet(); openDevices(); };
@@ -807,6 +830,36 @@
   $('#nsOn').onchange = e => { SET.ns = e.target.checked; reopen(); };
   $('#mirrorOn').onchange = e => { SET.mirror = e.target.checked; saveSet(); $('#camBox').classList.toggle('mirror', SET.mirror); };
   $('#countOn').onchange = e => { SET.count = e.target.checked; saveSet(); };
+  // Pegel: am Gerät (Windows), in HoneyRec, automatisch, einmessen
+  function paintLevel(){ $('#gainSl').value = SET.gainDb; $('#gainVal').textContent = (SET.gainDb > 0 ? '+' : '') + SET.gainDb + ' dB'; $('#agcOn').checked = !!SET.agc; }
+  const micLabel = () => { const t = Dev.mic && Dev.mic.getAudioTracks()[0]; return t ? t.label : ''; };
+  let devVol = null;
+  async function readDevVol(){
+    $('#devVolWrap').classList.add('hidden'); devVol = null;
+    if (!TS.recMicVol || !micLabel()) return;
+    try { const r = J(await TS.recMicVol(micLabel(), -1)); if (r && r.found){ devVol = r.volume; $('#devVol').value = r.volume; $('#devVolVal').textContent = r.volume + ' %'; $('#devVolWrap').classList.remove('hidden'); } } catch(_){}
+  }
+  async function setDevVol(v){ if (!TS.recMicVol) return null; try { const r = J(await TS.recMicVol(micLabel(), v)); if (r && r.found){ devVol = r.volume; $('#devVol').value = r.volume; $('#devVolVal').textContent = r.volume + ' %'; return r; } } catch(_){} return null; }
+  $('#devVol').oninput = e => { $('#devVolVal').textContent = e.target.value + ' %'; };
+  $('#devVol').onchange = e => setDevVol(+e.target.value);
+  $('#gainSl').oninput = e => setGain(+e.target.value);
+  $('#agcOn').onchange = e => { SET.agc = e.target.checked; saveSet(); openDevices().then(readDevVol); };
+  $('#meter').onclick = () => $('#setBtn').click();
+  $('#lvlCheck').onclick = async () => {
+    if (!Mix.raw) return toast('Kein Mikrofon gefunden');
+    wake(); const b = $('#lvlCheck'), info = $('#lvlInfo'); b.disabled = true; info.textContent = 'Bitte 5 Sekunden in normaler Lautstärke sprechen …';
+    const pk = [], t0 = performance.now(); while (performance.now() - t0 < 5000){ pk.push(peakOf(Mix.raw)); await new Promise(r => setTimeout(r, 40)); }
+    b.disabled = false; const s = pk.slice().sort((a, c) => a - c), p = s[Math.floor(s.length * 0.97)], over = pk.filter(x => x >= 0.985).length / pk.length;
+    if (p < 0.01){ info.textContent = 'Kaum Ton – ist das richtige Mikrofon gewählt?'; return; }
+    if (over > 0.02){
+      if (devVol != null && devVol > 5){ const nv = Math.max(5, Math.round(devVol * 0.5)), old = devVol; const r = await setDevVol(nv);
+        info.textContent = r ? `Übersteuert schon am Eingang – Pegel am Gerät von ${old} auf ${r.volume} % gesenkt. Bitte noch einmal einmessen.` : 'Übersteuert schon am Eingang – bitte den Pegel am Gerät senken.'; }
+      else info.textContent = 'Übersteuert schon am Eingang. Bitte die Verstärkung am Mikrofon bzw. in der Kamera senken oder „Pegel automatisch anpassen“ einschalten.';
+      return;
+    }
+    setGain(20 * Math.log10(dbLin(-9) / p)); Clip.hits = []; Clip.warned = false;
+    info.textContent = `Passt: Pegel in HoneyRec auf ${(SET.gainDb > 0 ? '+' : '') + SET.gainDb} dB gesetzt (Spitzen um −9 dB).`;
+  };
   $('#regieOn').onchange = e => { if (live){ e.target.checked = !!SET.regie; return toast('Während der Aufnahme lässt sich die Bildregie nicht umschalten'); }
     SET.regie = e.target.checked; saveSet(); mixInit(); mixMic(); paintRegie(); regieLoop(); if (M.cur && !M.cur.doc && !M.cur.screen) paintStage(false); };
   $('#fmtSel').onchange = e => { if (live){ e.target.value = SET.fmt; return toast('Während der Aufnahme bleibt das Format'); } SET.fmt = e.target.value; saveSet(); paintRegie(); };
@@ -852,5 +905,5 @@
   $('#rearBtn').onclick = () => { if (live) return toast('Erst die Aufnahme pausieren, dann den Bildschirm wechseln');
     const st = J(TS.recRear(rearPrev ? 'off' : 'on')); if (st && st.status === 'unavailable') toast('Dafür das Handy ganz aufklappen'); };
 
-  window.HoneyRec = {get P(){ return P; }, regen, SET, Mouse, drawProg};   // für Tests
+  window.HoneyRec = {get P(){ return P; }, regen, SET, Mouse, drawProg, Mix, Clip};   // für Tests
 })();
