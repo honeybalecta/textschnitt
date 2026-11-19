@@ -275,6 +275,20 @@ class Bridge(private val act: MainActivity) {
         return job.id
     }
 
+    // ── HoneyRec: Aufnahmen anlegen und abschließen (die Stücke kommen über den lokalen Server, siehe LocalServer.recChunk) ──
+    @JavascriptInterface
+    fun recOpen(spec: String): String = runCatching { Rec.open(ctx, JSONObject(spec)).toString() }.getOrElse { JSONObject().put("error", it.message).toString() }
+
+    @JavascriptInterface
+    fun recClose(id: String, meta: String): String {
+        val job = Jobs.create()
+        runCatching { Rec.close(ctx, id, JSONObject(meta.ifBlank { "{}" }), job) }.onFailure { job.fail(it) }
+        return job.id
+    }
+
+    @JavascriptInterface
+    fun recDir(session: String, open: Boolean): String = (if (session.isBlank()) Rec.root(ctx) else Rec.dir(ctx, session)).absolutePath
+
     @JavascriptInterface fun job(id: String): String = Jobs.get(id)?.toJson() ?: "null"
     @JavascriptInterface fun cancel(id: String) { Jobs.get(id)?.cancel() }
 

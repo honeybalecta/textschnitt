@@ -21,6 +21,15 @@ Die Plattformen stellen dem Kern dieselbe Schnittstelle `window.TS` bereit (Date
 - **Android**: APK unter Releases (`HoneyCut-Android-….apk`), Android 10 oder neuer.
 - **Browser**: https://honeybalecta.github.io/textschnitt/ – ohne Installation. Videos bleiben auf dem Gerät; die Whisper-Modelle tiny und base liefert die Seite selbst aus (einmal geladen, dann im Browser gespeichert); nur das größere Modell small kommt von Hugging Face. Am besten in aktuellem Chrome oder Edge (mit Grafikkarte deutlich schneller); läuft nach dem ersten Besuch auch offline und lässt sich als App installieren.
 
+## HoneyRec – aufnehmen
+
+**HoneyRec** ist das Aufnahmeprogramm zu HoneyCut (seit 2.46): gleiche Installation, eigenes Symbol (Windows: Startmenü „HoneyRec“ bzw. `HoneyRec.exe`, Android: eigenes Startsymbol, Browser: `rec.html`), dazu „● Aufnehmen“ auf der Projektliste. Oberfläche in `core/web/rec.html` / `rec.js` / `rec.css`; die Plattformen liefern dafür `TS.recOpen`, `TS.recClose` und das Anhängen der Stücke (Windows `api/rec/chunk`, Android `rec/chunk` am lokalen Server, Browser OPFS).
+
+- Aufnahme mit `getUserMedia`/`MediaRecorder`: jede Kamera, die das System als Webcam kennt (eingebaut, USB, DJI im Webcam-Modus, Aufnahmekarten), Mikrofon frei wählbar, bis 4K. Jedes Stück zwischen „Aufnehmen“ und „Pause“ ist ein Take; am Computer liegt er als MP4 in „Dokumente\HoneyRec Aufnahmen\<Datum Name>“.
+- Skript wie im Souffleur (optional), Medien zum Reagieren und Zeigen (Videos, Ton, Bilder, Präsentationen als Bilder), Bildschirm mitaufnehmen (am Computer).
+- Läuft ein Medium mit eigenem Ton, wird das Mikrofon nicht aufgenommen (abschaltbar über „Mikro auch bei Medien mit Ton aufnehmen“); Bilder schalten nie stumm.
+- „Fertig → HoneyCut“: Takes werden Quellen, entfernte Teile `P.dels`, Einblendungen Elemente (`it.rec`) an der Stelle der Aufnahme, das Skript `P.script`. Alles Weitere wie bei jedem Projekt.
+
 ## Arbeiten
 
 - **Projekte**: In der Projektliste benennt der Stift ein Projekt um; im offenen Projekt genügt ein Klick auf den Namen in der Kopfzeile. Der Export schlägt den neuen Namen gleich als Dateinamen vor. Die Liste lässt sich durchsuchen und nach Datum, Namen oder Länge ordnen; jedes Projekt zeigt ein Vorschaubild (das zuletzt gesehene Bild), und „Duplizieren“ legt eine Kopie als Ausgangspunkt für eine Variante an.

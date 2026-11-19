@@ -3,6 +3,10 @@ HoneyCut als Desktop-Anwendung: eigenes Programmfenster (Edge WebView2), kein Te
 
 Start: pythonw textschnitt_app.pyw [videodatei]
 Läuft HoneyCut schon, wird die Datei im offenen Fenster geöffnet und das Fenster nach vorn geholt.
+
+HoneyRec (Aufnahmeprogramm) ist dasselbe Programm mit eigenem Start: HoneyRec.exe bzw. „--rec“ öffnet das Aufnahmefenster.
+Beide teilen sich Backend, Projekte und Datenordner; wer zuerst startet, öffnet das lokale Backend, der zweite Start
+übergibt nur noch („bitte ein HoneyRec-Fenster“ bzw. „bitte HoneyCut“).
 """
 from __future__ import annotations
 
@@ -29,6 +33,8 @@ if links.is_dir():
 
 FIRST_PORT = 8765
 TITLE = "HoneyCut"
+REC_TITLE = "HoneyRec"
+REC_MODE = "--rec" in sys.argv or Path(sys.executable).stem.lower() == "honeyrec"
 VIDEO_TYPES = ("Video und Audio (*.mp4;*.mov;*.mkv;*.m4v;*.webm;*.avi;*.mts;*.m2ts;*.wmv;*.mp3;*.wav;*.m4a;*.flac;*.aac;*.ogg)",
                "Alle Dateien (*.*)")
 FONT_TYPES = ("Schriften (*.ttf;*.otf)", "Alle Dateien (*.*)")
@@ -69,7 +75,7 @@ def port_free(port: int) -> bool:
 
 
 def hand_over(port: int, paths: list[str]):
-    body = json.dumps({"paths": paths}).encode("utf-8")
+    body = json.dumps({"paths": paths, "app": "rec" if REC_MODE else "cut"}).encode("utf-8")
     req = urllib.request.Request(f"http://127.0.0.1:{port}/api/focus", data=body,
                                  headers={"Content-Type": "application/json"})
     try:
@@ -151,6 +157,9 @@ def selftest(out_path: str) -> int:
         rep["tonquelle"] = T.tonquelle_selftest()
         if not rep["tonquelle"].get("ok"):
             raise RuntimeError(f"Zweite Tonquelle angleichen arbeitet nicht wie erwartet: {rep['tonquelle']}")
+        rep["honeyrec"] = T.rec_selftest()
+        if not rep["honeyrec"].get("ok") or not (T.WEB_DIR / "rec.html").is_file():
+            raise RuntimeError(f"HoneyRec sichert Aufnahmen nicht wie erwartet: {rep['honeyrec']}")
         rep["stimmen"] = T.stimmen_selftest()
         if not rep["stimmen"].get("ok"):
             raise RuntimeError(f"Der Ton für das Erkennen der Personen kommt nicht wie erwartet: {rep['stimmen']}")
@@ -238,13 +247,17 @@ def main():
 
     try:  # eigenes Taskleisten-Symbol statt dem von Python
         import ctypes
-        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("HoneyCut.App")
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("HoneyCut.HoneyRec" if REC_MODE else "HoneyCut.App")
     except Exception:
         pass
 
-    window = webview.create_window(TITLE, T.app_url(port), width=1480, height=940,
+    url_cut = T.app_url(port)
+    url_rec = url_cut.replace("index.html", "rec.html")
+    first_title = REC_TITLE if REC_MODE else TITLE
+    window = webview.create_window(first_title, url_rec if REC_MODE else url_cut, width=1480, height=940,
                                    min_size=(1000, 640), background_color="#131312", text_select=False)
-    window.events.shown += lambda: fenster_einrichten(window, TITLE, True)
+    window.events.shown += lambda: fenster_einrichten(window, first_title, True)
+    kinds = {"rec" if REC_MODE else "cut": window}   # je Art das zuletzt geöffnete Fenster
 
     def pick(kind: str):
         multi = kind in ("videos", "clips", "font")
@@ -269,14 +282,30 @@ def main():
         except Exception:
             return False
 
-    def focus():
+    def bring(w) -> bool:
         try:
-            window.restore()
-            window.show()
-            window.on_top = True
-            window.on_top = False
+            w.restore()
+            w.show()
+            w.on_top = True
+            w.on_top = False
+            return True
         except Exception:
-            pass
+            return False
+
+    def focus(app: str = "cut"):
+        """Zweiter Programmstart: passendes Fenster nach vorn holen – oder eines öffnen (HoneyRec neben HoneyCut und umgekehrt)."""
+        w = kinds.get(app)
+        if w is not None and bring(w):
+            return
+        try:
+            t = REC_TITLE if app == "rec" else TITLE
+            w2 = webview.create_window(t, url_rec if app == "rec" else url_cut, width=1480, height=940, min_size=(1000, 640),
+                                       background_color="#131312", text_select=False)
+            w2.events.shown += lambda: fenster_einrichten(w2, t, True)
+            w2.events.closed += lambda: kinds.get(app) is w2 and kinds.pop(app, None)
+            kinds[app] = w2
+        except Exception as e:  # noqa: BLE001
+            T.log(f"Fenster nicht geöffnet: {e!r}")
 
     def open_files(media: list):
         try:
@@ -325,7 +354,7 @@ def main():
         webview.settings["ALLOW_DOWNLOADS"] = True
     except Exception:
         pass
-    icon = RES_DIR / "textschnitt.ico"
+    icon = RES_DIR / ("honeyrec.ico" if REC_MODE else "textschnitt.ico")
     try:
         webview.start(private_mode=False, storage_path=str(T.DATA_DIR / "webview"),
                       icon=str(icon) if icon.exists() else None)

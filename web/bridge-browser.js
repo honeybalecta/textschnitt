@@ -542,6 +542,21 @@
       else if (!on && wake){ wake.release().catch(() => {}); wake = null; }
     },
     openWindow: (project, view) => location.origin + location.pathname + `#p=${encodeURIComponent(project)}&view=${encodeURIComponent(view)}`,
+    // HoneyRec: Aufnahmen Stück für Stück in den Speicher dieses Browsers (OPFS) schreiben
+    recOpen: specTxt => {
+      const spec = JSON.parse(specTxt || '{}'), ext = /webm/.test(spec.mime || '') ? 'webm' : 'mp4', id = newId();
+      const fname = `rec-${Date.now()}-${String(spec.name || 'Take').replace(/[^\w.-]/g, '_').slice(0, 60)}.${ext}`;
+      const r = {fname, name: spec.name || 'Take'};
+      r.ready = (async () => { const root = await navigator.storage.getDirectory(); r.fh = await root.getFileHandle(fname, {create: true}); r.w = await r.fh.createWritable(); requestPersist(); })();
+      recs.set(id, r); return JSON.stringify({id});
+    },
+    recChunk: async (id, blob) => { const r = recs.get(id); if (!r) throw new Error('Diese Aufnahme ist nicht mehr offen'); await r.ready; await r.w.write(blob); return {ok: true}; },
+    recClose: (id, meta) => newJob(async () => {
+      const r = recs.get(id); if (!r) throw new Error('Diese Aufnahme ist nicht mehr offen'); recs.delete(id);
+      await r.ready; await r.w.close(); const f = await r.fh.getFile(), uri = 'opfs:' + r.fname, m = JSON.parse(meta || '{}');
+      files.set(uri, f);
+      return {uri, name: r.name, kind: 'video', duration: +m.duration || 0, width: m.width || 0, height: m.height || 0, rotation: 0, fps: m.fps || 30, hasAudio: m.hasAudio !== false, hasVideo: true};
+    }),
     mediaUrl: uri => {
       if (urls.has(uri)) return urls.get(uri);
       if (uri.startsWith('font:')){ const f = fontStore.get(uri.slice(5)); if (!f) return ''; const u = URL.createObjectURL(f.blob); urls.set(uri, u); return u; }
@@ -558,6 +573,7 @@
     busListen: (pid, me, cb) => { const c = chan(pid); c.onmessage = e => { if (e.data && e.data.from !== me) cb(e.data.msg); }; },
   };
   const thumbs = new Map();
+  const recs = new Map();
 
   // ───────── kleine Oberflächen-Helfer ─────────
   const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;'}[c]));
@@ -597,7 +613,8 @@
     } catch(e){ console.error(e); }
     try { hasGpu = !!(navigator.gpu && await Promise.race([navigator.gpu.requestAdapter(), new Promise(r => setTimeout(() => r(null), 1500))])); } catch(_){}
     window.TS_DECK_BASE = '../honeydeck/';   // HoneyDeck: eigene Seite honeybalecta.github.io/honeydeck/
-    await loadScript('app.js'); await loadScript('studio.js'); await loadScript('slides.js'); await loadScript('deck-host.js');
+    if (window.TS_REC) await loadScript('rec.js');   // HoneyRec: eigene Seite, ohne den Schnitt-Kern
+    else { await loadScript('app.js'); await loadScript('studio.js'); await loadScript('slides.js'); await loadScript('deck-host.js'); }
     // Hinweise auf der Startseite
     const home = $('#home .home-body');
     if (home){

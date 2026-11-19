@@ -15,7 +15,7 @@ VERSION = (WEB / "version.txt").read_text().strip()
 shutil.rmtree(OUT, ignore_errors=True)
 (OUT / "vendor" / "ort").mkdir(parents=True)
 
-for f in ("app.js", "studio.js", "slides.js", "deck-host.js", "app.css", "icons.js", "chroma.js", "stimmen.js", "folgen.js", "skript.js", "thumb-engine.js", "thumb-cut.js", "titelbild.js"):
+for f in ("app.js", "studio.js", "slides.js", "deck-host.js", "app.css", "icons.js", "chroma.js", "stimmen.js", "folgen.js", "skript.js", "thumb-engine.js", "thumb-cut.js", "titelbild.js", "rec.js", "rec.css", "rec-logo.svg"):
     shutil.copy(CORE / f, OUT / f)
 shutil.copytree(CORE / "fonts", OUT / "fonts")
 for f in ("engine.js", "asr-worker.js", "web.css", "manifest.webmanifest", "icon.svg", "icon-192.png", "icon-512.png"):
@@ -35,6 +35,14 @@ html = html.replace("</head>", head, 1)
 html = html.replace("<body>", '<body>\n<div class="web-boot">HoneyCut wird geladen …</div>', 1)
 (OUT / "index.html").write_text(html)
 
+# HoneyRec (Aufnahmeprogramm): eigene Seite mit derselben Browser-Brücke
+rec = (CORE / "rec.html").read_text()
+rec, n = re.subn(r'<script src="bridge-http\.js"></script>\s*<script src="rec\.js"></script>',
+                 '<script>window.TS_REC = 1;</script>\n<script src="bridge-browser.js"></script>', rec)
+assert n == 1, "Skript-Einbindung in rec.html nicht gefunden"
+rec = rec.replace("</head>", '<meta name="theme-color" content="#131312">\n<link rel="icon" href="rec-logo.svg" type="image/svg+xml">\n</head>', 1)
+(OUT / "rec.html").write_text(rec)
+
 # Bibliotheken bündeln
 def esbuild(entry, out):
     subprocess.run(["npx", "--no-install", "esbuild", str(WEB / "src" / entry), "--bundle", "--format=esm", "--minify",
@@ -53,7 +61,7 @@ for p in ort:
 print("ONNX-Runtime:", ", ".join(names) or "– (wird vom CDN geladen)")
 
 fonts = sorted("fonts/" + p.name for p in (CORE / "fonts").iterdir() if p.suffix in (".ttf", ".otf"))
-shell = ["./", "index.html", "app.js", "studio.js", "slides.js", "deck-host.js", "app.css", "icons.js", "chroma.js", "stimmen.js", "folgen.js", "skript.js", "thumb-engine.js", "thumb-cut.js", "titelbild.js", "web.css", "bridge-browser.js", "engine.js", "asr-worker.js",
+shell = ["./", "index.html", "rec.html", "rec.js", "rec.css", "rec-logo.svg", "app.js", "studio.js", "slides.js", "deck-host.js", "app.css", "icons.js", "chroma.js", "stimmen.js", "folgen.js", "skript.js", "thumb-engine.js", "thumb-cut.js", "titelbild.js", "web.css", "bridge-browser.js", "engine.js", "asr-worker.js",
          "manifest.webmanifest", "icon.svg", "icon-192.png", "icon-512.png", "vendor/media.js", "vendor/asr.js"] + fonts
 sw = (WEB / "sw.js").read_text().replace("__VERSION__", VERSION + "-" + subprocess.run(
     ["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, capture_output=True, text=True).stdout.strip()).replace("__SHELL__", json.dumps(shell))

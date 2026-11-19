@@ -2,6 +2,17 @@
 
 Was sich mit jeder Version von HoneyCut ändert. Die Windows-App zeigt diese Stichpunkte an, sobald eine neuere Version bereitsteht.
 
+## 2.46.0 · HoneyRec: aufnehmen mit Skript, Medien und Bildschirm
+
+- **HoneyRec** ist das neue Aufnahmeprogramm zu HoneyCut – mit eigenem Symbol (Windows: Startmenü „HoneyRec“, Android: eigenes Startsymbol, Browser: `rec.html`) und über „● Aufnehmen“ auf der Projektliste. Es nimmt mit jeder Kamera auf, die der Computer kennt: eingebaute Kameras, Webcams und Kameras, die per USB als Webcam laufen (etwa DJI), dazu Aufnahmekarten. Kamera, Mikrofon, Auflösung (bis 4K) und Bilder pro Sekunde lassen sich wählen; der Pegel des Mikrofons steht oben.
+- **Takes:** Jedes Stück zwischen „Aufnehmen“ und „Pause“ (Taste R) wird ein eigener Take. Takes lassen sich ansehen, am Anfang und Ende kürzen, in Teilen entfernen, verwerfen und zurückholen – auch während der Sitzung.
+- **Skript (Souffleur):** Text einfügen oder als Textdatei laden; er läuft von selbst oder mit den Pfeiltasten, Größe und Tempo einstellbar, auf Wunsch gespiegelt. Ohne Skript geht es genauso. Das Skript kommt ins Projekt, „Skript abgleichen“ nimmt es nach der Transkription – Abweichungen beim Sprechen sind erlaubt.
+- **Medien zum Reagieren und Zeigen:** Videos, Tonaufnahmen, Bilder und Präsentationen (als Bilder; mit Pfeiltasten oder Presenter weiterschalten) – auch mitten in der Sitzung nachladen. Was während der Aufnahme läuft oder zu sehen ist, landet im Projekt als Element an genau dieser Stelle, bildfüllend oder als Bild im Bild, das Original in voller Qualität.
+- **Reagieren ohne Kopfhörer:** Solange ein Medium mit eigenem Ton läuft, nimmt HoneyRec das Mikrofon nicht auf – der Ton aus den Lautsprechern landet so nicht doppelt in der Aufnahme. Mit dem Anhalten ist das Mikrofon sofort wieder an. Bilder und Präsentationen schalten nie stumm. Der Haken „Mikro auch bei Medien mit Ton aufnehmen“ hebt das auf (etwa mit Kopfhörern).
+- **Bildschirm mitaufnehmen** (am Computer): einen Bildschirm, ein Fenster oder einen Tab – läuft mit, solange aufgenommen wird, und kommt als eigenes Element ins Projekt.
+- **„Fertig → HoneyCut“** öffnet die Aufnahme als gewöhnliches Projekt: Takes als Videos hintereinander, entfernte Teile als gelöschte Bereiche (wiederherstellbar), Einblendungen auf den Videospuren, Hausstil wie bei neuen Projekten. „Weiter aufnehmen“ hängt später neue Takes hinten an.
+- Am Computer liegen die Takes als MP4 in „Dokumente\HoneyRec Aufnahmen“. Bricht eine Aufnahme ab, holt HoneyRec den Take beim nächsten Öffnen der Sitzung zurück.
+
 ## 2.45.0 · Fertiges Titelbild importieren
 
 - **Titelbild importieren** (Export → „Titelbild importieren …“, auch im Blatt „Titelbild mit Vorlage“): Ein fertiges Bild aus einer Datei liegt im exportierten Video im Ganzen auf dem ersten Bild – über allem, nur ein Bild lang, der Ton läuft normal. Hat es ein anderes Format als das Video, bleibt ringsum Schwarz; beschnitten wird nichts.

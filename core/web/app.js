@@ -455,6 +455,7 @@ $('#projFind').addEventListener('input', renderHome);
 $('#projFind').addEventListener('keydown', e => { if (e.key === 'Escape' && $('#projFind').value){ $('#projFind').value = ''; renderHome(); } });
 $('#projSort').addEventListener('change', () => { try { localStorage.setItem('hc-home-sort', $('#projSort').value); } catch(_){} renderHome(); });
 if (CAP.version && CAP.platform !== 'web'){ const v = document.createElement('p'); v.className = 'muted small'; v.style.cssText = 'text-align:center;margin:24px 0 90px'; v.textContent = 'HoneyCut ' + CAP.version; $('#home .home-body').append(v); }
+$('#recHome').onclick = () => { if (TS.openRec && TS.openRec()) return; location.href = 'rec.html'; };   // HoneyRec: am Computer eigenes Fenster, sonst diese Seite
 $('#newProj').onclick = async () => { const list = asList(await pickMedia('videos')); if (list.length) createProject(list); };
 function createProject(list){
   list = list.filter(Boolean); if (!list.length) return;
@@ -494,6 +495,7 @@ function openProjectNow(id, keep){
   P.checks = P.checks.filter(c => c && Array.isArray(c.ids) && (c.ids.length || (c.tr || []).length || (c.v || []).length) && chkSpan(c)[1] < tokens.length);
   deleted = new Set(P.deleted || []); undo = []; redo = [];
   layoutSources(); vSi = -1; vPending = null; cueCache.at = -1; subShown = null;
+  if (P.houseNew){ delete P.houseNew; const hd = houseList.find(h => h.id === houseDef); if (hd){ houseInto(P, hd.st); P.house = hd.id; autoSet(hd.st.auto); P.sub_style = {...DEF_STYLE, ...(P.sub_style || {})}; } setTimeout(() => { if (P) saveNow(); }, 0); }   // Aufnahme aus HoneyRec: Hausstil wie bei neuen Projekten
   if (P.frameNew){ delete P.frameNew; if (P.format && !P.frame) P.frame = clampFrame({sc: coverSc(), tx: 0, ty: 0}); }   // neues Projekt mit Hausstil: Format füllt die Leinwand
   $('#home').classList.add('hidden'); $('#proj').classList.remove('hidden');
   projNameEl.textContent = P.name; $('#exName').value = P.name + '_geschnitten';
@@ -2257,7 +2259,7 @@ function updateOverlay(o){
   const order = act.map(a => a.x.id).join(',');
   if (order !== layerOrder){ layerOrder = order; act.forEach(a => $('#stage').insertBefore(layerFor(a.x), $('#pipBox'))); }
   act.forEach((a, k) => {
-    const it = a.x, el = layerFor(it), url = MEDIA(itClip(it, o - a.at).uri); if (it.build) slPreload(it);
+    const it = a.x, el = layerFor(it), url = MEDIA((window.itClip ? itClip(it, o - a.at) : it.clip).uri); if (it.build && window.slPreload) slPreload(it);
     if (el.dataset.src !== url){ el.src = url; el.dataset.src = url; }
     if (el.classList.contains('hidden')) el.classList.remove('hidden');
     const v = PipDrag.on && PipDrag.it === it ? PipDrag : elVals(it, o - a.at), r = elRect(it, v, W, H) || (hasCrop(it) || Crop.it === it ? elRect(it, coverVals(it), W, H) : null);
@@ -8818,6 +8820,8 @@ async function findOpen(h, asClip){
 fillFontSelects(); loadUserFonts();
 showHome();
 (() => { const h = new URLSearchParams(location.hash.slice(1)); const p = h.get('p');
+  // Übergabe aus HoneyRec: „Fertig“ öffnet die Aufnahme hier als ganz normales Projekt
+  const op = h.get('open'); if (op){ try { history.replaceState(null, '', location.pathname + location.search); } catch(_){} Promise.resolve(openProject(op)).then(() => { if (P && P.id === op && h.get('view')) setTab(h.get('view')); }); return; }
   if (p){ document.body.classList.add('solo'); Promise.resolve(openProject(p)).then(() => { if (P && h.get('view')) setTab(h.get('view')); }); return; }
   // Nach einem Neuladen (nicht nach dem Schließen) ins zuletzt offene Projekt zurück
   if (CAP.platform === 'web') return;

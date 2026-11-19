@@ -35,6 +35,8 @@ Source: "..\dist\HoneyCut\*"; DestDir: "{app}"; Flags: ignoreversion recursesubd
 [Icons]
 Name: "{autoprograms}\HoneyCut"; Filename: "{app}\HoneyCut.exe"
 Name: "{autodesktop}\HoneyCut"; Filename: "{app}\HoneyCut.exe"; Tasks: desktopicon
+Name: "{autoprograms}\HoneyRec"; Filename: "{app}\HoneyRec.exe"; Comment: "Aufnehmen mit Skript, Medien und Bildschirm"; AppUserModelID: "HoneyCut.HoneyRec"
+Name: "{autodesktop}\HoneyRec"; Filename: "{app}\HoneyRec.exe"; Tasks: desktopicon; AppUserModelID: "HoneyCut.HoneyRec"
 
 [InstallDelete]
 ; frühere Versionen hießen „Textschnitt“

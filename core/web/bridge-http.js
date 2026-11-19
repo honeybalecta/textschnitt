@@ -93,6 +93,13 @@
     updateOpen: what => { call('POST', 'update/open', {what}); },
     // Auffälligkeiten der Oberfläche ins Protokoll (textschnitt.log) schreiben – für die Fehlersuche; darf nie stören
     log: msg => { try { fetch(api + 'log', {method:'POST', body: String(msg).slice(0, 800), keepalive: true}).catch(() => {}); } catch(_){} },
+    // HoneyRec: Aufnahme öffnen, Stücke anhängen (rohe Bytes), abschließen (Job → Medium wie bei pick)
+    recOpen: spec => call('POST', 'rec/open', spec),
+    recChunk: (id, blob) => fetch(api + 'rec/chunk?id=' + q(id), {method:'POST', body: blob}).then(r => r.json()).then(d => { if (d && d.error) throw new Error(d.error); return d; }),
+    recClose: (id, meta) => jobOf(call('POST', 'rec/close', {id, meta: JSON.parse(meta || '{}')})),
+    recOrphans: session => call('POST', 'rec/orphans', {session}),
+    openRec: () => { try { return !!JSON.parse(call('POST', 'rec/window', {})).ok; } catch(_){ return false; } },
+    recDir: (session, open) => { try { return JSON.parse(call('POST', 'rec/dir', {session: session || '', open: !!open})).dir || ''; } catch(_){ return ''; } },
     openWindow: (project, view) => { try { return JSON.parse(call('POST', 'window', {project, view})).url || ''; } catch(_){ return ''; } },
   };
 })();

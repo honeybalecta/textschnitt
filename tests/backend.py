@@ -25,6 +25,7 @@ os.environ.setdefault("TEXTSCHNITT_DATA", str(WORK / "data"))
 os.environ.setdefault("TEXTSCHNITT_PORT", "8795")
 os.environ.setdefault("TEXTSCHNITT_NO_BROWSER", "1")
 os.environ.setdefault("HONEYCUT_UPDATE_API", "test://releases")   # schaltet die Versionsprüfung auch außerhalb der Windows-App ein
+os.environ.setdefault("HONEYREC_DIR", str(WORK / "honeyrec"))   # HoneyRec schreibt seine Takes hierhin statt in die Dokumente
 sys.path.insert(0, str(REPO))
 import textschnitt as T  # noqa: E402
 

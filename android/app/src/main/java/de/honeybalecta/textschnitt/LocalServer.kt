@@ -104,6 +104,7 @@ class LocalServer(private val ctx: Context) {
                     val sub = r.path.removePrefix(prefix)
                     when {
                         sub == "media" -> media(out, r)
+                        sub == "rec/chunk" -> recChunk(out, r, inp)
                         sub == "thumb" -> thumb(out, r)
                         sub.startsWith("deck/") -> deckAsset(out, sub.removePrefix("deck/").ifEmpty { "index.html" })
                         else -> asset(out, sub.ifEmpty { "index.html" })
@@ -115,6 +116,17 @@ class LocalServer(private val ctx: Context) {
                 // Der Player bricht Verbindungen beim Springen ab – das ist normal.
             }
         }
+    }
+
+    // HoneyRec: Stück einer laufenden Aufnahme (rohe Bytes im Körper der Anfrage)
+    private fun recChunk(out: OutputStream, r: Req, inp: InputStream) {
+        val len = r.headers["content-length"]?.toLongOrNull() ?: -1L
+        val body = runCatching {
+            if (r.method != "POST" || len < 0) throw IllegalArgumentException("Länge fehlt")
+            val total = Rec.append(r.query["id"] ?: "", inp, len)
+            org.json.JSONObject().put("ok", true).put("bytes", total)
+        }.getOrElse { org.json.JSONObject().put("error", it.message ?: "Fehler") }
+        send(out, if (body.has("error")) 400 else 200, if (body.has("error")) "Bad Request" else "OK", "application/json; charset=utf-8", body.toString().toByteArray())
     }
 
     private fun header(out: OutputStream, code: Int, reason: String, type: String, len: Long, extra: Map<String, String> = emptyMap()) {

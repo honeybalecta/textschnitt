@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<title>HoneyRec</title>
+<link rel="stylesheet" href="rec.css">
+</head>
+<body>
+
+<!-- ───────────── Kopfleiste ───────────── -->
+<header class="rbar">
+  <div class="brand"><img src="rec-logo.svg" alt="">HoneyRec</div>
+  <div class="rname" id="rName" title="Name der Aufnahme – klicken zum Umbenennen"></div>
+  <div class="rstate" id="rState"><span class="dot"></span><span id="rClock">0:00</span><span class="muted" id="rTake"></span></div>
+  <button class="rbtn rec" id="recBtn" title="Aufnahme starten (R)"><span class="ico"></span><span class="lbl">Aufnehmen</span></button>
+  <div class="meter" id="meter" title="Pegel des Mikrofons"><i></i><b class="hidden" id="muteBadge">Mikro stumm – Medium läuft</b></div>
+  <div class="grow"></div>
+  <button class="ibtn" id="setBtn" title="Kamera, Mikrofon und Einstellungen">⚙</button>
+  <button class="rbtn" id="doneBtn" title="Aufnahme abschließen und in HoneyCut öffnen">Fertig → HoneyCut</button>
+</header>
+
+<main class="rmain">
+  <!-- links: Kamera und Souffleur -->
+  <section class="col cam-col">
+    <div class="cam-box" id="camBox">
+      <video id="camV" muted playsinline autoplay></video>
+      <div class="cam-msg hidden" id="camMsg"></div>
+      <div class="count hidden" id="count"></div>
+    </div>
+    <div class="prompt" id="prompt">
+      <div class="prompt-bar">
+        <strong>Skript</strong>
+        <button class="sbtn" id="skEdit" title="Skript einfügen oder bearbeiten">Bearbeiten</button>
+        <button class="sbtn" id="skRoll" title="Text von selbst laufen lassen (S)">▶ Laufen lassen</button>
+        <label class="mini" title="Geschwindigkeit des Laufs">Tempo <input type="range" id="skSpeed" min="10" max="120" value="40"></label>
+        <label class="mini" title="Schriftgröße">Größe <input type="range" id="skSize" min="20" max="72" value="38"></label>
+        <label class="mini" title="Für einen Teleprompter mit Spiegelglas"><input type="checkbox" id="skMirror"> Spiegeln</label>
+        <button class="sbtn" id="skHide" title="Skript ausblenden">✕</button>
+      </div>
+      <div class="prompt-view" id="skView" tabindex="0"><div class="prompt-text" id="skBody"></div></div>
+      <div class="prompt-mark"></div>
+    </div>
+    <button class="sbtn show-prompt hidden" id="skShow">Skript einblenden</button>
+  </section>
+
+  <!-- rechts: Medien, Bildschirm -->
+  <section class="col media-col">
+    <div class="stage" id="stage">
+      <div class="stage-empty" id="stageEmpty">
+        <p><strong>Medien zum Reagieren und Zeigen</strong></p>
+        <p class="muted">Videos, Tonaufnahmen, Bilder und Präsentationen (als Bilder) hier laden – auch während der Aufnahme. Was du hier abspielst oder zeigst, landet später an genau der Stelle im Projekt.</p>
+      </div>
+      <div class="stage-on hidden" id="stageOn"></div>
+      <div class="stage-ctl hidden" id="stageCtl">
+        <button class="sbtn" id="mPrev" title="Vorheriges Bild (←)">◀</button>
+        <button class="sbtn" id="mPlay" title="Abspielen / anhalten (K)">▶</button>
+        <button class="sbtn" id="mNext" title="Nächstes Bild (→)">▶▶</button>
+        <input type="range" id="mSeek" min="0" max="1000" value="0">
+        <span class="mono small" id="mTime"></span>
+        <button class="sbtn" id="mOff" title="Medium ausblenden">Ausblenden</button>
+      </div>
+    </div>
+    <div class="mbar">
+      <button class="sbtn" id="addMedia">+ Medien laden</button>
+      <button class="sbtn" id="scrBtn" title="Einen Bildschirm, ein Fenster oder einen Tab mitaufnehmen">Bildschirm mitaufnehmen</button>
+      <label class="mini" title="Standard: Solange ein Medium mit Ton läuft, nimmt HoneyRec dein Mikrofon nicht auf – so landet der Ton aus den Lautsprechern nicht doppelt in der Aufnahme."><input type="checkbox" id="micDuring"> Mikro auch bei Medien mit Ton aufnehmen</label>
+      <div class="grow"></div>
+      <label class="mini" title="Wie das Medium später im Video erscheint">Im Video <select id="mMode"><option value="broll">bildfüllend</option><option value="pip">als Bild im Bild</option></select></label>
+    </div>
+    <div class="mlist" id="mList"></div>
+    <div class="scr hidden" id="scrBox"><video id="scrV" muted playsinline autoplay></video><div><strong>Bildschirm wird mitaufgenommen</strong><p class="muted small" id="scrInfo">Läuft mit, solange die Aufnahme läuft.</p><button class="sbtn" id="scrStop">Beenden</button></div></div>
+  </section>
+</main>
+
+<!-- Takes -->
+<footer class="takes">
+  <div class="takes-head"><strong>Takes</strong><span class="muted small" id="takesSum"></span><div class="grow"></div><button class="sbtn hidden" id="dropLast" title="Den eben aufgenommenen Take verwerfen">Letzten Take verwerfen</button></div>
+  <div class="take-row" id="takeRow"><p class="muted small take-empty">Jedes Stück zwischen „Aufnehmen“ und „Pause“ wird ein eigener Take. Takes lassen sich ansehen, kürzen, in Teilen entfernen oder verwerfen.</p></div>
+</footer>
+
+<!-- Startfenster: neue Aufnahme oder weiter aufnehmen -->
+<div class="veil" id="startVeil">
+  <div class="card start">
+    <div class="start-head"><img src="rec-logo.svg" alt=""><div><h1>HoneyRec</h1><p class="muted">Aufnehmen mit Skript, Medien und Bildschirm – danach direkt in HoneyCut schneiden.</p></div></div>
+    <label class="field">Name der Aufnahme<input id="newName" autocomplete="off"></label>
+    <button class="rbtn rec big" id="newGo"><span class="ico"></span>Neue Aufnahme</button>
+    <div id="resume"></div>
+    <p class="muted small" id="startNote"></p>
+  </div>
+</div>
+
+<!-- Einstellungen -->
+<div class="veil hidden" id="setVeil">
+  <div class="card set">
+    <h2>Kamera und Mikrofon</h2>
+    <div class="grid2">
+      <label class="field">Kamera<select id="camSel"></select></label>
+      <label class="field">Mikrofon<select id="micSel"></select></label>
+      <label class="field">Auflösung<select id="resSel"><option value="720">HD 720p</option><option value="1080">Full HD 1080p</option><option value="1440">1440p</option><option value="2160">4K 2160p</option></select></label>
+      <label class="field">Bilder pro Sekunde<select id="fpsSel"><option value="25">25</option><option value="30">30</option><option value="50">50</option><option value="60">60</option></select></label>
+    </div>
+    <p class="muted small" id="camInfo"></p>
+    <label class="row"><input type="checkbox" id="nsOn"> Störgeräusche dämpfen (für laute Räume; sonst bleibt der Ton unbearbeitet)</label>
+    <label class="row"><input type="checkbox" id="mirrorOn"> Kamerabild in der Vorschau spiegeln (die Aufnahme bleibt richtig herum)</label>
+    <label class="row"><input type="checkbox" id="countOn"> Vor jedem Take 3 Sekunden herunterzählen</label>
+    <h2>Speicherort</h2>
+    <p class="muted small" id="dirInfo"></p>
+    <div class="row end"><button class="sbtn hidden" id="dirOpen">Ordner öffnen</button><div class="grow"></div><button class="rbtn" id="setOk">Fertig</button></div>
+  </div>
+</div>
+
+<!-- Skript bearbeiten -->
+<div class="veil hidden" id="skVeil">
+  <div class="card sk">
+    <h2>Skript</h2>
+    <p class="muted small">Text einfügen, so wie er im Souffleur stehen soll. Überschriften mit # und Hinweise in [eckigen Klammern] erscheinen klein und gedämpft. Nach der Aufnahme gleicht HoneyCut den Text mit dem Transkript ab – Abweichungen beim Sprechen sind ausdrücklich erlaubt.</p>
+    <textarea id="skText" rows="14" placeholder="Skript hier einfügen …"></textarea>
+    <div class="row end"><label class="sbtn file">Textdatei laden<input type="file" id="skFile" accept=".txt,.md,text/plain" hidden></label><div class="grow"></div><button class="sbtn" id="skNo">Abbrechen</button><button class="rbtn" id="skOk">Übernehmen</button></div>
+  </div>
+</div>
+
+<!-- Take ansehen und bearbeiten -->
+<div class="veil hidden" id="tkVeil">
+  <div class="card tk">
+    <div class="row"><h2 id="tkTitle">Take</h2><div class="grow"></div><button class="ibtn" id="tkClose" title="Schließen (Esc)">✕</button></div>
+    <video id="tkV" playsinline></video>
+    <div class="tk-line" id="tkLine"><div class="tk-dels" id="tkDels"></div><div class="tk-ab hidden" id="tkAB"></div><div class="tk-head" id="tkHead"></div></div>
+    <div class="row wrap tk-ctl">
+      <button class="sbtn" id="tkPlay">▶ Abspielen</button>
+      <span class="mono small" id="tkTime"></span>
+      <div class="grow"></div>
+      <button class="sbtn" id="tkIn" title="Alles vor dieser Stelle entfernen">Anfang hier</button>
+      <button class="sbtn" id="tkOut" title="Alles nach dieser Stelle entfernen">Ende hier</button>
+      <button class="sbtn" id="tkA" title="Beginn eines Bereichs setzen (A)">[ Von hier</button>
+      <button class="sbtn" id="tkB" title="Ende des Bereichs setzen (B)">Bis hier ]</button>
+      <button class="sbtn danger" id="tkCut" disabled>Bereich entfernen</button>
+    </div>
+    <div class="tk-list" id="tkList"></div>
+    <div class="row end"><button class="sbtn danger" id="tkDrop">Ganzen Take verwerfen</button><div class="grow"></div><button class="rbtn" id="tkOk">Fertig</button></div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+<script src="bridge-http.js"></script>
+<script src="rec.js"></script>
+</body>
+</html>

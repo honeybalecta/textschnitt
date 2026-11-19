@@ -5,6 +5,12 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- HoneyRec: Aufnehmen mit Kamera und Mikrofon (im WebView über getUserMedia) -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
 
     <!-- HoneyDeck erkennen und seine Oberfläche im Reiter „Folien“ einbetten -->
     <queries>
@@ -42,6 +48,19 @@
                 <data android:scheme="honeycut" android:host="uebergabe" />
             </intent-filter>
         </activity>
+        <!-- HoneyRec: eigenes Symbol im Startbildschirm, öffnet dieselbe App im Aufnahmemodus -->
+        <activity-alias
+            android:name=".RecAlias"
+            android:targetActivity=".MainActivity"
+            android:label="HoneyRec"
+            android:icon="@mipmap/ic_rec"
+            android:roundIcon="@mipmap/ic_rec"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
         <service
             android:name=".WorkService"
             android:exported="false"

@@ -37,7 +37,7 @@ os.environ.setdefault("HF_HUB_DISABLE_IMPLICIT_TOKEN", "1")
 import warnings  # noqa: E402
 warnings.filterwarnings("ignore", module="huggingface_hub")
 
-VERSION = "2.45.0"
+VERSION = "2.46.0"
 APP_DIR = Path(__file__).resolve().parent
 FROZEN = bool(getattr(sys, "frozen", False))          # als installierte .exe gebaut
 RES_DIR = Path(getattr(sys, "_MEIPASS", APP_DIR))      # mitgelieferte Dateien (Oberfläche, ffmpeg, Modelle)
@@ -1276,13 +1276,18 @@ def thumb(path: str, t: float, h: int) -> Path | None:
         if out.exists():
             return out
         tmp = out.with_suffix(".tmp.jpg")
-        seek = [] if info["kind"] == "image" else ["-ss", f"{max(0.0, min(t, info['duration'] - 0.05)):.2f}"]
-        try:
-            subprocess.run([FFMPEG, "-v", "error", "-y", "-nostdin"] + seek + ["-i", path, "-frames:v", "1", "-vf", f"scale=-2:{h}",
-                            "-q:v", "6", str(tmp)], capture_output=True, stdin=subprocess.DEVNULL, timeout=25, **NOWIN)
-        except subprocess.TimeoutExpired:
-            # Datei hängt (z. B. Cloud-Ordner, der erst geladen werden muss): aufgeben statt alle weiteren Vorschaubilder zu blockieren
-            log(f"Vorschaubild abgebrochen (25 s ohne Ergebnis): {Path(path).name} bei {t:.1f} s")
+        # Ganz am Ende endet das Bild oft etwas vor dem Ton (z. B. Aufnahmen aus HoneyRec): dann ein Stück davor noch einmal versuchen
+        for back in ((0.0,) if info["kind"] == "image" else (0.0, 0.6)):
+            seek = [] if info["kind"] == "image" else ["-ss", f"{max(0.0, min(t, info['duration'] - 0.05) - back):.2f}"]
+            try:
+                subprocess.run([FFMPEG, "-v", "error", "-y", "-nostdin"] + seek + ["-i", path, "-frames:v", "1", "-vf", f"scale=-2:{h}",
+                                "-q:v", "6", str(tmp)], capture_output=True, stdin=subprocess.DEVNULL, timeout=25, **NOWIN)
+            except subprocess.TimeoutExpired:
+                # Datei hängt (z. B. Cloud-Ordner, der erst geladen werden muss): aufgeben statt alle weiteren Vorschaubilder zu blockieren
+                log(f"Vorschaubild abgebrochen (25 s ohne Ergebnis): {Path(path).name} bei {t:.1f} s")
+                break
+            if tmp.exists() and tmp.stat().st_size:
+                break
         try:
             if tmp.exists() and tmp.stat().st_size:
                 tmp.replace(out)
@@ -5278,6 +5283,151 @@ def import_root() -> Path:
     return home / "HoneyCut Importe"
 
 
+# ───────── HoneyRec (Aufnahmeprogramm): Takes und Bildschirmaufnahmen auf die Festplatte schreiben ─────────
+# Die Oberfläche nimmt mit MediaRecorder auf und schickt jede Sekunde ein Stück. Die Teile wachsen als „.part“-Datei im
+# Ordner der Aufnahme (Dokumente\HoneyRec Aufnahmen\<Datum Name>) und werden beim Abschluss zu einer normalen MP4.
+REC_OPEN: dict[str, dict] = {}
+REC_LOCK = threading.Lock()
+
+
+def rec_root() -> Path:
+    if os.environ.get("HONEYREC_DIR"):
+        return Path(os.environ["HONEYREC_DIR"])
+    return import_root().parent / "HoneyRec Aufnahmen"
+
+
+def rec_session_dir(name: str) -> Path:
+    clean = re.sub(r'[\\/:*?"<>|]', "_", str(name or "Aufnahme")).strip(" .")[:80] or "Aufnahme"
+    d = rec_root() / clean
+    d.mkdir(parents=True, exist_ok=True)
+    CREATED.add(norm_path(str(d)))
+    return d
+
+
+def rec_open(data: dict) -> dict:
+    d = rec_session_dir(str(data.get("session") or "Aufnahme"))
+    stem = re.sub(r'[\\/:*?"<>|]', "_", str(data.get("name") or "Take"))[:60] or "Take"
+    mime = str(data.get("mime") or "")
+    ext = ".webm" if "webm" in mime else ".mp4"
+    name, k = stem, 2
+    while any((d / f"{name}{x}").exists() for x in (f"{ext}.part", ext, ".mp4", ".tmp.mp4")):
+        name, k = f"{stem} ({k})", k + 1
+    f = d / f"{name}{ext}.part"
+    f.write_bytes(b"")
+    rid = uuid.uuid4().hex[:12]
+    with REC_LOCK:
+        REC_OPEN[rid] = {"path": f, "bytes": 0}
+    log(f"HoneyRec: Aufnahme beginnt in {f}")
+    return {"id": rid, "dir": str(d), "file": f.name}
+
+
+def rec_chunk(rid: str, raw: bytes) -> dict:
+    with REC_LOCK:
+        r = REC_OPEN.get(rid)
+    if not r:
+        raise ValueError("Diese Aufnahme ist nicht mehr offen.")
+    with open(r["path"], "ab") as fh:
+        fh.write(raw)
+        fh.flush()
+    r["bytes"] += len(raw)
+    return {"ok": True, "bytes": r["bytes"]}
+
+
+def rec_orphans(session: str) -> list[dict]:
+    """Takes, die nach einem Absturz als .part liegen blieben: wieder anmelden, damit die Oberfläche sie abschließen kann."""
+    d = rec_session_dir(session)
+    open_paths = {norm_path(str(r["path"])) for r in REC_OPEN.values()}
+    out = []
+    for f in sorted(d.glob("*.part")):
+        if norm_path(str(f)) in open_paths or f.stat().st_size < 4096:
+            continue
+        rid = uuid.uuid4().hex[:12]
+        with REC_LOCK:
+            REC_OPEN[rid] = {"path": f, "bytes": f.stat().st_size}
+        out.append({"id": rid, "file": f.name, "name": f.name.split(".")[0]})
+    return out
+
+
+def rec_close_job(job: dict, rid: str, meta: dict):
+    with REC_LOCK:
+        r = REC_OPEN.pop(rid, None)
+    if not r:
+        raise ValueError("Diese Aufnahme ist nicht mehr offen.")
+    part: Path = r["path"]
+    final = part.with_name(part.name[:-len(".part")])   # „Take 01.mp4“ bzw. „Take 01.webm“
+    out = final.with_suffix(".mp4")
+    job["message"] = "Aufnahme wird gesichert …"
+    try:
+        d = probe_raw(str(part))
+        streams = d.get("streams", [])
+    except Exception:  # noqa: BLE001
+        streams = []
+    v = next((s for s in streams if s.get("codec_type") == "video"), None)
+    a = next((s for s in streams if s.get("codec_type") == "audio"), None)
+    args = ["-fflags", "+genpts", "-i", str(part), "-map", "0:v:0?", "-map", "0:a:0?"]
+    vc = (v or {}).get("codec_name", "")
+    args += ["-c:v", "copy"] if vc in ("h264", "hevc", "vp9", "av1", "") else ["-c:v", "libx264", "-preset", "veryfast", "-crf", "17", "-pix_fmt", "yuv420p"]
+    args += ["-c:a", "copy"] if (a or {}).get("codec_name") == "aac" else ["-c:a", "aac", "-b:a", "192k"]
+    tmp = out.with_name(out.stem + ".tmp.mp4")
+    try:
+        run_ffmpeg(args + ["-movflags", "+faststart", str(tmp)], float(meta.get("duration") or 0) or 1.0, job)
+        os.replace(tmp, out)
+        part.unlink(missing_ok=True)
+    except Exception as e:  # noqa: BLE001
+        # Lieber die rohe Aufnahme behalten als gar nichts: Sie lässt sich trotzdem schneiden, nur langsamer springen
+        log(f"HoneyRec: Umwandeln fehlgeschlagen ({e!r}) – rohe Datei bleibt erhalten")
+        tmp.unlink(missing_ok=True)
+        out = final
+        os.replace(part, out)
+    CREATED.add(norm_path(str(out)))
+    info = probe(str(out))
+    if not info.get("duration") and meta.get("duration"):
+        info["duration"] = round(float(meta["duration"]), 3)
+    info["name"] = out.stem
+    log(f"HoneyRec: {out.name} gesichert ({info.get('duration')} s)")
+    return info
+
+
+def rec_selftest() -> dict:
+    """HoneyRec im Build: Aufnahmen, wie sie WebView2 liefert (WebM mit VP9/Opus und fragmentiertes MP4 mit H.264/AAC),
+    stückweise anhängen und abschließen – am Ende muss je eine normale MP4 mit Bild, Ton und Länge stehen."""
+    import tempfile
+    out: dict = {"ok": False}
+    tmp = Path(tempfile.mkdtemp(prefix="honeyrec_"))
+    old = os.environ.get("HONEYREC_DIR")
+    os.environ["HONEYREC_DIR"] = str(tmp)
+    try:
+        encs = subprocess.run([FFMPEG, "-hide_banner", "-encoders"], capture_output=True, text=True, **NOWIN).stdout
+        cases = {"mp4": ["-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", "-movflags", "frag_keyframe+empty_moov+default_base_moof", "-f", "mp4"]}
+        vp = "libvpx-vp9" if " libvpx-vp9 " in encs else "libvpx" if " libvpx " in encs else ""
+        if vp:   # WebM wie aus WebView2 (VP9 bzw. VP8 mit Opus bzw. Vorbis) – nur, wenn dieses ffmpeg so etwas erzeugen kann
+            cases["webm"] = ["-c:v", vp, "-deadline", "realtime", "-cpu-used", "8", "-b:v", "1M", "-c:a", "libopus" if " libopus " in encs else "libvorbis", "-f", "webm"]
+        else:
+            out["webm"] = "übersprungen (kein VP8/VP9-Encoder)"
+        for name, enc in cases.items():
+            src = tmp / f"quelle.{name}"
+            subprocess.run([FFMPEG, "-y", "-v", "error", "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30:duration=3", "-f", "lavfi",
+                            "-i", "sine=frequency=440:duration=3", "-shortest"] + enc + [str(src)], check=True, **NOWIN)
+            o = rec_open({"session": "Selbsttest", "name": f"Take {name}", "mime": f"video/{name}"})
+            data = src.read_bytes()
+            for i in range(0, len(data), 64 * 1024):
+                rec_chunk(o["id"], data[i:i + 64 * 1024])
+            info = rec_close_job({"cancel": False, "progress": 0, "message": ""}, o["id"], {"duration": 3})
+            out[name] = {"name": Path(info["uri"]).name, "dauer": info["duration"], "ton": info["hasAudio"], "bild": info["hasVideo"]}
+            if not (Path(info["uri"]).suffix == ".mp4" and info["hasAudio"] and info["hasVideo"] and abs(info["duration"] - 3) < 0.4):
+                raise RuntimeError(f"Aufnahme {name} nicht richtig gesichert: {info}")
+        out["ok"] = True
+    except Exception as e:  # noqa: BLE001
+        out["error"] = repr(e)
+    finally:
+        if old is None:
+            os.environ.pop("HONEYREC_DIR", None)
+        else:
+            os.environ["HONEYREC_DIR"] = old
+        shutil.rmtree(tmp, ignore_errors=True)
+    return out
+
+
 # ───────── HoneyDeck (eigenes Programm für Folien) ─────────
 def deck_dir() -> Path | None:
     """Ordner mit der Oberfläche von HoneyDeck, wenn HoneyDeck installiert ist (sonst None)."""
@@ -5940,10 +6090,10 @@ class Handler(BaseHTTPRequestHandler):
                 if not str(f).startswith(str(d.resolve())) or not f.is_file():
                     return self._json({"error": "Nicht gefunden"}, 404)
                 return self._send(200, f.read_bytes(), DECK_TYPES.get(f.suffix.lower(), "application/octet-stream"))
-            if rest in ("", "index.html", "app.js", "studio.js", "slides.js", "deck-host.js", "app.css", "bridge-http.js", "icons.js", "chroma.js", "stimmen.js", "folgen.js", "skript.js", "thumb-engine.js", "thumb-cut.js", "titelbild.js"):
+            if rest in ("", "index.html", "app.js", "studio.js", "slides.js", "deck-host.js", "app.css", "bridge-http.js", "icons.js", "chroma.js", "stimmen.js", "folgen.js", "skript.js", "thumb-engine.js", "thumb-cut.js", "titelbild.js", "rec.html", "rec.js", "rec.css", "rec-logo.svg"):
                 f = WEB_DIR / (rest or "index.html")
                 ctype = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
-                         ".css": "text/css; charset=utf-8"}[f.suffix]
+                         ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml"}[f.suffix]
                 return self._send(200, f.read_bytes(), ctype)
             if rest == "media":
                 p = norm_path(q.get("u") or q.get("f") or "")
@@ -6004,7 +6154,10 @@ class Handler(BaseHTTPRequestHandler):
             if u.path == "/api/focus":   # zweiter Programmstart übergibt Dateien
                 data = json.loads(raw or b"{}")
                 if APP_HOOKS.get("focus"):
-                    APP_HOOKS["focus"]()
+                    try:
+                        APP_HOOKS["focus"](str(data.get("app") or "cut"))
+                    except TypeError:
+                        APP_HOOKS["focus"]()
                 if data.get("paths"):
                     threading.Thread(target=handle_open_paths, args=(data["paths"],), daemon=True).start()
                 return self._json({"ok": True})
@@ -6038,6 +6191,10 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     bus_post(q.get("p", ""), q.get("from", ""), raw.decode("utf-8"), q.get("k", ""))
                 return self._json({"ok": True})
+            if rest == "api/rec/chunk":   # Stück einer laufenden Aufnahme (rohe Bytes, kein JSON)
+                if len(raw) != int(self.headers.get("Content-Length") or 0):
+                    raise ValueError("Das Stück kam unvollständig an.")
+                return self._json(rec_chunk(q.get("id", ""), raw))
             if rest == "api/project/delete":
                 delete_project(q.get("id", ""))
                 return self._json({"ok": True})
@@ -6166,6 +6323,29 @@ class Handler(BaseHTTPRequestHandler):
                 if job:
                     job["cancel"] = True
                 return self._json({"ok": True})
+            if rest == "api/rec/open":
+                return self._json(rec_open(data))
+            if rest == "api/rec/close":
+                job = run_job(new_job("rec"), rec_close_job, str(data.get("id") or ""), data.get("meta") or {})
+                return self._json({"job": job["id"]})
+            if rest == "api/rec/window":   # HoneyRec aus HoneyCut heraus: eigenes Fenster (nur in der Windows-App)
+                fn = APP_HOOKS.get("focus")
+                if not fn:
+                    return self._json({"ok": False})
+                try:
+                    fn("rec")
+                except TypeError:
+                    return self._json({"ok": False})
+                return self._json({"ok": True})
+            if rest == "api/rec/orphans":
+                return self._json(rec_orphans(str(data.get("session") or "")))
+            if rest == "api/rec/dir":
+                d = rec_session_dir(str(data.get("session") or "")) if data.get("session") else rec_root()
+                d.mkdir(parents=True, exist_ok=True)
+                CREATED.add(norm_path(str(d)))
+                if data.get("open"):
+                    reveal(str(d))
+                return self._json({"dir": str(d)})
             if rest == "api/reveal":
                 reveal(data.get("path", ""))
                 return self._json({"ok": True})

@@ -4,7 +4,7 @@ from pathlib import Path
 from PyInstaller.utils.hooks import collect_all
 
 ROOT = Path(SPECPATH).parent
-datas = [(str(ROOT / "core" / "web"), "web"), (str(ROOT / "textschnitt.ico"), ".")]
+datas = [(str(ROOT / "core" / "web"), "web"), (str(ROOT / "textschnitt.ico"), "."), (str(ROOT / "packaging" / "honeyrec.ico"), ".")]
 for sub in ("ffmpeg", "models"):
     src = ROOT / "build" / sub
     if src.exists():
@@ -20,4 +20,7 @@ a = Analysis([str(ROOT / "packaging" / "app_entry.py")], pathex=[str(ROOT)], bin
 pyz = PYZ(a.pure)
 exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name="HoneyCut", console=False,
           icon=str(ROOT / "textschnitt.ico"), version=str(ROOT / "packaging" / "version.txt"))
-coll = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name="HoneyCut")
+# HoneyRec: eigenes Programm-Symbol und eigener Start, gleicher Programmordner (startet im Aufnahmemodus, siehe textschnitt_app.py)
+exe_rec = EXE(pyz, a.scripts, [], exclude_binaries=True, name="HoneyRec", console=False,
+              icon=str(ROOT / "packaging" / "honeyrec.ico"), version=str(ROOT / "packaging" / "version.txt"))
+coll = COLLECT(exe, exe_rec, a.binaries, a.datas, strip=False, upx=False, name="HoneyCut")

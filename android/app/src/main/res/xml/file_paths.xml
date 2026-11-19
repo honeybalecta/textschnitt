@@ -1,4 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths>
     <cache-path name="share" path="share/" />
+    <!-- HoneyRec: Takes und Bildschirmaufnahmen -->
+    <external-files-path name="honeyrec" path="HoneyRec/" />
+    <files-path name="honeyrec_intern" path="HoneyRec/" />
 </paths>

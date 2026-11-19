@@ -8,6 +8,7 @@ import android.os.Build
 import android.net.Uri
 import android.os.Bundle
 import android.view.ViewGroup
+import android.webkit.PermissionRequest
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
@@ -48,6 +49,32 @@ class MainActivity : ComponentActivity() {
     }
 
     private val notifPerm = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
+
+    // HoneyRec: Kamera und Mikrofon für getUserMedia im WebView – erst die Android-Erlaubnis, dann die Freigabe für die Seite
+    private var mediaReq: PermissionRequest? = null
+    private val mediaPerm = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { res ->
+        val req = mediaReq ?: return@registerForActivityResult; mediaReq = null
+        val ok = req.resources.filter { r -> androidPermsOf(r).let { ps -> ps.isNotEmpty() && ps.all { res[it] == true || checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED } } }
+        if (ok.isEmpty()) req.deny() else req.grant(ok.toTypedArray())
+    }
+    private fun androidPermsOf(res: String): List<String> = when (res) {
+        PermissionRequest.RESOURCE_VIDEO_CAPTURE -> listOf(Manifest.permission.CAMERA)
+        PermissionRequest.RESOURCE_AUDIO_CAPTURE -> listOf(Manifest.permission.RECORD_AUDIO)
+        else -> emptyList()
+    }
+    private fun onMediaPermission(req: PermissionRequest) = runOnUiThread {
+        // Nur die eigene Oberfläche (lokaler Server) darf Kamera und Mikrofon anfragen
+        if (req.origin?.host != "127.0.0.1") return@runOnUiThread req.deny()
+        val known = req.resources.filter { it == PermissionRequest.RESOURCE_VIDEO_CAPTURE || it == PermissionRequest.RESOURCE_AUDIO_CAPTURE }
+        if (known.isEmpty()) return@runOnUiThread req.deny()
+        val missing = known.flatMap { androidPermsOf(it) }.filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
+        if (missing.isEmpty()) req.grant(known.toTypedArray())
+        else { mediaReq?.deny(); mediaReq = req; mediaPerm.launch(missing.toTypedArray()) }
+    }
+
+    /** Welche Seite ein Start öffnet: das Symbol „HoneyRec“ (RecAlias) die Aufnahme, sonst HoneyCut. */
+    private fun pageOf(i: Intent?): String = if (i?.component?.className?.endsWith(".RecAlias") == true) "rec.html" else "index.html"
+    private var page = "index.html"
     private var notifAsked = false
 
     /** Einmal nach der Erlaubnis für Benachrichtigungen fragen (Fortschritt im Hintergrund). */
@@ -93,6 +120,7 @@ class MainActivity : ComponentActivity() {
         bridge = Bridge(this)
         web.addJavascriptInterface(bridge, "TS")
         web.webChromeClient = object : WebChromeClient() {
+            override fun onPermissionRequest(request: PermissionRequest) = onMediaPermission(request)
             override fun onShowFileChooser(view: WebView, cb: ValueCallback<Array<Uri>>, params: FileChooserParams): Boolean {
                 fileCb?.onReceiveValue(null); fileCb = cb
                 // Endungen wie „.honeydeck“ kennt Android nicht als Dateityp: dann alle Dateien anbieten, sonst blieben nur Bilder sichtbar
@@ -116,7 +144,8 @@ class MainActivity : ComponentActivity() {
         onBackPressedDispatcher.addCallback(this) {
             web.evaluateJavascript("window.TSApp && TSApp.onBack()") { r -> if (r != "true") finish() }
         }
-        web.loadUrl(server.base + "index.html")
+        page = pageOf(intent)
+        web.loadUrl(server.base + page)
     }
 
     // ── Übergabe im Heimnetz: Die Seite des Computers öffnet die App über honeycut://uebergabe?u=<Adresse> ──
@@ -131,6 +160,15 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        // Anderes Startsymbol angetippt (HoneyCut ↔ HoneyRec): Seite wechseln – eine laufende Aufnahme darf das nicht abbrechen
+        if (intent.action == Intent.ACTION_MAIN) {
+            val want = pageOf(intent)
+            val now = web.url?.substringAfterLast('/')?.substringBefore('?')?.substringBefore('#') ?: page
+            if (want != now) web.evaluateJavascript("(window.TSApp && TSApp.onSwitch) ? TSApp.onSwitch() : 'go'") { r ->
+                if (r == "\"go\"") { page = want; web.loadUrl(server.base + want) }
+            }
+            return
+        }
         val url = handoverOf(intent) ?: return
         if (pageReady) deliverHandover(url) else pendingHandover = url
     }
