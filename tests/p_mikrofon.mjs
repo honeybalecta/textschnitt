@@ -42,7 +42,8 @@ try {
   chk('Der Hinweis nennt Datei und Versatz, der Knopf heißt „Andere Tonaufnahme wählen“, „Original zurück“ erscheint', /„mikrofon\.wav“/.test(st.hint) && /3,2 s vor der Kamera/.test(st.hint) && /Andere Tonaufnahme/.test(st.go) && st.origBtn, st.hint);
   chk('„Bild beruhigen“ verweist auf die Reihenfolge und ist gesperrt', st.stGo === true && /Erst beruhigen, dann den Ton angleichen/.test(st.stHint), st.stHint);
   const laut = [rms(camUri, 5, 20), rms(st.uri, 5, 20)];
-  chk('Die Kopie klingt wie das Mikrofon (deutlich lauter als der Kameraton) und ist so lang wie das Video', laut[1] > laut[0] * 1.6 && await ev(() => Math.abs(P.sources[0].duration - 54.97) < 0.2), laut.map(v => +v.toFixed(4)));
+  const lang = await ev(() => P.sources[0].duration);
+  chk('Die Kopie klingt wie das Mikrofon (deutlich lauter als der Kameraton) und ist so lang wie das Video', laut[1] > laut[0] * 1.6 && Math.abs(lang - 54.97) < 0.2, { laut: laut.map(v => +v.toFixed(4)), lang, uri: st.uri.split(/[\\/]/).slice(-2).join('/') });
   const words1 = await ev(() => tokens.filter(t => t.type === 'word').map(t => [t.text, t.ws, t.we]));
   chk('Transkript und Wortzeiten bleiben unverändert', JSON.stringify(words0) === JSON.stringify(words1));
   // Lage prüfen: Im Kameraton beginnt das erste Wort bei words0[0][1]; in der Kopie muss dort ebenfalls Sprache beginnen
