@@ -76,6 +76,28 @@ body.live .cam-box{box-shadow:0 0 0 3px var(--rot)}
 .count{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font:800 120px var(--ui);color:#fff;background:rgba(19,19,18,.45)}
 
 /* Souffleur */
+/* Bildregie */
+.cam-box canvas{width:100%;height:100%;display:block;object-fit:contain;background:#000}
+body.mode-regie .cam-box #camV{position:absolute;width:2px;height:2px;opacity:0;pointer-events:none;left:0;top:0}
+body.mode-regie.fmt-v .cam-box{aspect-ratio:9/16;width:auto;height:52%;max-height:52%}
+.regie{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.lays{display:flex;gap:6px;flex-wrap:wrap}
+.lay{display:flex;flex-direction:column;align-items:center;gap:2px;padding:4px 6px;border-radius:8px;border:1px solid var(--line);background:var(--surface-2);font-size:10.5px;color:var(--sand);min-width:56px}
+.lay svg{width:40px;height:24px;display:block}
+body.fmt-v .lay svg{width:16px;height:28px}
+.lay.on{border-color:var(--rot);color:var(--creme);background:rgba(229,64,42,.16)}
+.lay:hover{background:var(--surface-3)}
+.lay .k{font:600 10px var(--mono);color:var(--grau)}
+/* Große Bühne und Vollbild */
+body.bigstage .cam-col{flex:.62}
+body.bigstage .media-col{flex:1.38}
+body.bigstage .cam-box{max-height:40%}
+.stage:fullscreen{border-radius:0}
+.stage:fullscreen .stage-ctl{position:absolute;left:0;right:0;bottom:0;opacity:.15;transition:opacity .2s}
+.stage:fullscreen:hover .stage-ctl{opacity:1}
+.docwrap{overflow:auto}
+.docin{position:relative}
+.stage .stage-on{cursor:default}
 .prompt{position:relative;flex:1;display:flex;flex-direction:column;background:var(--surface);border:1px solid var(--line);border-radius:12px;min-height:120px;overflow:hidden}
 .prompt-bar{display:flex;align-items:center;gap:8px 10px;padding:8px 10px;border-bottom:1px solid var(--line);flex-wrap:wrap}
 .prompt-bar .sbtn{height:30px;padding:0 10px;font-size:13px}
@@ -176,6 +198,7 @@ label.sbtn.file{cursor:pointer}
 
 /* Schmale Bildschirme (Handy hochkant): untereinander, die Seite scrollt als Ganzes */
 @media (max-width:860px){
+  body.bigstage .cam-col,body.bigstage .media-col{flex:none}
   body{display:block;overflow:auto;height:auto;min-height:100%}
   .rbar{flex-wrap:wrap;gap:8px;position:sticky;top:0;background:var(--bg);z-index:5}
   .rname{max-width:150px}

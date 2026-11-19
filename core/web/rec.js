@@ -22,7 +22,7 @@
 
   // ───────── Einstellungen (pro Gerät) ─────────
   const SET_KEY = 'hr-set';
-  const SET = Object.assign({cam: '', mic: '', res: 1080, fps: 30, ns: false, mirror: true, count: true, micDuring: false, mode: 'broll', skSize: 38, skSpeed: 40, skMirror: false, skHide: false},
+  const SET = Object.assign({cam: '', mic: '', res: 1080, fps: 30, ns: false, mirror: true, count: true, micDuring: false, mode: 'broll', regie: true, layout: 'medium-pip', corner: 'ur', fmt: '16:9', mouse: true, big: true, docFit: 'page', skSize: 38, skSpeed: 40, skMirror: false, skHide: false},
     J(localStorage.getItem(SET_KEY)) || {});
   const saveSet = () => { try { localStorage.setItem(SET_KEY, JSON.stringify(SET)); } catch(_){} };
 
@@ -84,7 +84,7 @@
     const srcs = readyTakes().map(t => {
       const s = old.get(t.src.uri) || {...t.src, tr: false};
       for (const [a, b] of t.dels) dels.push([r3(off + a), r3(off + b)]);
-      for (const e of t.ev) if (e.t1 > e.t0 + 0.05 && e.clip) items.push(evItem(e, off, t));
+      if (!t.regie) for (const e of t.ev) if (e.t1 > e.t0 + 0.05 && e.clip) items.push(evItem(e, off, t));   // Bildregie: Medien sind schon im Bild
       off += +t.src.duration || 0; return s;
     });
     P.sources = keep.concat(srcs);
@@ -127,7 +127,7 @@
     try { Dev.mic = await md.getUserMedia({audio: SET.mic ? {...ac0, deviceId: {exact: SET.mic}} : ac0, video: false}); }
     catch(e){ try { Dev.mic = await md.getUserMedia({audio: ac0, video: false}); } catch(e2){ toast('Kein Mikrofon verfügbar – aufgenommen wird nur das Bild'); log('Mikrofon: ' + e2.name); } }
     if (Dev.cam){ $('#camV').srcObject = Dev.cam; camMsg(''); }
-    meterFrom(Dev.mic); gate();
+    meterFrom(Dev.mic); mixInit(); mixMic(); gate();
     await fillDevices(); camInfo();
   }
   const stopTracks = s => { if (s) s.getTracks().forEach(t => t.stop()); };
@@ -230,14 +230,22 @@
     busyStart = true;
     try {
       const n = nextNo(), v = Dev.cam.getVideoTracks()[0], s = v.getSettings();
-      const tracks = [v, ...(Dev.mic ? Dev.mic.getAudioTracks() : [])];
-      const R = startRecorder(new MediaStream(tracks), `Take ${pad(n)}`, vbr(s.height || +SET.res, s.frameRate || +SET.fps));
-      const take = {id: newId(), n, src: null, dels: [], ev: [], at: Date.now(), w: s.width, h: s.height};
+      let R, take;
+      if (SET.regie){   // Bildregie: das zusammengesetzte Programmbild, Ton aus Mikrofon und Medium
+        const ps = progStream(), [pw, ph] = progSize(), aud = Mix.dest ? Mix.dest.stream.getAudioTracks() : (Dev.mic ? Dev.mic.getAudioTracks() : []);
+        if (Mix.ac && Mix.ac.state === 'suspended') await Mix.ac.resume().catch(() => {});
+        R = startRecorder(new MediaStream([ps.getVideoTracks()[0], ...aud]), `Take ${pad(n)}`, vbr(Math.min(pw, ph), +SET.fps));
+        take = {id: newId(), n, src: null, dels: [], ev: [], at: Date.now(), w: pw, h: ph, regie: {fmt: SET.fmt, lay: [[0, curLayout()]]}};
+      } else {
+        const tracks = [v, ...(Dev.mic ? Dev.mic.getAudioTracks() : [])];
+        R = startRecorder(new MediaStream(tracks), `Take ${pad(n)}`, vbr(s.height || +SET.res, s.frameRate || +SET.fps));
+        take = {id: newId(), n, src: null, dels: [], ev: [], at: Date.now(), w: s.width, h: s.height};
+      }
       P.rec.takes.push(take);
       live = {take, R, open: null};
       document.body.classList.add('live'); paintRec();
       if (M.cur && (M.cur.doc || M.cur.clip.kind === 'image' || (M.el && !M.el.paused))) openEv();   // was schon läuft oder zu sehen ist, gehört ab jetzt dazu
-      if (Scr.stream) startScreenSeg();
+      if (Scr.stream && !take.regie) startScreenSeg();
       renderTakes(); tickClock();
     } catch(e){ toast(e.message || 'Aufnahme ließ sich nicht starten'); log('Start: ' + e.message); live = null; document.body.classList.remove('live'); }
     busyStart = false; paintRec();
@@ -252,8 +260,8 @@
     const take = L.take; take.busy = true; take.dur = t; renderTakes(); $('#dropLast').classList.remove('hidden');
     if (scr) endScreenSeg(scr, take, t);
     try {
-      const s = Dev.cam && Dev.cam.getVideoTracks()[0] ? Dev.cam.getVideoTracks()[0].getSettings() : {};
-      const media = await finishRecorder(L.R, {duration: t, width: s.width || take.w, height: s.height || take.h, fps: s.frameRate || +SET.fps, mime: L.R.mime, hasAudio: !!(Dev.mic && Dev.mic.getAudioTracks().length)});
+      const s = take.regie ? {width: take.w, height: take.h, frameRate: +SET.fps} : Dev.cam && Dev.cam.getVideoTracks()[0] ? Dev.cam.getVideoTracks()[0].getSettings() : {};
+      const media = await finishRecorder(L.R, {duration: t, width: s.width || take.w, height: s.height || take.h, fps: s.frameRate || +SET.fps, mime: L.R.mime, hasAudio: !!(take.regie || (Dev.mic && Dev.mic.getAudioTracks().length))});
       media.name = media.name || `Take ${pad(take.n)}`;
       if (!media.duration) media.duration = r3(t);
       take.src = media; take.busy = false;
@@ -283,6 +291,10 @@
     const tr = Scr.stream.getVideoTracks()[0]; tr.onended = () => stopScreen();
     $('#scrV').srcObject = Scr.stream; $('#scrBox').classList.remove('hidden'); $('#scrBtn').classList.add('on'); $('#scrBtn').textContent = 'Bildschirm beenden';
     $('#scrInfo').textContent = live ? 'Wird gerade mitaufgenommen.' : 'Läuft mit, sobald du aufnimmst.';
+    if (SET.regie){   // Bildregie: Der Bildschirm erscheint auf der Medienbühne und kommt so ins Bild
+      $('#scrBox').classList.add('hidden');
+      const x = {mid: 'scr-' + newId(), screen: true, clip: {name: 'Bildschirm', kind: 'screen'}}; M.list.push(x); show(x, false); return;
+    }
     if (live) startScreenSeg();
   }
   function startScreenSeg(){
@@ -302,6 +314,7 @@
     } catch(e){ toast('Die Bildschirmaufnahme ließ sich nicht sichern: ' + e.message, 6000); }
   }
   function stopScreen(){
+    const sx = M.list.filter(x => x.screen); if (sx.length){ if (M.cur && M.cur.screen) hide(); M.list = M.list.filter(x => !x.screen); renderMedia(); }
     if (Scr.seg && live){ const seg = Scr.seg; Scr.seg = null; endScreenSeg(seg, live.take, nowT()); }
     stopTracks(Scr.stream); Scr.stream = null; $('#scrV').srcObject = null; $('#scrBox').classList.add('hidden'); $('#scrBtn').classList.remove('on'); $('#scrBtn').textContent = 'Bildschirm mitaufnehmen';
   }
@@ -319,15 +332,15 @@
     renderMedia(); saveMediaList();
     if (!M.cur) show(M.list[M.list.length - 1], false);
   }
-  function saveMediaList(){ if (P){ P.rec.media = M.list.map(x => ({mid: x.mid, clip: x.clip, pages: x.pages, name: x.name, doc: x.doc, imgs: x.imgs, n: x.n})); save(); } }
+  function saveMediaList(){ if (P){ P.rec.media = M.list.filter(x => !x.screen).map(x => ({mid: x.mid, clip: x.clip, pages: x.pages, name: x.name, doc: x.doc, imgs: x.imgs, n: x.n})); save(); } }
   const docLbl = x => { const e = RecDocs.EXT(x.clip.name); return RecDocs.isSlides(x.clip) ? 'Folien' : e === 'pdf' ? 'PDF' : RecDocs.kindOf(x.clip) === 'text' ? 'Text' : 'Dokument'; };
-  const kindLbl = x => x.doc ? docLbl(x) : x.pages ? 'Präsentation' : x.clip.kind === 'image' ? 'Bild' : x.clip.kind === 'audio' || x.clip.hasVideo === false ? 'Ton' : 'Video';
+  const kindLbl = x => x.screen ? 'Bildschirm' : x.doc ? docLbl(x) : x.pages ? 'Präsentation' : x.clip.kind === 'image' ? 'Bild' : x.clip.kind === 'audio' || x.clip.hasVideo === false ? 'Ton' : 'Video';
   function renderMedia(){
     const box = $('#mList'); box.innerHTML = '';
     for (const x of M.list){
       const b = document.createElement('div'); b.className = 'mitem' + (M.cur === x ? ' on' : ''); b.tabIndex = 0; b.title = x.name || x.clip.name;
       const k = kindLbl(x), au = k === 'Ton';
-      b.innerHTML = (x.doc ? `<div class="au doc">${esc(k)}</div>` : au ? '<div class="au">♪</div>' : x.clip.kind === 'image' ? `<img src="${esc(MEDIA(x.clip.uri))}" alt="">` : `<video preload="metadata" muted src="${esc(MEDIA(x.clip.uri))}#t=1"></video>`)
+      b.innerHTML = (x.screen ? '<div class="au doc">▣</div>' : x.doc ? `<div class="au doc">${esc(k)}</div>` : au ? '<div class="au">♪</div>' : x.clip.kind === 'image' ? `<img src="${esc(MEDIA(x.clip.uri))}" alt="">` : `<video preload="metadata" muted src="${esc(MEDIA(x.clip.uri))}#t=1"></video>`)
         + `<span class="kind">${k}</span><span class="nm">${esc(x.name || x.clip.name || '')}</span><button class="x" title="Aus der Liste nehmen">✕</button>`;
       b.onclick = e => { if (e.target.closest('.x')){ if (M.cur === x) hide(); M.list = M.list.filter(y => y !== x); renderMedia(); saveMediaList(); return; } show(x, false); };
       box.append(b);
@@ -346,6 +359,12 @@
   function paintStage(play){
     const x = M.cur, on = $('#stageOn'); on.innerHTML = ''; on.classList.remove('hidden'); $('#stageCtl').classList.remove('hidden');
     if (x.doc) return paintDoc(x);
+    if (x.screen){   // laufende Bildschirmaufnahme als Inhalt der Bühne
+      $('#stage').classList.remove('docmode'); for (const id of ['#mPrev', '#mNext', '#mPlay', '#mSeek', '#mFit']) $(id).classList.add('hidden');
+      const v = document.createElement('video'); v.muted = true; v.autoplay = true; v.playsInline = true; v.srcObject = Scr.stream; on.append(v); v.play().catch(() => {});
+      M.el = null; $('#mTime').textContent = 'Bildschirm'; gate(); return;
+    }
+    $('#mFit').classList.add('hidden');
     const c = curClip();
     const img = c.kind === 'image', au = !img && (c.kind === 'audio' || c.hasVideo === false);
     $('#mPrev').classList.toggle('hidden', !x.pages); $('#mNext').classList.toggle('hidden', !x.pages); $('#stage').classList.remove('docmode');
@@ -354,7 +373,7 @@
     if (img){ const im = new Image(); im.src = MEDIA(c.uri); on.append(im); $('#mTime').textContent = x.pages ? `Bild ${M.page + 1} von ${x.pages.length}` : 'Bild'; if (live) openEv(); gate(); return; }
     const el = document.createElement(au ? 'audio' : 'video'); el.src = MEDIA(c.uri); el.playsInline = true; el.preload = 'auto';
     if (au){ const card = document.createElement('div'); card.className = 'audio-card'; card.innerHTML = `<b>♪</b><span>${esc(c.name || 'Ton')}</span>`; on.append(card); }
-    on.append(el); M.el = el;
+    on.append(el); M.el = el; if (SET.regie) mixMedia(el);
     el.addEventListener('play', () => { if (live) openEv(); gate(); paintPlay(); });
     el.addEventListener('playing', () => { if (live && !live.open) openEv(); gate(); });
     el.addEventListener('pause', () => { closeEv(live, nowT()); gate(); paintPlay(); });
@@ -378,8 +397,10 @@
   }
   async function paintDoc(x){
     const on = $('#stageOn'), st = $('#stage'); st.classList.add('docmode');
-    $('#mPlay').classList.add('hidden'); $('#mSeek').classList.add('hidden');
-    on.innerHTML = '<div class="docwrap"><canvas></canvas><div class="links"></div></div>';
+    $('#mPlay').classList.add('hidden'); $('#mSeek').classList.add('hidden'); $('#mFit').classList.remove('hidden');
+    $('#mFit').textContent = SET.docFit === 'width' ? 'Ganze Seite' : 'Volle Breite';
+    const keep = on.querySelector('.docwrap'), top0 = keep && keep.dataset.k === x.mid + ':' + M.page ? keep.scrollTop : 0;
+    on.innerHTML = '<div class="docwrap"><div class="docin"><canvas></canvas><div class="links"></div></div></div>';
     $('#mTime').textContent = 'Wird geladen …'; gate();
     let d; try { d = await ensureDoc(x); } catch(e){ if (M.cur === x){ on.innerHTML = `<p class="doc-err">${esc(e.message || 'Das Dokument ließ sich nicht öffnen')}</p>`; $('#mTime').textContent = ''; } return; }
     if (M.cur !== x) return;
@@ -387,20 +408,34 @@
     const pg = M.page = clamp(M.page, 0, d.n - 1), many = d.n > 1;
     $('#mPrev').classList.toggle('hidden', !many); $('#mNext').classList.toggle('hidden', !many);
     $('#mTime').textContent = `${RecDocs.isSlides(x.clip) ? 'Folie' : 'Seite'} ${pg + 1} von ${d.n}` + (d.note ? ' · vereinfacht' : '');
-    const wrap = on.querySelector('.docwrap'), cv = wrap.querySelector('canvas'), dpr = Math.min(2, devicePixelRatio || 1);
-    const W = Math.max(50, on.clientWidth), H = Math.max(50, on.clientHeight);
-    cv.style.width = W + 'px'; cv.style.height = H + 'px';
+    const wrap = on.querySelector('.docwrap'), inn = wrap.querySelector('.docin'), cv = inn.querySelector('canvas'), dpr = Math.min(2, devicePixelRatio || 1);
+    wrap.dataset.k = x.mid + ':' + pg;
+    // Ganze Seite: eingepasst. Volle Breite: so breit wie die Bühne, nach unten scrollen (zum Lesen kleiner Schrift)
+    const W = Math.max(50, wrap.clientWidth), H0 = Math.max(50, on.clientHeight);
+    let H = H0; if (SET.docFit === 'width'){ const [pw, ph] = await d.size(pg); H = Math.max(H0, Math.round(W * ph / pw)); }
+    inn.style.width = W + 'px'; inn.style.height = H + 'px'; cv.style.width = W + 'px'; cv.style.height = H + 'px';
     if (live) openEv();
     const r = await d.draw(pg, cv, Math.round(W * dpr), Math.round(H * dpr), '#000'); if (!r || M.cur !== x || M.page !== pg) return;
-    const box = wrap.querySelector('.links'); box.innerHTML = '';
+    cv._r = {x: r.x / dpr, y: r.y / dpr, w: r.w / dpr, h: r.h / dpr};   // Lage der Seite in der Leinwand (CSS-Pixel), für das Programmbild
+    if (top0) wrap.scrollTop = top0;
+    const box = inn.querySelector('.links'); box.innerHTML = '';
     let ls = []; try { ls = await d.links(pg); } catch(e){ log('Links: ' + e.message); }
     for (const l of ls){
       const a = document.createElement('a'); a.href = '#'; a.className = 'doclink'; a.title = l.url || `Zu Seite ${l.page + 1}`;
-      a.style.cssText = `left:${(r.x + l.r[0] * r.w) / dpr}px;top:${(r.y + l.r[1] * r.h) / dpr}px;width:${l.r[2] * r.w / dpr}px;height:${l.r[3] * r.h / dpr}px`;
+      a.style.cssText = `left:${cv._r.x + l.r[0] * cv._r.w}px;top:${cv._r.y + l.r[1] * cv._r.h}px;width:${l.r[2] * cv._r.w}px;height:${l.r[3] * cv._r.h}px`;
       a.onclick = e => { e.preventDefault(); if (l.url) openBrowser(l.url); else if (l.page != null){ page(l.page - M.page); } };
       box.append(a);
     }
+    hiPage(x, pg).catch(() => {});                                            // scharfe Fassung für das Programmbild
     if (!(x.imgs || {})[pg]) pageImage(x, pg).catch(() => {});   // Bild der Seite für das Projekt schon vorbereiten
+  }
+  // Seite scharf in 1920×1080 eingepasst (nur im Speicher): für das Programmbild und als Bild im Projekt
+  const hiCache = new Map();
+  function hiPage(x, i){
+    const key = x.mid + ':' + i; if (hiCache.has(key)) return hiCache.get(key);
+    const pr = (async () => { const d = await ensureDoc(x), [pw, ph] = await d.size(i), sc = Math.min(1920 / pw, 1080 / ph), W = Math.round(pw * sc), H = Math.round(ph * sc);
+      const cv = document.createElement('canvas'); await d.draw(i, cv, W, H, '#fff'); return cv; })();
+    hiCache.set(key, pr); pr.then(cv => { x.hiCv ||= {}; x.hiCv[i] = cv; }, () => hiCache.delete(key)); return pr;
   }
   // Seite als Bild ablegen (für die Einblendung im Projekt): eingepasst in 1920×1080, ohne Rand
   const imgBusy = new Map();
@@ -408,8 +443,7 @@
     x.imgs ||= {}; if (x.imgs[i]) return Promise.resolve(x.imgs[i]);
     const key = x.mid + ':' + i; if (imgBusy.has(key)) return imgBusy.get(key);
     const pr = (async () => {
-      const d = await ensureDoc(x), [pw, ph] = await d.size(i), s = Math.min(1920 / pw, 1080 / ph), W = Math.round(pw * s), H = Math.round(ph * s);
-      const cv = document.createElement('canvas'); await d.draw(i, cv, W, H, '#fff');
+      const cv = await hiPage(x, i), W = cv.width, H = cv.height;
       const stem = String(x.clip.name || 'Dokument').replace(/\.[^.]+$/, '').replace(/[^\w\-]+/g, '_').slice(0, 40);
       const m = J(TS.saveImage(`${stem}-${pad(i + 1)}-${x.mid}.png`, cv.toDataURL('image/png'), W, H, P ? P.id : 'honeyrec'));
       if (!m || !m.uri) throw new Error('Seitenbild ließ sich nicht speichern');
@@ -419,6 +453,128 @@
     imgBusy.set(key, pr); pr.finally(() => imgBusy.delete(key)); return pr;
   }
   addEventListener('resize', () => { if (M.cur && M.cur.doc){ clearTimeout(paintDoc.t); paintDoc.t = setTimeout(() => { if (M.cur && M.cur.doc) paintDoc(M.cur); }, 200); } });
+
+  // ───────── Bildregie: Kamera und Medienbühne live zu einem Bild ─────────
+  // Die Medienbühne wird wie ein eigenes Fenster behandelt: Was darin zu sehen ist (Video, Bild, Dokument, Bildschirm), samt
+  // Mauszeiger, landet im Programmbild – in der gewählten Anordnung. Aufgenommen wird dieses Programmbild (Leinwand) mit dem Ton
+  // aus Mikrofon und Medium. Ohne Medium auf der Bühne zeigt das Programm nur die Kamera.
+  const LAYOUTS = [
+    {id: 'ich', label: 'Nur ich', h: [[0, 0, 1, 1, 'c']]},
+    {id: 'medium-pip', label: 'Medium, ich klein', h: [[0, 0, 1, 1, 'm'], ['pip', 'c']]},
+    {id: 'ich-pip', label: 'Ich, Medium klein', h: [[0, 0, 1, 1, 'c'], ['pip', 'm']]},
+    {id: 'neben', label: 'Nebeneinander', h: [[0, 0, .5, 1, 'm'], [.5, 0, .5, 1, 'c']]},
+    {id: 'neben-gross', label: 'Medium ⅔, ich ⅓', h: [[0, 0, 2 / 3, 1, 'm'], [2 / 3, 0, 1 / 3, 1, 'c']]},
+    {id: 'medium', label: 'Nur Medium', h: [[0, 0, 1, 1, 'm']]},
+  ];
+  const vert = () => SET.fmt === '9:16';
+  const progSize = () => { const s = Math.min(1080, +SET.res || 1080), l = Math.round(s * 16 / 9 / 2) * 2; return vert() ? [s, l] : [l, s]; };
+  const stageShown = () => !!(M.cur && !$('#stageOn').classList.contains('hidden'));
+  const curLayout = () => stageShown() ? SET.layout : 'ich';
+  // Bereiche des Programmbilds: [x, y, w, h] in Anteilen; 9:16 legt „nebeneinander“ untereinander
+  function regions(id){
+    const L = LAYOUTS.find(l => l.id === id) || LAYOUTS[0], [W, H] = progSize(), out = [];
+    for (const r of L.h){
+      if (r[0] === 'pip'){ const big = r[1] === 'm', w = vert() ? (big ? .62 : .42) : (big ? .36 : .28), ar = r[1] === 'c' ? camAr() : (vert() ? 16 / 9 : 16 / 9);
+        const pw = w * W, ph = Math.min(H * .45, pw / ar), m = .03 * Math.min(W, H), c = SET.corner || 'ur';
+        out.push({x: c[1] === 'l' ? m : W - m - pw, y: c[0] === 'u' ? m : H - m - ph, w: pw, h: ph, what: r[1], pip: true}); continue; }
+      let [x, y, w, h, what] = r; if (vert() && w < 1){ [x, y, w, h] = [y, x, h, w]; }
+      out.push({x: x * W, y: y * H, w: w * W, h: h * H, what});
+    }
+    return out;
+  }
+  const camAr = () => { const v = $('#camV'); return v.videoWidth ? v.videoWidth / v.videoHeight : 16 / 9; };
+  // Fenster der Bühne zeichnen (so, wie es auf dem Bildschirm zu sehen ist), Mauszeiger obenauf
+  const WIN = document.createElement('canvas'), Mouse = {in: false, x: 0, y: 0, down: 0};
+  function renderWin(){
+    const on = $('#stageOn'); if (!stageShown()) return null;
+    const box = on.getBoundingClientRect(); if (box.width < 20 || box.height < 20) return null;
+    const S = Math.min(1920 / box.width, 1920 / box.height), W = Math.round(box.width * S), H = Math.round(box.height * S);
+    if (WIN.width !== W || WIN.height !== H){ WIN.width = W; WIN.height = H; }
+    const g = WIN.getContext('2d'); g.fillStyle = '#000'; g.fillRect(0, 0, W, H);
+    const rel = r => [(r.left - box.left) * S, (r.top - box.top) * S, r.width * S, r.height * S];
+    for (const el of on.querySelectorAll('video, img, canvas')){
+      const r = el.getBoundingClientRect(); if (!r.width || !r.height) continue;
+      let [dx, dy, dw, dh] = rel(r);
+      try {
+        if (el.tagName === 'CANVAS'){
+          const hi = M.cur && M.cur.hiCv && M.cur.hiCv[M.page], pr = el._r;
+          if (hi && pr){ const k = r.width / parseFloat(el.style.width || r.width); g.drawImage(hi, dx + pr.x * k * S, dy + pr.y * k * S, pr.w * k * S, pr.h * k * S); }
+          else if (el.width) g.drawImage(el, dx, dy, dw, dh);
+          continue;
+        }
+        const iw = el.videoWidth || el.naturalWidth, ih = el.videoHeight || el.naturalHeight; if (!iw || !ih) continue;
+        const sc = Math.min(dw / iw, dh / ih), w = iw * sc, h = ih * sc; g.drawImage(el, dx + (dw - w) / 2, dy + (dh - h) / 2, w, h);
+      } catch(_){}
+    }
+    const card = on.querySelector('.audio-card'); if (card){ g.fillStyle = '#E5402A'; g.font = `800 ${Math.round(H * .14)}px Inter, sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('♪', W / 2, H * .42);
+      g.fillStyle = '#CFC6B0'; g.font = `500 ${Math.round(H * .05)}px Inter, sans-serif`; g.fillText(card.textContent.replace('♪', '').trim().slice(0, 60), W / 2, H * .6); }
+    if (SET.mouse && Mouse.in) drawCursor(g, Mouse.x * S, Mouse.y * S, Math.max(1, W / 1100));
+    return WIN;
+  }
+  function drawCursor(g, x, y, k){
+    const age = performance.now() - Mouse.down;
+    if (age < 450){ g.beginPath(); g.arc(x, y, (14 + age / 14) * k, 0, Math.PI * 2); g.fillStyle = `rgba(229,64,42,${.45 * (1 - age / 450)})`; g.fill(); }
+    g.save(); g.translate(x, y); g.scale(k * 1.25, k * 1.25);
+    g.beginPath(); g.moveTo(0, 0); g.lineTo(0, 17); g.lineTo(4.2, 13.2); g.lineTo(7.2, 19.6); g.lineTo(9.8, 18.4); g.lineTo(6.9, 12.2); g.lineTo(12.3, 12.2); g.closePath();
+    g.fillStyle = '#fff'; g.fill(); g.lineWidth = 1.3; g.strokeStyle = '#131312'; g.stroke(); g.restore();
+  }
+  // In einen Bereich zeichnen: einpassen (Medium, Rand in Anthrazit) oder füllen (Kamera, mittig beschnitten)
+  function fitInto(g, src, sw, sh, r, cover){
+    const sc = cover ? Math.max(r.w / sw, r.h / sh) : Math.min(r.w / sw, r.h / sh), w = sw * sc, h = sh * sc;
+    g.save(); g.beginPath(); if (r.pip && g.roundRect) g.roundRect(r.x, r.y, r.w, r.h, Math.min(r.w, r.h) * .05); else g.rect(r.x, r.y, r.w, r.h); g.clip();
+    if (!cover){ g.fillStyle = '#131312'; g.fillRect(r.x, r.y, r.w, r.h); }
+    g.drawImage(src, r.x + (r.w - w) / 2, r.y + (r.h - h) / 2, w, h); g.restore();
+    if (r.pip){ g.save(); g.lineWidth = Math.max(2, r.w * .008); g.strokeStyle = 'rgba(237,231,218,.85)'; g.beginPath(); if (g.roundRect) g.roundRect(r.x, r.y, r.w, r.h, Math.min(r.w, r.h) * .05); else g.rect(r.x, r.y, r.w, r.h); g.stroke(); g.restore(); }
+  }
+  const Prog = {cv: $('#progCv'), stream: null, timer: 0};
+  function drawProg(){
+    const cv = Prog.cv, [W, H] = progSize(); if (cv.width !== W || cv.height !== H){ cv.width = W; cv.height = H; }
+    const g = cv.getContext('2d'); g.fillStyle = '#131312'; g.fillRect(0, 0, W, H);
+    const cam = $('#camV'), win = renderWin(), lay = win ? SET.layout : 'ich';
+    for (const r of regions(lay)){
+      if (r.what === 'c'){ if (cam.videoWidth) fitInto(g, cam, cam.videoWidth, cam.videoHeight, r, true); }
+      else if (win) fitInto(g, win, win.width, win.height, r, false);
+    }
+  }
+  function progStream(){ if (!Prog.stream) Prog.stream = Prog.cv.captureStream(+SET.fps || 30); return Prog.stream; }
+  function regieLoop(){ clearInterval(Prog.timer); Prog.timer = 0; if (SET.regie) Prog.timer = setInterval(drawProg, 1000 / (+SET.fps > 30 ? 30 : +SET.fps || 30)); }
+  // Ton fürs Programm: Mikrofon (stumm, solange ein Medium mit Ton läuft) und Ton des Mediums
+  const Mix = {ac: null, dest: null, mic: null};
+  function mixInit(){ if (Mix.ac || !SET.regie) return; try { Mix.ac = new (window.AudioContext || window.webkitAudioContext)({sampleRate: 48000}); Mix.dest = Mix.ac.createMediaStreamDestination(); } catch(e){ Mix.ac = null; log('Mischpult: ' + e.message); } }
+  function mixMic(){ if (!Mix.ac) return; try { if (Mix.mic) Mix.mic.disconnect(); } catch(_){} Mix.mic = null;
+    if (Dev.mic && Dev.mic.getAudioTracks().length) try { Mix.mic = Mix.ac.createMediaStreamSource(Dev.mic); Mix.mic.connect(Mix.dest); } catch(e){ log('Mikrofon ins Programm: ' + e.message); } }
+  function mixMedia(el){ mixInit(); if (!Mix.ac) return; try { const n = Mix.ac.createMediaElementSource(el); n.connect(Mix.dest); n.connect(Mix.ac.destination); } catch(e){ log('Medium ins Programm: ' + e.message); } }
+  const wake = () => { if (Mix.ac && Mix.ac.state === 'suspended') Mix.ac.resume().catch(() => {}); };
+  document.addEventListener('pointerdown', wake, true); document.addEventListener('keydown', wake, true);
+  // Bedienung
+  const layIcon = id => { const vh = vert(), W = vh ? 18 : 40, H = vh ? 32 : 24; const sv = n => n.toFixed(1);
+    const pr = SET.fmt; SET.fmt = vh ? '9:16' : '16:9'; const [PW, PH] = progSize(); const rs = regions(id).map(r => `<rect x="${sv(r.x / PW * W)}" y="${sv(r.y / PH * H)}" width="${sv(r.w / PW * W)}" height="${sv(r.h / PH * H)}" rx="${r.pip ? 1.5 : 0}" fill="${r.what === 'c' ? '#E5402A' : '#CFC6B0'}" stroke="#131312" stroke-width=".8"/>`).join(''); SET.fmt = pr;
+    return `<svg viewBox="0 0 ${W} ${H}"><rect width="${W}" height="${H}" fill="#30302C"/>${rs}</svg>`; };
+  function paintRegie(){
+    document.body.classList.toggle('mode-regie', !!SET.regie); document.body.classList.toggle('fmt-v', vert());
+    $('#regie').classList.toggle('hidden', !SET.regie); Prog.cv.classList.toggle('hidden', !SET.regie);
+    $('#camBox').classList.toggle('mirror', !!SET.mirror && !SET.regie);
+    $('#lays').innerHTML = LAYOUTS.map((l, k) => `<button class="lay${SET.layout === l.id ? ' on' : ''}" data-l="${l.id}" title="${l.label} (Taste ${k + 1})">${layIcon(l.id)}<span>${l.label}</span></button>`).join('');
+    $('#corner').value = SET.corner; $('#mouseOn').checked = !!SET.mouse;
+    $('#mModeWrap') && $('#mModeWrap').classList.toggle('hidden', !!SET.regie);
+  }
+  function setLayout(id){ if (!LAYOUTS.some(l => l.id === id)) return; SET.layout = id; saveSet(); paintRegie();
+    if (live && live.take.regie) live.take.regie.lay.push([r3(nowT()), id]);
+    if (!stageShown() && id !== 'ich') toast('Die Anordnung gilt, sobald ein Medium auf der Bühne ist'); }
+  $('#lays').onclick = e => { const b = e.target.closest('[data-l]'); if (b) setLayout(b.dataset.l); };
+  $('#corner').onchange = e => { SET.corner = e.target.value; saveSet(); paintRegie(); };
+  $('#mouseOn').onchange = e => { SET.mouse = e.target.checked; saveSet(); };
+  (() => { const on = $('#stageOn');   // Mauszeiger über der Bühne
+    const at = e => { const b = on.getBoundingClientRect(); Mouse.x = e.clientX - b.left; Mouse.y = e.clientY - b.top; Mouse.in = Mouse.x >= 0 && Mouse.y >= 0 && Mouse.x <= b.width && Mouse.y <= b.height; };
+    on.addEventListener('pointermove', at, true); on.addEventListener('pointerdown', e => { at(e); Mouse.down = performance.now(); }, true);
+    on.addEventListener('pointerleave', () => { Mouse.in = false; });
+    on.addEventListener('scroll', () => {}, true); })();
+  // Große Bühne, Vollbild, Dokument einpassen
+  function paintBig(){ document.body.classList.toggle('bigstage', !!SET.big); $('#mBig').classList.toggle('on', !!SET.big); requestAnimationFrame(fitPrompt); }
+  $('#mBig').onclick = () => { SET.big = !SET.big; saveSet(); paintBig(); if (M.cur && M.cur.doc) setTimeout(() => paintDoc(M.cur), 60); };
+  $('#mFull').onclick = () => { const st = $('#stage'); if (document.fullscreenElement) document.exitFullscreen().catch(() => {}); else if (st.requestFullscreen) st.requestFullscreen().catch(e => toast('Vollbild nicht möglich: ' + e.message)); };
+  document.addEventListener('fullscreenchange', () => { $('#mFull').textContent = document.fullscreenElement ? 'Vollbild beenden' : 'Vollbild'; if (M.cur && M.cur.doc) setTimeout(() => paintDoc(M.cur), 120); });
+  $('#mFit').onclick = () => { SET.docFit = SET.docFit === 'width' ? 'page' : 'width'; saveSet(); if (M.cur && M.cur.doc) paintDoc(M.cur); };
 
   // ── Eingebauter Browser: Windows eigenes Fenster „HoneyRec – Browser“, Android eingeblendeter Browser, sonst neuer Tab ──
   function normUrl(u){
@@ -638,7 +794,7 @@
   // Einstellungen
   $('#setBtn').onclick = () => { $('#setVeil').classList.remove('hidden'); $('#resSel').value = String(SET.res); $('#fpsSel').value = String(SET.fps); $('#nsOn').checked = !!SET.ns; $('#mirrorOn').checked = !!SET.mirror; $('#countOn').checked = !!SET.count;
     const dir = TS.recDir ? TS.recDir(P ? P.rec.dir : '', false) : ''; $('#dirInfo').textContent = dir ? `Die Takes liegen als MP4 in: ${dir}` : PLAT === 'android' ? 'Die Takes liegen im Speicher der App und erscheinen in HoneyCut.' : 'Die Takes liegen im Speicher dieses Browsers.';
-    $('#dirOpen').classList.toggle('hidden', !(TS.recDir && PLAT === 'desktop')); fillDevices(); camInfo(); };
+    $('#dirOpen').classList.toggle('hidden', !(TS.recDir && PLAT === 'desktop')); $('#regieOn').checked = !!SET.regie; $('#fmtSel').value = SET.fmt; fillDevices(); camInfo(); };
   $('#dirOpen').onclick = () => TS.recDir(P ? P.rec.dir : '', true);
   $('#setOk').onclick = () => $('#setVeil').classList.add('hidden');
   const reopen = () => { saveSet(); openDevices(); };
@@ -649,6 +805,9 @@
   $('#nsOn').onchange = e => { SET.ns = e.target.checked; reopen(); };
   $('#mirrorOn').onchange = e => { SET.mirror = e.target.checked; saveSet(); $('#camBox').classList.toggle('mirror', SET.mirror); };
   $('#countOn').onchange = e => { SET.count = e.target.checked; saveSet(); };
+  $('#regieOn').onchange = e => { if (live){ e.target.checked = !!SET.regie; return toast('Während der Aufnahme lässt sich die Bildregie nicht umschalten'); }
+    SET.regie = e.target.checked; saveSet(); mixInit(); mixMic(); paintRegie(); regieLoop(); if (M.cur && !M.cur.doc && !M.cur.screen) paintStage(false); };
+  $('#fmtSel').onchange = e => { if (live){ e.target.value = SET.fmt; return toast('Während der Aufnahme bleibt das Format'); } SET.fmt = e.target.value; saveSet(); paintRegie(); };
   $('#camBox').classList.toggle('mirror', !!SET.mirror);
   // Tastatur: R Aufnahme, K Medium, ←/→ bzw. Bild↑/Bild↓ Präsentation (Presenter), ↑/↓ Skript, S Lauf
   document.addEventListener('keydown', e => {
@@ -670,11 +829,12 @@
     else if (k === 'ArrowDown'){ e.preventDefault(); $('#skView').scrollTop += lineH(); }
     else if (k === 'ArrowUp'){ e.preventDefault(); $('#skView').scrollTop -= lineH(); }
     else if (k === 's' || k === 'S'){ e.preventDefault(); setRoll(!roll); }
+    else if (SET.regie && /^[1-6]$/.test(k)){ e.preventDefault(); setLayout(LAYOUTS[+k - 1].id); }
   });
   addEventListener('beforeunload', e => { if (live){ e.preventDefault(); e.returnValue = ''; } });
   document.addEventListener('visibilitychange', () => { if (document.hidden && saveT) saveNow(); });
   if (TS.keepAwake) try { TS.keepAwake(true); } catch(_){}
 
-  paintPromptStyle(); renderStart(); renderScript(); openDevices();
-  window.HoneyRec = {get P(){ return P; }, regen, SET};   // für Tests
+  paintPromptStyle(); paintRegie(); paintBig(); regieLoop(); renderStart(); renderScript(); openDevices();
+  window.HoneyRec = {get P(){ return P; }, regen, SET, Mouse, drawProg};   // für Tests
 })();

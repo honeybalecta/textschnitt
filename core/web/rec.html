@@ -25,8 +25,14 @@
   <section class="col cam-col">
     <div class="cam-box" id="camBox">
       <video id="camV" muted playsinline autoplay></video>
+      <canvas id="progCv" class="hidden" title="Programmbild: so landet die Aufnahme im Video"></canvas>
       <div class="cam-msg hidden" id="camMsg"></div>
       <div class="count hidden" id="count"></div>
+    </div>
+    <div class="regie hidden" id="regie">
+      <div class="lays" id="lays"></div>
+      <label class="mini" title="Ecke für das kleine Bild"><select id="corner"><option value="ur">oben rechts</option><option value="ul">oben links</option><option value="lr">unten rechts</option><option value="ll">unten links</option></select></label>
+      <label class="mini" title="Mauszeiger auf der Medienbühne mit ins Bild nehmen"><input type="checkbox" id="mouseOn"> Mauszeiger</label>
     </div>
     <div class="prompt" id="prompt">
       <div class="prompt-bar">
@@ -58,6 +64,9 @@
         <button class="sbtn" id="mNext" title="Nächstes Bild (→)">▶▶</button>
         <input type="range" id="mSeek" min="0" max="1000" value="0">
         <span class="mono small" id="mTime"></span>
+        <button class="sbtn hidden" id="mFit" title="Dokument: ganze Seite oder volle Breite (zum Lesen)">Volle Breite</button>
+        <button class="sbtn" id="mBig" title="Medienbühne groß – Kamera und Skript rücken zusammen">⤢ Groß</button>
+        <button class="sbtn" id="mFull" title="Medienbühne als Vollbild (Esc beendet)">Vollbild</button>
         <button class="sbtn" id="mOff" title="Medium ausblenden">Ausblenden</button>
       </div>
     </div>
@@ -67,7 +76,7 @@
       <button class="sbtn" id="scrBtn" title="Einen Bildschirm, ein Fenster oder einen Tab mitaufnehmen">Bildschirm mitaufnehmen</button>
       <label class="mini" title="Standard: Solange ein Medium mit Ton läuft, nimmt HoneyRec dein Mikrofon nicht auf – so landet der Ton aus den Lautsprechern nicht doppelt in der Aufnahme."><input type="checkbox" id="micDuring"> Mikro auch bei Medien mit Ton aufnehmen</label>
       <div class="grow"></div>
-      <label class="mini" title="Wie das Medium später im Video erscheint">Im Video <select id="mMode"><option value="broll">bildfüllend</option><option value="pip">als Bild im Bild</option></select></label>
+      <label class="mini" id="mModeWrap" title="Wie das Medium später im Video erscheint">Im Video <select id="mMode"><option value="broll">bildfüllend</option><option value="pip">als Bild im Bild</option></select></label>
     </div>
     <div class="brbar hidden" id="brBar">
       <button class="sbtn" id="brBack" title="Zurück">◀</button><button class="sbtn" id="brFwd" title="Vor">▶</button><button class="sbtn" id="brReload" title="Neu laden">⟳</button>
@@ -112,6 +121,10 @@
     <label class="row"><input type="checkbox" id="nsOn"> Störgeräusche dämpfen (für laute Räume; sonst bleibt der Ton unbearbeitet)</label>
     <label class="row"><input type="checkbox" id="mirrorOn"> Kamerabild in der Vorschau spiegeln (die Aufnahme bleibt richtig herum)</label>
     <label class="row"><input type="checkbox" id="countOn"> Vor jedem Take 3 Sekunden herunterzählen</label>
+    <h2>Bildregie</h2>
+    <label class="row"><input type="checkbox" id="regieOn"> Kamera und Medienbühne live zu einem Bild zusammensetzen (Anordnung wählbar, Mauszeiger und Ton des Mediums kommen mit)</label>
+    <div class="grid2"><label class="field">Format des Videos<select id="fmtSel"><option value="16:9">16:9 quer</option><option value="9:16">9:16 hochkant</option></select></label></div>
+    <p class="muted small">Mit Bildregie ist die Aufnahme ein fertiges Bild bis 1080p; ohne liegen Kamera und Originalmedien getrennt im Projekt und lassen sich in HoneyCut frei anordnen.</p>
     <h2>Speicherort</h2>
     <p class="muted small" id="dirInfo"></p>
     <div class="row end"><button class="sbtn hidden" id="dirOpen">Ordner öffnen</button><div class="grow"></div><button class="rbtn" id="setOk">Fertig</button></div>

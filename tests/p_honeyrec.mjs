@@ -67,7 +67,7 @@ zipFile(DOCS.pptx, { 'ppt/slides/slide1.xml': `<p:sld ${A}><a:p><a:r><a:t>Mieten
   'ppt/slides/slide2.xml': `<p:sld ${A}><a:p><a:r><a:t>Forderung</a:t></a:r></a:p><a:p><a:r><a:t>Mietendeckel jetzt</a:t></a:r></a:p></p:sld>` });
 
 try {
-  await page.addInitScript(() => { if (!localStorage.getItem('hr-set')) localStorage.setItem('hr-set', JSON.stringify({ count: false, res: 720, fps: 30 })); });
+  await page.addInitScript(() => { if (!localStorage.getItem('hr-set')) localStorage.setItem('hr-set', JSON.stringify({ count: false, res: 720, fps: 30, regie: false, big: false })); });
   await page.goto(REC);
   await page.waitForFunction(() => window.HoneyRec && document.querySelector('#camV').videoWidth > 0, null, { timeout: 15000 });
   chk('Startfenster mit Namen und „Neue Aufnahme“; die Kamera läuft schon in der Vorschau', await ev(() => !document.querySelector('#startVeil').classList.contains('hidden') && !!document.querySelector('#newName').value && document.querySelector('#camV').videoWidth > 0));
@@ -202,6 +202,59 @@ try {
   await shot('7_dokument');
   P = await R();
   chk('Dokumente bleiben in der Sitzung gemerkt (Art, Seitenzahl, Seitenbilder)', P.rec.media.filter(m => m.doc).length === 4 && P.rec.media.find(m => m.doc && /\.pdf$/.test(m.clip.name)).n === 2);
+
+
+  // ── Bildregie: Kamera und Bühne in einem Bild, Anordnungen, Mauszeiger, große Bühne ──
+  const px = (fx, fy) => ev(([fx, fy]) => { HoneyRec.drawProg(); const c0 = document.querySelector('#progCv'), c = document.createElement('canvas'); c.width = c0.width; c.height = c0.height; c.getContext('2d').drawImage(c0, 0, 0); const d = c.getContext('2d').getImageData(Math.round(c.width * fx), Math.round(c.height * fy), 1, 1).data; return [d[0], d[1], d[2]]; }, [fx, fy]);
+  const isGreen = c => c[1] > 100 && c[0] < 90 && c[2] < 90, isLight = c => c[0] > 200 && c[1] > 200 && c[2] > 200;
+  await page.click('#setBtn'); await page.check('#regieOn'); await page.click('#setOk');
+  chk('Bildregie an: Programmbild statt Kamerabild, Leiste mit sechs Anordnungen', await ev(() => !document.querySelector('#progCv').classList.contains('hidden') && document.querySelectorAll('.lay').length === 6 && document.body.classList.contains('mode-regie')));
+  await page.click('.mitem >> nth=2'); await page.waitForFunction(() => document.querySelectorAll('.doclink').length, null, { timeout: 15000 }); await sleep(600);
+  await page.keyboard.press('2'); await sleep(200);
+  let a1 = await px(0.5, 0.75), a2 = await px(0.86, 0.15);
+  chk('„Medium, ich klein“: Dokument füllt das Bild, Kamera klein oben rechts', isLight(a1) && isGreen(a2), [a1, a2]);
+  await page.keyboard.press('1'); await sleep(100); a1 = await px(0.5, 0.75);
+  chk('„Nur ich“ (Taste 1): Kamera füllt das Bild', isGreen(a1), a1);
+  await page.keyboard.press('4'); await sleep(100); a1 = await px(0.25, 0.5); a2 = await px(0.75, 0.75);
+  chk('„Nebeneinander“ (Taste 4): Dokument links, Kamera rechts', isLight(a1) && isGreen(a2), [a1, a2]);
+  await page.keyboard.press('3'); await sleep(100); a1 = await px(0.3, 0.75); a2 = await px(0.86, 0.15);
+  chk('„Ich, Medium klein“ (Taste 3): Kamera groß, Dokument klein in der Ecke', isGreen(a1) && isLight(a2), [a1, a2]);
+  await page.selectOption('#corner', 'll'); await sleep(100); a2 = await px(0.14, 0.85);
+  chk('Ecke wählbar: kleines Bild unten links', isLight(a2), a2);
+  await page.selectOption('#corner', 'ur');
+  const sb = await page.locator('#stageOn').boundingBox(); await page.mouse.move(sb.x + sb.width * 0.4, sb.y + sb.height * 0.5); await sleep(100);
+  chk('Mauszeiger über der Bühne wird erfasst', await ev(() => HoneyRec.Mouse.in));
+  await page.keyboard.press('6'); await sleep(100);
+  const cur = await ev(() => { HoneyRec.drawProg(); const c0 = document.querySelector('#progCv'), c = document.createElement('canvas'); c.width = c0.width; c.height = c0.height; const g = c.getContext('2d'); g.drawImage(c0, 0, 0); const st = document.querySelector('#stageOn').getBoundingClientRect(), M = HoneyRec.Mouse;
+    // Lage des Zeigers im Programm: Fenster eingepasst in das ganze Bild
+    const S = Math.min(1920 / st.width, 1920 / st.height), ww = st.width * S, wh = st.height * S, k = Math.min(c.width / ww, c.height / wh), ox = (c.width - ww * k) / 2, oy = (c.height - wh * k) / 2;
+    const x = Math.round(ox + (M.x * S + 4) * k), y = Math.round(oy + (M.y * S + 9) * k), d = g.getImageData(x - 2, y - 2, 5, 5).data; let w = 0, b = 0; for (let i = 0; i < d.length; i += 4){ if (d[i] > 240 && d[i + 1] > 240 && d[i + 2] > 240) w++; if (d[i] < 40) b++; } return {w, b}; });
+  chk('Mauszeiger ist im Programmbild zu sehen (weißer Pfeil mit dunklem Rand)', cur.w > 3 && cur.b > 0, cur);
+  // Aufnahme mit Wechsel der Anordnung
+  const nItems = (await R()).items.length;
+  await page.keyboard.press('2'); await page.click('#recBtn'); await sleep(900); await page.keyboard.press('4'); await sleep(900); await page.click('#recBtn');
+  await page.waitForFunction(() => { const t = HoneyRec.P.rec.takes.slice(-1)[0]; return t && t.src && t.regie; }, null, { timeout: 30000 });
+  P = await R(); const rt = P.rec.takes.slice(-1)[0];
+  chk('Take mit Bildregie: fertiges Bild 1280×720 mit Ton, Wechsel der Anordnung gemerkt', rt.src.width === 1280 && rt.src.height === 720 && rt.src.hasAudio && rt.regie.lay.map(l => l[1]).join('>') === 'medium-pip>neben', { w: rt.src.width, h: rt.src.height, lay: rt.regie.lay });
+  chk('Bildregie: keine zusätzlichen Einblendungen im Projekt (Medium steckt schon im Bild)', P.items.length === nItems, [P.items.length, nItems]);
+  // 9:16
+  await page.click('#setBtn'); await page.selectOption('#fmtSel', '9:16'); await page.click('#setOk'); await sleep(200);
+  const dims = await ev(() => { HoneyRec.drawProg(); const c = document.querySelector('#progCv'); return [c.width, c.height]; });
+  a1 = await px(0.5, 0.2); a2 = await px(0.5, 0.8);
+  chk('9:16: Programm hochkant, „nebeneinander“ wird übereinander (Dokument oben, Kamera unten)', dims[0] === 720 && dims[1] === 1280 && isLight(a1) && isGreen(a2), {dims, a1, a2});
+  await page.click('#setBtn'); await page.selectOption('#fmtSel', '16:9'); await page.uncheck('#regieOn'); await page.click('#setOk');
+  // große Bühne, volle Breite, Vollbild
+  const w0 = await ev(() => document.querySelector('#stage').getBoundingClientRect().width);
+  await page.click('#mBig'); await sleep(300);
+  const w1 = await ev(() => document.querySelector('#stage').getBoundingClientRect().width);
+  chk('„Groß“: Die Medienbühne wird deutlich breiter', w1 > w0 * 1.2, [w0, w1]);
+  await page.click('#mFit'); await page.waitForFunction(() => document.querySelector('#mFit').textContent === 'Ganze Seite', null, { timeout: 5000 }); await sleep(500);
+  chk('„Volle Breite“: Seite so breit wie die Bühne, nach unten scrollbar', await ev(() => { const w = document.querySelector('.docwrap'), i = document.querySelector('.docin'); return i.offsetWidth >= w.clientWidth - 2 && Math.abs(i.offsetHeight - i.offsetWidth * 595 / 842) < 8; }));
+  await page.click('#mFit');
+  await page.click('#mFull'); await sleep(400);
+  chk('Vollbild der Medienbühne', await ev(() => document.fullscreenElement === document.querySelector('#stage')));
+  await ev(() => document.exitFullscreen()); await sleep(300);
+  await shot('8_regie');
 
   // ── Fertig → HoneyCut ──
   const pid = P.id, nSrc = P.sources.length;

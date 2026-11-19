@@ -2,6 +2,14 @@
 
 Was sich mit jeder Version von HoneyCut ändert. Die Windows-App zeigt diese Stichpunkte an, sobald eine neuere Version bereitsteht.
 
+## 2.48.0 · HoneyRec: Bildregie, Mauszeiger, große Medienbühne
+
+- **Bildregie:** HoneyRec setzt Kamera und Medienbühne live zu einem fertigen Bild zusammen. Sechs Anordnungen per Klick oder Taste 1–6: nur ich, Medium groß und ich klein, ich groß und Medium klein, nebeneinander (halb und halb), Medium ⅔ und ich ⅓, nur Medium. Die Ecke für das kleine Bild ist wählbar. Ohne Medium auf der Bühne zeigt das Bild die Kamera. Wechsel sind auch während der Aufnahme möglich.
+- **16:9 oder 9:16:** In den Einstellungen wählbar; hochkant liegen „nebeneinander“ und „⅔ – ⅓“ übereinander.
+- **Medienbühne wie ein eigenes Fenster:** Was die Bühne zeigt – Video, Bild, Dokument, Bildschirmaufnahme –, kommt so ins Bild, wie es dort zu sehen ist, samt Mauszeiger und Klicks. Der Ton des Mediums landet mit in der Aufnahme; das Mikrofon schweigt weiter, solange ein Medium mit Ton läuft (abschaltbar wie bisher).
+- **Große Bühne:** „Groß“ macht die Medienbühne deutlich breiter (Standard), „Vollbild“ zeigt sie bildschirmfüllend, „Volle Breite“ zieht Dokumente auf die ganze Breite der Bühne zum Lesen kleiner Schrift.
+- **Ohne Bildregie** (Einstellungen) bleibt alles wie bisher: Kamera und Originalmedien liegen getrennt im Projekt und lassen sich in HoneyCut frei anordnen.
+
 ## 2.47.0 · HoneyRec: PDF, Präsentationen, Dokumente und eingebauter Browser
 
 - **PDF in HoneyRec:** PDFs lassen sich wie Medien laden und Seite für Seite zeigen (Pfeiltasten, Bild↑/Bild↓, Presenter). Links im PDF sind anklickbar; Verweise innerhalb des PDFs springen auf die Seite.
