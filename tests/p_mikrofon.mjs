@@ -18,6 +18,8 @@ const rms = (file, a, d) => { const b = execFileSync('ffmpeg', ['-v', 'error', '
 try {
   const id = await newProject(page, [MEDIA + 'kamera.mp4']); made.push(id); await transcribe(page);
   const words0 = await ev(() => tokens.filter(t => t.type === 'word').map(t => [t.text, t.ws, t.we]));
+  // Länge des Videos: Das von ffmpeg erzeugte kamera.mp4 ist je nach Fassung verschieden lang (6.1: 54,97 s, 8.0: 56 s – „-shortest“ schneidet anders)
+  const dur0 = await ev(() => P.sources[0].duration);
   await openAdj();
   let st = await state();
   chk('Im Blatt „Anpassen“ steht das Feld „Ton vom externen Mikrofon“ mit einer Erklärung', await ev(() => CAP.audiosync && !!document.querySelector('.micblk')) && /Tonaufnahme wählen/.test(st.go) && !st.goOff && !st.origBtn && /externen Mikrofons oder Rekorders/.test(st.hint), st.hint);
@@ -43,7 +45,7 @@ try {
   chk('„Bild beruhigen“ verweist auf die Reihenfolge und ist gesperrt', st.stGo === true && /Erst beruhigen, dann den Ton angleichen/.test(st.stHint), st.stHint);
   const laut = [rms(camUri, 5, 20), rms(st.uri, 5, 20)];
   const lang = await ev(() => P.sources[0].duration);
-  chk('Die Kopie klingt wie das Mikrofon (deutlich lauter als der Kameraton) und ist so lang wie das Video', laut[1] > laut[0] * 1.6 && Math.abs(lang - 54.97) < 0.2, { laut: laut.map(v => +v.toFixed(4)), lang, uri: st.uri.split(/[\\/]/).slice(-2).join('/') });
+  chk('Die Kopie klingt wie das Mikrofon (deutlich lauter als der Kameraton) und ist so lang wie das Video', laut[1] > laut[0] * 1.6 && Math.abs(lang - dur0) < 0.2, { laut: laut.map(v => +v.toFixed(4)), lang, dur0, uri: st.uri.split(/[\\/]/).slice(-2).join('/') });
   const words1 = await ev(() => tokens.filter(t => t.type === 'word').map(t => [t.text, t.ws, t.we]));
   chk('Transkript und Wortzeiten bleiben unverändert', JSON.stringify(words0) === JSON.stringify(words1));
   // Lage prüfen: Im Kameraton beginnt das erste Wort bei words0[0][1]; in der Kopie muss dort ebenfalls Sprache beginnen
