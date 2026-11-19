@@ -763,7 +763,8 @@ def audio_sync_job(job: dict, path: str, audio: str):
         chain.append(f"adelay={off * 1000:.3f}:all=1")
     elif off < 0:
         chain += [f"atrim=start={-off:.5f}", "asetpts=PTS-STARTPTS"]
-    chain.append("apad")
+    # Ton genau so lang wie das Bild: Mit „-t“ allein lief der aufgefüllte Ton unter ffmpeg 8 gut eine Sekunde über das Video hinaus
+    chain += [f"apad=whole_dur={dur:.3f}", f"atrim=end={dur:.3f}"]
     tmp_out = out.with_suffix(".tmp.mp4")
     job["message"] = "Das Video bekommt den Ton des Mikrofons …"
     base = ["-i", path, "-i", audio, "-filter_complex", f"[1:a:0]{','.join(chain)}[a]", "-map", "0:v:0", "-map", "[a]", "-t", f"{dur:.3f}"]

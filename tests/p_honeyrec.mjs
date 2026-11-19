@@ -15,7 +15,9 @@ if (process.env.HR_DEBUG) page.on('console', m => console.log('console:', m.type
 const ev = (f, a) => page.evaluate(f, a);
 const REC = BASE.replace(/index\.html$/, 'rec.html');
 const DIR = path.join(WORK, 'honeyrec');
-fs.rmSync(DIR, { recursive: true, force: true });   // Aufnahmen früherer Läufe (gleicher Tag, gleicher Name) bekämen sonst „(2)“ angehängt
+// Eigener Name je Lauf: Aufnahmen früherer Läufe (gleicher Tag, gleicher Name) bekämen sonst „(2)“ angehängt. Die Dateien bleiben liegen,
+// damit Projekte früherer Läufe in der Projektliste (spätere Prüfungen) keine fehlenden Vorschaubilder melden.
+const NAME = 'Prüfaufnahme ' + Date.now().toString(36);
 const shot = n => page.screenshot({ path: path.join(OUT, `honeyrec_${n}.png`) });
 const R = () => ev(() => JSON.parse(JSON.stringify(HoneyRec.P)));
 const muted = () => ev(() => ({ badge: !document.querySelector('#muteBadge').classList.contains('hidden') }));
@@ -32,9 +34,9 @@ try {
   await page.waitForFunction(() => window.HoneyRec && document.querySelector('#camV').videoWidth > 0, null, { timeout: 15000 });
   chk('Startfenster mit Namen und „Neue Aufnahme“; die Kamera läuft schon in der Vorschau', await ev(() => !document.querySelector('#startVeil').classList.contains('hidden') && !!document.querySelector('#newName').value && document.querySelector('#camV').videoWidth > 0));
   await shot('1_start');
-  await page.fill('#newName', 'Prüfaufnahme');
+  await page.fill('#newName', NAME);
   await page.click('#newGo');
-  chk('Name der Aufnahme steht in der Kopfleiste', (await ev(() => document.querySelector('#rName').textContent)) === 'Prüfaufnahme');
+  chk('Name der Aufnahme steht in der Kopfleiste', (await ev(() => document.querySelector('#rName').textContent)) === NAME);
   // Skript
   await page.click('#skEdit'); await page.fill('#skText', SKRIPT); await page.click('#skOk');
   const sk = await ev(() => ({ h: [...document.querySelectorAll('#skBody .h')].map(x => x.textContent), rg: [...document.querySelectorAll('#skBody .rg')].map(x => x.textContent), txt: document.querySelector('#skBody').textContent }));
@@ -145,5 +147,6 @@ try {
   chk('Handy hochkant: Aufnahmeknopf und Fertig bleiben erreichbar', await ev(() => { const a = document.querySelector('#recBtn').getBoundingClientRect(), b = document.querySelector('#doneBtn').getBoundingClientRect(); return a.width > 0 && b.right <= innerWidth + 1 && a.right <= innerWidth + 1; }));
 
   chk('Keine Fehler auf der Seite', !logs.length, logs);
+  await ev(id => TS.deleteProject(id), pid);   // aufräumen: Die Aufnahme liegt danach im Papierkorb, die Dateien bleiben
 } catch (e) { chk('Ablauf ohne Abbruch', false, String(e && e.stack || e).slice(0, 600)); }
 await ende(br);
