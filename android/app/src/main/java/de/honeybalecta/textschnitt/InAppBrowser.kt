@@ -55,7 +55,7 @@ class InAppBrowser(private val act: MainActivity) {
                 // Webseiten bleiben hier; andere Schemata (Mail, Telefon, Apps) werden nicht geöffnet
                 override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean =
                     request.url.scheme?.lowercase() !in setOf("http", "https")
-                override fun onPageFinished(view: WebView, u: String) { url = u; title?.text = view.title?.ifBlank { u } ?: u }
+                override fun onPageFinished(view: WebView, u: String) { this@InAppBrowser.url = u; this@InAppBrowser.title?.text = view.title?.ifBlank { u } ?: u }
             }
             webChromeClient = WebChromeClient()
         }
