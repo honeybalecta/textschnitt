@@ -2,6 +2,11 @@
 
 Was sich mit jeder Version von HoneyCut ändert. Die Windows-App zeigt diese Stichpunkte an, sobald eine neuere Version bereitsteht.
 
+## 2.50.1 · Dateidialog am richtigen Fenster
+
+- **Neues Projekt, Dateien wählen, Speichern:** Der Dialog öffnet sich jetzt über dem Fenster, in dem geklickt wurde. Bisher hing er immer am zuerst geöffneten Fenster des Programms – liefen HoneyCut und HoneyRec nebeneinander, erschien er womöglich hinter oder über dem anderen Fenster, und das Programm wirkte aufgehängt.
+- Öffnen und Schließen jedes Dialogs steht nun in der Protokolldatei `textschnitt.log`, damit sich Hänger genau eingrenzen lassen.
+
 ## 2.50.0 · HoneyRec: Pegel im Griff
 
 - **Übersteuerung erkennen:** Kommt der Ton schon übersteuert vom Gerät an (etwa ein DJI Mic, das über die Kamera läuft), zeigt die Pegelanzeige „ÜBERSTEUERT“ und HoneyRec meldet sich einmal mit einem Hinweis. Ein Klick auf die Pegelanzeige öffnet die Einstellungen.

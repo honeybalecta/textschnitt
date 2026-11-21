@@ -262,14 +262,52 @@ def main():
                                    min_size=(1000, 640), background_color="#131312", text_select=False)
     window.events.shown += lambda: fenster_einrichten(window, first_title, True)
     kinds = {"rec" if REC_MODE else "cut": window}   # je Art das zuletzt geöffnete Fenster
+    window.events.closed += lambda: kinds.get("rec" if REC_MODE else "cut") is window and kinds.pop("rec" if REC_MODE else "cut", None)
+
+    def hwnd_of(w) -> int:
+        try:
+            return int(w.native.Handle.ToInt64())
+        except Exception:  # noqa: BLE001
+            return 0
+
+    def owner(hint: str = "cut"):
+        """Fenster, dem ein Dialog gehört: das Programmfenster, in dem gerade geklickt wurde.
+
+        Früher hing jeder Dialog am ersten Fenster des Programms. Lief HoneyCut als zweites Fenster neben HoneyRec
+        (oder umgekehrt), öffnete sich der Dialog über dem falschen – womöglich schon geschlossenen oder
+        verkleinerten – Fenster, und das Programm wirkte aufgehängt."""
+        alive = [w for w in list(getattr(webview, "windows", []) or []) if w is not browser_state.get("w") and hwnd_of(w)]
+        try:
+            import ctypes
+            fg = ctypes.windll.user32.GetForegroundWindow()
+            fg = ctypes.windll.user32.GetAncestor(fg, 2) or fg   # GA_ROOT
+            for w in alive:
+                if hwnd_of(w) == fg:
+                    return w
+        except Exception:  # noqa: BLE001
+            pass
+        for k in (hint, "cut", "rec"):
+            w = kinds.get(k)
+            if w is not None and w in alive:
+                return w
+        return alive[0] if alive else window
+
+    def dialog(hint: str, what: str, **kw):
+        w = owner(hint)
+        T.log(f"Dialog {what}: Fenster „{getattr(w, 'title', '?')}“")
+        try:
+            res = w.create_file_dialog(**kw)
+        except Exception as e:  # noqa: BLE001
+            T.log(f"Dialog {what} mit Dateitypen fehlgeschlagen: {e!r}")
+            kw.pop("file_types", None)
+            res = w.create_file_dialog(**kw)
+        T.log(f"Dialog {what}: {'gewählt' if res else 'abgebrochen'}")
+        return res
 
     def pick(kind: str):
         multi = kind in ("videos", "clips", "font", "rec")
         types = {"font": FONT_TYPES, "clip": CLIP_TYPES, "clips": CLIPS_TYPES, "rec": REC_TYPES, "package": PACKAGE_TYPES, "backup": BACKUP_TYPES}.get(kind, VIDEO_TYPES)
-        try:
-            res = window.create_file_dialog(webview.OPEN_DIALOG, allow_multiple=multi, file_types=types)
-        except Exception:
-            res = window.create_file_dialog(webview.OPEN_DIALOG, allow_multiple=multi)
+        res = dialog("rec" if kind == "rec" else "cut", "Öffnen " + kind, dialog_type=webview.OPEN_DIALOG, allow_multiple=multi, file_types=types)
         if not res:
             return []
         return list(res) if isinstance(res, (list, tuple)) else [res]
@@ -313,7 +351,7 @@ def main():
 
     def open_files(media: list):
         try:
-            window.evaluate_js("window.TSApp && TSApp.onOpenFiles(" + json.dumps(json.dumps(media)) + ")")
+            (kinds.get("cut") or window).evaluate_js("window.TSApp && TSApp.onOpenFiles(" + json.dumps(json.dumps(media)) + ")")
         except Exception:
             pass
 
@@ -328,20 +366,14 @@ def main():
     def save_any(name: str):
         """Speichern-Dialog für Dateien aus HoneyDeck."""
         ext = Path(name).suffix.lstrip(".") or "*"
-        try:
-            res = window.create_file_dialog(webview.SAVE_DIALOG, save_filename=name, file_types=(f"{ext.upper()}-Datei (*.{ext})", "Alle Dateien (*.*)"))
-        except Exception:
-            res = window.create_file_dialog(webview.SAVE_DIALOG, save_filename=name)
+        res = dialog("cut", "Speichern", dialog_type=webview.SAVE_DIALOG, save_filename=name, file_types=(f"{ext.upper()}-Datei (*.{ext})", "Alle Dateien (*.*)"))
         if not res:
             return None
         return res[0] if isinstance(res, (list, tuple)) else res
 
     def save(name: str):
         """Speichern-Dialog für Projektpakete (.honeycut)."""
-        try:
-            res = window.create_file_dialog(webview.SAVE_DIALOG, save_filename=name, file_types=PACKAGE_TYPES)
-        except Exception:
-            res = window.create_file_dialog(webview.SAVE_DIALOG, save_filename=name)
+        res = dialog("cut", "Speichern Paket", dialog_type=webview.SAVE_DIALOG, save_filename=name, file_types=PACKAGE_TYPES)
         if not res:
             return None
         return res[0] if isinstance(res, (list, tuple)) else res
