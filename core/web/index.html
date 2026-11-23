@@ -119,6 +119,11 @@
         <label class="row">Sprache <select id="lang"><option value="de" selected>Deutsch</option><option value="en">Englisch</option><option value="">automatisch</option></select></label>
         <label class="row"><input type="checkbox" id="fillers" checked> Füllwörter (äh, ähm) mit erkennen</label>
         <div class="row dict-row"><span>Wörterbuch für Namen und Fachbegriffe: <b id="dictInfo">noch leer</b></span><button class="btn small" id="dictBtn">Bearbeiten</button></div>
+        <div class="row dict-row"><span>Skript zum Abgleichen: <b id="preScriptInfo">keins</b></span><button class="btn small" id="preScriptBtn">Einfügen</button></div>
+        <div class="pre-script hidden" id="preScriptOpts">
+          <label class="row"><input type="checkbox" id="preScriptAdopt" checked> Schreibweisen, Namen und Satzzeichen aus dem Skript übernehmen</label>
+          <label class="row" id="preScriptSortRow"><input type="checkbox" id="preScriptSort" checked> Videos nach dem Skript in die richtige Reihenfolge bringen</label>
+        </div>
         <div class="subs-only hidden" id="subsOnlyBox">
           <label class="row"><input type="checkbox" id="subsOnly"> <b>Nur für Untertitel</b> – den Schnitt aus dem Studio unverändert lassen</label>
           <span class="muted small">Es wird nichts automatisch entfernt; danach geht es direkt zu den Untertiteln.</span>

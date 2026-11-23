@@ -10,6 +10,8 @@
                                    eq gleich · fz fast gleich (Schreibweise) · sub anderes Wort an derselben Stelle ·
                                    m21 zwei gesprochene Wörter = ein geschriebenes · m12 umgekehrt ·
                                    del nur gesprochen (i) · ins nur im Manuskript (j)
+   Skript.place(wörter, text)    → {at, n, share}  Lage einer Aufnahme im Manuskript (0…1) – zum Ordnen mehrerer Videos (2.51)
+   Skript.terms(text, max)       → [Begriff …]  Namen, Abkürzungen und Fachbegriffe als Hinweis für Whisper (2.51)
    Skript.compare(spoken, text)  → {pairs, free, miss, stats}
        spoken – [{i, text}] die Wörter des Transkripts in Sprechreihenfolge (i = Kennung des Worts)
        pairs  – [{ids: [i …], text}] Stellen, an denen das Manuskript anders schreibt (Schreibweise, Großschreibung, Satzzeichen)
@@ -122,5 +124,40 @@
     flush();
     return {pairs, free, miss, stats: {spoken: ak.length, script: b.length, same, share: ak.length ? same / ak.length : 0}};
   }
-  g.Skript = {words, key, align, compare, like};
+  // Wo im Manuskript eine Aufnahme liegt (2.51: mehrere Videos nach dem Skript ordnen). spokenTexts: Wörter der Aufnahme.
+  // → {at: Lage 0…1 (Mitte der zugeordneten Manuskriptwörter), n: zugeordnete Wörter, share: Anteil an den gesprochenen}
+  function place(spokenTexts, text){
+    const b = words(text).map(x => x.k), a = spokenTexts.map(key).filter(k => k && !FILL.has(k));
+    if (!a.length || !b.length) return {at: -1, n: 0, share: 0};
+    const js = []; for (const o of align(a, b)) if (o.op === 'eq' || o.op === 'fz' || o.op === 'm21' || o.op === 'm12') js.push(o.j);
+    if (!js.length) return {at: -1, n: 0, share: 0};
+    js.sort((p, q) => p - q);
+    return {at: js[Math.floor(js.length / 2)] / b.length, n: js.length, share: js.length / a.length};
+  }
+  // Begriffe aus dem Manuskript, die Whisper als Hinweis bekommt (2.51): Abkürzungen, gegenderte Formen, Wörter mit Ziffern,
+  // Bindestrich oder fremden Schriftzeichen, Namen mitten im Satz (großgeschrieben ohne Artikel davor), sehr lange Wörter.
+  // Häufig genannte zuerst; zusammen höchstens max Zeichen (mit „, “ dazwischen).
+  const DET = new Set('der die das den dem des ein eine einen einem einer eines kein keine keinen keinem keiner keines mein meine meinen meinem meiner dein deine sein seine seinen seinem seiner ihr ihre ihren ihrem ihrer unser unsere unseren unserem euer eure jeder jede jedes jeden jedem diese dieser dieses diesen diesem alle allen viele vielen wenige einige mehrere am im vom zum zur beim ins ans aufs the a an'.split(' '));
+  function terms(text, max = 300){
+    const ws = words(text), seen = new Map();
+    ws.forEach((x, q) => {
+      const raw = x.w.replace(/^[„“"'‚‘(«»]+|[.,!?;:…"“”’')»«]+$/g, ''); if (raw.length < 2 || !/\p{L}/u.test(raw)) return;
+      const prev = q ? ws[q - 1].w : '.', start = !q || /[.!?:…]["“”»«)]*$/.test(prev);
+      let sc = 0;
+      if (/\p{Lu}.*\p{Lu}/u.test(raw)) sc = 5;                                   // SPD, AfD, BlackRock
+      if (/\p{L}[:*_]\p{L}/u.test(raw)) sc = Math.max(sc, 4);                    // Nachbar:innen
+      if (/\d/.test(raw)) sc = Math.max(sc, 4);                                   // G7, 49-Euro-Ticket
+      if (/[^\p{Script=Latin}\d:*_\-'’.]/u.test(raw) || /[çşğıćčšžřłńőűéèêëáàâãíìîóòôõúùûñåæø]/i.test(raw)) sc = Math.max(sc, 4);   // Köktürk geht über „ü“ nicht, Eralp über Namen
+      if (/\p{L}-\p{L}/u.test(raw)) sc = Math.max(sc, 3);                        // Rot-Rot-Grün
+      if (/^\p{Lu}/u.test(raw) && !start && !DET.has(key(prev))) sc = Math.max(sc, 2);   // Namen mitten im Satz
+      if (raw.length >= 13) sc = Math.max(sc, 1);
+      if (!sc) return;
+      const k = key(raw), e = seen.get(k); if (e){ e.n++; e.sc = Math.max(e.sc, sc); } else seen.set(k, {t: raw, sc, n: 1, q});
+    });
+    const rank = e => e.sc + Math.min(2, e.n - 1);
+    const out = []; let len = 0;
+    for (const e of [...seen.values()].sort((a, b) => rank(b) - rank(a) || a.q - b.q)){ if (len + e.t.length + 2 > max) continue; out.push(e.t); len += e.t.length + 2; }
+    return out;
+  }
+  g.Skript = {words, key, align, compare, like, place, terms};
 })(typeof window !== 'undefined' ? window : typeof self !== 'undefined' ? self : globalThis);

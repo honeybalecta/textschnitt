@@ -2,6 +2,13 @@
 
 Was sich mit jeder Version von HoneyCut ändert. Die Windows-App zeigt diese Stichpunkte an, sobald eine neuere Version bereitsteht.
 
+## 2.51.0 · Skript vor dem Transkribieren, Titelbild ohne Untertitel
+
+- **Skript vor dem Transkribieren:** Im Reiter „Transkribieren“ lässt sich unter „Skript zum Abgleichen“ das Skript einfügen oder aus einer Datei laden – Text, Word (.docx) oder OpenDocument. Überschriften und Regieanweisungen in eckigen Klammern bleiben außen vor; die Souffleur-Fassung passt direkt.
+- **Namen und Begriffe von Anfang an richtig:** Abkürzungen, Namen, gegenderte Formen und Wörter mit Bindestrich aus dem Skript gehen als Hinweis an Whisper (am Computer und auf dem Handy). Nach der Transkription übernimmt HoneyCut Schreibweisen, Großschreibung und Satzzeichen aus dem Skript; frei Gesprochenes und Ausgelassenes ist markiert wie bei „Skript abgleichen“. „Rückgängig“ nimmt den Abgleich in einem Schritt zurück.
+- **Mehrere Videos in der Reihenfolge des Skripts:** Bei mehreren Clips oder Aufnahmen bringt HoneyCut sie nach der Transkription in die Reihenfolge des Skripts – noch bevor Wiederholungen entfernt werden, sodass mehrere Anläufe derselben Stelle nebeneinanderliegen. Videos ohne klare Fundstelle im Skript bleiben hinter dem Video, das vorher vor ihnen lag. Beides lässt sich mit einem Haken abschalten.
+- **Titelbild frei:** Liegt ein Titelbild auf dem ersten Bild des Videos, steht dort kein Untertitel und kein Titel mehr. Sie setzen erst mit dem zweiten Bild ein.
+
 ## 2.50.1 · Dateidialog am richtigen Fenster
 
 - **Neues Projekt, Dateien wählen, Speichern:** Der Dialog öffnet sich jetzt über dem Fenster, in dem geklickt wurde. Bisher hing er immer am zuerst geöffneten Fenster des Programms – liefen HoneyCut und HoneyRec nebeneinander, erschien er womöglich hinter oder über dem anderen Fenster, und das Programm wirkte aufgehängt.

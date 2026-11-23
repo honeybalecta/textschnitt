@@ -29,7 +29,7 @@ const tokText = t => (P && P.edits && P.edits[t.i] != null) ? P.edits[t.i] : t.t
 const LOW_PR = 0.5;
 const isLowTok = t => t.type === 'word' && t.pr < LOW_PR && !t.ok && !(P && P.edits && P.edits[t.i] != null);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;'}[c]));
-function toast(msg){ const t = $('#toast'); t.textContent = msg; t.classList.add('on'); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('on'), 2600); }
+function toast(msg, ms){ const t = $('#toast'); t.textContent = msg; t.classList.add('on'); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('on'), ms || 2600); }
 // Text nur dann ins Dokument schreiben, wenn er sich geändert hat – und dann in den vorhandenen Textknoten.
 // „el.textContent = …“ ersetzt den Textknoten jedes Mal, auch bei gleichem Text. In der Abspielschleife hieß das:
 // bei jedem Bild neue Knoten, neue Stil- und Layoutberechnung, neues Zeichnen – für Anzeigen, die sich gar nicht ändern.
@@ -2635,7 +2635,7 @@ function fillModels(){
   const ready = ms.find(m => m.name === keep) || ms.find(m => m.installed && m.recommended) || ms.find(m => m.installed) || ms[0]; if (ready) sel.value = ready.name;
 }
 function renderSources(){
-  const box = $('#srcList'); if (!box || !P) return; box.innerHTML = ''; paintDictInfo();
+  const box = $('#srcList'); if (!box || !P) return; box.innerHTML = ''; paintDictInfo(); paintPreScript();
   P.sources.forEach((s, k) => {
     const el = document.createElement('div'); el.className = 'src-item';
     const st = s.tr ? (s.noAudio ? 'ohne Ton' : 'transkribiert') : (s.hasAudio === false ? 'ohne Ton' : 'noch nicht transkribiert');
@@ -2686,7 +2686,7 @@ const tjSet = (id, v) => { try { v ? localStorage.setItem(TJ_KEY(id), JSON.strin
 $('#transBtn').onclick = () => runTranscribe(null);
 function runTranscribe(resume){
   const todo = P.sources.map((s, k) => k).filter(k => !P.sources[k].tr);
-  const o = resume ? resume.opts : {model: $('#model').value, lang: $('#lang').value, fillers: $('#fillers').checked, startTok: tokens.length, firstTime: !tokens.length, hint: dictHint()};
+  const o = resume ? resume.opts : {model: $('#model').value, lang: $('#lang').value, fillers: $('#fillers').checked, startTok: tokens.length, firstTime: !tokens.length, hint: transHint()};
   if (!resume) o.subsOnly = o.firstTime && studioCut() && $('#subsOnly').checked;
   if (!todo.length && !resume) return;
   const pid = P.id, P0 = P;
@@ -2703,13 +2703,20 @@ function runTranscribe(resume){
   const finish = () => {
     end(); if (!alive()) return; P.language ||= lang;
     if (firstTime && !subsOnly){ deleted = new Set(); P.trims = {}; P.adj = {}; P.checks = []; }
+    // Skript, das schon vor der Transkription im Projekt lag: Videos in seine Reihenfolge bringen (vor dem Aufräumen, damit
+    // wiederholte Anläufe aus verschiedenen Videos nebeneinanderliegen), danach Schreibweisen übernehmen (2.51)
+    const pre = firstTime && !subsOnly ? preScriptText() : '';
+    let sorted = false; if (pre && P.script.sort !== false && !transCancelled) try { sorted = scriptSortSources(pre); } catch(e){ hcLog('Videos nach dem Skript ordnen: ' + (e && e.message)); }
     const fixed = dictApply(startTok);   // hinterlegte Fehlschreibungen ersetzen, ehe aufgeräumt wird und die Untertitel entstehen
     const cleaned = subsOnly ? [] : autoClean(startTok);
     if (firstTime) genCues(); else genCues(startTok);
+    let sk = null; if (pre) try { sk = scriptRun(pre, P.script.adopt !== false); } catch(e){ hcLog('Skript nach der Transkription: ' + (e && e.message)); }
     renderTranscript(); changed(); saveNow(); busSend({t:'reload'}); setTab(subsOnly ? 'subs' : 'text');
     if (subsOnly){ toast(`${computedCues().length} Untertitel aus dem Schnitt erzeugt – Text, Zeiten und Position lassen sich jetzt anpassen`); return; }
     const unk = tokens.filter(t => t.i >= startTok && t.type === 'unk' && !deleted.has(t.i)).length;
-    toast(`${words} Wörter erkannt` + (fixed ? ` · ${fixed === 1 ? '1 Stelle' : fixed + ' Stellen'} nach dem Wörterbuch korrigiert` : '') + (cleaned.length ? ` · entfernt: ${cleaned.join(', ')}` : '') + (unk ? ` · ${unk}× 🗣 nicht erkannte Sprache` : ''));
+    const skShare = sk && sk.stats.spoken ? sk.stats.same / sk.stats.spoken : 0;
+    toast(`${words} Wörter erkannt` + (fixed ? ` · ${fixed === 1 ? '1 Stelle' : fixed + ' Stellen'} nach dem Wörterbuch korrigiert` : '') + (cleaned.length ? ` · entfernt: ${cleaned.join(', ')}` : '') + (unk ? ` · ${unk}× 🗣 nicht erkannte Sprache` : '')
+      + (sorted ? ' · Videos nach dem Skript geordnet' : '') + (sk ? (skShare < 0.3 ? ' · Skript und Transkript passen kaum zusammen – ist es das richtige Skript?' : ` · ${Math.round(skShare * 100)} % wie im Skript` + (sk.stats.fixed ? `, ${sk.stats.fixed === 1 ? '1 Stelle' : sk.stats.fixed + ' Stellen'} nach dem Skript geschrieben` : '')) : ''), sk ? 9000 : undefined);
   };
   const next = () => {
     if (!alive()) return;
@@ -5647,6 +5654,9 @@ function buildPlan(dry){   // dry: nur nachsehen (z. B. für das Titelbild) – 
     cues.push({start:r3(a), end:r3(Math.min(total, a + t.dur)), text:wrapTitle(t.text.trim(), (SIZE_F[t.size] || 0.058) * (t.scale || 1), t.font, W, H), x:t.x, y:t.y, size:+((SIZE_F[t.size] || 0.058) * (t.scale || 1)).toFixed(4), color:t.color || '#FFFFFF', outline:t.outline !== false, bg:!!t.bg, title:true, font:t.font || ''}); }
   const tl = tlineCue(W, H); if (tl) cues.push(tl);
   for (const c of refCues()) cues.push({...lineCue(srcLayout(c.text, W, H), W, H, c.s, c.e), src: true});
+  // Titelbild auf dem ersten Bild (2.51): dort steht keine Schrift – Untertitel und Titel setzen erst mit dem zweiten Bild ein
+  if (ovs.some(o => o.first)){ const f1 = Math.floor(1000 / Math.max(1, +(primary().fps) || 30)) / 1000;
+    for (let q = cues.length - 1; q >= 0; q--){ const c = cues[q]; if (c.start >= f1) continue; if (c.end <= f1 + 0.001) cues.splice(q, 1); else c.start = f1; } }
   const subs = cues.length ? {cues, style:S(), fonts: planFonts([S().font, ...cues.map(c => c.font)])} : null;
   const media = P.sources.map(s => ({uri:s.uri, name:s.name, duration:s.duration, width:dispSize(s)[0], height:dispSize(s)[1], fps:s.fps, hasAudio:s.hasAudio !== false, hasVideo:hasVid(s), kind:s.kind || 'video'}));
   return {format:exFmt, name: ($('#exName').value || P.name).replace(/[\\/:*?"<>|]/g, '_'), width:W, height:H, fps:primary().fps || 30, total:r3(total),
@@ -7554,7 +7564,8 @@ function scriptRun(text, adopt){
   commit(() => {
     if (adopt) for (const p of r.pairs){ p.ids.forEach((i, q) => { const v = q === 0 ? p.text : ''; if (v === tokens[i].text) delete P.edits[i]; else P.edits[i] = v; touched.push(i); }); fixed++; }
     if (touched.length) regenCuesFor(touched);
-    P.script = {text, free: r.free.map(f => [f.a, f.b]), miss: r.miss.map(m => ({after: m.after, text: m.text, n: m.n})), stats: {spoken: r.stats.spoken, script: r.stats.script, same: r.stats.same, fixed}};
+    const keep = {}; if (P.script && P.script.adopt != null) keep.adopt = P.script.adopt; if (P.script && P.script.sort != null) keep.sort = P.script.sort;
+    P.script = {...keep, text, free: r.free.map(f => [f.a, f.b]), miss: r.miss.map(m => ({after: m.after, text: m.text, n: m.n})), stats: {spoken: r.stats.spoken, script: r.stats.script, same: r.stats.same, fixed}};
   }, false);
   renderTranscript(); if (tab === 'subs') renderSubs();
   return P.script;
@@ -7599,6 +7610,105 @@ function openScript(edit){
   $('#skOff').onclick = () => { commit(() => { P.script = {text: P.script.text}; }, false); renderTranscript(); closeSheet(); toast('Markierungen entfernt'); };
   $('#skOk').onclick = closeSheet;
   openSheet(true);
+}
+
+// ───────── Skript vor dem Transkribieren (2.51) ─────────
+// Das Skript liegt schon vor der Transkription im Projekt (P.script.text – eingefügt, aus einer Datei oder aus HoneyRec). Dann
+// gehen Namen und Begriffe daraus als Hinweis an Whisper (Skript.terms), danach bringt HoneyCut mehrere Videos in die Reihenfolge
+// des Skripts (P.script.sort, Skript.place) und gleicht das Transkript ab (P.script.adopt: Schreibweisen übernehmen).
+const preScriptText = () => P && P.script && window.Skript && Skript.words(P.script.text || '').length >= 5 ? P.script.text : '';
+function paintPreScript(){
+  const el = $('#preScriptInfo'); if (!el || !P) return;
+  el.closest('.row').classList.toggle('hidden', !window.Skript);
+  const t = preScriptText(), n = t ? Skript.words(t).length : 0, fresh = !tokens.some(x => x.type === 'word');
+  el.textContent = n ? `${n} Wörter` + (P.rec ? ' · aus HoneyRec' : '') : 'keins';
+  $('#preScriptBtn').textContent = !n ? 'Einfügen' : fresh ? 'Ändern' : 'Abgleichen';
+  $('#preScriptOpts').classList.toggle('hidden', !n || !fresh);
+  $('#preScriptAdopt').checked = !P.script || P.script.adopt !== false;
+  $('#preScriptSort').checked = !P.script || P.script.sort !== false;
+  $('#preScriptSortRow').classList.toggle('hidden', P.sources.length < 2 || !!P.rec);
+}
+// Hinweis an Whisper: Wörterbuch zuerst, dann Begriffe aus dem Skript (zusammen höchstens 580 Zeichen)
+function transHint(){
+  const d = dictHint(), t = preScriptText(); if (!t || !TS.setAsrHint) return d;
+  const room = 580 - (d ? d.length + 2 : 0); if (room < 20) return d;
+  const have = new Set(d ? dictHintList().map(x => Skript.key(x)) : []), terms = Skript.terms(t, room).filter(x => !have.has(Skript.key(x)));
+  return [d, terms.join(', ')].filter(Boolean).join(', ');
+}
+// Skript aus einer Datei: Text, Markdown, RTF, Word (.docx) oder OpenDocument (.odt). Überschriften bekommen ein #, damit sie
+// beim Abgleich außen vor bleiben wie in der Souffleur-Fassung.
+async function zipText(buf, name){
+  const u8 = new Uint8Array(buf), dv = new DataView(buf); let e = -1;
+  for (let i = u8.length - 22; i >= Math.max(0, u8.length - 66000); i--) if (dv.getUint32(i, true) === 0x06054b50){ e = i; break; }
+  if (e < 0) throw new Error('Die Datei lässt sich nicht lesen');
+  const n = dv.getUint16(e + 10, true), td = new TextDecoder(); let p = dv.getUint32(e + 16, true);
+  for (let k = 0; k < n; k++){
+    const method = dv.getUint16(p + 10, true), csize = dv.getUint32(p + 20, true), nl = dv.getUint16(p + 28, true), xl = dv.getUint16(p + 30, true), cl = dv.getUint16(p + 32, true), off = dv.getUint32(p + 42, true);
+    if (td.decode(u8.subarray(p + 46, p + 46 + nl)) === name){
+      const start = off + 30 + dv.getUint16(off + 26, true) + dv.getUint16(off + 28, true), data = u8.subarray(start, start + csize);
+      if (method === 0) return td.decode(data);
+      return new Response(new Blob([data]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).text();
+    }
+    p += 46 + nl + xl + cl;
+  }
+  return null;
+}
+async function scriptFileText(f){
+  const ext = (f.name.split('.').pop() || '').toLowerCase();
+  if (ext === 'docx' || ext === 'odt'){
+    const x = await zipText(await f.arrayBuffer(), ext === 'docx' ? 'word/document.xml' : 'content.xml'); if (x == null) throw new Error('In der Datei steht kein lesbarer Text');
+    const d = new DOMParser().parseFromString(x, 'application/xml'), by = (el, t) => [...el.getElementsByTagName(t)];
+    if (ext === 'docx') return by(d, 'w:p').map(p => { const sty = by(p, 'w:pStyle')[0], st = sty ? sty.getAttribute('w:val') || '' : '', t = by(p, 'w:t').map(q => q.textContent).join('');
+      return (t.trim() && /heading|berschrift|title|titel/i.test(st) ? '# ' : '') + t; }).join('\n');
+    return [...d.getElementsByTagName('*')].filter(q => q.tagName === 'text:h' || q.tagName === 'text:p').map(q => (q.tagName === 'text:h' && q.textContent.trim() ? '# ' : '') + q.textContent).join('\n');
+  }
+  let t = await f.text();
+  if (ext === 'rtf') t = t.replace(/\\par[d]?/g, '\n').replace(/\{\\\*[^{}]*\}|\\[a-z]+-?\d* ?|[{}]/gi, '');
+  return t;
+}
+function openPreScript(){
+  if (!P || !window.Skript) return;
+  if (tokens.some(t => t.type === 'word')) return openScript(true);
+  sheetItem = null; const body = $('#sheetBody'); body.onclick = null; const had = !!preScriptText();
+  body.innerHTML = `<h3>Skript vor dem Transkribieren</h3>
+    <p class="muted small">Füge dein Skript ein oder lade es aus einer Datei (Text, Word, OpenDocument). ${TS.setAsrHint ? 'Namen und Begriffe daraus gehen als Hinweis an Whisper. ' : ''}Nach der Transkription übernimmt HoneyCut Schreibweisen, Namen und Satzzeichen aus dem Skript und bringt mehrere Videos in die Reihenfolge des Skripts. Frei Gesprochenes bleibt, wie es gesagt wurde.</p>
+    <textarea id="psText" rows="10" dir="auto" placeholder="Skript hier einfügen …" style="width:100%;font-size:16px"></textarea>
+    <p class="muted small">Regieanweisungen in eckigen Klammern und Überschriften mit # bleiben unberücksichtigt – die Souffleur-Fassung passt direkt.</p>
+    <div class="row wrap" style="margin-top:12px"><label class="btn">Aus Datei laden …<input type="file" id="psFile" accept=".txt,.md,.docx,.odt,.rtf,text/plain" hidden></label>${had ? '<button class="btn" id="psDel">Entfernen</button>' : ''}<button class="btn" id="psNo" style="margin-left:auto">Abbrechen</button><button class="btn primary" id="psGo">Übernehmen</button></div>`;
+  $('#psText').value = (P.script && P.script.text) || '';
+  $('#psFile').onchange = async e => { const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+    try { const t = await scriptFileText(f); if (Skript.words(t).length < 5) return toast('In der Datei steht kaum Text'); $('#psText').value = t.trim(); toast(`${Skript.words(t).length} Wörter aus „${f.name}“`); }
+    catch(err){ toast((err && err.message) || 'Die Datei lässt sich nicht lesen'); } };
+  $('#psNo').onclick = closeSheet;
+  if (had) $('#psDel').onclick = () => { P.script = null; changed(); saveNow(); paintPreScript(); closeSheet(); toast('Skript entfernt'); };
+  $('#psGo').onclick = () => { const text = $('#psText').value;
+    if (Skript.words(text).length < 5){ toast('Bitte das Skript einfügen'); $('#psText').focus(); return; }
+    P.script = {...(P.script || {}), text}; delete P.script.free; delete P.script.miss; delete P.script.stats;
+    changed(); saveNow(); paintPreScript(); closeSheet(); toast(`Skript übernommen (${Skript.words(text).length} Wörter)`); };
+  openSheet(); setTimeout(() => { const t = $('#psText'); if (t && !t.value) t.focus(); }, 50);
+}
+$('#preScriptBtn').onclick = openPreScript;
+$('#preScriptAdopt').onchange = e => { if (P && P.script){ P.script.adopt = e.target.checked; changed(); saveNow(); } };
+$('#preScriptSort').onchange = e => { if (P && P.script){ P.script.sort = e.target.checked; changed(); saveNow(); } };
+// Mehrere Videos nach dem Skript ordnen – nur direkt nach der ersten Transkription eines frischen Projekts (noch nichts geschnitten).
+// Jede Aufnahme bekommt ihre Lage im Skript (Mitte der passenden Wörter); Aufnahmen ohne klare Fundstelle bleiben hinter dem Video,
+// das vorher vor ihnen lag. Wiederholte Anläufe derselben Stelle behalten ihre Reihenfolge. → true, wenn sich etwas geändert hat.
+function scriptSortSources(text){
+  if (P.sources.length < 2 || P.rec || studioCut() || (P.marks || []).length || !P.sources.every(s => s.tr)) return false;
+  const pos = P.sources.map((s, k) => { const ws = tokens.filter(t => t.src === k && t.type === 'word').map(t => t.text);
+    const r = ws.length >= 3 ? Skript.place(ws, text) : {at: -1, n: 0, share: 0}; return {k, at: r.n >= 3 && r.share >= 0.25 ? r.at : -1}; });
+  if (pos.filter(p => p.at >= 0).length < 2) return false;
+  let last = -1; for (const p of pos){ if (p.at < 0) p.at = last; else last = p.at; }
+  const ord = pos.slice().sort((a, b) => a.at - b.at || a.k - b.k).map(p => p.k);
+  if (ord.every((k, q) => k === q)) return false;
+  const old = P.sources.map(s => s.off), groups = ord.map(k => tokens.filter(t => t.src === k));
+  P.sources = ord.map(k => P.sources[k]); layoutSources();
+  const pmap = new Map(), out = [];
+  groups.forEach((g, q) => { const d = P.sources[q].off - old[ord[q]];
+    for (const t of g){ t.s = r3(t.s + d); t.e = r3(t.e + d); if (t.ws != null){ t.ws = r3(t.ws + d); t.we = r3(t.we + d); } t.src = q;
+      const pk = q + ':' + t.p; if (!pmap.has(pk)) pmap.set(pk, pmap.size); t.p = pmap.get(pk); out.push(t); } });
+  out.forEach((t, i) => t.i = i); tokens = out; P.tokens = tokens; order = []; vSi = -1; clipTokMemo = null;
+  return true;
 }
 
 // ───────── Person im Bild halten (2.39, E5) ─────────

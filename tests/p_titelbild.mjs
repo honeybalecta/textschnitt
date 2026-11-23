@@ -97,6 +97,13 @@ try {
   const c1 = await ev(() => { exFmt = 'video'; const c = P.settings.coverFirst, [W, H] = outSize(), plan = buildPlan(), o = plan.overlays ? plan.overlays.filter(x => x.first) : (plan.ovs || []).filter(x => x.first), dry = buildPlan(true), all = dry.overlays || dry.ovs || []; exFmt = 'capcut'; const cc = buildPlan(); exFmt = 'video';
     return { on: c.on, uri: !!c.uri, ar: c.w / c.h, out: [W, H], o: o[0] || null, n: o.length, dry: all.some(x => x.first), cc: (cc.overlays || cc.ovs || []).some(x => x.first), fps: plan.fps }; });
   chk('Der Haken legt das Titelbild in der Größe des Videos beim Projekt ab; der Exportplan trägt es als Bild über allem, vom Anfang an weniger als ein Bild lang', c1.on && c1.uri && Math.abs(c1.ar - c1.out[0] / c1.out[1]) < 0.01 && c1.n === 1 && c1.o.at === 0 && c1.o.in === 0 && c1.o.out > 0.001 && c1.o.out < 1 / c1.fps && c1.o.top === true && c1.o.image === true && c1.o.w === 1 && c1.o.x === 0.5 && c1.o.track === 199 && !c1.dry && !c1.cc, c1);
+  // 2.51: Auf dem Titelbild steht keine Schrift – ein Untertitel, der bei 0 beginnt, setzt erst mit dem zweiten Bild ein
+  const sb = await ev(() => { exFmt = 'video'; const keep = window.computedCues;
+    window.computedCues = () => { const l = keep(); if (l.length) l[0] = {...l[0], s: 0}; return l; };
+    try { const fps = buildPlan().fps, f1 = Math.floor(1000 / fps) / 1000, mit = buildPlan().subs; P.settings.coverFirst.on = false; const ohne = buildPlan().subs; P.settings.coverFirst.on = true;
+      return { fps, f1, mit: mit && mit.cues.map(c => c.start).sort((x, y) => x - y).slice(0, 2), ohne: ohne && ohne.cues.map(c => c.start).sort((x, y) => x - y).slice(0, 2), n: [mit && mit.cues.length, ohne && ohne.cues.length] }; }
+    finally { window.computedCues = keep; } });
+  chk('Mit Titelbild auf dem ersten Bild beginnen Untertitel erst mit dem zweiten Bild; ohne Titelbild bleibt der Anfang bei 0', !!sb.mit && sb.ohne[0] === 0 && sb.mit[0] === sb.f1 && sb.f1 > 0 && sb.f1 < 1 / sb.fps + 0.0005 && sb.n[0] === sb.n[1], sb);
   await page.click('#ctNo'); await sleep(400);
   const ex = await ev(async () => { P.settings.level = false; exFmt = 'video'; const plan = buildPlan(); plan.name = 'titelbild-erstes-bild'; const id = TS.exportVideo(JSON.stringify(plan));
     for (;;){ await new Promise(r => setTimeout(r, 200)); const j = JSON.parse(TS.job(id)); if (j.status === 'done') return { ok: true, file: j.result.playable, total: plan.total, fps: plan.fps }; if (j.status === 'error') return { ok: false, error: j.error }; } });

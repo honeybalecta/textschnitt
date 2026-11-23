@@ -1124,6 +1124,7 @@ label.col input{width:100%}
 .dc-add #dcTerm{grid-column:1 / -1}
 .dict-row{justify-content:space-between;gap:10px}
 .dict-row span{flex:1;min-width:0}
+.pre-script{display:flex;flex-direction:column;gap:6px;padding-left:2px}
 
 /* 2.30: Hausstil und Bausteine */
 .hs-sec{border-top:1px solid var(--line);padding-top:10px;margin-top:12px}
