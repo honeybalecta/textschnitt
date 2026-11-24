@@ -5,6 +5,7 @@ Start: pythonw textschnitt_app.pyw [videodatei]
 Läuft HoneyCut schon, wird die Datei im offenen Fenster geöffnet und das Fenster nach vorn geholt.
 
 HoneyRec (Aufnahmeprogramm) ist dasselbe Programm mit eigenem Start: HoneyRec.exe bzw. „--rec“ öffnet das Aufnahmefenster.
+HoneyPlan (Planer für Videos mit mehreren Ausgängen) ebenso: HoneyPlan.exe bzw. „--plan“.
 Beide teilen sich Backend, Projekte und Datenordner; wer zuerst startet, öffnet das lokale Backend, der zweite Start
 übergibt nur noch („bitte ein HoneyRec-Fenster“ bzw. „bitte HoneyCut“).
 """
@@ -35,6 +36,10 @@ FIRST_PORT = 8765
 TITLE = "HoneyCut"
 REC_TITLE = "HoneyRec"
 REC_MODE = "--rec" in sys.argv or Path(sys.executable).stem.lower() == "honeyrec"
+# HoneyPlan (Planer für Videos mit mehreren Ausgängen): ebenfalls dasselbe Programm mit eigenem Start (HoneyPlan.exe bzw. „--plan“)
+PLAN_TITLE = "HoneyPlan"
+PLAN_MODE = not REC_MODE and ("--plan" in sys.argv or Path(sys.executable).stem.lower() == "honeyplan")
+MODE = "rec" if REC_MODE else "plan" if PLAN_MODE else "cut"
 VIDEO_TYPES = ("Video und Audio (*.mp4;*.mov;*.mkv;*.m4v;*.webm;*.avi;*.mts;*.m2ts;*.wmv;*.mp3;*.wav;*.m4a;*.flac;*.aac;*.ogg)",
                "Alle Dateien (*.*)")
 FONT_TYPES = ("Schriften (*.ttf;*.otf)", "Alle Dateien (*.*)")
@@ -79,7 +84,7 @@ def port_free(port: int) -> bool:
 
 
 def hand_over(port: int, paths: list[str]):
-    body = json.dumps({"paths": paths, "app": "rec" if REC_MODE else "cut"}).encode("utf-8")
+    body = json.dumps({"paths": paths, "app": MODE}).encode("utf-8")
     req = urllib.request.Request(f"http://127.0.0.1:{port}/api/focus", data=body,
                                  headers={"Content-Type": "application/json"})
     try:
@@ -251,18 +256,22 @@ def main():
 
     try:  # eigenes Taskleisten-Symbol statt dem von Python
         import ctypes
-        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("HoneyCut.HoneyRec" if REC_MODE else "HoneyCut.App")
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID({"rec": "HoneyCut.HoneyRec", "plan": "HoneyCut.HoneyPlan"}.get(MODE, "HoneyCut.App"))
     except Exception:
         pass
 
     url_cut = T.app_url(port)
     url_rec = url_cut.replace("index.html", "rec.html")
-    first_title = REC_TITLE if REC_MODE else TITLE
-    window = webview.create_window(first_title, url_rec if REC_MODE else url_cut, width=1480, height=940,
-                                   min_size=(1000, 640), background_color="#131312", text_select=False)
+    url_plan = url_cut.replace("index.html", "plan.html")
+    urls = {"cut": url_cut, "rec": url_rec, "plan": url_plan}
+    titles = {"cut": TITLE, "rec": REC_TITLE, "plan": PLAN_TITLE}
+    # HoneyPlan ist ein Schreibwerkzeug: Text markieren und kopieren muss gehen, das Fenster darf schmal sein
+    shape = lambda app: dict(width=1280, height=880, min_size=(420, 560), text_select=True) if app == "plan" else dict(width=1480, height=940, min_size=(1000, 640), text_select=False)  # noqa: E731
+    first_title = titles[MODE]
+    window = webview.create_window(first_title, urls[MODE], background_color="#131312", **shape(MODE))
     window.events.shown += lambda: fenster_einrichten(window, first_title, True)
-    kinds = {"rec" if REC_MODE else "cut": window}   # je Art das zuletzt geöffnete Fenster
-    window.events.closed += lambda: kinds.get("rec" if REC_MODE else "cut") is window and kinds.pop("rec" if REC_MODE else "cut", None)
+    kinds = {MODE: window}   # je Art das zuletzt geöffnete Fenster
+    window.events.closed += lambda: kinds.get(MODE) is window and kinds.pop(MODE, None)
 
     def hwnd_of(w) -> int:
         try:
@@ -286,7 +295,7 @@ def main():
                     return w
         except Exception:  # noqa: BLE001
             pass
-        for k in (hint, "cut", "rec"):
+        for k in (hint, "cut", "rec", "plan"):
             w = kinds.get(k)
             if w is not None and w in alive:
                 return w
@@ -340,9 +349,9 @@ def main():
         if w is not None and bring(w):
             return
         try:
-            t = REC_TITLE if app == "rec" else TITLE
-            w2 = webview.create_window(t, url_rec if app == "rec" else url_cut, width=1480, height=940, min_size=(1000, 640),
-                                       background_color="#131312", text_select=False)
+            app = app if app in urls else "cut"
+            t = titles[app]
+            w2 = webview.create_window(t, urls[app], background_color="#131312", **shape(app))
             w2.events.shown += lambda: fenster_einrichten(w2, t, True)
             w2.events.closed += lambda: kinds.get(app) is w2 and kinds.pop(app, None)
             kinds[app] = w2
@@ -432,7 +441,7 @@ def main():
         webview.settings["ALLOW_DOWNLOADS"] = True
     except Exception:
         pass
-    icon = RES_DIR / ("honeyrec.ico" if REC_MODE else "textschnitt.ico")
+    icon = RES_DIR / {"rec": "honeyrec.ico", "plan": "honeyplan.ico"}.get(MODE, "textschnitt.ico")
     try:
         webview.start(private_mode=False, storage_path=str(T.DATA_DIR / "webview"),
                       icon=str(icon) if icon.exists() else None)

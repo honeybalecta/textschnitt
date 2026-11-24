@@ -74,8 +74,11 @@ class MainActivity : ComponentActivity() {
         else { mediaReq?.deny(); mediaReq = req; mediaPerm.launch(missing.toTypedArray()) }
     }
 
-    /** Welche Seite ein Start öffnet: das Symbol „HoneyRec“ (RecAlias) die Aufnahme, sonst HoneyCut. */
-    private fun pageOf(i: Intent?): String = if (i?.component?.className?.endsWith(".RecAlias") == true) "rec.html" else "index.html"
+    /** Welche Seite ein Start öffnet: das Symbol „HoneyRec“ (RecAlias) die Aufnahme, „HoneyPlan“ (PlanAlias) den Planer, sonst HoneyCut. */
+    private fun pageOf(i: Intent?): String {
+        val c = i?.component?.className ?: ""
+        return if (c.endsWith(".RecAlias")) "rec.html" else if (c.endsWith(".PlanAlias")) "plan.html" else "index.html"
+    }
     private var page = "index.html"
     private var notifAsked = false
 
@@ -163,7 +166,7 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        // Anderes Startsymbol angetippt (HoneyCut ↔ HoneyRec): Seite wechseln – eine laufende Aufnahme darf das nicht abbrechen
+        // Anderes Startsymbol angetippt (HoneyCut, HoneyRec, HoneyPlan): Seite wechseln – eine laufende Aufnahme darf das nicht abbrechen
         if (intent.action == Intent.ACTION_MAIN) {
             val want = pageOf(intent)
             val now = web.url?.substringAfterLast('/')?.substringBefore('?')?.substringBefore('#') ?: page

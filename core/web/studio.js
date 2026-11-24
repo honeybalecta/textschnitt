@@ -1352,7 +1352,7 @@ function clipDialog(o1, o2, ids){   // ids: die markierten Wörter – dann läs
 }
 // Clip-Projekt aus einem oder mehreren Bereichen des geschnittenen Videos (Ausgabezeit). Ein Bereich ergibt einen Clip; mehrere ergeben
 // einen Zusammenschnitt: alles dazwischen ist herausgeschnitten, die Reihenfolge bleibt die des Videos. Gespeichert wird hier nichts.
-function clipData(ranges, fmt, name){
+function clipData(ranges, fmt, name, keep){   // keep: Format, Ausschnitt und Untertitel des Projekts bleiben (Pfad-Videos)
   const R = ranges.map(r => [r[0], r[1]]).sort((p, q) => p[0] - q[0])
     .reduce((acc, r) => { const l = acc[acc.length - 1]; if (l && r[0] <= l[1] + 0.02) l[1] = Math.max(l[1], r[1]); else acc.push(r); return acc; }, []);
   const hit = (a, e, pad) => R.some(([o1, o2]) => e > o1 + pad && a < o2 - pad), at = o => R.some(([o1, o2]) => o >= o1 - 0.05 && o < o2 - 0.05);
@@ -1381,7 +1381,8 @@ function clipData(ranges, fmt, name){
   c.marks = (c.marks || []).filter(m => at(markOut(m)) && !isSrcDeleted(m.at));
   c.refs = (c.refs || []).filter(r => !refGone(r) && at(refOut(r)));
   c.checks = [];   // die Prüfliste gehört zum ganzen Video
-  delete c.clipList; delete c.clipSeries; delete c.part;   // Vorgemerktes und Reihen gehören zum Hauptprojekt
+  delete c.clipList; delete c.clipSeries; delete c.part; delete c.pfade; delete c.pfad;   // Vorgemerktes, Reihen und der Pfad-Plan gehören zum Hauptprojekt
+  if (keep){ c.format = P.format || null; return c; }
   c.format = fmt || null;
   // Bildausschnitt: Hat der Clip ein anderes Format als das Projekt, gilt dessen Ausschnitt nicht mehr. Dann zählt der Ausschnitt, den dieses
   // Format im Projekt zuletzt hatte; sonst füllt das Bild die Leinwand (wird beim Öffnen berechnet, weil es vom Format abhängt).
@@ -1442,6 +1443,7 @@ function renderClip(){
   $('#clipHookAltN').textContent = nv ? `· ${nv} Dateien im Export` : '';
   if (box.dataset.pid !== P.id){ box.dataset.pid = P.id; box.open = nv > 0; }   // beim Öffnen des Projekts: aufgeklappt, wenn es Varianten gibt
   // Clip-Reihe (F2, F5): Teil k von n, Nachbarn, Kennzeichnung
+  if (window.pfClipCard) pfClipCard();
   const pt = P.part; $('#clipSeriesCard').classList.toggle('hidden', !pt);
   if (pt){ const ids = pt.ids || [];
     $('#clipSeriesH').textContent = `Teil ${pt.k} von ${pt.n}`;

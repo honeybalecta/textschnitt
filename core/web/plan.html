@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>HoneyPlan</title>
+<link rel="stylesheet" href="plan.css">
+</head>
+<body>
+
+<!-- ───────────── Kopfleiste ───────────── -->
+<header class="pbar">
+  <div class="brand"><img src="plan-logo.svg" alt="">HoneyPlan</div>
+  <input type="text" class="pname" id="pName" maxlength="80" dir="auto" aria-label="Name des Plans" title="Name des Plans">
+  <div class="grow"></div>
+  <span class="saved muted small" id="pSaved"></span>
+  <button class="sbtn" id="plansBtn" title="Alle Pläne auf diesem Gerät: öffnen, neu anlegen, aus einer Datei laden">Pläne</button>
+  <button class="sbtn" id="scriptBtn" title="Aufnahme-Skript: jeder Abschnitt einmal, in der Reihenfolge der Aufnahme">Skript</button>
+  <button class="rbtn" id="cutBtn" title="Den Plan an HoneyCut geben">Für HoneyCut</button>
+</header>
+
+<!-- Umschalter für schmale Bildschirme -->
+<nav class="ptabs" id="pTabs">
+  <button type="button" data-view="flow" class="on">Ablauf</button>
+  <button type="button" data-view="side">Pfade <b id="tabCount"></b></button>
+</nav>
+
+<main class="pmain" id="pMain" data-view="flow">
+  <!-- links: der Ablauf mit gemeinsamen Teilen und Weichen -->
+  <section class="col flow-col" id="flowCol">
+    <p class="lead muted">Lege fest, was in jedem Video gleich ist und an welchen Stellen sich die Videos trennen. Eine <b>Weiche</b> ist eine Stelle mit mehreren möglichen Ausgängen. Jeder Weg durch alle Weichen ergibt ein Video.</p>
+    <div id="flow"></div>
+  </section>
+  <!-- rechts: was daraus entsteht -->
+  <section class="col side-col" id="sideCol">
+    <div class="stats" id="stats"></div>
+    <div class="tree-box" id="treeBox"><div class="tree" id="tree"></div></div>
+    <h2 class="h">Videos</h2>
+    <div id="paths"></div>
+  </section>
+</main>
+
+<div class="modal-back hidden" id="modalBack"></div>
+<div class="modal hidden" id="modal" role="dialog" aria-modal="true"></div>
+<div class="toast" id="toast" role="status"></div>
+
+<script src="skript.js"></script>
+<script src="plan-core.js"></script>
+<script src="bridge-http.js"></script>
+<script src="plan.js"></script>
+</body>
+</html>

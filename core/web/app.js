@@ -486,7 +486,7 @@ function openProjectNow(id, keep){
   const keepTab = keep ? tab : null, keepPos = keep ? outPos : 0;
   let np = null; try { np = J(TS.loadProject(id)); } catch(e){ hcLog('Projekt laden: ' + (e && e.message)); }
   if (!np || typeof np !== 'object') return toast('Projekt konnte nicht geladen werden');   // das offene Projekt bleibt dabei unberührt
-  P = np; clearTimeout(saveRetryT); saveFails = 0; $('#saved').classList.remove('err'); $('#saved').textContent = '';
+  P = np; if (window.pfReset) pfReset(); clearTimeout(saveRetryT); saveFails = 0; $('#saved').classList.remove('err'); $('#saved').textContent = '';
   if (!P.sources){ P.sources = [P.main]; P.sources[0].tr = !!(P.tokens || []).length; delete P.main; }   // altes Format (ein Video)
   P.adj ||= {}; P.speakers ||= []; P.slides ||= []; P.items ||= []; P.marks ||= []; if (!Array.isArray(P.refs)) P.refs = []; if (!Array.isArray(P.checks)) P.checks = []; P.dels ||= []; P.splits ||= []; P.edits ||= {}; P.moves ||= []; P.trims ||= {}; P.settings ||= {pad:0.06}; P.cues ||= [];
   if (P.settings.burn == null) P.settings.burn = true;
@@ -505,6 +505,7 @@ function openProjectNow(id, keep){
   fillModels(); syncLang(); syncSafe(); syncStyleInputs(); renderExportForm();
   if (tokens.length){ renderTranscript(); if (!P.cues.length) genCues(); }
   recompute();
+  if (window.pfPaintBtn){ pfPaintBtn(); pfPaintInfo(); }   // Pfad-Plan: Zahl der vollständigen Videos erst mit dem fertigen Schnitt
   $('.clip-tab').classList.toggle('hidden', !P.clipOf && !P.format);
   if (P.regen && tokens.length){ genCues(); delete P.regen; saveNow(); }
   setTab(keepTab || (P.clipOf ? 'clip' : tokens.length ? 'text' : 'trans'));
@@ -716,7 +717,7 @@ setTimeout(() => { if (!$('#home').classList.contains('hidden')) renderUpdateBan
 // ── Alle Projekte sichern, Sicherung einspielen (Desktop) ──
 // Gesichert werden die Projekte samt Folienbildern und Schriften, dazu die eigenen Designprofile, Farbfavoriten, Füllwörter und
 // Untertitel-Looks, dazu das eigene Wörterbuch – ohne die Videos.
-const PREF_KEYS = ['hc-slide-profiles', 'hc-colfav', 'hc-fillers', 'hc-sub-looks', 'hc-dict', 'hc-house', 'hc-blocks', 'hc-emoji', 'hc-clipwords', 'hc-color-looks'];
+const PREF_KEYS = ['hc-slide-profiles', 'hc-colfav', 'hc-fillers', 'hc-sub-looks', 'hc-dict', 'hc-house', 'hc-blocks', 'hc-emoji', 'hc-clipwords', 'hc-color-looks', 'hp-plans'];
 function uiPrefs(){ const o = {}; for (const k of PREF_KEYS){ try { const v = JSON.parse(localStorage.getItem(k)); if (Array.isArray(v) && v.length) o[k] = v; } catch(_){} } return o; }
 function mergePrefs(pr){
   let n = 0; if (!pr || typeof pr !== 'object') return 0;
@@ -731,6 +732,9 @@ function mergePrefs(pr){
   try { n += mergeBlocks(pr['hc-blocks']); } catch(_){}
   try { n += mergeEmoji(pr['hc-emoji']); } catch(_){}
   try { n += mergeClipWords(pr['hc-clipwords']); } catch(_){}
+  // Pläne aus HoneyPlan: was es hier noch nicht gibt, kommt dazu
+  try { if (window.HoneyPlan){ const have = J(localStorage.getItem('hp-plans') || '[]') || [], ids = new Set(have.map(p => p && p.id)), add = (pr['hp-plans'] || []).map(p => { try { return HoneyPlan.parse(p); } catch(_){ return null; } }).filter(p => p && !ids.has(p.id));
+    if (add.length){ localStorage.setItem('hp-plans', JSON.stringify(have.concat(add))); n += add.length; } } } catch(_){}
   return n;
 }
 const plural = (k, one, many) => `${k} ${k === 1 ? one : many}`;
@@ -1106,7 +1110,7 @@ function tokMarks(){ const o = {}; for (const t of tokens) if (t.spk || t.ks || 
 // Zum Stand gehören auch Format, Bildausschnitt und die Lautstärke der Hauptvideos (fm, fr, sv). Sie fehlten: „Rückgängig“
 // nach einem Formatwechsel, nach dem Verschieben des Ausschnitts oder nach „Alle angleichen“ tat nichts bzw. nur die Hälfte.
 function snapshot(){ return JSON.stringify({d:[...deleted], t:P.trims, c:P.cues, i:P.items, a:P.adj, x:P.dels, y:P.splits, s:P.sub_style, e:P.edits, m:P.moves, k:P.speakers, w:tokMarks(), f:P.slides, wm:P.watermark || null, tr:P.trans || null,
-  fm:P.format || null, fr:P.frame || null, sv:P.sources.map(x => x.vol == null ? null : x.vol), mk:P.marks || [], tl:P.textline || null, rf:P.refs || [], ss:P.srcStyle || null, lw:P.lower || null, cl:P.clipList || [], pt:P.part || null, ps:P.partStyle || null, au:P.audio || null, pg:P.progress || null, co:P.color || null, fo:P.follow || null, sk:P.script || null, ck:P.checks || [], kw:P.kw || []}); }
+  fm:P.format || null, fr:P.frame || null, sv:P.sources.map(x => x.vol == null ? null : x.vol), mk:P.marks || [], tl:P.textline || null, rf:P.refs || [], ss:P.srcStyle || null, lw:P.lower || null, cl:P.clipList || [], pt:P.part || null, ps:P.partStyle || null, au:P.audio || null, pg:P.progress || null, co:P.color || null, fo:P.follow || null, sk:P.script || null, pf:P.pfade ? P.pfade.secs || [] : null, ck:P.checks || [], kw:P.kw || []}); }
 function restore(s){ const o = JSON.parse(s); deleted = new Set(o.d); P.trims = o.t; P.cues = o.c; P.items = o.i; P.adj = o.a; P.dels = o.x || []; P.splits = o.y || [];
   if (o.s) P.sub_style = o.s; P.edits = o.e || {}; P.moves = o.m || [];
   const fmCh = 'fm' in o && (P.format || null) !== (o.fm || null), frCh = 'fr' in o && JSON.stringify(P.frame || null) !== JSON.stringify(o.fr || null);
@@ -1129,6 +1133,8 @@ function restore(s){ const o = JSON.parse(s); deleted = new Set(o.d); P.trims = 
   if ('co' in o){ if (o.co) P.color = o.co; else delete P.color; }
   if ('fo' in o){ if (o.fo) P.follow = o.fo; else delete P.follow; }
   if ('sk' in o){ if (o.sk) P.script = o.sk; else delete P.script; paintScriptBtn(); }
+  const pfCh = 'pf' in o && !!P.pfade && JSON.stringify(P.pfade.secs || []) !== JSON.stringify(o.pf || []);
+  if (pfCh) P.pfade.secs = o.pf || [];
   if ('ck' in o) P.checks = o.ck || [];
   if ('kw' in o) P.kw = o.kw || [];
   if (o.f) P.slides = o.f; if (o.k) P.speakers = o.k;
@@ -1141,6 +1147,7 @@ function restore(s){ const o = JSON.parse(s); deleted = new Set(o.d); P.trims = 
   if (clCh){ paintClipsBtn(); if (clipsSheetOpen()) renderClipsSheet(); }
   if (joinSheetOpen()) paintJoinSheet(); if (markSheetOpen()) paintMarkSheet(); if (progSheetOpen()) paintProgSheet();
   partChanged(true); if (psCh) partSyncLater();
+  if (pfCh && window.pfChanged) pfChanged();
   chkChanged();
   if (coCh){ if (!playing) seekOut(outPos, false); if (colorAllPaint && $('#caHost')) colorAllPaint(); }   // Farbe des ganzen Videos: Vorschau und offenes Blatt nachziehen
   if (fmCh || frCh) frameRestored(fmCh); }
@@ -1152,7 +1159,7 @@ function frameRestored(fmCh){
   if (tab === 'clip' && window.renderClip) renderClip();
   if (!playing) seekOut(outPos, false);
 }
-function commit(fn, rerender = true){ undo.push(snapshot()); if (undo.length > 200) undo.shift(); redo = []; fn(); changed(rerender); }
+function commit(fn, rerender = true){ if (P.pfad && window.pfTouched) pfTouched(); undo.push(snapshot()); if (undo.length > 200) undo.shift(); redo = []; fn(); changed(rerender); }
 $('#undoBtn').onclick = () => { if (!undo.length || !P) return; redo.push(snapshot()); restore(undo.pop()); };
 $('#redoBtn').onclick = () => { if (!redo.length || !P) return; undo.push(snapshot()); restore(redo.pop()); };
 // Wiedergabe, Abspiellinie und Schnitt beieinander halten. Nach einer Änderung stimmt die Nummer des laufenden Abschnitts
@@ -1216,7 +1223,7 @@ function changed(rerender = true){
   cueCache.at = -1; if (!playing){ updateSubs(outPos); viewSrcLine(); viewLower(); viewPart(); viewProgress();   // Quellenzeile, Bauchbinde und Kennzeichnung der Reihe folgen dem Schnitt
     if (marks.length || $('#shapeOv').firstChild || $('#blurOv').firstChild) updateOverlay(outPos); }   // Formen und Bereiche ebenso (auch nach dem Löschen und nach „Rückgängig“)
   if (tab === 'export') renderExport(); else if (tab === 'clip') renderLenLights(); else if (tab === 'subs') a11yLater();
-  textLater(); if (refsAll().length || lowerSheetOpen()) refsLater(); if (clipsSheetOpen()) clipsLater();
+  textLater(); if (refsAll().length || lowerSheetOpen()) refsLater(); if (clipsSheetOpen()) clipsLater(); if (P.pfade && window.pfLater) pfLater();
   clearTimeout(saveT); $('#saved').textContent = '…'; saveT = setTimeout(saveNow, 700);
   if (!applyingRemote && busOn()){ clearTimeout(busT); busT = setTimeout(() => { if (busOn()) busSend({t:'state', snap: snapshot()}); }, 120); }
 }
@@ -1230,6 +1237,7 @@ function saveNow(){
   const el = $('#saved');
   try {
     TS.saveProject(P.id, JSON.stringify(P)); el.textContent = '✓'; el.classList.remove('err'); el.title = 'Gespeichert';
+    if (P.pfad && window.pfNoteMain) pfNoteMain();
     if (saveFails){ saveFails = 0; toast('Wieder gespeichert'); }
     return true;
   } catch(e){
@@ -2708,6 +2716,8 @@ function runTranscribe(resume){
     const pre = firstTime && !subsOnly ? preScriptText() : '';
     let sorted = false; if (pre && P.script.sort !== false && !transCancelled) try { sorted = scriptSortSources(pre); } catch(e){ hcLog('Videos nach dem Skript ordnen: ' + (e && e.message)); }
     const fixed = dictApply(startTok);   // hinterlegte Fehlschreibungen ersetzen, ehe aufgeräumt wird und die Untertitel entstehen
+    // Pfad-Plan (2.52): Abschnitte zuordnen, ehe aufgeräumt wird – ähnliche Sätze in verschiedenen Ausgängen sind keine wiederholten Anläufe
+    const pfRes = firstTime && !subsOnly && !transCancelled && window.pfAfterTrans ? pfAfterTrans() : null;
     const cleaned = subsOnly ? [] : autoClean(startTok);
     if (firstTime) genCues(); else genCues(startTok);
     let sk = null; if (pre) try { sk = scriptRun(pre, P.script.adopt !== false); } catch(e){ hcLog('Skript nach der Transkription: ' + (e && e.message)); }
@@ -2716,7 +2726,8 @@ function runTranscribe(resume){
     const unk = tokens.filter(t => t.i >= startTok && t.type === 'unk' && !deleted.has(t.i)).length;
     const skShare = sk && sk.stats.spoken ? sk.stats.same / sk.stats.spoken : 0;
     toast(`${words} Wörter erkannt` + (fixed ? ` · ${fixed === 1 ? '1 Stelle' : fixed + ' Stellen'} nach dem Wörterbuch korrigiert` : '') + (cleaned.length ? ` · entfernt: ${cleaned.join(', ')}` : '') + (unk ? ` · ${unk}× 🗣 nicht erkannte Sprache` : '')
-      + (sorted ? ' · Videos nach dem Skript geordnet' : '') + (sk ? (skShare < 0.3 ? ' · Skript und Transkript passen kaum zusammen – ist es das richtige Skript?' : ` · ${Math.round(skShare * 100)} % wie im Skript` + (sk.stats.fixed ? `, ${sk.stats.fixed === 1 ? '1 Stelle' : sk.stats.fixed + ' Stellen'} nach dem Skript geschrieben` : '')) : ''), sk ? 9000 : undefined);
+      + (sorted ? ' · Videos nach dem Skript geordnet' : '') + (pfRes ? ` · ${pfRes.n} von ${pfRes.of} Abschnitten des Plans gefunden` : '') + (sk ? (skShare < 0.3 ? ' · Skript und Transkript passen kaum zusammen – ist es das richtige Skript?' : ` · ${Math.round(skShare * 100)} % wie im Skript` + (sk.stats.fixed ? `, ${sk.stats.fixed === 1 ? '1 Stelle' : sk.stats.fixed + ' Stellen'} nach dem Skript geschrieben` : '')) : ''), sk || pfRes ? 9000 : undefined);
+    if (window.pfChanged) pfChanged();
   };
   const next = () => {
     if (!alive()) return;
@@ -2791,7 +2802,7 @@ function renderTranscript(){
     prev = i;
   }
   root.append(frag); tokens.forEach(t => paint(t.i));
-  paintFillerCount(fset); paintMarkTimes(); paintMarksBtn(); paintRefsBtn(); paintClipsBtn(); paintLowBtn(); paintChkBtn(); paintScriptBtn(); lowMark();
+  paintFillerCount(fset); paintMarkTimes(); paintMarksBtn(); paintRefsBtn(); paintClipsBtn(); paintLowBtn(); paintChkBtn(); paintScriptBtn(); lowMark(); if (window.pfPaintBtn) pfPaintBtn();
   const todo = P.sources.filter(s => !s.tr).length;
   $('#textTodo').classList.toggle('hidden', !todo); $('#textTodo b').textContent = todo === 1 ? '1 Video ist' : `${todo} Videos sind`;
   if ($('#findIn').value) runFind();
@@ -2805,6 +2816,7 @@ function paint(i){
   sp.classList.toggle('ks', !!t.ks && sp.classList.contains('del'));
   const kwOn = !!(P.kw && P.kw.length && P.kw.includes(i)); if (kwOn !== sp.classList.contains('kw')){ sp.classList.toggle('kw', kwOn); } sp.style.setProperty('--kw', kwOn ? (S().kwColor || KW_DEF) : '');
   const clOn = clipToks().has(i); if (clOn !== sp.classList.contains('cl')) sp.classList.toggle('cl', clOn);
+  if (window.pfPaintTok) pfPaintTok(i, sp);
   const added = t.type !== 'word' && P.edits[i];
   sp.classList.toggle('added', !!added);
   if (added){ sp.textContent = P.edits[i]; return; }
@@ -3253,10 +3265,11 @@ const KEEP_REPEAT = new Set(['sehr','ganz','so','ja','nein','nee','immer','mehr'
   'der','die','das','den','dem','des','was','wer','sie','es','wir','ihr','er','man','dass','da','hier','jetzt','gerade','auch','noch','schon','mal']);
 // Rückgabe: {ids: alles, was als Anlauf wegfällt, groups: [{v: [[a, b], …], s}]}. v nennt die Fassungen einer Wiederholung als
 // Bereiche von Wortnummern, die letzte ist die, die stehen bleibt; s kennzeichnet ganze Sätze (C5: Fassungen vergleichen).
+const pfSameTok = (a, b) => !window.pfSame || pfSame(a, b);
 function repeatFinds(minTok = 0){
   const ws = tokens.filter(t => t.i >= minTok && t.type === 'word' && !deleted.has(t.i) && tokText(t) && !isSrcDeleted((t.ws + t.we) / 2));
   const out = new Set(), groups = [];
-  for (const g of repeatGroups(ws, t => tokText(t), (i, j) => ws[i].src === ws[j].src && ws[j].ws - ws[i].ws <= 30)){
+  for (const g of repeatGroups(ws, t => tokText(t), (i, j) => ws[i].src === ws[j].src && ws[j].ws - ws[i].ws <= 30 && pfSameTok(ws[i].i, ws[j].i))){
     const from = ws[g.att[0][0]].i, to = ws[g.fin[0]].i;
     for (let i = from; i < to; i++) if (tokens[i].type !== 'pause' && !deleted.has(i)) out.add(i);
     // Die letzte Fassung: bei einem abgebrochenen Anlauf die wiederholten Wörter; war der Anlauf ein ganzer Satz, dann der ganze Satz
@@ -3276,6 +3289,7 @@ function repeatFinds(minTok = 0){
     for (let j = k + 1; j < sents.length && j <= k + 4; j++){
       const B = sents[j];
       if (B[0].src !== A[0].src || B[0].ws - A[0].ws > 45) break;
+      if (!pfSameTok(A[0].i, B[0].i)) break;   // anderer Abschnitt des Pfad-Plans: ein anderer Ausgang, kein Anlauf
       const b = B.map(t => norm(tokText(t))).filter(Boolean);
       if (b.length < 3 || a[0] !== b[0] || (a.length > 3 && a[1] !== b[1])) continue;
       const l = lcs(a, b.slice(0, a.length + 2));
@@ -3958,6 +3972,7 @@ const viewSrcLine = () => { const st = $('#stage'); placeSrcLine(st.clientWidth,
 // kam inzwischen ein anderer Schritt dazu oder liegt die letzte Änderung länger zurück, beginnt eine neue Folge.
 let burstKey = '', burstLen = -1, burstT = 0;
 function commitBurst(key, fn){
+  if (P.pfad && window.pfTouched) pfTouched();
   const now = Date.now();
   if (burstKey !== key || undo.length !== burstLen || now - burstT > 4000){ undo.push(snapshot()); if (undo.length > 200) undo.shift(); redo = []; burstKey = key; burstLen = undo.length; }
   burstT = now; fn(); changedLive();
@@ -4447,6 +4462,7 @@ $('#textMore').onclick = e => {
     {icon: icon('＋'), label: 'Video anhängen', fn: () => addSources()},
     {icon: icon('↻'), label: 'Am Ton ausrichten', fn: () => $('#realignBtn').click()},
     {icon: icon('✎'), label: 'Eigenes Wörterbuch', fn: () => openDict()},
+    ...(window.pfOpenPick && !P.clipOf ? [{icon: icon('⑂'), label: 'Pfad-Plan (mehrere Ausgänge)', fn: () => pfOpenPick()}] : []),
   ]);
 };
 $('#findIn').addEventListener('input', runFind);
@@ -5770,7 +5786,7 @@ function renderExport(){
   const nmv = exFmt === 'video' ? P.items.filter(x => x.type === 'blur' && markMoves(x)).length : 0;
   if (nmv) bn.textContent = `${nmv === 1 ? 'Ein unkenntlich gemachter Bereich liegt' : nmv + ' unkenntlich gemachte Bereiche liegen'} an einer Stelle, an der sich das Bild bewegt (Zoom oder Keyframes). Bitte in der Vorschau prüfen, ob ${nmv === 1 ? 'er' : 'sie'} durchgehend ${nmv === 1 ? 'sitzt' : 'sitzen'}.`;
   bn.classList.toggle('hidden', !bn.textContent); bn.classList.toggle('warn', !!nb || !!nmv);
-  paintExBtns(); renderLenLights(); renderChapters(); renderRefsCard(); renderA11y();
+  paintExBtns(); renderLenLights(); renderChapters(); renderRefsCard(); renderA11y(); if (window.pfExportNote) pfExportNote();
 }
 $('#exRes').onchange = renderExport;
 let exJob = null, exResult = null;
@@ -7621,7 +7637,8 @@ function paintPreScript(){
   const el = $('#preScriptInfo'); if (!el || !P) return;
   el.closest('.row').classList.toggle('hidden', !window.Skript);
   const t = preScriptText(), n = t ? Skript.words(t).length : 0, fresh = !tokens.some(x => x.type === 'word');
-  el.textContent = n ? `${n} Wörter` + (P.rec ? ' · aus HoneyRec' : '') : 'keins';
+  el.textContent = n ? `${n} Wörter` + (P.rec ? ' · aus HoneyRec' : P.script && P.script.plan ? ' · aus dem Pfad-Plan' : '') : 'keins';
+  if (window.pfPaintInfo) pfPaintInfo();
   $('#preScriptBtn').textContent = !n ? 'Einfügen' : fresh ? 'Ändern' : 'Abgleichen';
   $('#preScriptOpts').classList.toggle('hidden', !n || !fresh);
   $('#preScriptAdopt').checked = !P.script || P.script.adopt !== false;
@@ -7683,7 +7700,7 @@ function openPreScript(){
   if (had) $('#psDel').onclick = () => { P.script = null; changed(); saveNow(); paintPreScript(); closeSheet(); toast('Skript entfernt'); };
   $('#psGo').onclick = () => { const text = $('#psText').value;
     if (Skript.words(text).length < 5){ toast('Bitte das Skript einfügen'); $('#psText').focus(); return; }
-    P.script = {...(P.script || {}), text}; delete P.script.free; delete P.script.miss; delete P.script.stats;
+    P.script = {...(P.script || {}), text}; delete P.script.free; delete P.script.miss; delete P.script.stats; delete P.script.plan;
     changed(); saveNow(); paintPreScript(); closeSheet(); toast(`Skript übernommen (${Skript.words(text).length} Wörter)`); };
   openSheet(); setTimeout(() => { const t = $('#psText'); if (t && !t.value) t.focus(); }, 50);
 }

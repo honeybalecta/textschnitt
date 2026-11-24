@@ -33,6 +33,15 @@ Die Plattformen stellen dem Kern dieselbe Schnittstelle `window.TS` bereit (Date
 - Läuft ein Medium mit eigenem Ton, wird das Mikrofon nicht aufgenommen (abschaltbar über „Mikro auch bei Medien mit Ton aufnehmen“); Bilder schalten nie stumm.
 - „Fertig → HoneyCut“: Takes werden Quellen, entfernte Teile `P.dels`, Einblendungen Elemente (`it.rec`) an der Stelle der Aufnahme, das Skript `P.script`. Alles Weitere wie bei jedem Projekt.
 
+## HoneyPlan und Pfad-Videos – ein Dreh, mehrere Ausgänge
+
+**HoneyPlan** (seit 2.52) plant Videos zu Ereignissen mit offenem Ausgang: gleiche Installation, eigenes Symbol (Windows: Startmenü „HoneyPlan“ bzw. `HoneyPlan.exe`, Android: eigenes Startsymbol, Browser: `plan.html`), dazu „⑂ Pfade planen“ auf der Projektliste. Oberfläche in `core/web/plan.html` / `plan.js` / `plan.css`, Rechenkern in `core/web/plan-core.js` (`HoneyPlan`), Anschluss an HoneyCut in `core/web/pfade.js`.
+
+- Ein Plan ist eine Folge von Blöcken: gemeinsame Teile (`kind: 'teil'`) und Weichen (`kind: 'weiche'`) mit Ausgängen. Bedingungen (`when: {Weiche: [Ausgänge]}`) beschränken einen Block auf bestimmte Pfade; abweichende Fassungen (`alts`) ersetzen auf ausgewählten Pfaden den Standardtext; ein Ausgang kann ohne eigenen Teil sein (`leer`). Jeder Weg durch die Weichen ist ein Pfad und ergibt ein Video (`HoneyPlan.paths`).
+- Pläne liegen im Gerät (localStorage `hp-plans`, Teil der Sicherung der Einstellungen); für andere Geräte gibt es die Datei `.honeyplan`. `HoneyPlan.script` liefert das Aufnahme-Skript (jeder Abschnitt einmal).
+- In HoneyCut: `P.pfade = {plan, secs, vids, got}`. `secs` ordnet jedem Abschnitt eine Stelle der Aufnahme zu (Quellzeit, folgt dem Schnitt, Teil des Rückgängig-Stands als `pf`). `HoneyPlan.place` findet die Abschnitte über `Skript.align`, für anders aufgenommene Reihenfolgen zusätzlich einzeln; die Zuordnung läuft nach der ersten Transkription vor dem Aufräumen, damit „Wiederholungen weg“ nur innerhalb eines Abschnitts sucht (`pfSame`).
+- Je Pfad entsteht ein Clip-Projekt (`clipData(…, keep)`, `P.pfad`), das vor jedem Export aus dem Hauptprojekt neu aufgebaut wird (`pfEnsure`); liegt die Aufnahme in anderer Reihenfolge als der Plan, ordnen Verschiebungen (`P.moves`) die Abschnitte. Name und Titelbild (`settings.coverFirst`, `settings.coverTpl`) bleiben; eine Änderung von Hand macht das Video eigenständig (`pfad.own`). Der Export läuft über `exportProjects` wie bei Clip-Reihen.
+
 ## Arbeiten
 
 - **Projekte**: In der Projektliste benennt der Stift ein Projekt um; im offenen Projekt genügt ein Klick auf den Namen in der Kopfzeile. Der Export schlägt den neuen Namen gleich als Dateinamen vor. Die Liste lässt sich durchsuchen und nach Datum, Namen oder Länge ordnen; jedes Projekt zeigt ein Vorschaubild (das zuletzt gesehene Bild), und „Duplizieren“ legt eine Kopie als Ausgangspunkt für eine Variante an.

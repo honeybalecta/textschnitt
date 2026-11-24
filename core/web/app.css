@@ -1361,3 +1361,15 @@ label.col input{width:100%}
 @media (max-width:759px){ .ct-prev{max-height:24vh} }
 .sheet.passive:has(#ctPrev){max-height:64vh}
 @media (min-width:760px) and (min-height:600px){ .sheet.passive:has(#ctPrev){max-height:calc(100vh - 88px)} }
+
+/* Pfad-Videos (2.52): Abschnitte des Plans im Text, Blatt „Pfade“ */
+.transcript .tk.pf:not(.sel):not(.del){box-shadow:inset 0 -2px 0 rgba(229,64,42,.6)}
+.transcript .tk.pf.pfx:not(.sel):not(.del){box-shadow:inset 0 -2px 0 rgba(207,198,176,.65)}
+.transcript .tk.pf0::before{content:attr(data-pf);display:inline-block;margin-right:6px;padding:1px 7px;border-radius:6px;background:var(--surface-3);color:var(--sand);font:650 11px/1.5 var(--ui);letter-spacing:.03em;vertical-align:2px;white-space:nowrap;max-width:min(60vw,340px);overflow:hidden;text-overflow:ellipsis;text-decoration:none}
+.pf-row .btn.small{flex:none}
+.pf-vid.hit{border-color:var(--rot);background:rgba(229,64,42,.1)}
+.pf-vid .mk-go:disabled{opacity:.6}
+.pf-gotbox{border:1px solid var(--line);border-radius:var(--r);padding:10px 12px;margin:10px 0;background:var(--surface-2)}
+.pf-gotbox h4{margin:0 0 4px}
+.pf-got{flex-wrap:wrap}
+.pf-got button{white-space:normal;padding:6px 8px;min-width:30%;line-height:1.25}

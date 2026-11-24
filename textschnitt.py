@@ -37,7 +37,7 @@ os.environ.setdefault("HF_HUB_DISABLE_IMPLICIT_TOKEN", "1")
 import warnings  # noqa: E402
 warnings.filterwarnings("ignore", module="huggingface_hub")
 
-VERSION = "2.51.0"
+VERSION = "2.52.0"
 APP_DIR = Path(__file__).resolve().parent
 FROZEN = bool(getattr(sys, "frozen", False))          # als installierte .exe gebaut
 RES_DIR = Path(getattr(sys, "_MEIPASS", APP_DIR))      # mitgelieferte Dateien (Oberfläche, ffmpeg, Modelle)
@@ -6255,7 +6255,8 @@ class Handler(BaseHTTPRequestHandler):
                 if not str(f).startswith(str(d.resolve())) or not f.is_file():
                     return self._json({"error": "Nicht gefunden"}, 404)
                 return self._send(200, f.read_bytes(), DECK_TYPES.get(f.suffix.lower(), "application/octet-stream"))
-            if rest in ("", "index.html", "app.js", "studio.js", "slides.js", "deck-host.js", "app.css", "bridge-http.js", "icons.js", "chroma.js", "stimmen.js", "folgen.js", "skript.js", "thumb-engine.js", "thumb-cut.js", "titelbild.js", "rec.html", "rec.js", "rec-docs.js", "rec.css", "rec-logo.svg", "vendor/pdf.min.mjs", "vendor/pdf.worker.min.mjs"):
+            if rest in ("", "index.html", "app.js", "studio.js", "slides.js", "deck-host.js", "app.css", "bridge-http.js", "icons.js", "chroma.js", "stimmen.js", "folgen.js", "skript.js", "thumb-engine.js", "thumb-cut.js", "titelbild.js", "rec.html", "rec.js", "rec-docs.js", "rec.css", "rec-logo.svg", "vendor/pdf.min.mjs", "vendor/pdf.worker.min.mjs",
+                        "plan.html", "plan.js", "plan-core.js", "plan.css", "plan-logo.svg", "pfade.js"):
                 f = WEB_DIR / (rest or "index.html")
                 ctype = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
                          ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".mjs": "text/javascript; charset=utf-8"}[f.suffix]
@@ -6499,6 +6500,16 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({"ok": False})
                 try:
                     fn("rec")
+                except TypeError:
+                    return self._json({"ok": False})
+                return self._json({"ok": True})
+            if rest == "api/app/window":   # HoneyPlan aus HoneyCut heraus und zurück: eigenes Fenster (nur in der Windows-App)
+                fn = APP_HOOKS.get("focus")
+                app = str(data.get("app") or "")
+                if not fn or app not in ("plan", "cut"):
+                    return self._json({"ok": False})
+                try:
+                    fn(app)
                 except TypeError:
                     return self._json({"ok": False})
                 return self._json({"ok": True})

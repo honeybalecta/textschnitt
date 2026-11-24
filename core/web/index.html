@@ -18,7 +18,7 @@
   </header>
   <div class="home-body">
     <div class="upd hidden" id="updBanner"></div>
-    <div class="home-actions"><h2 class="home-h">Projekte</h2><button class="btn small hidden" id="handBtn" title="Ein Projekt im WLAN zwischen Computer und Handy übergeben">⇄ Handy</button><button class="btn small" id="recHome" title="Mit HoneyRec aufnehmen: Kamera, Skript, Medien und Bildschirm – danach geht es hier weiter">● Aufnehmen</button><button class="btn small" id="impProj" title="Projekt von einem anderen Gerät oder einer anderen Person öffnen (.honeycut)">⤓ Projekt importieren</button></div>
+    <div class="home-actions"><h2 class="home-h">Projekte</h2><button class="btn small hidden" id="handBtn" title="Ein Projekt im WLAN zwischen Computer und Handy übergeben">⇄ Handy</button><button class="btn small" id="planHome" title="Mit HoneyPlan Videos für mehrere mögliche Ausgänge planen: gemeinsame Teile, Weichen, Pfade">⑂ Pfade planen</button><button class="btn small" id="recHome" title="Mit HoneyRec aufnehmen: Kamera, Skript, Medien und Bildschirm – danach geht es hier weiter">● Aufnehmen</button><button class="btn small" id="impProj" title="Projekt von einem anderen Gerät oder einer anderen Person öffnen (.honeycut)">⤓ Projekt importieren</button></div>
     <div class="home-find hidden" id="homeFind"><input type="search" id="projFind" placeholder="Projekte und Text durchsuchen" autocomplete="off" enterkeyhint="search"><select id="projSort" title="Reihenfolge der Liste"><option value="new">Zuletzt bearbeitet</option><option value="old">Älteste zuerst</option><option value="name">Name A–Z</option><option value="len">Längste zuerst</option></select></div>
     <div id="projList"></div>
     <div id="findHits" class="find-hits hidden"></div>
@@ -120,6 +120,7 @@
         <label class="row"><input type="checkbox" id="fillers" checked> Füllwörter (äh, ähm) mit erkennen</label>
         <div class="row dict-row"><span>Wörterbuch für Namen und Fachbegriffe: <b id="dictInfo">noch leer</b></span><button class="btn small" id="dictBtn">Bearbeiten</button></div>
         <div class="row dict-row"><span>Skript zum Abgleichen: <b id="preScriptInfo">keins</b></span><button class="btn small" id="preScriptBtn">Einfügen</button></div>
+        <div class="row dict-row"><span>Pfad-Plan für mehrere Ausgänge: <b id="pfInfo">keiner</b></span><button class="btn small" id="pfPlanBtn">Wählen</button></div>
         <div class="pre-script hidden" id="preScriptOpts">
           <label class="row"><input type="checkbox" id="preScriptAdopt" checked> Schreibweisen, Namen und Satzzeichen aus dem Skript übernehmen</label>
           <label class="row" id="preScriptSortRow"><input type="checkbox" id="preScriptSort" checked> Videos nach dem Skript in die richtige Reihenfolge bringen</label>
@@ -153,6 +154,7 @@
         <button class="chip" id="marksBtn" title="Kapitel und Notizen dieses Projekts">Marken</button>
         <button class="chip" id="refsBtn" title="Quellen und offene Belege dieses Projekts">Quellen</button>
         <button class="chip" id="clipsBtn" title="Clips aus diesem Video: vorgemerkte Abschnitte, Vorschläge und Clip-Reihen">Clips</button>
+        <button class="chip hidden" id="pfadeBtn" title="Pfad-Videos: Abschnitte des Plans zuordnen, Videos ansehen und gemeinsam exportieren">Pfade</button>
         <button class="chip hidden" id="lowBtn" title="Unsichere Wörter der Reihe nach anhören, bestätigen oder korrigieren (P)">Unsichere prüfen</button>
         <button class="chip hidden" id="checkBtn" title="Jeden automatischen Schnitt anhören und einzeln zurücknehmen">Prüfliste</button>
         <button class="chip hidden" id="scriptBtn" title="Abgleich mit dem Manuskript: frei gesprochene und ausgelassene Stellen">Skript</button>
@@ -279,6 +281,11 @@
         <span class="muted small" id="clipInfo"></span>
         <div class="len-lights hidden" id="clipLen"></div>
         <span class="muted small">Schnitte, Bilder, Titel und Lautstärke in diesem Clip lassen das Hauptprojekt unverändert.</span>
+      </div>
+      <div class="card stack hidden" id="clipPfadCard">
+        <h4 id="clipPfadH">Pfad-Video</h4>
+        <span class="muted small" id="clipPfadInfo"></span>
+        <div class="row wrap"><button class="btn small" id="clipPfadCover" title="Eigenes Titelbild für dieses Video – auf Wunsch als erstes Bild im Video">Titelbild …</button><button class="btn small" id="clipPfadMain">Zum Hauptprojekt</button><button class="btn small" id="clipPfadOwn"></button></div>
       </div>
       <div class="card stack">
         <h4>Format</h4>
@@ -421,6 +428,7 @@
         <div class="len-lights hidden" id="exLen"></div>
         <div class="ex-notes hidden" id="exNotes"><span></span><button class="btn small" id="exNotesBtn">Ansehen</button></div>
         <div class="ex-notes warn hidden" id="exRefs"><span></span><button class="btn small" id="exRefsBtn">Ansehen</button></div>
+        <div class="ex-notes hidden" id="exPfade"><span></span><button class="btn small" id="exPfadeBtn">Pfade</button></div>
         <div class="ex-notes hidden" id="exA11y"><span></span><button class="btn small" id="exA11yBtn">Ansehen</button></div>
         <label class="row nogpu" data-fmt="video" id="exGpuRow" title="Die Videoeinheit der Grafikkarte kodiert um ein Mehrfaches schneller. Kommt sie bei einem Export nicht durch, rechnet HoneyCut ihn von selbst auf dem bisherigen Weg"><input type="checkbox" id="exGpu" checked> <span>Über die Grafikkarte rechnen (<span id="exGpuName"></span>)</span></label>
         <div class="row wrap"><button class="btn primary" id="exBtn">Exportieren</button><button class="btn hidden" id="exCancel">Abbrechen</button><button class="btn" id="exQueueBtn" title="Diesen Export einreihen und im Hintergrund rechnen lassen – du kannst gleich weiterschneiden oder ein anderes Projekt öffnen">In die Warteschlange</button><button class="btn" id="exPackBtn" title="Mehrere Fassungen mit einem Klick: Hochformat, Querformat, Titelbild">Export-Paket …</button></div>
@@ -532,6 +540,7 @@
 <script src="stimmen.js"></script>
 <script src="folgen.js"></script>
 <script src="skript.js"></script>
+<script src="plan-core.js"></script>
 <script src="thumb-engine.js"></script>
 <script src="thumb-cut.js"></script>
 <script src="bridge-http.js"></script>
@@ -540,5 +549,6 @@
 <script src="slides.js"></script>
 <script src="deck-host.js"></script>
 <script src="titelbild.js"></script>
+<script src="pfade.js"></script>
 </body>
 </html>

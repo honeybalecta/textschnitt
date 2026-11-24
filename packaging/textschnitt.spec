@@ -4,7 +4,7 @@ from pathlib import Path
 from PyInstaller.utils.hooks import collect_all
 
 ROOT = Path(SPECPATH).parent
-datas = [(str(ROOT / "core" / "web"), "web"), (str(ROOT / "textschnitt.ico"), "."), (str(ROOT / "packaging" / "honeyrec.ico"), ".")]
+datas = [(str(ROOT / "core" / "web"), "web"), (str(ROOT / "textschnitt.ico"), "."), (str(ROOT / "packaging" / "honeyrec.ico"), "."), (str(ROOT / "packaging" / "honeyplan.ico"), ".")]
 for sub in ("ffmpeg", "models"):
     src = ROOT / "build" / sub
     if src.exists():
@@ -23,4 +23,7 @@ exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name="HoneyCut", console=Fa
 # HoneyRec: eigenes Programm-Symbol und eigener Start, gleicher Programmordner (startet im Aufnahmemodus, siehe textschnitt_app.py)
 exe_rec = EXE(pyz, a.scripts, [], exclude_binaries=True, name="HoneyRec", console=False,
               icon=str(ROOT / "packaging" / "honeyrec.ico"), version=str(ROOT / "packaging" / "version.txt"))
-coll = COLLECT(exe, exe_rec, a.binaries, a.datas, strip=False, upx=False, name="HoneyCut")
+# HoneyPlan: Planer für Videos mit mehreren Ausgängen, ebenfalls eigener Start im selben Programmordner
+exe_plan = EXE(pyz, a.scripts, [], exclude_binaries=True, name="HoneyPlan", console=False,
+               icon=str(ROOT / "packaging" / "honeyplan.ico"), version=str(ROOT / "packaging" / "version.txt"))
+coll = COLLECT(exe, exe_rec, exe_plan, a.binaries, a.datas, strip=False, upx=False, name="HoneyCut")

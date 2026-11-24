@@ -259,6 +259,46 @@ def takt(out: Path) -> None:
     print("takt.mp4", f"{TAKT_S} s")
 
 
+# Prüfmedium zu den Pfad-Videos (2.52): eine Aufnahme nach einem Plan mit zwei Weichen. Die Abschnitte stehen in der Reihenfolge
+# der Aufnahme; „pfade.json“ nennt je Abschnitt die Quellzeit (für die Prüfung am fertigen Video). Der Einstieg beginnt mit einem
+# wiederholten Anlauf; die beiden Ausgänge der ersten Weiche und die beiden Fassungen des Schlusses klingen ähnlich wie Anläufe,
+# sind aber keine. Das Bild trägt je Bild seine Nummer als Balkenmuster (wie takt.mp4, hier 20 Bilder/s).
+PFADE = [
+    ("einstieg", ["Heute entscheidet der Heute entscheidet der Stadtrat über den Mietendeckel.", "Wir haben lange dafür gekämpft."]),
+    ("angenommen", ["Der Antrag ist angenommen.", "Die Mieten bleiben stabil."]),
+    ("abgelehnt", ["Der Antrag ist abgelehnt.", "Der Kampf geht weiter."]),
+    ("frei", ["Das hier spreche ich frei und ohne Vorlage."]),
+    ("begehren", ["Außerdem startet jetzt das Bürgerbegehren."]),
+    ("schluss", ["Kommt am Samstag zur Versammlung im Rathaus."]),
+    ("schluss_abgelehnt", ["Kommt am Samstag zur Kundgebung vor dem Rathaus."]),
+]
+PFADE_FPS = 20
+
+
+def pfade(out: Path) -> None:
+    items, marks = [], []
+    for name, sents in PFADE:
+        marks.append((name, len(items)))
+        for si, sent in enumerate(sents):
+            ws = sent.split()
+            for k, w in enumerate(ws):
+                items.append((w, .93, (1.6 if si == len(sents) - 1 else 0.5) if k == len(ws) - 1 else 0.05))
+    wav = out / "pfade.wav"
+    length = skript(wav, out / "pfade.words.json", items)
+    assert length * PFADE_FPS < 2 ** TAKT_BITS, "pfade.mp4 ist für das Balkenmuster zu lang"
+    words = json.loads((out / "pfade.words.json").read_text(encoding="utf-8"))
+    secs = {}
+    for q, (name, a) in enumerate(marks):
+        b = (marks[q + 1][1] if q + 1 < len(marks) else len(items)) - 1
+        secs[name] = {"start": words[a]["start"], "end": words[b]["end"], "words": b - a + 1}
+    (out / "pfade.json").write_text(json.dumps({"fps": PFADE_FPS, "length": round(length, 3), "secs": secs}, ensure_ascii=False), encoding="utf-8")
+    bars = f"geq=lum='if(gt(mod(floor(N/pow(2,floor(X*{TAKT_BITS}/W))),2),0),232,24)':cb=128:cr=128"
+    ff("-f", "lavfi", "-i", f"color=c=black:size=160x90:rate={PFADE_FPS},format=yuv420p,{bars},scale=640:360:flags=neighbor", "-i", str(wav), "-t", f"{length:.2f}",
+       "-c:v", "libx264", "-preset", "veryfast", "-crf", "24", "-g", "20", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "96k", "-movflags", "+faststart", str(out / "pfade.mp4"))
+    wav.unlink()
+    print("pfade.mp4", f"{length:.1f} s")
+
+
 # Prüfmedium zum Erkennen der Personen (2.38): drei künstliche Stimmen. Jede hat eine eigene Grundtonhöhe und einen eigenen
 # „Rachenraum“ (Lage der Formanten); die Vokale wechseln von Silbe zu Silbe. (Grundton in Hz, Faktor der Formanten, Pegel)
 STIMMEN = [(112, 1.0, 1.0), (205, 1.2, 0.7), (150, 0.86, 0.85)]
@@ -456,6 +496,8 @@ def main(out: Path) -> None:
         ton(out)
     if not all((out / f).exists() for f in ("takt.mp4", "takt.words.json")):
         takt(out)
+    if not all((out / f).exists() for f in ("pfade.mp4", "pfade.words.json", "pfade.json")):
+        pfade(out)
     if not all((out / f).exists() for f in ("gespraech.mp4", "gespraech.words.json", "gespraech.json")):
         gespraech(out)
     if not (out / "stimmen-flite.wav").exists():
