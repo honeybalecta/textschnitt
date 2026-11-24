@@ -1722,7 +1722,55 @@ def ton_241():
     chk("Speicher verwalten kennt die Kopien mit Mikrofon-Ton", grp is not None and grp["count"] == 3 and grp["bytes"] > 0, grp and (grp["count"], grp["bytes"]))
 
 
-PARTS = (speichern_und_fassungen, speicher, sicherung, projektpakete, kleine_helfer, quellen_und_belege, schrift_im_export, transkript, export_231, untertitel_effekte, ton_234, belege_235, bild_236, uebergabe_237, stimmen_238, folgen_239, skript_240, ton_241, neue_versionen, bericht_und_protokoll)
+def exportordner_2521():
+    """2.52.1: Export aus einem früheren Export (Ordner „…_honeycut“) landet in diesem Ordner statt in einem weiteren darin;
+    alle Pfade bleiben unter der Grenze von Windows (259 Zeichen). Nachgestellt mit den Namen aus Raphaels Fehlerbericht."""
+    base = TMP / "Quick Share Nachbau"
+    first = "Video_262256_DJI_20261122180004_0007_D_MP4_159260686_59000_202611221814_video_original"
+    prev = "Video_262496_DJI_20261122181428_0022_D_MP4_210591843_78000_20261122181546_video_original + 16_geschnitten"
+    # Pfadlängen wie auf Raphaels Rechner („C:\\Users\\strat\\Downloads\\Quick Share“ hat 36 Zeichen)
+    win = Path("C:/Users/strat/Downloads/Quick Share".replace("/", os.sep)) if os.name == "nt" else Path("/" + "u" * 35)
+    d1, s1 = T.export_target(win / f"{first}.MP4", prev)
+    chk("Export der 17 Aufnahmen: Ordner und Name wie bisher, solange alles unter der Grenze bleibt",
+        d1.name == f"{first}_honeycut" and s1 == prev and len(str(d1 / f"Untertitel – {s1}.srt")) <= 259, [d1.name, s1])
+    d2, s2 = T.export_target(d1 / f"{prev}.mp4", "URENCO_geschnitten")
+    chk("Export aus diesem Export: landet im selben Ordner „…_honeycut“, kein Ordner im Ordner", d2 == d1 and s2 == "URENCO_geschnitten", [str(d2), s2])
+    longest = max(len(str(d2 / f"Untertitel – {s2}.srt")), len(str(d2 / f"{s2} – Textfassung.txt")))
+    chk("… und der längste Pfad (SRT, Textfassung) bleibt unter der Grenze von Windows", longest <= 259, longest)
+    deep = win / "Projekte Honey Balecta" / "November 2026 – Videos"
+    d3, s3 = T.export_target(deep / f"{first}.MP4", prev + " und noch viel mehr Text im Namen des Projekts")
+    l3 = max(len(str(d3 / f"Untertitel – {s3}.srt")), len(str(d3 / f"{s3} – Textfassung.txt")))
+    chk("Lange Namen in tiefem Ordner: erst der Ordnername, dann der Name des Exports gekürzt, alles unter der Grenze",
+        l3 <= 259 and len(str(d3)) <= 247 and d3.name.endswith("_honeycut") and d3.name.startswith("Video_262256") and s3.startswith("Video_262496") and not s3.endswith((" ", ".")), [l3, d3.name, s3])
+    d4, s4 = T.export_target(base / "kurz.mp4", "Kurz_geschnitten")
+    chk("Kurze Namen bleiben unverändert", d4 == base / "kurz_honeycut" and s4 == "Kurz_geschnitten", [str(d4), s4])
+    # echter Export (ffmpeg nachgestellt): aus einem früheren Export, mit Untertiteln und Titelbild, gleicher Name wie die Quelle
+    old = base / f"{first}_honeycut"
+    old.mkdir(parents=True, exist_ok=True)
+    src = old / f"{prev}.mp4"
+    src.write_bytes(b"frueherer Export")
+    render0 = T.render_plan
+    T.render_plan = lambda job, plan, out, with_video, cues: (Path(out).write_bytes(b"neu"), None)[1]
+    cues = [{"start": 0.5, "end": 2.0, "text": "Hallo"}]
+    plan = {"format": "video", "name": "URENCO_geschnitten", "segments": [{"uri": str(src), "in": 0, "out": 3}], "sources": [{"uri": str(src)}],
+            "subs": {"cues": cues, "style": {}}, "textfile": {"text": "Text"}, "extras": [{"name": "U" * 120 + " – Titelbild.jpg", "data": "aGFsbG8="}]}
+    try:
+        r = T.export_job(job(), plan)
+        same = base / "k_honeycut" / "Quelle.mp4"
+        same.parent.mkdir(parents=True, exist_ok=True)
+        same.write_bytes(b"Aufnahme")
+        r2 = T.export_job(job(), {**plan, "name": "Quelle", "segments": [{"uri": str(same), "in": 0, "out": 3}], "sources": [{"uri": str(same)}], "extras": []})
+    finally:
+        T.render_plan = render0
+    names = sorted(Path(f).name for f in r["files"])
+    chk("Export aus dem früheren Export: Video, SRT, Textfassung und Titelbild liegen im vorhandenen Ordner",
+        Path(r["folder"]) == old and all(Path(f).parent == old and Path(f).is_file() for f in r["files"]) and len(names) == 4
+        and "URENCO_geschnitten.mp4" in names and "Untertitel – URENCO_geschnitten.srt" in names, names)
+    chk("Heißt der neue Export wie die Aufnahme, überschreibt er sie nicht („(neu)“)",
+        same.read_bytes() == b"Aufnahme" and Path(r2["playable"]).name == "Quelle (neu).mp4", Path(r2["playable"]).name)
+
+
+PARTS = (speichern_und_fassungen, speicher, sicherung, projektpakete, kleine_helfer, quellen_und_belege, schrift_im_export, transkript, export_231, untertitel_effekte, ton_234, belege_235, bild_236, uebergabe_237, stimmen_238, folgen_239, skript_240, ton_241, exportordner_2521, neue_versionen, bericht_und_protokoll)
 for part in [p for p in PARTS if p.__name__ == MODE] or PARTS:
     print(f"── {part.__name__.replace('_', ' ')} ──", flush=True)
     part()

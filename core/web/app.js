@@ -5590,7 +5590,7 @@ function renderExportForm(){
   $('#exQualityRow').dataset.fmt = 'video';   // Qualität gibt es auf allen Plattformen (Android: Bitrate des Encoders)
   $('#exNote').textContent = CAP.platform === 'web' ? 'Das Video wird in deinem Browser berechnet und danach heruntergeladen – nichts verlässt dein Gerät. Lass diesen Tab während des Exports geöffnet. Untertitel kommen zusätzlich als SRT-Datei mit.'
     : CAP.platform === 'android' ? 'Das Video landet direkt in deiner Galerie (Ordner „HoneyCut“). Bitte die App während des Exports geöffnet lassen.'
-    : 'Die Dateien landen im Ordner „…_honeycut“ neben deinem ersten Video. Untertitel kommen zusätzlich als SRT-Datei mit.';
+    : 'Die Dateien landen im Ordner „…_honeycut“ neben deinem ersten Video – liegt es selbst schon in so einem Ordner, dann dort. Untertitel kommen zusätzlich als SRT-Datei mit.';
   paintExportForm();
 }
 function paintExportForm(){

@@ -2,6 +2,12 @@
 
 Was sich mit jeder Version von HoneyCut ändert. Die Windows-App zeigt diese Stichpunkte an, sobald eine neuere Version bereitsteht.
 
+## 2.52.1 · Export aus einem früheren Export
+
+- **Export, wenn das Video selbst schon ein Export ist:** Lag die Aufnahme in einem Ordner „…_honeycut“, legte HoneyCut darin einen weiteren Ordner mit dem langen Namen an. Der Pfad wurde zu lang für Windows (höchstens 259 Zeichen): Video und Ton entstanden noch, die Untertitel-Datei daneben scheiterte mit „No such file or directory“, und der Export galt als fehlgeschlagen. Jetzt landet der neue Export direkt im vorhandenen Ordner „…_honeycut“.
+- Werden Ordner- oder Dateiname so lang, dass Windows sie nicht mehr anlegen könnte, kürzt HoneyCut sie vorher – erst den Ordner, dann den Dateinamen. Liegt der Ordner der Aufnahme selbst zu tief, sagt HoneyCut das vor dem Rechnen.
+- Heißt der Export wie die Aufnahme im selben Ordner, bekommt er den Zusatz „(neu)“ – die Aufnahme bleibt unangetastet.
+
 ## 2.52.0 · ScriptGenius und Pfad-Videos: ein Dreh, mehrere Ausgänge
 
 - **ScriptGenius (neues Programm):** Für Videos zu Ereignissen, deren Ausgang noch offen ist. Du legst fest, was in jedem Video gleich ist („Gemeinsamer Teil“) und an welchen Stellen sich die Videos trennen („Weiche“ mit ihren Ausgängen). Jeder Weg durch alle Weichen ergibt ein Video; ScriptGenius zeigt sie als Baum und als Liste mit geschätzter Länge. Weichen und Teile lassen sich auf bestimmte Pfade beschränken, ein Ausgang kann ohne eigenen Teil sein, und ein Text wird einmal geschrieben und nur dort durch eine abweichende Fassung ersetzt, wo es nötig ist. Das Skript ist freiwillig, eine Beschriftung genügt.

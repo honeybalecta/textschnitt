@@ -37,7 +37,7 @@ os.environ.setdefault("HF_HUB_DISABLE_IMPLICIT_TOKEN", "1")
 import warnings  # noqa: E402
 warnings.filterwarnings("ignore", module="huggingface_hub")
 
-VERSION = "2.52.0"
+VERSION = "2.52.1"
 APP_DIR = Path(__file__).resolve().parent
 FROZEN = bool(getattr(sys, "frozen", False))          # als installierte .exe gebaut
 RES_DIR = Path(getattr(sys, "_MEIPASS", APP_DIR))      # mitgelieferte Dateien (Oberfläche, ffmpeg, Modelle)
@@ -3564,12 +3564,55 @@ def write_capcut(plan: dict, root: Path, name: str, cues: list[dict], style: dic
 
 # ───────────────────────────── Export-Auftrag ─────────────────────────────
 
+# Windows legt eine Datei nur an, wenn ihr ganzer Pfad höchstens 259 Zeichen hat (MAX_PATH; der Schalter für längere Pfade
+# steht in Windows meist aus). ffmpeg kommt mit längeren Pfaden zurecht, Python nicht: Bis 2.52.0 entstand dann das Video,
+# und die SRT-Datei daneben scheiterte mit „No such file or directory“ – etwa bei einem Export aus einem früheren Export
+# (Ordner „…_honeycut“ im Ordner „…_honeycut“, jeweils mit dem langen Namen der ersten Aufnahme).
+PATH_MAX = 259      # Datei: 260 Zeichen mit dem abschließenden Nullzeichen
+DIR_MAX = 247       # Ordner: Windows behält 12 Zeichen für einen Dateinamen darin zurück
+EXPORT_TAIL = 18    # längste Endung neben dem Namen des Exports: „ – Textfassung.txt“ (18), „Untertitel – ….srt“ (17)
+
+
+def _shorten(s: str, n: int) -> str:
+    """Kürzt auf höchstens n Zeichen; Windows verträgt keine Namen, die auf Leerzeichen oder Punkt enden."""
+    return s[:max(1, n)].rstrip(" .-_–+") or "export"
+
+
+def export_target(src: Path, stem: str) -> tuple[Path, str]:
+    """Ordner und Name eines Exports. Der Ordner heißt wie das erste Video mit „_honeycut“ und liegt daneben. Liegt das erste
+    Video selbst schon in einem „…_honeycut“-Ordner (ein früherer Export, weiterbearbeitet), landet der neue Export in diesem
+    Ordner – statt Ordner im Ordner. Wird der längste Pfad zu lang für Windows, kürzt HoneyCut erst den Ordnernamen
+    (bis auf 40 Zeichen), dann den Namen des Exports (bis auf 24 Zeichen)."""
+    parent = src.parent
+    if parent.name.lower().endswith("_honeycut"):
+        outdir = parent
+    else:
+        folder = src.stem
+        full = len(str(parent / f"{folder}_honeycut"))
+        over = max(full + 1 + len(stem) + EXPORT_TAIL - PATH_MAX, full - DIR_MAX)
+        if over > 0:
+            folder = _shorten(folder, max(40, len(folder) - over))
+        outdir = parent / f"{folder}_honeycut"
+    over = len(str(outdir)) + 1 + len(stem) + EXPORT_TAIL - PATH_MAX
+    if over > 0:
+        stem = _shorten(stem, max(24, len(stem) - over))
+    return outdir, stem
+
+
 def export_job(job: dict, plan: dict):
     fmt = plan.get("format") or "video"
     first = next((s for s in plan.get("sources") or [] if s.get("uri")), None) or {"uri": plan["segments"][0]["uri"]}
     src = Path(norm_path(first["uri"]))
-    outdir = src.parent / f"{src.stem}_honeycut"
-    stem = safe_name(plan.get("name") or f"{src.stem}_geschnitten")
+    outdir, stem = export_target(src, safe_name(plan.get("name") or f"{src.stem}_geschnitten"))
+    if fmt in ("video", "audio"):   # im selben Ordner wie die Aufnahme: nie die Aufnahme selbst überschreiben
+        ext = ".mp4" if fmt == "video" else f".{plan.get('audioFormat') or 'wav'}"
+        ins = {os.path.normcase(norm_path(str(x.get("uri")))) for x in list(plan.get("sources") or []) + list(plan.get("segments") or []) if x.get("uri")}
+        if os.path.normcase(str(outdir / f"{stem}{ext}")) in ins:
+            stem = _shorten(stem, min(len(stem), PATH_MAX - EXPORT_TAIL - len(str(outdir)) - 7)) + " (neu)"
+    if os.name == "nt" and (len(str(outdir)) + 1 + len(stem) + EXPORT_TAIL > PATH_MAX or len(str(outdir)) > DIR_MAX):
+        raise RuntimeError(f"Der Ordner deines ersten Videos liegt zu tief für Windows ({len(str(src.parent))} Zeichen bis dorthin): "
+                           "Die Exportdateien ließen sich dort nicht anlegen. Verschieb das Video in einen Ordner mit kürzerem Pfad, "
+                           "etwa direkt unter „Videos“, und exportiere noch einmal.")
     subs = plan.get("subs") or {}
     cues = clean_cues(subs.get("cues"))
     style = subs.get("style") or {}
@@ -3641,7 +3684,8 @@ def export_job(job: dict, plan: dict):
     for x in (plan.get("extras") or [])[:8] if fmt in ("video", "audio") else []:
         try:
             raw = re.sub(r'[\\/:*?"<>|\x00-\x1f]', "_", str(x.get("name") or "Beigabe")).strip(". ") or "Beigabe"
-            name = Path(raw).stem[:100] + Path(raw).suffix.lower()[:6]
+            ext = Path(raw).suffix.lower()[:6]
+            name = _shorten(Path(raw).stem, min(100, PATH_MAX - len(str(outdir)) - 1 - len(ext))) + ext
             data = base64.b64decode(str(x.get("data") or "").split(",")[-1])
             if data and len(data) < 60_000_000 and Path(name).suffix in (".jpg", ".png", ".txt", ".srt"):
                 (outdir / name).write_bytes(data)
