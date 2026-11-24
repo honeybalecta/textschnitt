@@ -27,7 +27,7 @@ import java.util.concurrent.Executors
  * Liefert Oberfläche, Videos (mit Byte-Bereichen, damit der Player springen kann) und Vorschaubilder.
  */
 class LocalServer(private val ctx: Context) {
-    companion object { const val DECK_PACKAGE = "de.honeybalecta.honeydeck" }
+    companion object { const val DECK_PACKAGE = "de.honeybalecta.honeydeck"; const val SG_PACKAGE = "de.honeybalecta.scriptgenius" }
     private val token = ByteArray(12).also { SecureRandom().nextBytes(it) }.joinToString("") { "%02x".format(it) }
     private val server = ServerSocket(0, 64, InetAddress.getByName("127.0.0.1"))
     private val pool = Executors.newCachedThreadPool()
@@ -107,6 +107,7 @@ class LocalServer(private val ctx: Context) {
                         sub == "rec/chunk" -> recChunk(out, r, inp)
                         sub == "thumb" -> thumb(out, r)
                         sub.startsWith("deck/") -> deckAsset(out, sub.removePrefix("deck/").ifEmpty { "index.html" })
+                        sub.startsWith("sg/") -> sgAsset(out, sub.removePrefix("sg/").ifEmpty { "index.html" })
                         else -> asset(out, sub.ifEmpty { "index.html" })
                     }
                     out.flush()
@@ -145,6 +146,14 @@ class LocalServer(private val ctx: Context) {
     private fun deckAsset(out: OutputStream, path: String) {
         if (path.contains("..")) { send(out, 404, "Not Found", "text/plain", ByteArray(0)); return }
         val bytes = runCatching { ctx.createPackageContext(DECK_PACKAGE, 0).assets.open("deck/$path").use { it.readBytes() } }.getOrNull()
+            ?: run { send(out, 404, "Not Found", "text/plain", ByteArray(0)); return }
+        send(out, 200, "OK", typeOf(path), bytes)
+    }
+
+    // ScriptGenius: Oberfläche aus der installierten ScriptGenius-App (fehlt sie, gibt es 404 und HoneyCut lädt Pläne nur als Datei)
+    private fun sgAsset(out: OutputStream, path: String) {
+        if (path.contains("..")) { send(out, 404, "Not Found", "text/plain", ByteArray(0)); return }
+        val bytes = runCatching { ctx.createPackageContext(SG_PACKAGE, 0).assets.open("sg/$path").use { it.readBytes() } }.getOrNull()
             ?: run { send(out, 404, "Not Found", "text/plain", ByteArray(0)); return }
         send(out, 200, "OK", typeOf(path), bytes)
     }

@@ -513,7 +513,12 @@
   }
   // ───────── Schnittstelle für den Kern ─────────
   let wake = null;
+  // ScriptGenius im Browser: Seite honeybalecta.github.io/scriptgenius/ – dieselbe Website, also derselbe Speicher (localStorage „sg-plans“)
+  const sgAll = () => { try { const a = JSON.parse(lsGet('sg-plans') || '[]'); return Array.isArray(a) ? a : []; } catch(_){ return []; } };
   window.TS = {
+    sgList: () => JSON.stringify(sgAll()),
+    sgSave: json => { try { const p = JSON.parse(json), a = sgAll().filter(q => q && q.id !== p.id); a.unshift(p); localStorage.setItem('sg-plans', JSON.stringify(a)); return ''; } catch(e){ return (e && e.message) || 'Nicht gespeichert'; } },
+    sgDelete: id => { lsSet('sg-plans', JSON.stringify(sgAll().filter(q => q && q.id !== id))); return ''; },
     info: () => JSON.stringify({platform:'web', version:VERSION, exportFormats:['video', 'audio'], bus: typeof BroadcastChannel !== 'undefined', gpu: hasGpu, matte: typeof VideoEncoder !== 'undefined', translate: typeof Translator !== 'undefined'}),
     pick: (id, kind) => { if (kind === 'font') pickFont(id); else pick(id, kind); },
     fonts: () => JSON.stringify([...fontStore.values()].map(f => ({uri: 'font:' + f.id, name: f.name}))),
@@ -619,8 +624,9 @@
     } catch(e){ console.error(e); }
     try { hasGpu = !!(navigator.gpu && await Promise.race([navigator.gpu.requestAdapter(), new Promise(r => setTimeout(() => r(null), 1500))])); } catch(_){}
     window.TS_DECK_BASE = '../honeydeck/';   // HoneyDeck: eigene Seite honeybalecta.github.io/honeydeck/
+    window.TS_SG_BASE = '../scriptgenius/';   // ScriptGenius: eigene Seite honeybalecta.github.io/scriptgenius/
     if (window.TS_REC){ await loadScript('rec-docs.js'); await loadScript('rec.js'); }   // HoneyRec: eigene Seite, ohne den Schnitt-Kern
-    else { await loadScript('app.js'); await loadScript('studio.js'); await loadScript('slides.js'); await loadScript('deck-host.js'); }
+    else { await loadScript('app.js'); await loadScript('studio.js'); await loadScript('slides.js'); await loadScript('deck-host.js'); await loadScript('sg-host.js'); }
     // Hinweise auf der Startseite
     const home = $('#home .home-body');
     if (home){

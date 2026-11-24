@@ -1,6 +1,7 @@
 'use strict';
-/* ScriptGenius – Rechenkern für Videos mit mehreren möglichen Ausgängen. Ohne Netz, für jede Plattform gleich;
-   der Planer (plan.html) und HoneyCut (pfade.js) rechnen damit.
+/* ScriptGenius – Rechenkern für Videos mit mehreren möglichen Ausgängen. Ohne Netz, für jede Plattform gleich.
+   Gepflegt im Repository honeybalecta/scriptgenius (web/sg-core.js); HoneyCut trägt eine Kopie (core/web/sg-core.js)
+   und rechnet damit die Pfad-Videos. Nach Änderungen hier die Datei nach HoneyCut kopieren.
 
    Ein Plan ist eine Folge von Blöcken in der Reihenfolge des Videos:
      {id, kind: 'teil',   label, text, when?, alts?}            gemeinsamer Teil
@@ -27,7 +28,7 @@
    ScriptGenius.place(plan, spoken)    → {ranges: [{seg, a, b, n, of}], miss: [id …]} – wo die Abschnitte im Transkript liegen
                                       (spoken: [{text}] in Sprechreihenfolge; a, b: Stellen in spoken). Braucht skript.js. */
 (function(g){
-  const ID = /^[A-Za-z0-9_-]{1,24}$/, MAX_BLOCKS = 60, MAX_OUTS = 8, MAX_ALTS = 12, MAX_TEXT = 30000;
+  const VERSION = 1, ID = /^[A-Za-z0-9_-]{1,24}$/, MAX_BLOCKS = 60, MAX_OUTS = 8, MAX_ALTS = 12, MAX_TEXT = 30000;
   let seq = 0;
   const newId = () => (Date.now().toString(36).slice(-4) + Math.random().toString(36).slice(2, 6) + (seq++ % 36).toString(36));
   const str = (v, n) => String(v == null ? '' : v).replace(/\r/g, '').slice(0, n);

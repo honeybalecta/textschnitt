@@ -16,7 +16,7 @@ shutil.rmtree(OUT, ignore_errors=True)
 (OUT / "vendor" / "ort").mkdir(parents=True)
 
 for f in ("app.js", "studio.js", "slides.js", "deck-host.js", "app.css", "icons.js", "chroma.js", "stimmen.js", "folgen.js", "skript.js", "thumb-engine.js", "thumb-cut.js", "titelbild.js", "rec.js", "rec-docs.js", "rec.css", "rec-logo.svg",
-          "plan-core.js", "pfade.js", "plan.js", "plan.css", "plan-logo.svg"):
+          "sg-core.js", "sg-host.js", "pfade.js"):
     shutil.copy(CORE / f, OUT / f)
 for f in ("pdf.min.mjs", "pdf.worker.min.mjs", "pdfjs-LIZENZ.txt"):   # pdf.js für HoneyRec
     shutil.copy(CORE / "vendor" / f, OUT / "vendor" / f)
@@ -27,7 +27,7 @@ for f in ("engine.js", "asr-worker.js", "web.css", "manifest.webmanifest", "icon
 
 # index.html: gleicher Aufbau wie in den Apps, nur mit der Browser-Brücke
 html = (CORE / "index.html").read_text()
-html, n = re.subn(r'<script src="bridge-http\.js"></script>\s*<script src="app\.js"></script>\s*<script src="studio\.js"></script>\s*<script src="slides\.js"></script>\s*<script src="deck-host\.js"></script>',
+html, n = re.subn(r'<script src="bridge-http\.js"></script>\s*<script src="app\.js"></script>\s*<script src="studio\.js"></script>\s*<script src="slides\.js"></script>\s*<script src="deck-host\.js"></script>\s*<script src="sg-host\.js"></script>',
                   '<script src="bridge-browser.js"></script>', html)
 assert n == 1, "Skript-Einbindung in index.html nicht gefunden"
 head = ('<meta name="description" content="Gesprochene Videos über das Transkript schneiden – direkt im Browser, ohne Upload.">\n'
@@ -45,13 +45,6 @@ rec, n = re.subn(r'<script src="bridge-http\.js"></script>\s*<script src="rec-do
 assert n == 1, "Skript-Einbindung in rec.html nicht gefunden"
 rec = rec.replace("</head>", '<meta name="theme-color" content="#131312">\n<link rel="icon" href="rec-logo.svg" type="image/svg+xml">\n</head>', 1)
 (OUT / "rec.html").write_text(rec)
-
-# ScriptGenius (Planer für Videos mit mehreren Ausgängen): eigene Seite ohne Brücke – Pläne liegen im Browser, Dateien kommen als Download
-plan = (CORE / "plan.html").read_text()
-plan, n = re.subn(r'<script src="bridge-http\.js"></script>\s*', '', plan)
-assert n == 1, "Skript-Einbindung in plan.html nicht gefunden"
-plan = plan.replace("</head>", '<meta name="theme-color" content="#131312">\n<link rel="icon" href="plan-logo.svg" type="image/svg+xml">\n</head>', 1)
-(OUT / "plan.html").write_text(plan)
 
 # Bibliotheken bündeln
 def esbuild(entry, out):
@@ -71,7 +64,7 @@ for p in ort:
 print("ONNX-Runtime:", ", ".join(names) or "– (wird vom CDN geladen)")
 
 fonts = sorted("fonts/" + p.name for p in (CORE / "fonts").iterdir() if p.suffix in (".ttf", ".otf"))
-shell = ["./", "index.html", "rec.html", "rec.js", "rec-docs.js", "rec.css", "rec-logo.svg", "plan.html", "plan.js", "plan-core.js", "plan.css", "plan-logo.svg", "pfade.js", "vendor/pdf.min.mjs", "vendor/pdf.worker.min.mjs", "app.js", "studio.js", "slides.js", "deck-host.js", "app.css", "icons.js", "chroma.js", "stimmen.js", "folgen.js", "skript.js", "thumb-engine.js", "thumb-cut.js", "titelbild.js", "web.css", "bridge-browser.js", "engine.js", "asr-worker.js",
+shell = ["./", "index.html", "rec.html", "rec.js", "rec-docs.js", "rec.css", "rec-logo.svg", "sg-core.js", "sg-host.js", "pfade.js", "vendor/pdf.min.mjs", "vendor/pdf.worker.min.mjs", "app.js", "studio.js", "slides.js", "deck-host.js", "app.css", "icons.js", "chroma.js", "stimmen.js", "folgen.js", "skript.js", "thumb-engine.js", "thumb-cut.js", "titelbild.js", "web.css", "bridge-browser.js", "engine.js", "asr-worker.js",
          "manifest.webmanifest", "icon.svg", "icon-192.png", "icon-512.png", "vendor/media.js", "vendor/asr.js"] + fonts
 sw = (WEB / "sw.js").read_text().replace("__VERSION__", VERSION + "-" + subprocess.run(
     ["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, capture_output=True, text=True).stdout.strip()).replace("__SHELL__", json.dumps(shell))

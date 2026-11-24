@@ -37,12 +37,13 @@ export async function launch(opts = {}){
   await page.waitForFunction(() => typeof showHome === 'function');
   return { browser: br, ctx, page, logs };
 }
-// Meldungen der Seite sammeln. HoneyDeck ist in den Prüfläufen nicht installiert: Die Anfrage nach deck/version.txt endet erwartungsgemäß mit 404.
+// Meldungen der Seite sammeln. HoneyDeck ist in den Prüfläufen nicht installiert, ScriptGenius nur, wenn lauf.sh es bereitstellen konnte:
+// Die Anfrage nach deck/version.txt bzw. sg/version.txt endet dann erwartungsgemäß mit 404.
 export function watch(page){
   const logs = [];
   page.on('console', m => { const t = m.text(); if ((m.type() === 'error' || m.type() === 'warning') && !/Failed to load resource/.test(t)) logs.push(`${m.type()}: ${t}`); });
   page.on('pageerror', e => logs.push('PAGEERROR: ' + (e.stack || e.message)));
-  page.on('response', r => { if (r.status() >= 400 && !/deck\/version\.txt/.test(r.url())) logs.push(`HTTP ${r.status()}: ${r.url().replace(/^.*\/test\//, '')}`); });
+  page.on('response', r => { if (r.status() >= 400 && !/(deck|sg)\/version\.txt/.test(r.url())) logs.push(`HTTP ${r.status()}: ${r.url().replace(/^.*\/test\//, '')}`); });
   page.on('dialog', d => d.accept().catch(() => {}));
   return logs;
 }

@@ -1,4 +1,6 @@
-// Pfad-Videos (2.52): ScriptGenius (Planer für Videos mit mehreren möglichen Ausgängen) und die Pfad-Videos in HoneyCut.
+// Pfad-Videos (2.52): Pläne aus ScriptGenius (eigenes Programm, Repository honeybalecta/scriptgenius) und die Pfad-Videos in HoneyCut.
+// Die Oberfläche von ScriptGenius prüft dessen eigener Prüflauf; hier geht es um die gemeinsame Ablage der Pläne (Ordner, über das
+// Test-Backend in .work/sg-plaene) und – wenn lauf.sh ScriptGenius bereitstellen konnte (SCRIPTGENIUS_DIR) – um das eingebettete ScriptGenius.
 // Grundlage ist pfade.mp4: eine Aufnahme nach einem Plan mit zwei Weichen, jedes Bild trägt seine Nummer (siehe medien.py).
 // Am fertigen Video wird Bild für Bild abgelesen, welche Stellen der Aufnahme in welcher Reihenfolge darin stehen.
 import fs from 'node:fs';
@@ -27,6 +29,10 @@ const seq = (rs, names, firstFrom) => rs.length === names.length && names.every(
 const exportAll = async click => { await click(); await page.waitForFunction(() => !exBatch, null, { timeout: 240000 }); await sleep(500); await idle(); await sleep(300); await ev(() => closeSheet()); const res = await q(); for (const x of res) for (const f of x.files) trash.add(f); return res; };
 const mp4 = x => x.files.find(f => /\.mp4$/.test(f));
 
+const PLANS = path.join(WORK, 'sg-plaene'); fs.rmSync(PLANS, { recursive: true, force: true });
+const planFiles = () => fs.existsSync(PLANS) ? fs.readdirSync(PLANS).filter(f => f.endsWith('.scriptgenius')).sort() : [];
+const SG = !!process.env.SCRIPTGENIUS_DIR && fs.existsSync(path.join(process.env.SCRIPTGENIUS_DIR, 'sg-core.js'));
+const sgFrame = async () => { await page.waitForSelector('#sgOverlay iframe'); const f = page.frames().find(x => /\/sg\/index\.html/.test(x.url())); await f.waitForFunction(() => document.documentElement.classList.contains('ready')); return f; };
 await ev(() => { for (const k of ['sg-plans', 'sg-current', 'hc-house', 'hc-house-def']) localStorage.removeItem(k); EXQ.length = 0;
   for (const p of JSON.parse(TS.listProjects() || '[]')) if (/^pfade( |$)/.test(p.name || '')){ try { TS.deleteProject(p.id); } catch (_) {} try { if (TS.trashPurge) TS.trashPurge(p.id); } catch (_) {} } });   // Reste eines abgebrochenen Laufs
 
@@ -56,94 +62,40 @@ chk('Aufnahme-Skript: jeder Abschnitt einmal, mit Überschriften oder als reiner
 chk('Bedingungen auf spätere Weichen werden entfernt, fremde Dateien abgelehnt, sehr viele Pfade begrenzt', !st.kept && /kein Plan/.test(st.foreign) && st.big[0] === 20000 && st.big[1] === 50 && st.big[2] === true, [st.kept, st.foreign, st.big]);
 chk('Schlüssel eines Pfads, Wortzahl ohne Überschriften und Regie, Bedingung in Worten, Datei bleibt beim Einlesen gleich', st.key && st.words === 4 && st.cond === 'A + X' && st.rt, [st.key, st.words, st.cond, st.rt]);
 
-// ══════════ 2) ScriptGenius ══════════
-const pp = await ctx.newPage(); const plogs = watch(pp);
-await pp.goto(BASE.replace('index.html', 'plan.html')); await pp.waitForFunction(() => window.ScriptGeniusApp);
-const pe = (f, a) => pp.evaluate(f, a);
-st = await pe(() => ({ empty: !!document.querySelector('#flow .empty'), name: document.querySelector('#pName').value, stats: document.querySelector('#stats').textContent.replace(/\s+/g, ' '), tree: document.querySelector('#treeBox').classList.contains('hidden') }));
-chk('ScriptGenius startet mit einem leeren Plan', st.empty && st.name === 'Neuer Plan' && /1 ?Video/.test(st.stats) && st.tree, st);
-await pp.fill('#pName', 'Mietendeckel');
-await pp.click('#flow [data-a="addTeil"]'); await pp.fill('#flow .blk.teil .lbl', 'Einstieg'); await pp.fill('#flow .blk.teil textarea', 'Heute entscheidet der Stadtrat über den Mietendeckel. Wir haben lange dafür gekämpft.');
-await pp.click('#flow .ins.last [data-a="addWeiche"]'); await pp.fill('#flow .blk.weiche .lbl', 'Abstimmung');
-await pp.fill('#flow .out:nth-child(1) [data-f="olabel"]', 'Angenommen'); await pp.fill('#flow .out:nth-child(1) textarea', 'Der Antrag ist angenommen. Die Mieten bleiben stabil.');
-await pp.fill('#flow .out:nth-child(2) [data-f="olabel"]', 'Abgelehnt'); await pp.fill('#flow .out:nth-child(2) textarea', 'Der Antrag ist abgelehnt. Der Kampf geht weiter.');
-await pp.click('#flow .ins.last [data-a="addTeil"]'); await pp.fill('#flow .blk:nth-of-type(3) .lbl', 'Einordnung');
-await pp.click('#flow .ins.last [data-a="addWeiche"]'); await pp.fill('#flow .blk:nth-of-type(4) .lbl', 'Bürgerbegehren');
-await pp.fill('#flow .blk:nth-of-type(4) .out:nth-child(1) [data-f="olabel"]', 'Begehren kommt'); await pp.fill('#flow .blk:nth-of-type(4) .out:nth-child(1) textarea', 'Außerdem startet jetzt das Bürgerbegehren.');
-await pp.fill('#flow .blk:nth-of-type(4) .out:nth-child(2) [data-f="olabel"]', 'Kein Begehren'); await pp.check('#flow .blk:nth-of-type(4) .out:nth-child(2) [data-f="leer"]');
-await pp.click('#flow .ins.last [data-a="addTeil"]'); await pp.fill('#flow .blk:nth-of-type(5) .lbl', 'Schluss'); await pp.fill('#flow .blk:nth-of-type(5) textarea[data-f="text"]', 'Kommt am Samstag zur Versammlung im Rathaus.');
-// abweichende Fassung des Schlusses für „Abgelehnt“
-await pp.click('#flow .blk:nth-of-type(5) [data-a="altAdd"]'); await pp.waitForSelector('#modal:not(.hidden) .chipb');
-st = await pe(() => ({ groups: [...document.querySelectorAll('#modal .cgroup')].map(g => g.querySelector('b').textContent + ': ' + [...g.querySelectorAll('.chipb')].map(c => c.textContent).join('/')), all: !!document.querySelector('#modal [data-x="all"]') }));
-chk('Bedingung wählen: die früheren Weichen mit ihren Ausgängen; eine abweichende Fassung braucht eine Auswahl', st.groups.join(' | ') === 'Abstimmung: Angenommen/Abgelehnt | Bürgerbegehren: Begehren kommt/Kein Begehren' && !st.all, st);
-await pp.click('#modal [data-x="ok"]'); await sleep(150);
-chk('ohne Auswahl bleibt das Fenster offen, mit Hinweis', await pe(() => !document.querySelector('#modal').classList.contains('hidden')) && /mindestens einen Ausgang/.test(await toastTxt(pp)));
-await pp.click('#modal .cgroup:nth-of-type(1) .chipb:nth-child(2)'); await pp.click('#modal [data-x="ok"]'); await sleep(200);
-await pp.fill('#flow .blk:nth-of-type(5) .alt textarea', 'Kommt am Samstag zur Kundgebung vor dem Rathaus.'); await sleep(500);
-st = await pe(() => ({ stats: [...document.querySelectorAll('#stats .stat')].map(s => s.textContent.replace(/\s+/g, ' ')), paths: [...document.querySelectorAll('#paths .path')].map(d => d.querySelector('.nr').textContent + ' ' + d.querySelector('.pl').textContent + ' ' + d.querySelector('.pd').textContent), leafs: document.querySelectorAll('#tree .leaf').length, nodes: [...document.querySelectorAll('#tree .nd text')].map(t => t.textContent),
-  alt: document.querySelector('#flow .alt .cond').textContent, meta: document.querySelector('#flow .blk.teil .meta').textContent, leer: document.querySelector('#flow .out.leer .meta').textContent, tab: document.querySelector('#tabCount').textContent, saved: document.querySelector('#pSaved').textContent }));
-chk('Übersicht: 4 Videos, 7 Abschnitte aufzunehmen, Sprechzeit', /^4 ?Videos$/.test(st.stats[0]) && /^7 ?Abschnitte aufzunehmen$/.test(st.stats[1]) && /\d+ s ?Aufnahme nach Skript/.test(st.stats[2]) && st.tab === '4', st.stats);
-chk('Videos mit Beschriftung der Ausgänge und geschätzter Länge', st.paths.length === 4 && /^1 Angenommen · Begehren kommt etwa \d+ s$/.test(st.paths[0]) && /^4 Abgelehnt · Kein Begehren etwa \d+ s$/.test(st.paths[3]), st.paths);
-chk('Baum der Pfade: Start, je Ausgang ein Knoten, je Video ein nummeriertes Blatt', st.leafs === 4 && st.nodes.join('|') === 'Angenommen|Begehren kommt|Kein Begehren|Abgelehnt|Begehren kommt|Kein Begehren|Start'.split('|').sort().join('|') || (st.leafs === 4 && st.nodes.filter(n => n === 'Begehren kommt').length === 2 && st.nodes.includes('Start')), st.nodes);
-chk('abweichende Fassung nennt ihre Pfade; Wortzahl und Sprechzeit je Text; Ausgang ohne eigenen Teil', /Abweichende Fassung für Abgelehnt/.test(st.alt) && /^12 Wörter · etwa \d+ s$/.test(st.meta) && /ohne eigenen Teil/.test(st.leer), [st.alt, st.meta, st.leer]);
-await shot('planer', pp);
-// Umbenennen eines Ausgangs zieht in Bedingungen nach; Titel je Video; Text eines Videos
-await pp.fill('#flow .blk.weiche .out:nth-child(2) [data-f="olabel"]', 'Durchgefallen'); await sleep(100);
-st = await pe(() => document.querySelector('#flow .alt .cond').textContent);
-chk('ein umbenannter Ausgang steht sofort auch in den Bedingungen', /für Durchgefallen/.test(st), st);
-await pp.fill('#flow .blk.weiche .out:nth-child(2) [data-f="olabel"]', 'Abgelehnt'); await sleep(450);
-await pp.click('#paths .path:nth-of-type(1) summary'); await pp.fill('#paths .path:nth-of-type(1) [data-f="ptitle"]', 'Deckel steht'); await sleep(100);
-st = await pe(() => ({ text: document.querySelector('#paths .path:nth-of-type(1) .ptext').textContent.replace(/\s+/g, ' '), heads: [...document.querySelectorAll('#paths .path:nth-of-type(1) .ptext .hd')].map(h => h.textContent), free: document.querySelector('#paths .path:nth-of-type(1) .ptext .free').textContent, title: Object.values(ScriptGeniusApp.plan.paths).map(x => x.title) }));
-chk('ein Video zeigt seinen Text der Reihe nach, frei Gesprochenes ist gekennzeichnet; der Titel wird gemerkt', st.heads.join('|') === 'Einstieg|Abstimmung: Angenommen|Einordnung|Bürgerbegehren: Begehren kommt|Schluss' && /Versammlung im Rathaus/.test(st.text) && !/Kundgebung/.test(st.text) && st.free === 'frei gesprochen' && st.title.join() === 'Deckel steht', st);
-await pp.click('#tree .leaf:nth-of-type(1)').catch(() => {}); await pp.evaluate(() => document.querySelectorAll('#tree .leaf')[3].dispatchEvent(new MouseEvent('click', { bubbles: true }))); await sleep(200);
-chk('ein Blatt im Baum klappt das Video in der Liste auf', await pe(() => document.querySelector('#paths .path:nth-of-type(4)').open));
-// Aufnahme-Skript
-await pp.click('#scriptBtn'); await pp.waitForSelector('#scText');
-st = await pe(() => ({ t: document.querySelector('#scText').value, info: document.querySelector('#scInfo').textContent }));
-chk('Aufnahme-Skript mit Überschriften: sieben Abschnitte, der freie Teil mit Hinweis in Klammern', (st.t.match(/^# /gm) || []).length === 7 && /# Einordnung\n\[frei gesprochen\]/.test(st.t) && /# Schluss \(Abgelehnt\)\nKommt am Samstag zur Kundgebung/.test(st.t) && /^\d+ Wörter · etwa \d+ s$/.test(st.info), st.info);
-await pp.click('#scMode [data-h="0"]');
-st = await pe(() => document.querySelector('#scText').value);
-chk('reiner Text für den Souffleur: ohne Überschriften, ohne den freien Teil', !/#|\[/.test(st) && st.split('\n\n').length === 6 && /^Heute entscheidet/.test(st), st.slice(0, 80));
-const fTxt = path.join(OUT, 'pfade-skript.txt'), fPlan = path.join(OUT, 'pfade-plan.scriptgenius'); for (const f of [fTxt, fPlan]){ fs.rmSync(f, { force: true }); trash.add(f); }
-setPick({ save_any: [fTxt] }); await pp.click('#modal [data-x="save"]'); await sleep(300);
-chk('das Skript lässt sich als Textdatei sichern', fs.existsSync(fTxt) && fs.readFileSync(fTxt, 'utf8') === st && /Gespeichert/.test(await toastTxt(pp)), await toastTxt(pp));
-await pp.click('#modal [data-x="close"]');
-// Für HoneyCut: Datei
-await pp.click('#cutBtn'); await pp.waitForSelector('#modal [data-x="file"]'); setPick({ save_any: [fPlan] }); await pp.click('#modal [data-x="file"]'); await sleep(300);
-const fileP = fs.existsSync(fPlan) ? JSON.parse(fs.readFileSync(fPlan, 'utf8')) : null;
-chk('„Für HoneyCut“ sichert den Plan als Datei .scriptgenius', !!fileP && fileP.app === 'scriptgenius' && fileP.name === 'Mietendeckel' && fileP.blocks.length === 5 && Object.values(fileP.paths).length === 1, fileP && [fileP.app, fileP.name, fileP.blocks.length]);
-await pp.click('#modal [data-x="close"]');
-// Pläne: Kopie, löschen, aus Datei, Neustart
-await pp.click('#plansBtn'); await pp.click('#modal .prow [data-x="dup"]'); await sleep(200);
-st = await pe(() => ({ n: ScriptGeniusApp.plans.length, name: ScriptGeniusApp.plan.name, stored: JSON.parse(localStorage.getItem('sg-plans')).map(p => p.name) }));
-chk('Kopie eines Plans: eigener Eintrag, sofort geöffnet und gespeichert', st.n === 2 && st.name === 'Mietendeckel (Kopie)' && st.stored.join('|') === 'Mietendeckel (Kopie)|Mietendeckel', st);
-await pp.click('#plansBtn'); await pp.click('#modal .prow.cur [data-x="del"]'); await sleep(200);
-st = await pe(() => ({ n: ScriptGeniusApp.plans.length, name: ScriptGeniusApp.plan.name, open: !document.querySelector('#modal').classList.contains('hidden') }));
-chk('Löschen nimmt den Plan aus der Liste und öffnet den nächsten', st.n === 1 && st.name === 'Mietendeckel' && st.open, st);
-await pp.setInputFiles('#planFile', fPlan); await sleep(300);
-st = await pe(() => ({ n: ScriptGeniusApp.plans.length, name: ScriptGeniusApp.plan.name, blocks: ScriptGeniusApp.plan.blocks.length }));
-chk('ein Plan aus einer Datei ersetzt nach Rückfrage den gleichnamigen', st.n === 1 && st.name === 'Mietendeckel' && st.blocks === 5, st);
-await pp.reload(); await pp.waitForFunction(() => window.ScriptGeniusApp);
-st = await pe(() => ({ name: document.querySelector('#pName').value, paths: document.querySelectorAll('#paths .path').length, title: document.querySelector('#paths .path [data-f="ptitle"]').value }));
-chk('nach dem Neustart ist der Plan wieder da', st.name === 'Mietendeckel' && st.paths === 4 && st.title === 'Deckel steht', st);
-// Reihenfolge ändern, Weiche löschen
-await pp.click('#flow .blk:nth-of-type(4) [data-a="up"]'); await sleep(150); await pp.click('#flow .blk:nth-of-type(3) [data-a="up"]'); await sleep(150);
-st = await pe(() => ({ order: ScriptGeniusApp.plan.blocks.map(b => b.label), alts: (ScriptGeniusApp.plan.blocks[4].alts || []).length, toast: document.querySelector('#toast').textContent, n: document.querySelectorAll('#paths .path').length }));
-chk('rückt eine Weiche hinter einen Block, der sich auf sie bezieht … (hier bleibt die Bedingung, die Abstimmung liegt weiter davor)', st.order.join('|') === 'Einstieg|Bürgerbegehren|Abstimmung|Einordnung|Schluss' && st.alts === 1 && st.n === 4, st);
-await pp.click('#flow .blk:nth-of-type(5) [data-a="up"]'); await sleep(100); await pp.click('#flow .blk:nth-of-type(4) [data-a="up"]'); await sleep(200);
-st = await pe(() => ({ order: ScriptGeniusApp.plan.blocks.map(b => b.label), alts: (ScriptGeniusApp.plan.blocks[2].alts || []).length, toast: document.querySelector('#toast').textContent }));
-chk('liegt der Schluss vor der Abstimmung, fällt seine Bedingung darauf weg – mit Hinweis', st.order.join('|') === 'Einstieg|Bürgerbegehren|Schluss|Abstimmung|Einordnung' && st.alts === 0 && /spätere Weichen/.test(st.toast), st);
-// Handy-Ansicht
-await pp.setViewportSize({ width: 390, height: 844 }); await sleep(200);
-st = await pe(() => ({ tabs: getComputedStyle(document.querySelector('#pTabs')).display, flow: getComputedStyle(document.querySelector('#flowCol')).display, side: getComputedStyle(document.querySelector('#sideCol')).display, w: document.documentElement.scrollWidth }));
-await pp.click('#pTabs [data-view="side"]'); await sleep(200);
-const st2 = await pe(() => ({ flow: getComputedStyle(document.querySelector('#flowCol')).display, side: getComputedStyle(document.querySelector('#sideCol')).display, back: window.TSApp.onBack(), view: document.querySelector('#pMain').dataset.view }));
-chk('am Handy: eine Spalte mit Umschalter „Ablauf / Pfade“, nichts läuft über den Rand; „Zurück“ führt erst zum Ablauf', st.tabs === 'flex' && st.flow !== 'none' && st.side === 'none' && st.w <= 390 && st2.flow === 'none' && st2.side !== 'none' && st2.back === true && st2.view === 'flow', [st, st2]);
-await shot('planer-handy', pp);
-chk('ScriptGenius: keine Fehlermeldungen in der Seite', plogs.length === 0, plogs);
-await pp.close(); await sleep(200);
-// den Plan für HoneyCut wieder so herstellen, wie er gesichert wurde (ScriptGenius speichert beim Schließen seinen letzten Stand)
-await ev(t => { localStorage.setItem('sg-plans', JSON.stringify([JSON.parse(t)])); }, fs.readFileSync(fPlan, 'utf8'));
+// ══════════ 2) Pläne aus ScriptGenius: gemeinsame Ablage, eingebettetes ScriptGenius ══════════
+// Der Plan, wie ihn ScriptGenius anlegt: zwei Weichen, ein Ausgang ohne eigenen Teil, eine abweichende Fassung, ein Titel je Video
+const planJson = await ev(() => { const H = ScriptGenius, p = H.blank('Mietendeckel');
+  const a = H.teil('Einstieg', 'Heute entscheidet der Stadtrat über den Mietendeckel. Wir haben lange dafür gekämpft.');
+  const w1 = H.weiche('Abstimmung', ['Angenommen', 'Abgelehnt']); w1.outs[0].text = 'Der Antrag ist angenommen. Die Mieten bleiben stabil.'; w1.outs[1].text = 'Der Antrag ist abgelehnt. Der Kampf geht weiter.';
+  const m = H.teil('Einordnung', '');
+  const w2 = H.weiche('Bürgerbegehren', ['Begehren kommt', 'Kein Begehren']); w2.outs[0].text = 'Außerdem startet jetzt das Bürgerbegehren.'; w2.outs[1].leer = true;
+  const z = H.teil('Schluss', 'Kommt am Samstag zur Versammlung im Rathaus.'); z.alts = [H.alt({[w1.id]: [w1.outs[1].id]}, 'Kommt am Samstag zur Kundgebung vor dem Rathaus.')];
+  p.blocks.push(a, w1, m, w2, z); H.tidy(p); p.paths[H.paths(p).list[0].key] = {title: 'Deckel steht'}; return JSON.stringify(p); });
+st = await ev(j => ({ save: TS.sgSave(j), list: JSON.parse(TS.sgList()).map(p => p.name), plans: sgPlans().map(p => p.name) }), planJson);
+chk('HoneyCut sichert Pläne im Ordner von ScriptGenius und liest sie von dort', st.save === '' && st.list.join() === 'Mietendeckel' && st.plans.join() === 'Mietendeckel' && planFiles().length === 1 && JSON.parse(fs.readFileSync(path.join(PLANS, planFiles()[0]), 'utf8')).app === 'scriptgenius', [st, planFiles()]);
+st = await ev(() => ({ bad: TS.sgSave('{"app":"etwas","id":"x"}'), badId: TS.sgSave('{"app":"scriptgenius","id":"../x"}') }));
+chk('fremde Dateien und unsichere Kennungen lehnt der Ordner ab', !!st.bad && !!st.badId && planFiles().length === 1, st);
+st = await ev(() => ({ on: window.HC_SG_ON, home: document.querySelector('#planHome').textContent }));
+if (!SG) console.log('HINWEIS eingebettetes ScriptGenius: nicht geprüft – kein SCRIPTGENIUS_DIR (lauf.sh baut es aus HC_SG_SRC oder von GitHub)');
+else {
+  await page.waitForFunction(() => window.HC_SG_ON === true, null, { timeout: 10000 });
+  await page.click('#planHome'); let f = await sgFrame();
+  st = await f.evaluate(() => ({ store: ScriptGeniusApp.store(), name: ScriptGeniusApp.plan.name, n: ScriptGeniusApp.plans.length, close: !document.querySelector('#closeBtn').classList.contains('hidden'), cut: document.querySelector('#cutBtn').classList.contains('hidden'), embed: document.documentElement.classList.contains('embed') }));
+  chk('„Pfade planen“ öffnet das installierte ScriptGenius in HoneyCut – mit denselben Plänen', st.store === 'host' && st.name === 'Mietendeckel' && st.n === 1 && st.close && st.cut && st.embed, st);
+  await shot('eingebettet');
+  await f.click('#plansBtn'); await f.click('#modal [data-x="new"]'); await f.fill('#pName', 'Zweiter Plan'); await sleep(700);
+  chk('ein neuer Plan aus dem eingebetteten ScriptGenius landet im gemeinsamen Ordner', planFiles().length === 2 && (await ev(() => sgPlans().map(p => p.name))).includes('Zweiter Plan'), planFiles());
+  await f.click('#plansBtn'); await f.click('#modal .prow.cur [data-x="del"]'); await sleep(400);
+  chk('Löschen verschiebt den Plan in den Papierkorb des Ordners', planFiles().length === 1 && fs.existsSync(path.join(PLANS, 'papierkorb')) && fs.readdirSync(path.join(PLANS, 'papierkorb')).length === 1, planFiles());
+  await f.evaluate(() => document.querySelector('#modal [data-x="close"]').click());
+  const fMd = path.join(OUT, 'pfade-eingebettet.md'); fs.rmSync(fMd, { force: true }); trash.add(fMd); setPick({ save_any: [fMd] });
+  await f.click('#exportBtn'); await f.click('#modal [data-f="md"] [data-x="go"]'); await sleep(800);
+  chk('Exportieren im eingebetteten ScriptGenius speichert über HoneyCut', fs.existsSync(fMd) && /^# Mietendeckel\n/.test(fs.readFileSync(fMd, 'utf8')), fs.existsSync(fMd) ? fs.readFileSync(fMd, 'utf8').slice(0, 40) : 'fehlt');
+  await f.evaluate(() => document.querySelector('#modal [data-x="close"]').click());
+  await f.click('#closeBtn'); await sleep(300);
+  chk('✕ schließt ScriptGenius und führt zurück zu HoneyCut', !(await ev(() => !!document.querySelector('#sgOverlay'))));
+}
+await ev(() => { localStorage.removeItem('sg-plans'); });
 
 // ══════════ 3) HoneyCut: Plan laden, transkribieren, zuordnen ══════════
 st = await ev(() => ({ home: !!document.querySelector('#planHome'), txt: document.querySelector('#planHome').textContent }));
@@ -153,8 +105,13 @@ st = await ev(() => ({ tab, info: document.querySelector('#pfInfo').textContent,
 chk('neues Projekt: im Reiter „Transkribieren“ steht „Pfad-Plan: keiner“, der Chip „Pfade“ fehlt noch', st.tab === 'trans' && st.info === 'keiner' && st.btn === 'Wählen' && st.chip, st);
 await page.click('#pfPlanBtn'); await page.waitForSelector('#pfPick [data-a="load"]');
 st = await ev(() => [...document.querySelectorAll('#pfPick .cl-row')].map(r => r.textContent.replace(/\s+/g, ' ').trim()));
-chk('das Blatt „Pfad-Plan“ zeigt die Pläne aus ScriptGenius auf diesem Gerät', st.length === 1 && /^Mietendeckel4 Videos · geändert am .*Laden$/.test(st[0]), st);
-await page.click('#pfPick [data-a="load"]'); await sleep(400);
+chk('das Blatt „Pfad-Plan“ zeigt die Pläne aus ScriptGenius', st.length === 1 && /^Mietendeckel4 Videos · geändert am .*Laden$/.test(st[0]), st);
+if (SG){   // aus dem geöffneten Projekt: ScriptGenius öffnen und dort „Im Projekt verwenden“
+  await page.click('#pfPick [data-a="app"]'); const f = await sgFrame();
+  st = await f.evaluate(() => ({ cut: !document.querySelector('#cutBtn').classList.contains('hidden'), txt: document.querySelector('#cutBtn').textContent }));
+  chk('im geöffneten Projekt bietet ScriptGenius „Im Projekt verwenden“', st.cut && st.txt === 'Im Projekt verwenden', st);
+  await f.click('#cutBtn'); await page.waitForFunction(() => !document.querySelector('#sgOverlay') && P.pfade, null, { timeout: 10000 }); await sleep(300);
+} else { await page.click('#pfPick [data-a="load"]'); await sleep(400); }
 st = await ev(() => ({ info: document.querySelector('#pfInfo').textContent, btn: document.querySelector('#pfPlanBtn').textContent, pre: document.querySelector('#preScriptInfo').textContent, script: P.script && P.script.text, plan: P.script && P.script.plan === P.pfade.plan.id, toast: document.querySelector('#toast').textContent, sheet: document.querySelector('#sheet').classList.contains('hidden') }));
 chk('Laden: Plan steht im Projekt, sein Aufnahme-Skript wird Vorlage für die Transkription', st.info === 'Mietendeckel · 4 Videos' && st.btn === 'Ändern' && /^\d+ Wörter · aus dem Pfad-Plan$/.test(st.pre) && /^# Einstieg\nHeute entscheidet/.test(st.script) && st.plan && /Plan „Mietendeckel“ geladen/.test(st.toast) && st.sheet, st);
 await ev(() => { document.querySelector('#autoPauses').checked = false; document.querySelector('#autoFillers').checked = false; document.querySelector('#autoRepeats').checked = true; });
@@ -271,9 +228,9 @@ await clearQ(); await ev(() => closeSheet());
 
 // ══════════ 6) Andere Reihenfolge in der Aufnahme, Beschriftungen ohne Skript, Plan entfernen ══════════
 // Derselbe Plan, aber der Einstieg steht als „Abspann“ am Ende: Die Aufnahme hat ihn vorn – im Video gehört er nach hinten.
-await ev(() => { const H = ScriptGenius, p = JSON.parse(localStorage.getItem('sg-plans'))[0]; const a = p.blocks.shift(); a.label = 'Abspann'; p.blocks.push(a); p.id = H.newId(); p.name = 'Abspann hinten'; p.paths = {};
+await ev(() => { const H = ScriptGenius, p = sgPlans()[0]; const a = p.blocks.shift(); a.label = 'Abspann'; p.blocks.push(a); p.id = H.newId(); p.name = 'Abspann hinten'; p.paths = {};
   const l = H.blank('Nur Beschriftungen'); const w = H.weiche('Ergebnis', ['Ja', 'Nein']); l.blocks.push(H.teil('Vorspann', ''), w, H.teil('Abschied', ''));
-  localStorage.setItem('sg-plans', JSON.stringify([p, l, ...JSON.parse(localStorage.getItem('sg-plans'))])); });
+  TS.sgSave(JSON.stringify(p)); TS.sgSave(JSON.stringify(l)); });
 await ev(() => closeProject());
 const idR = await newProject(page, [MEDIA + 'pfade.mp4']); made.push(idR);
 await ev(() => { document.querySelector('#autoPauses').checked = false; document.querySelector('#autoFillers').checked = false; document.querySelector('#autoRepeats').checked = false; });
@@ -323,6 +280,8 @@ await ev(() => closeSheet()); await page.setViewportSize({ width: 1480, height: 
 
 // aufräumen
 await ev(list => { if (P){ pausePlay(); clearTimeout(saveT); saveNow(); closeSheet(); closeProject(); } for (const i of list){ try { TS.deleteProject(i); } catch (_) {} try { if (TS.trashPurge) TS.trashPurge(i); } catch (_) {} } for (const k of ['sg-plans', 'sg-current']) localStorage.removeItem(k); }, [...new Set(made)]);
+fs.rmSync(PLANS, { recursive: true, force: true });
 for (const f of trash) fs.rmSync(f, { force: true });
-chk('keine Fehlermeldungen in der Seite', logs.length === 0, logs);
+const echte = logs.filter(l => !/^HTTP 400: api\/sg\/save$/.test(l));   // die zwei absichtlich abgelehnten Pläne aus Abschnitt 2
+chk('keine Fehlermeldungen in der Seite', echte.length === 0 && logs.length - echte.length === 2, logs);
 await ende(browser);

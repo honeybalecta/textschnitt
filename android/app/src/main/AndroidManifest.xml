@@ -15,7 +15,15 @@
     <!-- HoneyDeck erkennen und seine Oberfläche im Reiter „Folien“ einbetten -->
     <queries>
         <package android:name="de.honeybalecta.honeydeck" />
+        <package android:name="de.honeybalecta.scriptgenius" />
     </queries>
+    <!-- ScriptGenius: Pläne lesen und sichern (nur Apps mit demselben Signaturschlüssel). Die Berechtigung legen HoneyCut und
+         ScriptGenius beide an – so ist sie da, gleich welche App zuerst installiert wurde. -->
+    <permission
+        android:name="de.honeybalecta.scriptgenius.permission.PLAENE"
+        android:label="Pläne aus ScriptGenius"
+        android:protectionLevel="signature" />
+    <uses-permission android:name="de.honeybalecta.scriptgenius.permission.PLAENE" />
 
     <application
         android:label="HoneyCut"
@@ -55,19 +63,6 @@
             android:label="HoneyRec"
             android:icon="@mipmap/ic_rec"
             android:roundIcon="@mipmap/ic_rec"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity-alias>
-        <!-- ScriptGenius: eigenes Symbol im Startbildschirm, öffnet in derselben App den Planer für Videos mit mehreren Ausgängen -->
-        <activity-alias
-            android:name=".PlanAlias"
-            android:targetActivity=".MainActivity"
-            android:label="ScriptGenius"
-            android:icon="@mipmap/ic_plan"
-            android:roundIcon="@mipmap/ic_plan"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

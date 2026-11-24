@@ -37,8 +37,6 @@ Name: "{autoprograms}\HoneyCut"; Filename: "{app}\HoneyCut.exe"
 Name: "{autodesktop}\HoneyCut"; Filename: "{app}\HoneyCut.exe"; Tasks: desktopicon
 Name: "{autoprograms}\HoneyRec"; Filename: "{app}\HoneyRec.exe"; Comment: "Aufnehmen mit Skript, Medien und Bildschirm"; AppUserModelID: "HoneyCut.HoneyRec"
 Name: "{autodesktop}\HoneyRec"; Filename: "{app}\HoneyRec.exe"; Tasks: desktopicon; AppUserModelID: "HoneyCut.HoneyRec"
-Name: "{autoprograms}\ScriptGenius"; Filename: "{app}\ScriptGenius.exe"; Comment: "Videos für mehrere mögliche Ausgänge planen"; AppUserModelID: "HoneyCut.ScriptGenius"
-Name: "{autodesktop}\ScriptGenius"; Filename: "{app}\ScriptGenius.exe"; Tasks: desktopicon; AppUserModelID: "HoneyCut.ScriptGenius"
 
 [InstallDelete]
 ; frühere Versionen hießen „Textschnitt“

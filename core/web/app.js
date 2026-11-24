@@ -56,6 +56,7 @@ const pending = new Map();
 window.TSApp = {
   onPicked(reqId, json){ const cb = pending.get(reqId); pending.delete(reqId); if (cb) cb(json ? J(json) : null); },
   onBack(){ if (exBatch) return true;   // während die Clips einer Reihe eingereiht werden, bleibt das Projekt offen
+            if (window.sgIsOpen && sgIsOpen()) return sgBack();   // eingebettetes ScriptGenius
             if ($('#proj').classList.contains('full')){ setFull(false); return true; }
             if (!$('#sheet').classList.contains('hidden')) { closeSheet(); return true; }
             if (!$('#mgSheet').classList.contains('hidden')) { closeMg(); return true; }
@@ -718,7 +719,7 @@ setTimeout(() => { if (!$('#home').classList.contains('hidden')) renderUpdateBan
 // Gesichert werden die Projekte samt Folienbildern und Schriften, dazu die eigenen Designprofile, Farbfavoriten, Füllwörter und
 // Untertitel-Looks, dazu das eigene Wörterbuch – ohne die Videos.
 const PREF_KEYS = ['hc-slide-profiles', 'hc-colfav', 'hc-fillers', 'hc-sub-looks', 'hc-dict', 'hc-house', 'hc-blocks', 'hc-emoji', 'hc-clipwords', 'hc-color-looks', 'sg-plans'];
-function uiPrefs(){ const o = {}; for (const k of PREF_KEYS){ try { const v = JSON.parse(localStorage.getItem(k)); if (Array.isArray(v) && v.length) o[k] = v; } catch(_){} } return o; }
+function uiPrefs(){ const o = {}; for (const k of PREF_KEYS){ try { const v = k === 'sg-plans' && window.sgPlans ? sgPlans() : JSON.parse(localStorage.getItem(k)); if (Array.isArray(v) && v.length) o[k] = v; } catch(_){} } return o; }   // Pläne aus ScriptGenius aus der gemeinsamen Ablage
 function mergePrefs(pr){
   let n = 0; if (!pr || typeof pr !== 'object') return 0;
   try { if (window.slUserProfiles){ const have = slUserProfiles(), add = (pr['hc-slide-profiles'] || []).filter(p => p && p.id && p.colors && !have.some(h => h.id === p.id)); if (add.length){ slSaveUserProfiles(have.concat(add)); n += add.length; } } } catch(_){}
@@ -733,8 +734,7 @@ function mergePrefs(pr){
   try { n += mergeEmoji(pr['hc-emoji']); } catch(_){}
   try { n += mergeClipWords(pr['hc-clipwords']); } catch(_){}
   // Pläne aus ScriptGenius: was es hier noch nicht gibt, kommt dazu
-  try { if (window.ScriptGenius){ const have = J(localStorage.getItem('sg-plans') || '[]') || [], ids = new Set(have.map(p => p && p.id)), add = (pr['sg-plans'] || []).map(p => { try { return ScriptGenius.parse(p); } catch(_){ return null; } }).filter(p => p && !ids.has(p.id));
-    if (add.length){ localStorage.setItem('sg-plans', JSON.stringify(have.concat(add))); n += add.length; } } } catch(_){}
+  try { if (window.ScriptGenius && TS.sgSave){ const ids = new Set(sgPlans().map(p => p.id)); for (const raw of pr['sg-plans'] || []){ let p = null; try { p = ScriptGenius.parse(raw); } catch(_){} if (p && !ids.has(p.id) && !TS.sgSave(JSON.stringify(p))) n++; } } } catch(_){}
   return n;
 }
 const plural = (k, one, many) => `${k} ${k === 1 ? one : many}`;

@@ -26,6 +26,7 @@ os.environ.setdefault("TEXTSCHNITT_PORT", "8795")
 os.environ.setdefault("TEXTSCHNITT_NO_BROWSER", "1")
 os.environ.setdefault("HONEYCUT_UPDATE_API", "test://releases")   # schaltet die Versionsprüfung auch außerhalb der Windows-App ein
 os.environ.setdefault("HONEYREC_DIR", str(WORK / "honeyrec"))   # HoneyRec schreibt seine Takes hierhin statt in die Dokumente
+os.environ.setdefault("SCRIPTGENIUS_PLANS", str(WORK / "sg-plaene"))   # Pläne aus ScriptGenius (sonst %APPDATA%\\ScriptGenius\\plaene)
 sys.path.insert(0, str(REPO))
 import textschnitt as T  # noqa: E402
 

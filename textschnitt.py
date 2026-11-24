@@ -4869,6 +4869,7 @@ def report_text(ui: dict | None = None) -> str:
     safe("Bild beruhigen", lambda: "vidstab" if stab_method() == "vidstab" else "einfaches Verfahren (deshake)")
     safe("Übersetzen", lambda: ", ".join(translate_pairs()) if translate_available() else "nicht verfügbar")
     safe("HoneyDeck", lambda: (lambda d: f"{(d / 'version.txt').read_text(encoding='utf-8').strip()} ({d})" if d else "nicht installiert")(deck_dir()))
+    safe("ScriptGenius", lambda: (lambda d: f"{(d / 'version.txt').read_text(encoding='utf-8').strip()} ({d}) · Pläne: {sg_plan_dir()}" if d else f"nicht installiert · Pläne: {sg_plan_dir()}")(sg_dir()))
     add("")
     add("── System ──")
     add(f"Betriebssystem: {platform.system()} {platform.release()} ({platform.version()}), {platform.machine()}")
@@ -5616,6 +5617,82 @@ def deck_dir() -> Path | None:
     return None
 
 
+# ───────── ScriptGenius (eigenes Programm: Videos mit mehreren Ausgängen planen) ─────────
+def sg_dir() -> Path | None:
+    """Ordner mit der Oberfläche von ScriptGenius, wenn ScriptGenius installiert ist (sonst None)."""
+    cands = []
+    if os.environ.get("SCRIPTGENIUS_DIR"):
+        cands.append(Path(os.environ["SCRIPTGENIUS_DIR"]))
+    if sys.platform == "win32":
+        try:
+            import winreg
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\HoneyBalecta\ScriptGenius") as k:
+                cands.append(Path(winreg.QueryValueEx(k, "WebDir")[0]))
+        except OSError:
+            pass
+        if os.environ.get("LOCALAPPDATA"):
+            cands.append(Path(os.environ["LOCALAPPDATA"]) / "Programs" / "ScriptGenius" / "web")
+    else:
+        cands.append(Path.home() / ".local" / "share" / "scriptgenius" / "web")
+    for c in cands:
+        if (c / "sg-core.js").is_file() and (c / "version.txt").is_file():
+            return c
+    return None
+
+
+def sg_plan_dir() -> Path:
+    """Ordner der Pläne – derselbe, den ScriptGenius beschreibt (%APPDATA%\\ScriptGenius\\plaene)."""
+    if os.environ.get("SCRIPTGENIUS_PLANS"):
+        return Path(os.environ["SCRIPTGENIUS_PLANS"])
+    if sys.platform == "win32":
+        try:
+            import winreg
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\HoneyBalecta\ScriptGenius") as k:
+                return Path(winreg.QueryValueEx(k, "PlanDir")[0])
+        except OSError:
+            pass
+        return Path(os.environ.get("APPDATA") or Path.home()) / "ScriptGenius" / "plaene"
+    return Path.home() / ".local" / "share" / "scriptgenius" / "plaene"
+
+
+SG_ID = re.compile(r"[A-Za-z0-9_-]{1,24}")   # fullmatch: kein Zeilenumbruch am Ende
+
+
+def sg_list() -> list:
+    d = sg_plan_dir()
+    out = []
+    if d.is_dir():
+        for f in sorted(d.glob("*.scriptgenius")):
+            try:
+                p = json.loads(f.read_text(encoding="utf-8"))
+                if isinstance(p, dict) and p.get("app") == "scriptgenius":
+                    out.append(p)
+            except Exception:  # noqa: BLE001
+                log(f"ScriptGenius: Plan unlesbar: {f.name}")
+    return out
+
+
+def sg_save(plan: dict):
+    if not isinstance(plan, dict) or plan.get("app") != "scriptgenius" or not SG_ID.fullmatch(str(plan.get("id") or "")):
+        raise ValueError("Das ist kein Plan aus ScriptGenius.")
+    d = sg_plan_dir()
+    d.mkdir(parents=True, exist_ok=True)
+    f = d / f"{plan['id']}.scriptgenius"
+    tmp = f.with_name(f.name + ".tmp")
+    tmp.write_text(json.dumps(plan, ensure_ascii=False), encoding="utf-8")
+    tmp.replace(f)
+
+
+def sg_delete(pid: str):
+    if not SG_ID.fullmatch(pid or ""):
+        raise ValueError("ungültige Kennung")
+    d = sg_plan_dir()
+    f = d / f"{pid}.scriptgenius"
+    if f.is_file():   # wie in ScriptGenius: in den Papierkorb des Ordners
+        (d / "papierkorb").mkdir(parents=True, exist_ok=True)
+        f.replace(d / "papierkorb" / f.name)
+
+
 DECK_TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8",
               ".svg": "image/svg+xml", ".png": "image/png", ".ttf": "font/ttf", ".otf": "font/otf", ".txt": "text/plain; charset=utf-8",
               ".md": "text/plain; charset=utf-8", ".webmanifest": "application/manifest+json", ".json": "application/json"}
@@ -6246,6 +6323,17 @@ class Handler(BaseHTTPRequestHandler):
                 finally:
                     f.unlink(missing_ok=True)
                     VOICE_PCM.pop(q.get("id", ""), None)
+            if rest.startswith("sg/"):   # ScriptGenius, eingebettet: Dateien aus seiner Installation
+                d = sg_dir()
+                sub = rest[3:] or "index.html"
+                if not d or ".." in sub or sub.startswith(("/", "\\")):
+                    return self._json({"error": "ScriptGenius ist nicht installiert"}, 404)
+                f = (d / sub).resolve()
+                if not str(f).startswith(str(d.resolve())) or not f.is_file():
+                    return self._json({"error": "Nicht gefunden"}, 404)
+                return self._send(200, f.read_bytes(), DECK_TYPES.get(f.suffix.lower(), "application/octet-stream"))
+            if rest == "api/sg/list":
+                return self._send(200, json.dumps(sg_list(), ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8")
             if rest.startswith("deck/"):
                 d = deck_dir()
                 sub = rest[5:] or "index.html"
@@ -6256,7 +6344,7 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({"error": "Nicht gefunden"}, 404)
                 return self._send(200, f.read_bytes(), DECK_TYPES.get(f.suffix.lower(), "application/octet-stream"))
             if rest in ("", "index.html", "app.js", "studio.js", "slides.js", "deck-host.js", "app.css", "bridge-http.js", "icons.js", "chroma.js", "stimmen.js", "folgen.js", "skript.js", "thumb-engine.js", "thumb-cut.js", "titelbild.js", "rec.html", "rec.js", "rec-docs.js", "rec.css", "rec-logo.svg", "vendor/pdf.min.mjs", "vendor/pdf.worker.min.mjs",
-                        "plan.html", "plan.js", "plan-core.js", "plan.css", "plan-logo.svg", "pfade.js"):
+                        "sg-core.js", "sg-host.js", "pfade.js"):
                 f = WEB_DIR / (rest or "index.html")
                 ctype = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
                          ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".mjs": "text/javascript; charset=utf-8"}[f.suffix]
@@ -6503,15 +6591,11 @@ class Handler(BaseHTTPRequestHandler):
                 except TypeError:
                     return self._json({"ok": False})
                 return self._json({"ok": True})
-            if rest == "api/app/window":   # ScriptGenius aus HoneyCut heraus und zurück: eigenes Fenster (nur in der Windows-App)
-                fn = APP_HOOKS.get("focus")
-                app = str(data.get("app") or "")
-                if not fn or app not in ("plan", "cut"):
-                    return self._json({"ok": False})
-                try:
-                    fn(app)
-                except TypeError:
-                    return self._json({"ok": False})
+            if rest == "api/sg/save":
+                sg_save(data.get("plan"))
+                return self._json({"ok": True})
+            if rest == "api/sg/delete":
+                sg_delete(str(data.get("id") or ""))
                 return self._json({"ok": True})
             if rest == "api/rec/convert":
                 job = run_job(new_job("recconvert"), rec_convert_job, str(data.get("uri") or ""))

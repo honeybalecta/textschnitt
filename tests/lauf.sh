@@ -60,6 +60,16 @@ if [ ${#EINZELN[@]} -eq 0 ]; then
   lauf hart python3 "$HERE/rechenkern.py" "$HC_WORK/rechenkern"
 fi
 
+# ScriptGenius für die eingebettete Oberfläche: aus HC_SG_SRC (Ordner des Repositorys) oder frisch von GitHub.
+# Fehlt es, laufen die Prüfungen von HoneyCut ohne das eingebettete ScriptGenius (Pläne kommen dann direkt in den Ordner).
+if [ -z "${SCRIPTGENIUS_DIR:-}" ]; then
+  SGSRC="${HC_SG_SRC:-}"
+  [ -z "$SGSRC" ] && [ -f "$HC_WORK/sg-src/build.py" ] && SGSRC="$HC_WORK/sg-src"
+  if [ -z "$SGSRC" ] && GIT_TERMINAL_PROMPT=0 git clone -q --depth 1 https://github.com/honeybalecta/scriptgenius "$HC_WORK/sg-src.tmp" 2>/dev/null; then rm -rf "$HC_WORK/sg-src"; mv "$HC_WORK/sg-src.tmp" "$HC_WORK/sg-src"; SGSRC="$HC_WORK/sg-src"; fi
+  rm -rf "$HC_WORK/sg-src.tmp"
+  if [ -n "$SGSRC" ] && [ -f "$SGSRC/build.py" ] && python3 "$SGSRC/build.py" "$HC_WORK/sg-web" >> "$LOG" 2>&1; then export SCRIPTGENIUS_DIR="$HC_WORK/sg-web"; fi
+fi
+
 # 2) Testmedien, Backend, Testprojekte
 python3 "$HERE/medien.py" "$HC_WORK/media" >> "$LOG" 2>&1 || { echo "Die Testmedien ließen sich nicht erzeugen (ffmpeg vorhanden?)"; tail -5 "$LOG"; exit 1; }
 [ -f "$HC_WORK/github.json" ] || echo '{"releases": [], "notes": ""}' > "$HC_WORK/github.json"

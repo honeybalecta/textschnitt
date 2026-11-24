@@ -21,6 +21,21 @@ class Bridge(private val act: MainActivity) {
     private fun q(s: String) = JSONObject.quote(s)
     private fun safeId(id: String) = id.filter { it.isLetterOrDigit() || it == '-' || it == '_' }.take(40)
 
+    // ── ScriptGenius: Pläne über die Schnittstelle der App (nur mit demselben Signaturschlüssel) ──
+    private val sgUri = Uri.parse("content://${LocalServer.SG_PACKAGE}.plaene")
+    private fun sgCall(method: String, arg: String?) = ctx.contentResolver.call(sgUri, method, arg, null)
+    /** Alle Pläne als JSON-Liste – "" wenn ScriptGenius fehlt oder die Berechtigung nicht da ist */
+    @JavascriptInterface fun sgList(): String = runCatching { sgCall("list", null)?.getString("json") ?: "" }.getOrDefault("")
+    /** Plan sichern – Rückgabe leer, sonst der Grund */
+    @JavascriptInterface fun sgSave(json: String): String = runCatching { sgCall("save", json)?.getString("error") ?: "ScriptGenius antwortet nicht" }.getOrElse { it.message ?: "ScriptGenius ist nicht erreichbar" }
+    @JavascriptInterface fun sgDelete(id: String): String = runCatching { sgCall("delete", id); "" }.getOrElse { it.message ?: "ScriptGenius ist nicht erreichbar" }
+    /** ScriptGenius als eigene App öffnen */
+    @JavascriptInterface fun sgOpenApp(): Boolean {
+        val i = runCatching { act.packageManager.getLaunchIntentForPackage(LocalServer.SG_PACKAGE) }.getOrNull() ?: return false
+        main.post { runCatching { act.startActivity(i) } }
+        return true
+    }
+
     // ── Dateiauswahl ──
     @Volatile private var pickKind: String = "video"
 

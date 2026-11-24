@@ -1,6 +1,6 @@
 'use strict';
 /* HoneyCut – Pfad-Videos (2.52): mehrere Videos aus einer Aufnahme, die sich nur an den Weichen eines Plans unterscheiden.
-   Der Plan kommt aus ScriptGenius (plan-core.js: gemeinsame Teile, Weichen mit Ausgängen, Bedingungen, abweichende Fassungen).
+   Der Plan kommt aus ScriptGenius (sg-core.js, Kopie aus dem Repository von ScriptGenius: gemeinsame Teile, Weichen mit Ausgängen, Bedingungen, abweichende Fassungen).
 
    P.pfade = {plan, secs: [{seg, at, end}], vids: {Pfad: {id}}, got: {Weiche: Ausgang}}
      plan – Kopie des Plans, wie er geladen wurde
@@ -71,7 +71,8 @@ function pfExportNote(){
 }
 
 // ───────── Plan laden ─────────
-function pfDevicePlans(){ const raw = J(lsGet('sg-plans', '[]')); return (Array.isArray(raw) ? raw : []).map(p => { try { return ScriptGenius.parse(p); } catch(_){ return null; } }).filter(Boolean); }
+// Pläne aus ScriptGenius (gemeinsame Ablage, siehe sg-host.js)
+const pfDevicePlans = () => window.sgPlans ? sgPlans() : [];
 function pfLoad(plan){
   const old = P.pfade, same = !!(old && old.plan && old.plan.id === plan.id), ids = new Set(ScriptGenius.segs(plan).map(s => s.id));
   P.pfade = {plan, secs: same ? (old.secs || []).filter(x => ids.has(x.seg)) : [], vids: same ? old.vids || {} : {}, got: {}};
@@ -93,14 +94,14 @@ function pfOpenPick(){
   if (!P || !window.ScriptGenius) return; sheetItem = null;
   const body = $('#sheetBody'); body.onclick = null; body.onchange = null;
   const paint = () => {
-    const list = pfDevicePlans(), curId = pfOn() ? P.pfade.plan.id : '';
+    const list = pfDevicePlans(), curId = pfOn() ? P.pfade.plan.id : '', sgOn = !!window.HC_SG_ON;
     body.innerHTML = `<div id="pfPick"><h3>Pfad-Plan</h3>
       <p class="muted small">Ein Plan aus ScriptGenius legt fest, was in jedem Video gleich ist und an welchen Stellen sich die Videos trennen. HoneyCut ordnet die Aufnahme den Abschnitten des Plans zu und baut je Pfad ein eigenes Video.</p>
       ${pfOn() ? `<div class="cl-row"><span class="mk-t" style="flex:1"><b dir="auto">${esc(P.pfade.plan.name)}</b><i>in diesem Projekt geladen · ${pfCalc().paths.count} Videos</i></span><button type="button" class="btn small danger" data-a="unload">Entfernen</button></div>` : ''}
-      <h4 style="margin:14px 0 6px">Pläne auf diesem Gerät</h4>
+      <h4 style="margin:14px 0 6px">Pläne aus ScriptGenius</h4>
       ${list.length ? `<div class="cl-list">${list.map(p => { const n = ScriptGenius.paths(p, 1).count; return `<div class="cl-row" data-p="${esc(p.id)}"><span class="mk-t" style="flex:1"><b dir="auto">${esc(p.name)}</b><i>${n} ${n === 1 ? 'Video' : 'Videos'} · geändert am ${new Date(p.changed).toLocaleDateString('de-DE')}</i></span><button type="button" class="btn small${p.id === curId ? '' : ' primary'}" data-a="load">${p.id === curId ? 'Neu laden' : 'Laden'}</button></div>`; }).join('')}</div>`
-        : '<p class="muted small">Noch keiner. Lege in ScriptGenius einen Plan an – er steht danach hier.</p>'}
-      <div class="row wrap" style="margin-top:12px"><label class="btn">Aus Datei laden …<input type="file" id="pfFile" accept=".scriptgenius,.json,application/json" hidden></label><button type="button" class="btn" data-a="app">ScriptGenius öffnen</button><button type="button" class="btn" data-a="ok" style="margin-left:auto">Fertig</button></div></div>`;
+        : `<p class="muted small">${sgOn ? 'Noch keiner. Lege in ScriptGenius einen Plan an – er steht danach hier.' : 'Hier stehen die Pläne aus ScriptGenius, sobald es auf diesem Gerät installiert ist. Einen Plan von einem anderen Gerät oder aus dem Browser lädst du als Datei.'}</p>`}
+      <div class="row wrap" style="margin-top:12px"><label class="btn">Aus Datei laden …<input type="file" id="pfFile" accept=".scriptgenius,.json,application/json" hidden></label><button type="button" class="btn" data-a="app">${sgOn ? 'ScriptGenius öffnen' : 'ScriptGenius …'}</button><button type="button" class="btn" data-a="ok" style="margin-left:auto">Fertig</button></div></div>`;
     $('#pfFile').onchange = async e => { const f = e.target.files[0]; e.target.value = ''; if (!f) return;
       try { pfLoad(ScriptGenius.parse(await f.text())); closeSheet(); } catch(err){ toast((err && err.message) || 'Die Datei lässt sich nicht lesen'); } };
   };
@@ -109,10 +110,12 @@ function pfOpenPick(){
     if (act === 'unload'){ if (pfUnload()) paint(); return; }
     if (act === 'app') return pfOpenApp();
     if (act === 'load'){ const p = pfDevicePlans().find(q => q.id === a.closest('[data-p]').dataset.p); if (!p) return paint(); pfLoad(p); return closeSheet(); } };
-  sheetOnClose = () => { body.onclick = null; };
+  pfPickRefresh = () => { if ($('#pfPick')) paint(); };
+  sheetOnClose = () => { body.onclick = null; pfPickRefresh = () => {}; };
   paint(); openSheet();
 }
-function pfOpenApp(){ if (TS.openPlan && TS.openPlan()) return; if (P && !saveNow()) return toast('Das Projekt ließ sich nicht speichern'); try { sessionStorage.setItem('sg-from', 'cut'); } catch(_){} location.href = 'plan.html'; }
+let pfPickRefresh = () => {};   // nach dem Schließen von ScriptGenius die Liste der Pläne neu zeigen
+function pfOpenApp(){ if (window.sgOpen) sgOpen(); }
 
 // ───────── Abschnitte zuordnen ─────────
 // Nach dem Skript des Plans: die Wörter, die im Video bleiben, in der Reihenfolge des Textes. → {n: gefunden, of: Abschnitte}
