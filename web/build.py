@@ -46,7 +46,7 @@ assert n == 1, "Skript-Einbindung in rec.html nicht gefunden"
 rec = rec.replace("</head>", '<meta name="theme-color" content="#131312">\n<link rel="icon" href="rec-logo.svg" type="image/svg+xml">\n</head>', 1)
 (OUT / "rec.html").write_text(rec)
 
-# HoneyPlan (Planer für Videos mit mehreren Ausgängen): eigene Seite ohne Brücke – Pläne liegen im Browser, Dateien kommen als Download
+# ScriptGenius (Planer für Videos mit mehreren Ausgängen): eigene Seite ohne Brücke – Pläne liegen im Browser, Dateien kommen als Download
 plan = (CORE / "plan.html").read_text()
 plan, n = re.subn(r'<script src="bridge-http\.js"></script>\s*', '', plan)
 assert n == 1, "Skript-Einbindung in plan.html nicht gefunden"

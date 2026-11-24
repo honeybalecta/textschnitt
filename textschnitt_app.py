@@ -5,7 +5,7 @@ Start: pythonw textschnitt_app.pyw [videodatei]
 Läuft HoneyCut schon, wird die Datei im offenen Fenster geöffnet und das Fenster nach vorn geholt.
 
 HoneyRec (Aufnahmeprogramm) ist dasselbe Programm mit eigenem Start: HoneyRec.exe bzw. „--rec“ öffnet das Aufnahmefenster.
-HoneyPlan (Planer für Videos mit mehreren Ausgängen) ebenso: HoneyPlan.exe bzw. „--plan“.
+ScriptGenius (Planer für Videos mit mehreren Ausgängen) ebenso: ScriptGenius.exe bzw. „--plan“.
 Beide teilen sich Backend, Projekte und Datenordner; wer zuerst startet, öffnet das lokale Backend, der zweite Start
 übergibt nur noch („bitte ein HoneyRec-Fenster“ bzw. „bitte HoneyCut“).
 """
@@ -36,9 +36,9 @@ FIRST_PORT = 8765
 TITLE = "HoneyCut"
 REC_TITLE = "HoneyRec"
 REC_MODE = "--rec" in sys.argv or Path(sys.executable).stem.lower() == "honeyrec"
-# HoneyPlan (Planer für Videos mit mehreren Ausgängen): ebenfalls dasselbe Programm mit eigenem Start (HoneyPlan.exe bzw. „--plan“)
-PLAN_TITLE = "HoneyPlan"
-PLAN_MODE = not REC_MODE and ("--plan" in sys.argv or Path(sys.executable).stem.lower() == "honeyplan")
+# ScriptGenius (Planer für Videos mit mehreren Ausgängen): ebenfalls dasselbe Programm mit eigenem Start (ScriptGenius.exe bzw. „--plan“)
+PLAN_TITLE = "ScriptGenius"
+PLAN_MODE = not REC_MODE and ("--plan" in sys.argv or Path(sys.executable).stem.lower() == "scriptgenius")
 MODE = "rec" if REC_MODE else "plan" if PLAN_MODE else "cut"
 VIDEO_TYPES = ("Video und Audio (*.mp4;*.mov;*.mkv;*.m4v;*.webm;*.avi;*.mts;*.m2ts;*.wmv;*.mp3;*.wav;*.m4a;*.flac;*.aac;*.ogg)",
                "Alle Dateien (*.*)")
@@ -256,7 +256,7 @@ def main():
 
     try:  # eigenes Taskleisten-Symbol statt dem von Python
         import ctypes
-        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID({"rec": "HoneyCut.HoneyRec", "plan": "HoneyCut.HoneyPlan"}.get(MODE, "HoneyCut.App"))
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID({"rec": "HoneyCut.HoneyRec", "plan": "HoneyCut.ScriptGenius"}.get(MODE, "HoneyCut.App"))
     except Exception:
         pass
 
@@ -265,7 +265,7 @@ def main():
     url_plan = url_cut.replace("index.html", "plan.html")
     urls = {"cut": url_cut, "rec": url_rec, "plan": url_plan}
     titles = {"cut": TITLE, "rec": REC_TITLE, "plan": PLAN_TITLE}
-    # HoneyPlan ist ein Schreibwerkzeug: Text markieren und kopieren muss gehen, das Fenster darf schmal sein
+    # ScriptGenius ist ein Schreibwerkzeug: Text markieren und kopieren muss gehen, das Fenster darf schmal sein
     shape = lambda app: dict(width=1280, height=880, min_size=(420, 560), text_select=True) if app == "plan" else dict(width=1480, height=940, min_size=(1000, 640), text_select=False)  # noqa: E731
     first_title = titles[MODE]
     window = webview.create_window(first_title, urls[MODE], background_color="#131312", **shape(MODE))
@@ -441,7 +441,7 @@ def main():
         webview.settings["ALLOW_DOWNLOADS"] = True
     except Exception:
         pass
-    icon = RES_DIR / {"rec": "honeyrec.ico", "plan": "honeyplan.ico"}.get(MODE, "textschnitt.ico")
+    icon = RES_DIR / {"rec": "honeyrec.ico", "plan": "scriptgenius.ico"}.get(MODE, "textschnitt.ico")
     try:
         webview.start(private_mode=False, storage_path=str(T.DATA_DIR / "webview"),
                       icon=str(icon) if icon.exists() else None)

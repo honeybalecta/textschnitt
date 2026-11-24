@@ -1,6 +1,6 @@
 'use strict';
 /* HoneyCut – Pfad-Videos (2.52): mehrere Videos aus einer Aufnahme, die sich nur an den Weichen eines Plans unterscheiden.
-   Der Plan kommt aus HoneyPlan (plan-core.js: gemeinsame Teile, Weichen mit Ausgängen, Bedingungen, abweichende Fassungen).
+   Der Plan kommt aus ScriptGenius (plan-core.js: gemeinsame Teile, Weichen mit Ausgängen, Bedingungen, abweichende Fassungen).
 
    P.pfade = {plan, secs: [{seg, at, end}], vids: {Pfad: {id}}, got: {Weiche: Ausgang}}
      plan – Kopie des Plans, wie er geladen wurde
@@ -12,12 +12,12 @@
    und werden vor jedem gemeinsamen Export von dort neu aufgebaut; Name und Titelbild (settings.coverFirst, settings.coverTpl)
    gehören dem Video. Wer ein Pfad-Video von Hand ändert, behält es (own) – es wird dann nicht mehr aufgefrischt. */
 
-const pfOn = () => !!(P && P.pfade && P.pfade.plan && window.HoneyPlan);
+const pfOn = () => !!(P && P.pfade && P.pfade.plan && window.ScriptGenius);
 const pfSecs = () => (P.pfade.secs ||= []);
 let pfMemo = null, pfTokMemo = null;
 function pfCalc(){
   const pl = P.pfade.plan; if (pfMemo && pfMemo.pl === pl) return pfMemo;
-  const paths = HoneyPlan.paths(pl, 400), segs = HoneyPlan.segs(pl).filter(s => s.n > 0);
+  const paths = ScriptGenius.paths(pl, 400), segs = ScriptGenius.segs(pl).filter(s => s.n > 0);
   return pfMemo = {pl, paths, segs, by: new Map(segs.map(s => [s.id, s]))};
 }
 // Token → {seg, k, first}: zu welchem Abschnitt ein Wort gehört (k: laufende Nummer im Text, first: Beschriftung am ersten Wort)
@@ -60,7 +60,7 @@ function pfPaintBtn(){
 }
 function pfPaintInfo(){
   const el = $('#pfInfo'); if (!el || !P) return; const on = pfOn();
-  el.closest('.row').classList.toggle('hidden', !window.HoneyPlan || !!P.clipOf);
+  el.closest('.row').classList.toggle('hidden', !window.ScriptGenius || !!P.clipOf);
   if (on){ const n = pfCalc().paths.count; el.textContent = `${P.pfade.plan.name} · ${n} ${n === 1 ? 'Video' : 'Videos'}`; } else el.textContent = 'keiner';
   $('#pfPlanBtn').textContent = on ? 'Ändern' : 'Wählen';
 }
@@ -71,11 +71,11 @@ function pfExportNote(){
 }
 
 // ───────── Plan laden ─────────
-function pfDevicePlans(){ const raw = J(lsGet('hp-plans', '[]')); return (Array.isArray(raw) ? raw : []).map(p => { try { return HoneyPlan.parse(p); } catch(_){ return null; } }).filter(Boolean); }
+function pfDevicePlans(){ const raw = J(lsGet('sg-plans', '[]')); return (Array.isArray(raw) ? raw : []).map(p => { try { return ScriptGenius.parse(p); } catch(_){ return null; } }).filter(Boolean); }
 function pfLoad(plan){
-  const old = P.pfade, same = !!(old && old.plan && old.plan.id === plan.id), ids = new Set(HoneyPlan.segs(plan).map(s => s.id));
+  const old = P.pfade, same = !!(old && old.plan && old.plan.id === plan.id), ids = new Set(ScriptGenius.segs(plan).map(s => s.id));
   P.pfade = {plan, secs: same ? (old.secs || []).filter(x => ids.has(x.seg)) : [], vids: same ? old.vids || {} : {}, got: {}};
-  const text = HoneyPlan.script(plan, {heads: true}), fresh = !tokens.some(t => t.type === 'word');
+  const text = ScriptGenius.script(plan, {heads: true}), fresh = !tokens.some(t => t.type === 'word');
   if (fresh && window.Skript && Skript.words(text).length >= 5 && (!P.script || !Skript.words(P.script.text || '').length || P.script.plan)) P.script = {...(P.script || {}), text, plan: plan.id};
   pfMemo = null; pfTokMemo = null;
   let msg = `Plan „${plan.name}“ geladen`;
@@ -90,19 +90,19 @@ function pfUnload(){
   delete P.pfade; changed(false); saveNow(); if (window.paintPreScript) paintPreScript(); pfChanged(); toast('Plan entfernt'); return true;
 }
 function pfOpenPick(){
-  if (!P || !window.HoneyPlan) return; sheetItem = null;
+  if (!P || !window.ScriptGenius) return; sheetItem = null;
   const body = $('#sheetBody'); body.onclick = null; body.onchange = null;
   const paint = () => {
     const list = pfDevicePlans(), curId = pfOn() ? P.pfade.plan.id : '';
     body.innerHTML = `<div id="pfPick"><h3>Pfad-Plan</h3>
-      <p class="muted small">Ein Plan aus HoneyPlan legt fest, was in jedem Video gleich ist und an welchen Stellen sich die Videos trennen. HoneyCut ordnet die Aufnahme den Abschnitten des Plans zu und baut je Pfad ein eigenes Video.</p>
+      <p class="muted small">Ein Plan aus ScriptGenius legt fest, was in jedem Video gleich ist und an welchen Stellen sich die Videos trennen. HoneyCut ordnet die Aufnahme den Abschnitten des Plans zu und baut je Pfad ein eigenes Video.</p>
       ${pfOn() ? `<div class="cl-row"><span class="mk-t" style="flex:1"><b dir="auto">${esc(P.pfade.plan.name)}</b><i>in diesem Projekt geladen · ${pfCalc().paths.count} Videos</i></span><button type="button" class="btn small danger" data-a="unload">Entfernen</button></div>` : ''}
       <h4 style="margin:14px 0 6px">Pläne auf diesem Gerät</h4>
-      ${list.length ? `<div class="cl-list">${list.map(p => { const n = HoneyPlan.paths(p, 1).count; return `<div class="cl-row" data-p="${esc(p.id)}"><span class="mk-t" style="flex:1"><b dir="auto">${esc(p.name)}</b><i>${n} ${n === 1 ? 'Video' : 'Videos'} · geändert am ${new Date(p.changed).toLocaleDateString('de-DE')}</i></span><button type="button" class="btn small${p.id === curId ? '' : ' primary'}" data-a="load">${p.id === curId ? 'Neu laden' : 'Laden'}</button></div>`; }).join('')}</div>`
-        : '<p class="muted small">Noch keiner. Lege in HoneyPlan einen Plan an – er steht danach hier.</p>'}
-      <div class="row wrap" style="margin-top:12px"><label class="btn">Aus Datei laden …<input type="file" id="pfFile" accept=".honeyplan,.json,application/json" hidden></label><button type="button" class="btn" data-a="app">HoneyPlan öffnen</button><button type="button" class="btn" data-a="ok" style="margin-left:auto">Fertig</button></div></div>`;
+      ${list.length ? `<div class="cl-list">${list.map(p => { const n = ScriptGenius.paths(p, 1).count; return `<div class="cl-row" data-p="${esc(p.id)}"><span class="mk-t" style="flex:1"><b dir="auto">${esc(p.name)}</b><i>${n} ${n === 1 ? 'Video' : 'Videos'} · geändert am ${new Date(p.changed).toLocaleDateString('de-DE')}</i></span><button type="button" class="btn small${p.id === curId ? '' : ' primary'}" data-a="load">${p.id === curId ? 'Neu laden' : 'Laden'}</button></div>`; }).join('')}</div>`
+        : '<p class="muted small">Noch keiner. Lege in ScriptGenius einen Plan an – er steht danach hier.</p>'}
+      <div class="row wrap" style="margin-top:12px"><label class="btn">Aus Datei laden …<input type="file" id="pfFile" accept=".scriptgenius,.json,application/json" hidden></label><button type="button" class="btn" data-a="app">ScriptGenius öffnen</button><button type="button" class="btn" data-a="ok" style="margin-left:auto">Fertig</button></div></div>`;
     $('#pfFile').onchange = async e => { const f = e.target.files[0]; e.target.value = ''; if (!f) return;
-      try { pfLoad(HoneyPlan.parse(await f.text())); closeSheet(); } catch(err){ toast((err && err.message) || 'Die Datei lässt sich nicht lesen'); } };
+      try { pfLoad(ScriptGenius.parse(await f.text())); closeSheet(); } catch(err){ toast((err && err.message) || 'Die Datei lässt sich nicht lesen'); } };
   };
   body.onclick = e => { const a = e.target.closest('[data-a]'); if (!a) return; const act = a.dataset.a;
     if (act === 'ok') return closeSheet();
@@ -112,7 +112,7 @@ function pfOpenPick(){
   sheetOnClose = () => { body.onclick = null; };
   paint(); openSheet();
 }
-function pfOpenApp(){ if (TS.openPlan && TS.openPlan()) return; if (P && !saveNow()) return toast('Das Projekt ließ sich nicht speichern'); try { sessionStorage.setItem('hp-from', 'cut'); } catch(_){} location.href = 'plan.html'; }
+function pfOpenApp(){ if (TS.openPlan && TS.openPlan()) return; if (P && !saveNow()) return toast('Das Projekt ließ sich nicht speichern'); try { sessionStorage.setItem('sg-from', 'cut'); } catch(_){} location.href = 'plan.html'; }
 
 // ───────── Abschnitte zuordnen ─────────
 // Nach dem Skript des Plans: die Wörter, die im Video bleiben, in der Reihenfolge des Textes. → {n: gefunden, of: Abschnitte}
@@ -120,7 +120,7 @@ function pfAuto(quiet){
   const c = pfCalc(), res = {n: 0, of: c.segs.length}; if (!tokens.length || !window.Skript) return res;
   if (order.length !== tokens.length) computeOrder();
   const ids = order.filter(i => tokens[i].type === 'word' && tokText(tokens[i]) && !isCut(i));
-  const r = HoneyPlan.place(c.pl, ids.map(i => ({text: tokText(tokens[i])}))), secs = [];
+  const r = ScriptGenius.place(c.pl, ids.map(i => ({text: tokText(tokens[i])}))), secs = [];
   for (const x of r.ranges){ const s = secOf(order.slice(pos[ids[x.a]], pos[ids[x.b]] + 1)); if (s) secs.push({seg: x.seg, ...s}); }
   res.n = secs.length; if (!secs.length) return res;
   const set = () => { P.pfade.secs = secs; };
@@ -155,12 +155,12 @@ function pfSecsHtml(){
 }
 // „Was ist eingetreten?“: die Weichen der Reihe nach; spätere erscheinen erst, wenn die früheren entschieden sind
 function pfGot(){
-  const pl = P.pfade.plan, got = (P.pfade.got ||= {}), N = HoneyPlan.names(pl), st = {}, picks = []; let html = '', open = false;
-  for (const b of pl.blocks){ if (b.kind !== 'weiche' || !HoneyPlan.holds(b.when, st)) continue;
+  const pl = P.pfade.plan, got = (P.pfade.got ||= {}), N = ScriptGenius.names(pl), st = {}, picks = []; let html = '', open = false;
+  for (const b of pl.blocks){ if (b.kind !== 'weiche' || !ScriptGenius.holds(b.when, st)) continue;
     const sel = b.outs.some(o => o.id === got[b.id]) ? got[b.id] : null;
     html += `<div class="field"><span dir="auto">${esc(N.blk.get(b.id))}</span><div class="seg-ctl pf-got" data-w="${esc(b.id)}">${b.outs.map(o => `<button type="button" data-o="${esc(o.id)}"${o.id === sel ? ' class="on"' : ''} dir="auto">${esc(N.out.get(o.id))}</button>`).join('')}</div></div>`;
     if (!sel){ open = true; break; } st[b.id] = sel; picks.push(b.id + '.' + sel); }
-  return {html, key: open ? null : (picks.length ? picks.join('~') : HoneyPlan.KEY_NONE), any: !!html};
+  return {html, key: open ? null : (picks.length ? picks.join('~') : ScriptGenius.KEY_NONE), any: !!html};
 }
 function pfVidsHtml(){
   const ps = pfPaths(), c = pfCalc(), pm = projMap(), vids = P.pfade.vids || {}, g = pfGot(), hit = g.key ? ps.find(p => p.key === g.key) : null, ok = ps.filter(p => p.ok).length;

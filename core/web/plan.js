@@ -1,10 +1,10 @@
 'use strict';
-/* HoneyPlan – Planer für Videos mit mehreren möglichen Ausgängen (Oberfläche). Der Rechenkern steht in plan-core.js.
-   Pläne liegen im Gerät (localStorage „hp-plans“) – dort findet HoneyCut sie unter „Pfad-Plan“; für andere Geräte gibt es die Datei .honeyplan. */
+/* ScriptGenius – Planer für Videos mit mehreren möglichen Ausgängen (Oberfläche). Der Rechenkern steht in plan-core.js.
+   Pläne liegen im Gerät (localStorage „sg-plans“) – dort findet HoneyCut sie unter „Pfad-Plan“; für andere Geräte gibt es die Datei .scriptgenius. */
 (function(){
-  const H = window.HoneyPlan, $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
+  const H = window.ScriptGenius, $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
-  const KEY = 'hp-plans', CUR = 'hp-current';
+  const KEY = 'sg-plans', CUR = 'sg-current';
   let plans = [], cur = null, saveT = 0, sideT = 0;
   const openPaths = new Set();
 
@@ -197,11 +197,11 @@
     try { await navigator.clipboard.writeText(t); return true; } catch(_){}
     try { const ta = document.createElement('textarea'); ta.value = t; ta.style.cssText = 'position:fixed;opacity:0'; document.body.append(ta); ta.select(); const ok = document.execCommand('copy'); ta.remove(); return ok; } catch(_){ return false; }
   }
-  // Datei sichern: am Computer und in der Android-App über die Brücke (Dialog bzw. Ordner „HoneyPlan“), im Browser als Download
+  // Datei sichern: am Computer und in der Android-App über die Brücke (Dialog bzw. Ordner „ScriptGenius“), im Browser als Download
   function saveText(name, mime, text){
     const bytes = new TextEncoder().encode(text);
     if (window.TS && TS.saveFile){ let bin = ''; for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
-      try { const m = TS.saveFile(name, mime, btoa(bin), 'HoneyPlan'); return typeof m === 'string' ? (m || 'Nicht gespeichert') : 'Gespeichert'; } catch(e){ return 'Speichern fehlgeschlagen: ' + ((e && e.message) || e); } }
+      try { const m = TS.saveFile(name, mime, btoa(bin), 'ScriptGenius'); return typeof m === 'string' ? (m || 'Nicht gespeichert') : 'Gespeichert'; } catch(e){ return 'Speichern fehlgeschlagen: ' + ((e && e.message) || e); } }
     const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([bytes], {type: mime})); a.download = name; document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000);
     return 'Heruntergeladen: ' + name;
   }
@@ -212,7 +212,7 @@
     const row = p => { const n = H.paths(p, 1).count; return `<div class="prow${p === cur ? ' cur' : ''}" data-p="${p.id}"><span class="pn"><b dir="auto">${esc(p.name)}</b><span class="muted small">${n} ${n === 1 ? 'Video' : 'Videos'} · geändert am ${new Date(p.changed).toLocaleDateString('de-DE')}</span></span><button type="button" class="sbtn slim" data-x="open">${p === cur ? 'Geöffnet' : 'Öffnen'}</button><button type="button" class="sbtn slim" data-x="dup" title="Als Kopie anlegen">Kopie</button><button type="button" class="ibtn slim" data-x="del" title="Plan löschen">×</button></div>`; };
     const m = showModal(`<h3>Pläne</h3><p class="muted small">Die Pläne liegen in diesem Gerät. HoneyCut findet sie hier unter „Pfad-Plan“; für ein anderes Gerät sicherst du einen Plan über „Für HoneyCut“ als Datei.</p>
       <div class="plist">${plans.map(row).join('')}</div>
-      <div class="row wrap"><button type="button" class="rbtn" data-x="new">＋ Neuer Plan</button><label class="sbtn">Aus Datei öffnen …<input type="file" id="planFile" accept=".honeyplan,.json,application/json" hidden></label><button type="button" class="sbtn" data-x="sample">Beispiel ansehen</button><span class="grow"></span><button type="button" class="sbtn" data-x="close">Schließen</button></div>`);
+      <div class="row wrap"><button type="button" class="rbtn" data-x="new">＋ Neuer Plan</button><label class="sbtn">Aus Datei öffnen …<input type="file" id="planFile" accept=".scriptgenius,.json,application/json" hidden></label><button type="button" class="sbtn" data-x="sample">Beispiel ansehen</button><span class="grow"></span><button type="button" class="sbtn" data-x="close">Schließen</button></div>`);
     m.querySelector('#planFile').onchange = async e => { const f = e.target.files[0]; e.target.value = ''; if (!f) return;
       try { const p = H.parse(await f.text()); const old = plans.find(q => q.id === p.id);
         if (old){ if (!confirm(`„${old.name}“ gibt es hier schon. Durch die Datei ersetzen?\n\n„Abbrechen“ legt den Plan aus der Datei als Kopie an.`)){ p.id = H.newId(); p.name = (p.name + ' (Kopie)').slice(0, 80); plans.unshift(p); } else plans[plans.indexOf(old)] = p; use(p); persist(); }
@@ -259,10 +259,10 @@
     const m = showModal(`<h3>Für HoneyCut</h3>
       <p><b>Auf diesem Gerät:</b> Der Plan „${esc(cur.name)}“ steht in HoneyCut schon bereit. Öffne dort das Projekt mit der Aufnahme und wähle unter „Transkribieren“ den <b>Pfad-Plan</b>. HoneyCut ordnet die Aufnahme den Abschnitten zu und baut daraus ${n === 1 ? 'das Video' : `die ${n} Videos`}.</p>
       <p><b>Auf einem anderen Gerät:</b> Sichere den Plan als Datei und lade sie dort in HoneyCut unter „Pfad-Plan“ → „Aus Datei laden“.</p>
-      <div class="row end wrap"><button type="button" class="sbtn" data-x="close">Schließen</button><button type="button" class="sbtn" data-x="file">Als Datei sichern (.honeyplan)</button>${same ? '<button type="button" class="rbtn" data-x="cut">HoneyCut öffnen</button>' : ''}</div>`);
+      <div class="row end wrap"><button type="button" class="sbtn" data-x="close">Schließen</button><button type="button" class="sbtn" data-x="file">Als Datei sichern (.scriptgenius)</button>${same ? '<button type="button" class="rbtn" data-x="cut">HoneyCut öffnen</button>' : ''}</div>`);
     m.onclick = e => { const x = e.target.closest('[data-x]'); if (!x) return;
       if (x.dataset.x === 'close') return closeModal();
-      if (x.dataset.x === 'file') return toast(saveText(`${cleanFile(cur.name)}.honeyplan`, 'application/json', fileOf(cur)), 4000);
+      if (x.dataset.x === 'file') return toast(saveText(`${cleanFile(cur.name)}.scriptgenius`, 'application/json', fileOf(cur)), 4000);
       if (x.dataset.x === 'cut'){ persist(); if (window.TS && TS.openCut && TS.openCut()) return closeModal(); location.href = 'index.html'; } };
   }
   $('#cutBtn').onclick = () => { persist(); openCut(); };
@@ -274,7 +274,7 @@
   $('#pTabs').onclick = e => { const b = e.target.closest('[data-view]'); if (!b) return; $('#pMain').dataset.view = b.dataset.view; for (const q of $$('#pTabs button')) q.classList.toggle('on', q === b); if (b.dataset.view === 'side') renderSide(); };
 
   // Android: Zurück-Taste und Wechsel über ein anderes Startsymbol; aus HoneyCut geöffnet führt „Zurück“ dorthin
-  let fromCut = false; try { fromCut = sessionStorage.getItem('hp-from') === 'cut'; sessionStorage.removeItem('hp-from'); } catch(_){}
+  let fromCut = false; try { fromCut = sessionStorage.getItem('sg-from') === 'cut'; sessionStorage.removeItem('sg-from'); } catch(_){}
   window.TSApp = Object.assign(window.TSApp || {}, {
     onBack(){ if (!$('#modal').classList.contains('hidden')){ closeModal(); return true; }
       if ($('#pMain').dataset.view === 'side' && getComputedStyle($('#pTabs')).display !== 'none'){ $('#pTabs [data-view="flow"]').click(); return true; }
@@ -286,5 +286,5 @@
   if (!plans.length) plans.push(H.blank('Neuer Plan'));
   let first = plans[0]; try { const id = localStorage.getItem(CUR); first = plans.find(p => p.id === id) || first; } catch(_){}
   use(first);
-  window.HoneyPlanApp = {get plan(){ return cur; }, get plans(){ return plans; }, persist, use, sample};   // für die Prüfläufe
+  window.ScriptGeniusApp = {get plan(){ return cur; }, get plans(){ return plans; }, persist, use, sample};   // für die Prüfläufe
 })();

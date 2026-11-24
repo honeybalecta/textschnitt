@@ -61,11 +61,11 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity-alias>
-        <!-- HoneyPlan: eigenes Symbol im Startbildschirm, öffnet in derselben App den Planer für Videos mit mehreren Ausgängen -->
+        <!-- ScriptGenius: eigenes Symbol im Startbildschirm, öffnet in derselben App den Planer für Videos mit mehreren Ausgängen -->
         <activity-alias
             android:name=".PlanAlias"
             android:targetActivity=".MainActivity"
-            android:label="HoneyPlan"
+            android:label="ScriptGenius"
             android:icon="@mipmap/ic_plan"
             android:roundIcon="@mipmap/ic_plan"
             android:exported="true">

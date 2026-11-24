@@ -6503,7 +6503,7 @@ class Handler(BaseHTTPRequestHandler):
                 except TypeError:
                     return self._json({"ok": False})
                 return self._json({"ok": True})
-            if rest == "api/app/window":   # HoneyPlan aus HoneyCut heraus und zurück: eigenes Fenster (nur in der Windows-App)
+            if rest == "api/app/window":   # ScriptGenius aus HoneyCut heraus und zurück: eigenes Fenster (nur in der Windows-App)
                 fn = APP_HOOKS.get("focus")
                 app = str(data.get("app") or "")
                 if not fn or app not in ("plan", "cut"):

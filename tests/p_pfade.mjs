@@ -1,4 +1,4 @@
-// Pfad-Videos (2.52): HoneyPlan (Planer für Videos mit mehreren möglichen Ausgängen) und die Pfad-Videos in HoneyCut.
+// Pfad-Videos (2.52): ScriptGenius (Planer für Videos mit mehreren möglichen Ausgängen) und die Pfad-Videos in HoneyCut.
 // Grundlage ist pfade.mp4: eine Aufnahme nach einem Plan mit zwei Weichen, jedes Bild trägt seine Nummer (siehe medien.py).
 // Am fertigen Video wird Bild für Bild abgelesen, welche Stellen der Aufnahme in welcher Reihenfolge darin stehen.
 import fs from 'node:fs';
@@ -27,12 +27,12 @@ const seq = (rs, names, firstFrom) => rs.length === names.length && names.every(
 const exportAll = async click => { await click(); await page.waitForFunction(() => !exBatch, null, { timeout: 240000 }); await sleep(500); await idle(); await sleep(300); await ev(() => closeSheet()); const res = await q(); for (const x of res) for (const f of x.files) trash.add(f); return res; };
 const mp4 = x => x.files.find(f => /\.mp4$/.test(f));
 
-await ev(() => { for (const k of ['hp-plans', 'hp-current', 'hc-house', 'hc-house-def']) localStorage.removeItem(k); EXQ.length = 0;
+await ev(() => { for (const k of ['sg-plans', 'sg-current', 'hc-house', 'hc-house-def']) localStorage.removeItem(k); EXQ.length = 0;
   for (const p of JSON.parse(TS.listProjects() || '[]')) if (/^pfade( |$)/.test(p.name || '')){ try { TS.deleteProject(p.id); } catch (_) {} try { if (TS.trashPurge) TS.trashPurge(p.id); } catch (_) {} } });   // Reste eines abgebrochenen Laufs
 
 // ══════════ 1) Rechenkern ══════════
 let st = await ev(() => {
-  const H = HoneyPlan, p = H.blank('Kern');
+  const H = ScriptGenius, p = H.blank('Kern');
   const a = H.teil('Anfang', 'Guten Tag zusammen.'), w1 = H.weiche('Eins', ['A', 'B', 'C']), w2 = H.weiche('Zwei', ['X', 'Y']), w3 = H.weiche('Drei', ['M', 'N']), z = H.teil('Ende', 'Bis bald.');
   w1.outs.forEach((o, k) => o.text = 'Ausgang ' + 'ABC'[k] + ' ist eingetreten.'); w2.outs[0].text = 'Dazu kommt X.'; w2.outs[1].leer = true; w3.outs[0].text = 'M gilt.'; w3.outs[1].text = 'N gilt.';
   w2.when = {[w1.id]: [w1.outs[0].id, w1.outs[1].id]}; w3.when = {[w1.id]: [w1.outs[0].id], [w2.id]: [w2.outs[0].id]};
@@ -56,12 +56,12 @@ chk('Aufnahme-Skript: jeder Abschnitt einmal, mit Überschriften oder als reiner
 chk('Bedingungen auf spätere Weichen werden entfernt, fremde Dateien abgelehnt, sehr viele Pfade begrenzt', !st.kept && /kein Plan/.test(st.foreign) && st.big[0] === 20000 && st.big[1] === 50 && st.big[2] === true, [st.kept, st.foreign, st.big]);
 chk('Schlüssel eines Pfads, Wortzahl ohne Überschriften und Regie, Bedingung in Worten, Datei bleibt beim Einlesen gleich', st.key && st.words === 4 && st.cond === 'A + X' && st.rt, [st.key, st.words, st.cond, st.rt]);
 
-// ══════════ 2) HoneyPlan ══════════
+// ══════════ 2) ScriptGenius ══════════
 const pp = await ctx.newPage(); const plogs = watch(pp);
-await pp.goto(BASE.replace('index.html', 'plan.html')); await pp.waitForFunction(() => window.HoneyPlanApp);
+await pp.goto(BASE.replace('index.html', 'plan.html')); await pp.waitForFunction(() => window.ScriptGeniusApp);
 const pe = (f, a) => pp.evaluate(f, a);
 st = await pe(() => ({ empty: !!document.querySelector('#flow .empty'), name: document.querySelector('#pName').value, stats: document.querySelector('#stats').textContent.replace(/\s+/g, ' '), tree: document.querySelector('#treeBox').classList.contains('hidden') }));
-chk('HoneyPlan startet mit einem leeren Plan', st.empty && st.name === 'Neuer Plan' && /1 ?Video/.test(st.stats) && st.tree, st);
+chk('ScriptGenius startet mit einem leeren Plan', st.empty && st.name === 'Neuer Plan' && /1 ?Video/.test(st.stats) && st.tree, st);
 await pp.fill('#pName', 'Mietendeckel');
 await pp.click('#flow [data-a="addTeil"]'); await pp.fill('#flow .blk.teil .lbl', 'Einstieg'); await pp.fill('#flow .blk.teil textarea', 'Heute entscheidet der Stadtrat über den Mietendeckel. Wir haben lange dafür gekämpft.');
 await pp.click('#flow .ins.last [data-a="addWeiche"]'); await pp.fill('#flow .blk.weiche .lbl', 'Abstimmung');
@@ -93,7 +93,7 @@ st = await pe(() => document.querySelector('#flow .alt .cond').textContent);
 chk('ein umbenannter Ausgang steht sofort auch in den Bedingungen', /für Durchgefallen/.test(st), st);
 await pp.fill('#flow .blk.weiche .out:nth-child(2) [data-f="olabel"]', 'Abgelehnt'); await sleep(450);
 await pp.click('#paths .path:nth-of-type(1) summary'); await pp.fill('#paths .path:nth-of-type(1) [data-f="ptitle"]', 'Deckel steht'); await sleep(100);
-st = await pe(() => ({ text: document.querySelector('#paths .path:nth-of-type(1) .ptext').textContent.replace(/\s+/g, ' '), heads: [...document.querySelectorAll('#paths .path:nth-of-type(1) .ptext .hd')].map(h => h.textContent), free: document.querySelector('#paths .path:nth-of-type(1) .ptext .free').textContent, title: Object.values(HoneyPlanApp.plan.paths).map(x => x.title) }));
+st = await pe(() => ({ text: document.querySelector('#paths .path:nth-of-type(1) .ptext').textContent.replace(/\s+/g, ' '), heads: [...document.querySelectorAll('#paths .path:nth-of-type(1) .ptext .hd')].map(h => h.textContent), free: document.querySelector('#paths .path:nth-of-type(1) .ptext .free').textContent, title: Object.values(ScriptGeniusApp.plan.paths).map(x => x.title) }));
 chk('ein Video zeigt seinen Text der Reihe nach, frei Gesprochenes ist gekennzeichnet; der Titel wird gemerkt', st.heads.join('|') === 'Einstieg|Abstimmung: Angenommen|Einordnung|Bürgerbegehren: Begehren kommt|Schluss' && /Versammlung im Rathaus/.test(st.text) && !/Kundgebung/.test(st.text) && st.free === 'frei gesprochen' && st.title.join() === 'Deckel steht', st);
 await pp.click('#tree .leaf:nth-of-type(1)').catch(() => {}); await pp.evaluate(() => document.querySelectorAll('#tree .leaf')[3].dispatchEvent(new MouseEvent('click', { bubbles: true }))); await sleep(200);
 chk('ein Blatt im Baum klappt das Video in der Liste auf', await pe(() => document.querySelector('#paths .path:nth-of-type(4)').open));
@@ -104,34 +104,34 @@ chk('Aufnahme-Skript mit Überschriften: sieben Abschnitte, der freie Teil mit H
 await pp.click('#scMode [data-h="0"]');
 st = await pe(() => document.querySelector('#scText').value);
 chk('reiner Text für den Souffleur: ohne Überschriften, ohne den freien Teil', !/#|\[/.test(st) && st.split('\n\n').length === 6 && /^Heute entscheidet/.test(st), st.slice(0, 80));
-const fTxt = path.join(OUT, 'pfade-skript.txt'), fPlan = path.join(OUT, 'pfade-plan.honeyplan'); for (const f of [fTxt, fPlan]){ fs.rmSync(f, { force: true }); trash.add(f); }
+const fTxt = path.join(OUT, 'pfade-skript.txt'), fPlan = path.join(OUT, 'pfade-plan.scriptgenius'); for (const f of [fTxt, fPlan]){ fs.rmSync(f, { force: true }); trash.add(f); }
 setPick({ save_any: [fTxt] }); await pp.click('#modal [data-x="save"]'); await sleep(300);
 chk('das Skript lässt sich als Textdatei sichern', fs.existsSync(fTxt) && fs.readFileSync(fTxt, 'utf8') === st && /Gespeichert/.test(await toastTxt(pp)), await toastTxt(pp));
 await pp.click('#modal [data-x="close"]');
 // Für HoneyCut: Datei
 await pp.click('#cutBtn'); await pp.waitForSelector('#modal [data-x="file"]'); setPick({ save_any: [fPlan] }); await pp.click('#modal [data-x="file"]'); await sleep(300);
 const fileP = fs.existsSync(fPlan) ? JSON.parse(fs.readFileSync(fPlan, 'utf8')) : null;
-chk('„Für HoneyCut“ sichert den Plan als Datei .honeyplan', !!fileP && fileP.app === 'honeyplan' && fileP.name === 'Mietendeckel' && fileP.blocks.length === 5 && Object.values(fileP.paths).length === 1, fileP && [fileP.app, fileP.name, fileP.blocks.length]);
+chk('„Für HoneyCut“ sichert den Plan als Datei .scriptgenius', !!fileP && fileP.app === 'scriptgenius' && fileP.name === 'Mietendeckel' && fileP.blocks.length === 5 && Object.values(fileP.paths).length === 1, fileP && [fileP.app, fileP.name, fileP.blocks.length]);
 await pp.click('#modal [data-x="close"]');
 // Pläne: Kopie, löschen, aus Datei, Neustart
 await pp.click('#plansBtn'); await pp.click('#modal .prow [data-x="dup"]'); await sleep(200);
-st = await pe(() => ({ n: HoneyPlanApp.plans.length, name: HoneyPlanApp.plan.name, stored: JSON.parse(localStorage.getItem('hp-plans')).map(p => p.name) }));
+st = await pe(() => ({ n: ScriptGeniusApp.plans.length, name: ScriptGeniusApp.plan.name, stored: JSON.parse(localStorage.getItem('sg-plans')).map(p => p.name) }));
 chk('Kopie eines Plans: eigener Eintrag, sofort geöffnet und gespeichert', st.n === 2 && st.name === 'Mietendeckel (Kopie)' && st.stored.join('|') === 'Mietendeckel (Kopie)|Mietendeckel', st);
 await pp.click('#plansBtn'); await pp.click('#modal .prow.cur [data-x="del"]'); await sleep(200);
-st = await pe(() => ({ n: HoneyPlanApp.plans.length, name: HoneyPlanApp.plan.name, open: !document.querySelector('#modal').classList.contains('hidden') }));
+st = await pe(() => ({ n: ScriptGeniusApp.plans.length, name: ScriptGeniusApp.plan.name, open: !document.querySelector('#modal').classList.contains('hidden') }));
 chk('Löschen nimmt den Plan aus der Liste und öffnet den nächsten', st.n === 1 && st.name === 'Mietendeckel' && st.open, st);
 await pp.setInputFiles('#planFile', fPlan); await sleep(300);
-st = await pe(() => ({ n: HoneyPlanApp.plans.length, name: HoneyPlanApp.plan.name, blocks: HoneyPlanApp.plan.blocks.length }));
+st = await pe(() => ({ n: ScriptGeniusApp.plans.length, name: ScriptGeniusApp.plan.name, blocks: ScriptGeniusApp.plan.blocks.length }));
 chk('ein Plan aus einer Datei ersetzt nach Rückfrage den gleichnamigen', st.n === 1 && st.name === 'Mietendeckel' && st.blocks === 5, st);
-await pp.reload(); await pp.waitForFunction(() => window.HoneyPlanApp);
+await pp.reload(); await pp.waitForFunction(() => window.ScriptGeniusApp);
 st = await pe(() => ({ name: document.querySelector('#pName').value, paths: document.querySelectorAll('#paths .path').length, title: document.querySelector('#paths .path [data-f="ptitle"]').value }));
 chk('nach dem Neustart ist der Plan wieder da', st.name === 'Mietendeckel' && st.paths === 4 && st.title === 'Deckel steht', st);
 // Reihenfolge ändern, Weiche löschen
 await pp.click('#flow .blk:nth-of-type(4) [data-a="up"]'); await sleep(150); await pp.click('#flow .blk:nth-of-type(3) [data-a="up"]'); await sleep(150);
-st = await pe(() => ({ order: HoneyPlanApp.plan.blocks.map(b => b.label), alts: (HoneyPlanApp.plan.blocks[4].alts || []).length, toast: document.querySelector('#toast').textContent, n: document.querySelectorAll('#paths .path').length }));
+st = await pe(() => ({ order: ScriptGeniusApp.plan.blocks.map(b => b.label), alts: (ScriptGeniusApp.plan.blocks[4].alts || []).length, toast: document.querySelector('#toast').textContent, n: document.querySelectorAll('#paths .path').length }));
 chk('rückt eine Weiche hinter einen Block, der sich auf sie bezieht … (hier bleibt die Bedingung, die Abstimmung liegt weiter davor)', st.order.join('|') === 'Einstieg|Bürgerbegehren|Abstimmung|Einordnung|Schluss' && st.alts === 1 && st.n === 4, st);
 await pp.click('#flow .blk:nth-of-type(5) [data-a="up"]'); await sleep(100); await pp.click('#flow .blk:nth-of-type(4) [data-a="up"]'); await sleep(200);
-st = await pe(() => ({ order: HoneyPlanApp.plan.blocks.map(b => b.label), alts: (HoneyPlanApp.plan.blocks[2].alts || []).length, toast: document.querySelector('#toast').textContent }));
+st = await pe(() => ({ order: ScriptGeniusApp.plan.blocks.map(b => b.label), alts: (ScriptGeniusApp.plan.blocks[2].alts || []).length, toast: document.querySelector('#toast').textContent }));
 chk('liegt der Schluss vor der Abstimmung, fällt seine Bedingung darauf weg – mit Hinweis', st.order.join('|') === 'Einstieg|Bürgerbegehren|Schluss|Abstimmung|Einordnung' && st.alts === 0 && /spätere Weichen/.test(st.toast), st);
 // Handy-Ansicht
 await pp.setViewportSize({ width: 390, height: 844 }); await sleep(200);
@@ -140,20 +140,20 @@ await pp.click('#pTabs [data-view="side"]'); await sleep(200);
 const st2 = await pe(() => ({ flow: getComputedStyle(document.querySelector('#flowCol')).display, side: getComputedStyle(document.querySelector('#sideCol')).display, back: window.TSApp.onBack(), view: document.querySelector('#pMain').dataset.view }));
 chk('am Handy: eine Spalte mit Umschalter „Ablauf / Pfade“, nichts läuft über den Rand; „Zurück“ führt erst zum Ablauf', st.tabs === 'flex' && st.flow !== 'none' && st.side === 'none' && st.w <= 390 && st2.flow === 'none' && st2.side !== 'none' && st2.back === true && st2.view === 'flow', [st, st2]);
 await shot('planer-handy', pp);
-chk('HoneyPlan: keine Fehlermeldungen in der Seite', plogs.length === 0, plogs);
+chk('ScriptGenius: keine Fehlermeldungen in der Seite', plogs.length === 0, plogs);
 await pp.close(); await sleep(200);
-// den Plan für HoneyCut wieder so herstellen, wie er gesichert wurde (HoneyPlan speichert beim Schließen seinen letzten Stand)
-await ev(t => { localStorage.setItem('hp-plans', JSON.stringify([JSON.parse(t)])); }, fs.readFileSync(fPlan, 'utf8'));
+// den Plan für HoneyCut wieder so herstellen, wie er gesichert wurde (ScriptGenius speichert beim Schließen seinen letzten Stand)
+await ev(t => { localStorage.setItem('sg-plans', JSON.stringify([JSON.parse(t)])); }, fs.readFileSync(fPlan, 'utf8'));
 
 // ══════════ 3) HoneyCut: Plan laden, transkribieren, zuordnen ══════════
 st = await ev(() => ({ home: !!document.querySelector('#planHome'), txt: document.querySelector('#planHome').textContent }));
-chk('Startseite von HoneyCut: „Pfade planen“ führt zu HoneyPlan', st.home && /Pfade planen/.test(st.txt), st);
+chk('Startseite von HoneyCut: „Pfade planen“ führt zu ScriptGenius', st.home && /Pfade planen/.test(st.txt), st);
 const idM = await newProject(page, [MEDIA + 'pfade.mp4']); made.push(idM);
 st = await ev(() => ({ tab, info: document.querySelector('#pfInfo').textContent, btn: document.querySelector('#pfPlanBtn').textContent, chip: document.querySelector('#pfadeBtn').classList.contains('hidden') }));
 chk('neues Projekt: im Reiter „Transkribieren“ steht „Pfad-Plan: keiner“, der Chip „Pfade“ fehlt noch', st.tab === 'trans' && st.info === 'keiner' && st.btn === 'Wählen' && st.chip, st);
 await page.click('#pfPlanBtn'); await page.waitForSelector('#pfPick [data-a="load"]');
 st = await ev(() => [...document.querySelectorAll('#pfPick .cl-row')].map(r => r.textContent.replace(/\s+/g, ' ').trim()));
-chk('das Blatt „Pfad-Plan“ zeigt die Pläne aus HoneyPlan auf diesem Gerät', st.length === 1 && /^Mietendeckel4 Videos · geändert am .*Laden$/.test(st[0]), st);
+chk('das Blatt „Pfad-Plan“ zeigt die Pläne aus ScriptGenius auf diesem Gerät', st.length === 1 && /^Mietendeckel4 Videos · geändert am .*Laden$/.test(st[0]), st);
 await page.click('#pfPick [data-a="load"]'); await sleep(400);
 st = await ev(() => ({ info: document.querySelector('#pfInfo').textContent, btn: document.querySelector('#pfPlanBtn').textContent, pre: document.querySelector('#preScriptInfo').textContent, script: P.script && P.script.text, plan: P.script && P.script.plan === P.pfade.plan.id, toast: document.querySelector('#toast').textContent, sheet: document.querySelector('#sheet').classList.contains('hidden') }));
 chk('Laden: Plan steht im Projekt, sein Aufnahme-Skript wird Vorlage für die Transkription', st.info === 'Mietendeckel · 4 Videos' && st.btn === 'Ändern' && /^\d+ Wörter · aus dem Pfad-Plan$/.test(st.pre) && /^# Einstieg\nHeute entscheidet/.test(st.script) && st.plan && /Plan „Mietendeckel“ geladen/.test(st.toast) && st.sheet, st);
@@ -271,9 +271,9 @@ await clearQ(); await ev(() => closeSheet());
 
 // ══════════ 6) Andere Reihenfolge in der Aufnahme, Beschriftungen ohne Skript, Plan entfernen ══════════
 // Derselbe Plan, aber der Einstieg steht als „Abspann“ am Ende: Die Aufnahme hat ihn vorn – im Video gehört er nach hinten.
-await ev(() => { const H = HoneyPlan, p = JSON.parse(localStorage.getItem('hp-plans'))[0]; const a = p.blocks.shift(); a.label = 'Abspann'; p.blocks.push(a); p.id = H.newId(); p.name = 'Abspann hinten'; p.paths = {};
+await ev(() => { const H = ScriptGenius, p = JSON.parse(localStorage.getItem('sg-plans'))[0]; const a = p.blocks.shift(); a.label = 'Abspann'; p.blocks.push(a); p.id = H.newId(); p.name = 'Abspann hinten'; p.paths = {};
   const l = H.blank('Nur Beschriftungen'); const w = H.weiche('Ergebnis', ['Ja', 'Nein']); l.blocks.push(H.teil('Vorspann', ''), w, H.teil('Abschied', ''));
-  localStorage.setItem('hp-plans', JSON.stringify([p, l, ...JSON.parse(localStorage.getItem('hp-plans'))])); });
+  localStorage.setItem('sg-plans', JSON.stringify([p, l, ...JSON.parse(localStorage.getItem('sg-plans'))])); });
 await ev(() => closeProject());
 const idR = await newProject(page, [MEDIA + 'pfade.mp4']); made.push(idR);
 await ev(() => { document.querySelector('#autoPauses').checked = false; document.querySelector('#autoFillers').checked = false; document.querySelector('#autoRepeats').checked = false; });
@@ -322,7 +322,7 @@ await shot('handy');
 await ev(() => closeSheet()); await page.setViewportSize({ width: 1480, height: 900 }); await sleep(200);
 
 // aufräumen
-await ev(list => { if (P){ pausePlay(); clearTimeout(saveT); saveNow(); closeSheet(); closeProject(); } for (const i of list){ try { TS.deleteProject(i); } catch (_) {} try { if (TS.trashPurge) TS.trashPurge(i); } catch (_) {} } for (const k of ['hp-plans', 'hp-current']) localStorage.removeItem(k); }, [...new Set(made)]);
+await ev(list => { if (P){ pausePlay(); clearTimeout(saveT); saveNow(); closeSheet(); closeProject(); } for (const i of list){ try { TS.deleteProject(i); } catch (_) {} try { if (TS.trashPurge) TS.trashPurge(i); } catch (_) {} } for (const k of ['sg-plans', 'sg-current']) localStorage.removeItem(k); }, [...new Set(made)]);
 for (const f of trash) fs.rmSync(f, { force: true });
 chk('keine Fehlermeldungen in der Seite', logs.length === 0, logs);
 await ende(browser);

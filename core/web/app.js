@@ -717,7 +717,7 @@ setTimeout(() => { if (!$('#home').classList.contains('hidden')) renderUpdateBan
 // ── Alle Projekte sichern, Sicherung einspielen (Desktop) ──
 // Gesichert werden die Projekte samt Folienbildern und Schriften, dazu die eigenen Designprofile, Farbfavoriten, Füllwörter und
 // Untertitel-Looks, dazu das eigene Wörterbuch – ohne die Videos.
-const PREF_KEYS = ['hc-slide-profiles', 'hc-colfav', 'hc-fillers', 'hc-sub-looks', 'hc-dict', 'hc-house', 'hc-blocks', 'hc-emoji', 'hc-clipwords', 'hc-color-looks', 'hp-plans'];
+const PREF_KEYS = ['hc-slide-profiles', 'hc-colfav', 'hc-fillers', 'hc-sub-looks', 'hc-dict', 'hc-house', 'hc-blocks', 'hc-emoji', 'hc-clipwords', 'hc-color-looks', 'sg-plans'];
 function uiPrefs(){ const o = {}; for (const k of PREF_KEYS){ try { const v = JSON.parse(localStorage.getItem(k)); if (Array.isArray(v) && v.length) o[k] = v; } catch(_){} } return o; }
 function mergePrefs(pr){
   let n = 0; if (!pr || typeof pr !== 'object') return 0;
@@ -732,9 +732,9 @@ function mergePrefs(pr){
   try { n += mergeBlocks(pr['hc-blocks']); } catch(_){}
   try { n += mergeEmoji(pr['hc-emoji']); } catch(_){}
   try { n += mergeClipWords(pr['hc-clipwords']); } catch(_){}
-  // Pläne aus HoneyPlan: was es hier noch nicht gibt, kommt dazu
-  try { if (window.HoneyPlan){ const have = J(localStorage.getItem('hp-plans') || '[]') || [], ids = new Set(have.map(p => p && p.id)), add = (pr['hp-plans'] || []).map(p => { try { return HoneyPlan.parse(p); } catch(_){ return null; } }).filter(p => p && !ids.has(p.id));
-    if (add.length){ localStorage.setItem('hp-plans', JSON.stringify(have.concat(add))); n += add.length; } } } catch(_){}
+  // Pläne aus ScriptGenius: was es hier noch nicht gibt, kommt dazu
+  try { if (window.ScriptGenius){ const have = J(localStorage.getItem('sg-plans') || '[]') || [], ids = new Set(have.map(p => p && p.id)), add = (pr['sg-plans'] || []).map(p => { try { return ScriptGenius.parse(p); } catch(_){ return null; } }).filter(p => p && !ids.has(p.id));
+    if (add.length){ localStorage.setItem('sg-plans', JSON.stringify(have.concat(add))); n += add.length; } } } catch(_){}
   return n;
 }
 const plural = (k, one, many) => `${k} ${k === 1 ? one : many}`;

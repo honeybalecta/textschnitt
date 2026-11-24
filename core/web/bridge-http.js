@@ -99,7 +99,7 @@
     recClose: (id, meta) => jobOf(call('POST', 'rec/close', {id, meta: JSON.parse(meta || '{}')})),
     recOrphans: session => call('POST', 'rec/orphans', {session}),
     openRec: () => { try { return !!JSON.parse(call('POST', 'rec/window', {})).ok; } catch(_){ return false; } },
-    // HoneyPlan (Planer für Videos mit mehreren Ausgängen): eigenes Fenster in der Windows-App, von dort zurück zu HoneyCut
+    // ScriptGenius (Planer für Videos mit mehreren Ausgängen): eigenes Fenster in der Windows-App, von dort zurück zu HoneyCut
     openPlan: () => { try { return !!JSON.parse(call('POST', 'app/window', {app: 'plan'})).ok; } catch(_){ return false; } },
     openCut: () => { try { return !!JSON.parse(call('POST', 'app/window', {app: 'cut'})).ok; } catch(_){ return false; } },
     recConvert: uri => jobOf(call('POST', 'rec/convert', {uri})),   // Office-Datei → PDF für die Anzeige

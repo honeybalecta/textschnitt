@@ -1,5 +1,5 @@
 'use strict';
-/* HoneyPlan – Rechenkern für Videos mit mehreren möglichen Ausgängen. Ohne Netz, für jede Plattform gleich;
+/* ScriptGenius – Rechenkern für Videos mit mehreren möglichen Ausgängen. Ohne Netz, für jede Plattform gleich;
    der Planer (plan.html) und HoneyCut (pfade.js) rechnen damit.
 
    Ein Plan ist eine Folge von Blöcken in der Reihenfolge des Videos:
@@ -15,16 +15,16 @@
    Ein Abschnitt (seg) ist ein Stück, das einmal aufgenommen wird: ein gemeinsamer Teil, ein Ausgang oder eine abweichende
    Fassung. Jeder Pfad – jeder vollständige Weg durch die Weichen – ist eine Folge von Abschnitten und ergibt ein Video.
 
-   HoneyPlan.blank(name) · teil(label, text) · weiche(label, [Ausgänge]) · aus(label, text) · alt(when, text)
-   HoneyPlan.parse(text | obj)   → geprüfter Plan (wirft bei fremden Dateien)
-   HoneyPlan.tidy(plan)          → Bedingungen bereinigen (nur frühere Weichen, nur vorhandene Ausgänge)
-   HoneyPlan.paths(plan, max)    → {list: [{key, picks: [{w, o}], label, segs: [id …]}], count, more}
-   HoneyPlan.segs(plan)          → [{id, block, out, alt, kind, label, text, when, n}] in Aufnahme-Reihenfolge (n = Zahl der Pfade)
-   HoneyPlan.script(plan, opts)  → Aufnahme-Skript: jeder Abschnitt einmal (opts.heads: mit Überschriften „# …“)
-   HoneyPlan.pathText(plan, p, opts) → Skript eines Pfads
-   HoneyPlan.words(text) · secs(n) → Wortzahl und geschätzte Sprechzeit
-   HoneyPlan.condText(plan, when)   → Bedingung in Worten
-   HoneyPlan.place(plan, spoken)    → {ranges: [{seg, a, b, n, of}], miss: [id …]} – wo die Abschnitte im Transkript liegen
+   ScriptGenius.blank(name) · teil(label, text) · weiche(label, [Ausgänge]) · aus(label, text) · alt(when, text)
+   ScriptGenius.parse(text | obj)   → geprüfter Plan (wirft bei fremden Dateien)
+   ScriptGenius.tidy(plan)          → Bedingungen bereinigen (nur frühere Weichen, nur vorhandene Ausgänge)
+   ScriptGenius.paths(plan, max)    → {list: [{key, picks: [{w, o}], label, segs: [id …]}], count, more}
+   ScriptGenius.segs(plan)          → [{id, block, out, alt, kind, label, text, when, n}] in Aufnahme-Reihenfolge (n = Zahl der Pfade)
+   ScriptGenius.script(plan, opts)  → Aufnahme-Skript: jeder Abschnitt einmal (opts.heads: mit Überschriften „# …“)
+   ScriptGenius.pathText(plan, p, opts) → Skript eines Pfads
+   ScriptGenius.words(text) · secs(n) → Wortzahl und geschätzte Sprechzeit
+   ScriptGenius.condText(plan, when)   → Bedingung in Worten
+   ScriptGenius.place(plan, spoken)    → {ranges: [{seg, a, b, n, of}], miss: [id …]} – wo die Abschnitte im Transkript liegen
                                       (spoken: [{text}] in Sprechreihenfolge; a, b: Stellen in spoken). Braucht skript.js. */
 (function(g){
   const ID = /^[A-Za-z0-9_-]{1,24}$/, MAX_BLOCKS = 60, MAX_OUTS = 8, MAX_ALTS = 12, MAX_TEXT = 30000;
@@ -33,7 +33,7 @@
   const str = (v, n) => String(v == null ? '' : v).replace(/\r/g, '').slice(0, n);
   const line = (v, n) => str(v, n).replace(/\s+/g, ' ').trim();
 
-  const blank = name => { const t = Date.now(); return {app: 'honeyplan', v: 1, id: newId(), name: line(name, 80) || 'Neuer Plan', made: t, changed: t, blocks: [], paths: {}}; };
+  const blank = name => { const t = Date.now(); return {app: 'scriptgenius', v: 1, id: newId(), name: line(name, 80) || 'Neuer Plan', made: t, changed: t, blocks: [], paths: {}}; };
   const teil = (label, text) => ({id: newId(), kind: 'teil', label: line(label, 80), text: str(text, MAX_TEXT)});
   const aus = (label, text) => ({id: newId(), label: line(label, 80), text: str(text, MAX_TEXT)});
   const weiche = (label, outs) => ({id: newId(), kind: 'weiche', label: line(label, 80), outs: (outs && outs.length ? outs : ['', '']).slice(0, MAX_OUTS).map(o => typeof o === 'string' ? aus(o, '') : o)});
@@ -62,10 +62,10 @@
   // ── Datei lesen ──
   function parse(src){
     let raw = src; if (typeof src === 'string'){ try { raw = JSON.parse(src); } catch(_){ raw = null; } }
-    if (!raw || typeof raw !== 'object' || raw.app !== 'honeyplan' || !Array.isArray(raw.blocks)) throw new Error('Das ist kein Plan aus HoneyPlan.');
+    if (!raw || typeof raw !== 'object' || raw.app !== 'scriptgenius' || !Array.isArray(raw.blocks)) throw new Error('Das ist kein Plan aus ScriptGenius.');
     const seen = new Set(), id = v => { let x = typeof v === 'string' && ID.test(v) && !seen.has(v) ? v : newId(); seen.add(x); return x; };
     const altsOf = x => Array.isArray(x.alts) ? x.alts.slice(0, MAX_ALTS).filter(a => a && typeof a === 'object').map(a => ({id: id(a.id), when: a.when && typeof a.when === 'object' ? a.when : {}, text: str(a.text, MAX_TEXT)})) : [];
-    const t = Date.now(), p = {app: 'honeyplan', v: 1, id: typeof raw.id === 'string' && ID.test(raw.id) ? raw.id : newId(), name: line(raw.name, 80) || 'Plan',
+    const t = Date.now(), p = {app: 'scriptgenius', v: 1, id: typeof raw.id === 'string' && ID.test(raw.id) ? raw.id : newId(), name: line(raw.name, 80) || 'Plan',
       made: +raw.made || t, changed: +raw.changed || t, blocks: [], paths: {}};
     for (const b of raw.blocks.slice(0, MAX_BLOCKS)){ if (!b || typeof b !== 'object') continue;
       if (b.kind === 'weiche'){
@@ -208,5 +208,5 @@
     return {ranges, miss: list.filter(s => !have.has(s.id)).map(s => s.id)};
   }
 
-  g.HoneyPlan = {blank, teil, weiche, aus, alt, newId, parse, tidy, holds, names, condText, paths, segs, script, pathText, pathWords, words, secs, place, KEY_NONE, MAX_BLOCKS, MAX_OUTS, MAX_ALTS};
+  g.ScriptGenius = {blank, teil, weiche, aus, alt, newId, parse, tidy, holds, names, condText, paths, segs, script, pathText, pathWords, words, secs, place, KEY_NONE, MAX_BLOCKS, MAX_OUTS, MAX_ALTS};
 })(typeof window !== 'undefined' ? window : typeof self !== 'undefined' ? self : globalThis);
