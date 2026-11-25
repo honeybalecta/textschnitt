@@ -37,7 +37,7 @@ os.environ.setdefault("HF_HUB_DISABLE_IMPLICIT_TOKEN", "1")
 import warnings  # noqa: E402
 warnings.filterwarnings("ignore", module="huggingface_hub")
 
-VERSION = "2.52.1"
+VERSION = "2.52.2"
 APP_DIR = Path(__file__).resolve().parent
 FROZEN = bool(getattr(sys, "frozen", False))          # als installierte .exe gebaut
 RES_DIR = Path(getattr(sys, "_MEIPASS", APP_DIR))      # mitgelieferte Dateien (Oberfläche, ffmpeg, Modelle)
@@ -2860,7 +2860,9 @@ def shift_plan(plan: dict, segs: list[dict], o0: float, dur: float) -> dict:
         at, inn, out = float(o["at"]), float(o["in"]), float(o["out"])
         d = out - inn
         a, e = max(at, o0), min(at + d, o0 + dur)
-        if e - a < 0.02:
+        # Das Titelbild als erstes Bild (first) steht nur ein Bild lang – bei 50 oder 60 Bildern je Sekunde kürzer als 0,02 s.
+        # Bis 2.52.1 fiel es hier heraus, sobald der Export in Stücken lief (mehr als CHUNK Abschnitte).
+        if e - a < (0.0005 if o.get("first") else 0.02):
             continue
         cut = a - at   # am Anfang abgeschnittener Teil
         q = dict(o)

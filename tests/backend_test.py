@@ -1770,7 +1770,42 @@ def exportordner_2521():
         same.read_bytes() == b"Aufnahme" and Path(r2["playable"]).name == "Quelle (neu).mp4", Path(r2["playable"]).name)
 
 
-PARTS = (speichern_und_fassungen, speicher, sicherung, projektpakete, kleine_helfer, quellen_und_belege, schrift_im_export, transkript, export_231, untertitel_effekte, ton_234, belege_235, bild_236, uebergabe_237, stimmen_238, folgen_239, skript_240, ton_241, exportordner_2521, neue_versionen, bericht_und_protokoll)
+def titelbild_2522():
+    """2.52.2: Das Titelbild als erstes Bild des Videos steht auch dann im Export, wenn er in Stücken gerechnet wird (mehr als
+    sechs Abschnitte) und das Video 50 oder 60 Bilder je Sekunde hat – dann ist ein Bild kürzer als 0,02 s. Echte Exporte,
+    am fertigen Video Bild für Bild abgelesen."""
+    base = TMP / "titelbild 2522"
+    base.mkdir(parents=True, exist_ok=True)
+    img = base / "titelbild.png"
+    subprocess.run([T.FFMPEG, "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=red:s=320x180", "-frames:v", "1", str(img)], check=True)
+
+    def export(fps, nseg):
+        v = base / f"aufnahme{fps}.mp4"
+        if not v.exists():
+            subprocess.run([T.FFMPEG, "-v", "error", "-y", "-f", "lavfi", "-i", f"color=c=blue:s=320x180:r={fps}:d=5", "-f", "lavfi", "-i", "sine=f=440:d=5",
+                            "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", str(v)], check=True)
+        uri, step = T.allow(v), 4.0 / nseg
+        segs = [{"uri": uri, "in": round(k * step, 3), "out": round((k + 1) * step, 3), "kind": "main", "hasAudio": True, "width": 320, "height": 180, "rotation": 0} for k in range(nseg)]
+        # die Einblendung, wie coverFirstPlan (titelbild.js) sie einträgt
+        cover = {"mode": "pip", "image": True, "uri": T.allow(img), "in": 0, "out": round(0.6 / fps * 10000) / 10000, "at": 0, "x": 0.5, "y": 0.5, "w": 1, "aspect": 1.77778,
+                 "track": 199, "vol": 0, "hasAudio": False, "width": 320, "height": 180, "rotation": 0, "top": True, "first": True}
+        plan = {"format": "video", "name": f"titel_{fps}_{nseg}", "width": 320, "height": 180, "fps": fps, "total": 4.0, "segments": segs, "sources": [{"uri": uri}], "overlays": [cover]}
+        res = T.export_job(job(), plan)
+        raw = subprocess.run([T.FFMPEG, "-v", "error", "-i", res["playable"], "-an", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], capture_output=True, check=True).stdout
+        n, mid = 320 * 180 * 3, (90 * 320 + 160) * 3
+        return ["T" if raw[i + mid] > 150 and raw[i + mid + 2] < 100 else "V" for i in range(0, len(raw) - n + 1, n)]
+
+    for fps, nseg in ((30, 4), (30, 8), (50, 8), (60, 4), (60, 8), (60, 14)):
+        f = export(fps, nseg)
+        chk(f"Titelbild auf dem ersten Bild: {fps} Bilder je Sekunde, {nseg} Abschnitte{' (in Stücken gerechnet)' if nseg > T.CHUNK else ''} – genau das erste Bild, danach das Video",
+            abs(len(f) - 4 * fps) <= 2 and f[0] == "T" and "T" not in f[1:], [len(f), "".join(f[:4])])
+    sub = T.shift_plan({"overlays": [{"image": True, "at": 0, "in": 0, "out": 0.01, "first": True}, {"image": True, "at": 0, "in": 0, "out": 0.01}]}, [], 0.0, 2.0)
+    chk("Stückelung: Nur das Titelbild darf kürzer als 0,02 s sein; andere so kurze Einblendungen fallen weiter heraus", len(sub["overlays"]) == 1 and sub["overlays"][0].get("first") is True, sub["overlays"])
+    late = T.shift_plan({"overlays": [{"image": True, "at": 0, "in": 0, "out": 0.01, "first": True}]}, [], 2.0, 2.0)
+    chk("Stückelung: Das Titelbild steht nur im ersten Stück", late["overlays"] == [], late["overlays"])
+
+
+PARTS = (speichern_und_fassungen, speicher, sicherung, projektpakete, kleine_helfer, quellen_und_belege, schrift_im_export, transkript, export_231, untertitel_effekte, ton_234, belege_235, bild_236, uebergabe_237, stimmen_238, folgen_239, skript_240, ton_241, exportordner_2521, titelbild_2522, neue_versionen, bericht_und_protokoll)
 for part in [p for p in PARTS if p.__name__ == MODE] or PARTS:
     print(f"── {part.__name__.replace('_', ' ')} ──", flush=True)
     part()

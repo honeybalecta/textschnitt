@@ -2,6 +2,10 @@
 
 Was sich mit jeder Version von HoneyCut ändert. Die Windows-App zeigt diese Stichpunkte an, sobald eine neuere Version bereitsteht.
 
+## 2.52.2 · Titelbild auf dem ersten Bild auch bei langen Videos
+
+- **Titelbild als erstes Bild des Videos:** Bei Videos mit 50 oder 60 Bildern je Sekunde und mehr als sechs Abschnitten fehlte das Titelbild im exportierten Video. So lange Exporte rechnet HoneyCut in Stücken, und dabei fiel alles heraus, was kürzer als 0,02 Sekunden im Bild steht – bei 50 und 60 Bildern je Sekunde ist ein einzelnes Bild kürzer. Jetzt steht das Titelbild wieder auf dem ersten Bild, aus der Vorlage wie importiert. Kurze Videos und Videos mit 25 oder 30 Bildern je Sekunde waren nicht betroffen.
+
 ## 2.52.1 · Export aus einem früheren Export
 
 - **Export, wenn das Video selbst schon ein Export ist:** Lag die Aufnahme in einem Ordner „…_honeycut“, legte HoneyCut darin einen weiteren Ordner mit dem langen Namen an. Der Pfad wurde zu lang für Windows (höchstens 259 Zeichen): Video und Ton entstanden noch, die Untertitel-Datei daneben scheiterte mit „No such file or directory“, und der Export galt als fehlgeschlagen. Jetzt landet der neue Export direkt im vorhandenen Ordner „…_honeycut“.
