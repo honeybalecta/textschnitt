@@ -37,7 +37,7 @@ os.environ.setdefault("HF_HUB_DISABLE_IMPLICIT_TOKEN", "1")
 import warnings  # noqa: E402
 warnings.filterwarnings("ignore", module="huggingface_hub")
 
-VERSION = "2.53.0"
+VERSION = "2.54.0"
 APP_DIR = Path(__file__).resolve().parent
 FROZEN = bool(getattr(sys, "frozen", False))          # als installierte .exe gebaut
 RES_DIR = Path(getattr(sys, "_MEIPASS", APP_DIR))      # mitgelieferte Dateien (Oberfläche, ffmpeg, Modelle)
@@ -2794,13 +2794,19 @@ def build_graph(plan: dict, with_video: bool, ass_name: str | None):
             still = bool(o.get("image")) and not (g and g["anim"])
             op = min(1.0, max(0.0, float(o.get("opacity", 1) if o.get("opacity") is not None else 1)))
             opf = f",colorchannelmixer=aa={op:.3f}" if op < 0.999 else ""   # Deckkraft (z. B. Wasserzeichen)
+            # Farbe des Elements (2.54): dieselbe Kette wie auf der Hauptspur, nach dem Freistellen (wie in der Vorschau).
+            # Über RGBA, damit durchsichtige Stellen (PNG, freigestellte Videos) durchsichtig bleiben.
+            colf = video_fx_chain({"bright": float(o.get("bright") or 0), "contrast": float(o.get("contrast") or 0), "sat": float(o.get("sat") or 0),
+                                   "gray": bool(o.get("gray")), "wb": wb_gains(o.get("wb"))})
+            if colf:
+                colf = ",format=gbrap" + colf.replace(",eq=", ",format=yuva444p,eq=").replace(",hue=", ",format=yuva444p,hue=") + ",format=yuva420p"
             kg = chroma_graph(o.get("key"), f"[op{k}]", f"[ok{k}]", f"x{k}")
             if kg:
                 parts.append(f"{src}{'' if still else f',fps={fps_s}'},{sc}[op{k}]")
                 parts += kg
-                parts.append(f"[ok{k}]format=yuva420p{opf}[o{k}]")
+                parts.append(f"[ok{k}]format=yuva420p{colf}{opf}[o{k}]")
             else:
-                parts.append(f"{src}{'' if still else f',fps={fps_s}'},{sc},format=yuva420p{opf}[o{k}]")
+                parts.append(f"{src}{'' if still else f',fps={fps_s}'},{sc},format=yuva420p{colf}{opf}[o{k}]")
             ev = ":eval=frame" if g and (g["anim"] or g["move"]) else ""
             parts.append(f"{cur}[o{k}]overlay=x={x}:y={y}{ev}:eof_action={'repeat' if still else 'pass'}:enable='between(t,{at:.4f},{at + d:.4f})'[c{k}]")
             cur = f"[c{k}]"

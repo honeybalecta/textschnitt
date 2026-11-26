@@ -2287,6 +2287,7 @@ function updateOverlay(o){
 // Ebene setzen: r = sichtbares (zugeschnittenes) Rechteck; die Datei selbst liegt größer dahinter und wird per clip-path beschnitten
 function placeLayer(el, it, r){
   el.classList.toggle('free', !!r);
+  const flt = it.col && colorAny(it.col) ? cssFilter(it.col) : ''; if (el.style.filter !== flt) el.style.filter = flt;   // Farbe des Elements (2.54)
   if (!r){ Object.assign(el.style, {left: '', top: '', width: '', height: '', clipPath: ''}); return; }
   const c = cropOf(it), fw = r.w / Math.max(0.02, 1 - c.l - c.r), fh = r.h / Math.max(0.02, 1 - c.t - c.b);
   const cut = Crop.it === it ? null : c;   // beim Zuschneiden ganze Datei zeigen
@@ -5361,7 +5362,9 @@ function coverDraw(cv, o){
   for (const el of st.querySelectorAll('.ovl-layer')){
     if (el.tagName === 'CANVAS' || !shown(el)) continue;
     const ent = [...layers].find(x => x[1] === el), kl = ent ? keyLayers.get(ent[0]) : null, m = /inset\(([\d.]+)% ([\d.]+)% ([\d.]+)% ([\d.]+)%/.exec(el.style.clipPath || '');
+    ctx.filter = el.style.filter || 'none';
     draw(kl && el.style.opacity === '0' ? kl.canvas : el, box(el), el.classList.contains('free') ? 'fill' : 'cover', m ? {t: +m[1] / 100, r: +m[2] / 100, b: +m[3] / 100, l: +m[4] / 100} : null);
+    ctx.filter = 'none';
   }
   const lw = $('#lowerOv img'); if (lw && lw.complete && lw.naturalWidth) draw(lw, box(lw), 'fill');
   const pv = $('#partOv img'); if (pv && pv.complete && pv.naturalWidth) draw(pv, box(pv), 'fill');
@@ -5509,6 +5512,15 @@ function openItem(id){
   }
   if (it.type !== 'zoom' && it.type !== 'audio') keyBlock(body, {it, get: () => it.key || null, set: k => { it.key = k; }, el: () => layers.get(it.id) || $('#cPrev'),
     uri: () => isImg(it.clip) ? null : it.clip.uri, hasOrig: () => !!it.clip.orig, applyMatte: m => { commit(() => swapClip(it, m), true); paintItem(); }, restoreOrig: () => { commit(() => restoreClip(it), true); paintItem(); }});
+  if (it.type !== 'zoom' && it.type !== 'audio'){   // Farbe des Elements (2.54) – für B-Roll und Einblendung
+    body.insertAdjacentHTML('beforeend', '<details class="colopt it-col"><summary>Farbe und Filter</summary><div id="itColHost"></div></details>');
+    let b4 = null; const mark = () => { if (!b4) b4 = snapshot(); }, done = () => { if (b4){ undo.push(b4); if (undo.length > 200) undo.shift(); redo = []; b4 = null; } };
+    colorBlock($('#itColHost'), {get: () => it.col || {}, other: () => null, noPick: true,
+      live: fn => { mark(); fn(it.col ||= {}); changedLive(); seekOut(outPos, false); },
+      set: fn => { mark(); fn(it.col ||= {}); ovColorTidy(it); done(); changed(true); seekOut(outPos, false); }});
+    $('#itColHost').addEventListener('change', () => { ovColorTidy(it); done(); changed(true); });
+    if (colorAny(it.col)) body.querySelector('.it-col').open = true;
+  }
   body.insertAdjacentHTML('beforeend', `<div class="row" style="margin-top:12px"><button class="btn" id="itPlay">▶ Ansehen</button><button class="btn danger" id="itDel">Entfernen</button><button class="btn primary" id="itOk" style="margin-left:auto">Fertig</button></div>`);
   pinMode = it.type === 'zoom'; $('#stageHint').classList.toggle('hidden', !pinMode);
   openSheet(pinMode || it.type === 'pip' || it.type === 'broll');
@@ -5562,7 +5574,7 @@ function paintItem(){
   if (it.type === 'zoom'){ $('#zStr').value = it.strength; $('#zStrV').textContent = it.strength.toFixed(2).replace('.', ',') + '×'; $('#zDur').textContent = it.dur.toFixed(1).replace('.', ',') + ' s'; $('#zAt').textContent = fmtS(srcToOut(snapSrc(it.at)));
     const pin = $('#pin'); pin.classList.remove('hidden'); pin.style.left = it.cx * 100 + '%'; pin.style.top = it.cy * 100 + '%'; }
   else { $('#cName').textContent = isImg(it.clip) ? `${it.clip.name} · Foto, Länge frei wählbar` : `${it.clip.name} · ${fmtS(it.clip.duration)}`; $('#cIn').textContent = fmtS(it.in); $('#cOut').textContent = fmtS(it.out); $('#cAt').textContent = fmtS(srcToOut(snapSrc(it.at)));
-    $$('.pipopt').forEach(x => x.classList.toggle('hidden', it.type === 'insert' || it.type === 'audio'));
+    $$('.pipopt').forEach(x => x.classList.toggle('hidden', it.type === 'insert' || it.type === 'audio')); $$('.colopt').forEach(x => x.classList.toggle('hidden', !ovColorOk(it)));
     const cm = $('#cMode'); if (cm) cm.parentElement.classList.toggle('hidden', it.type === 'audio');
     $$('.audopt').forEach(x => x.classList.toggle('hidden', it.type !== 'audio'));
     const dn = $('#cDuckNote'); if (dn && it.type === 'audio'){ const h = duckNote(it); if (dn.dataset.h !== h){ dn.dataset.h = h; dn.innerHTML = h; } }
@@ -5657,6 +5669,7 @@ function buildPlan(dry){   // dry: nur nachsehen (z. B. für das Titelbild) – 
     ...(o.x.kf && o.x.kf.length ? {kf: kfPlan(o.x.kf, o.end - o.at)} : {}),
     ...(hasCrop(o.x) ? {crop: (c => ({l:r3(c.l), t:r3(c.t), r:r3(c.r), b:r3(c.b)}))(cropOf(o.x))} : {}),
     ...(keyOn(o.x.key) ? {key: planKey(o.x.key, false)} : {}),
+    ...ovColorPlan(o.x),
     aspect:+elAspect(o.x).toFixed(5), track: elTrack(o.x), vol:+(o.x.vol || 0), hasAudio: o.x.clip.hasAudio !== false && !isImg(o.x.clip),
     width:o.x.clip.width, height:o.x.clip.height, rotation:o.x.clip.rotation || 0}))
     .concat(dry ? [] : decoPlan(W, H)).concat(dry ? [] : lowerPlan(W, H)).concat(dry ? [] : partPlan(W, H)).concat(wmPlan(W, H))
@@ -8085,6 +8098,16 @@ function wbGains(fx){
 function wbFromGains(r, g, b){ const lr = Math.log(r / g), lb = Math.log(b / g); return {temp: Math.round(clamp((lr - lb) / 2 / WB_KT, -100, 100)), tint: Math.round(clamp((lr + lb) / 2 / WB_KM, -100, 100))}; }
 const colorOf = o => { const c = {}; if (!o) return c; for (const k of COLOR_FIELDS){ if (k === 'gray'){ if (o.gray) c.gray = true; } else if (Math.abs(+o[k] || 0) > 1e-4) c[k] = +o[k]; } return c; };
 const colorAny = o => Object.keys(colorOf(o)).length > 0;
+// Farbe eines Videos oder Bildes auf einer Videospur (2.54): it.col = {bright, contrast, sat, gray, temp, tint} – dieselben Felder
+// wie bei der Anpassung eines Clips der Hauptspur. Im Exportplan stehen sie am Element wie an einem Abschnitt (bright, contrast,
+// sat, gray, wb); „Farbe für das ganze Video“ gilt weiter nur der Hauptspur.
+const ovColorOk = it => !!(it && it.clip && (it.type === 'broll' || it.type === 'pip'));
+function ovColorPlan(it){
+  if (!ovColorOk(it) || !colorAny(it.col)) return {};
+  const c = it.col, w = wbGains(c);
+  return {bright: +(+c.bright || 0).toFixed(3), contrast: +(+c.contrast || 0).toFixed(3), sat: +(+c.sat || 0).toFixed(1), gray: !!c.gray, ...(w ? {wb: w} : {})};
+}
+function ovColorTidy(it){ if (it && it.col && !colorAny(it.col)) delete it.col; }
 function colorSet(o, c){ for (const k of COLOR_FIELDS){ if (k === 'gray') o.gray = !!c.gray; else if (k === 'temp' || k === 'tint'){ if (Math.abs(+c[k] || 0) > 1e-4) o[k] = +c[k]; else delete o[k]; } else o[k] = +c[k] || 0; } return o; }
 // Wirksame Werte eines Abschnitts: die eigenen und die des ganzen Videos zusammen
 function colorMix(f){
@@ -8157,7 +8180,7 @@ function colorBlock(host, o){
     <div class="field"><span>Farbtemperatur <b class="cV" data-k="temp"></b></span><input type="range" class="cR wb-temp" data-k="temp" min="-100" max="100" step="1"></div>
     <div class="field"><span>Tönung <b class="cV" data-k="tint"></b></span><input type="range" class="cR wb-tint" data-k="tint" min="-100" max="100" step="1"></div>
     <label class="row"><input type="checkbox" class="cGray"> Schwarzweiß</label>
-    <div class="row wrap"><button class="btn small cPick" type="button">◎ Weiß im Bild wählen</button>${o.match ? '<button class="btn small cMatch" type="button">⇆ An den Clip davor angleichen</button>' : ''}</div>
+    <div class="row wrap">${o.noPick ? '' : '<button class="btn small cPick" type="button">◎ Weiß im Bild wählen</button>'}${o.match ? '<button class="btn small cMatch" type="button">⇆ An den Clip davor angleichen</button>' : ''}</div>
     <div class="field"><span>Farb-Vorlagen</span><div class="clooks"></div></div>
   </div>`);
   const blk = host.lastElementChild, q = s => blk.querySelector(s), fmt = {bright: v => Math.round(v * 100), contrast: v => Math.round(v * 100), sat: v => Math.round(v), temp: v => v > 0 ? `warm ${Math.round(v)}` : v < 0 ? `kühl ${Math.round(-v)}` : '0', tint: v => v > 0 ? `magenta ${Math.round(v)}` : v < 0 ? `grün ${Math.round(-v)}` : '0'};
@@ -8169,7 +8192,7 @@ function colorBlock(host, o){
       + '<button type="button" class="look-chip add" data-cl="+">+ Speichern</button>'; };
   blk.querySelectorAll('.cR').forEach(r => { r.addEventListener('input', () => o.live(f => { const v = +r.value; if ((r.dataset.k === 'temp' || r.dataset.k === 'tint') && !v) delete f[r.dataset.k]; else f[r.dataset.k] = v; })); r.addEventListener('input', paint); });
   q('.cGray').addEventListener('input', () => { o.live(f => { f.gray = q('.cGray').checked; }); paint(); });
-  q('.cPick').onclick = e => { e.stopPropagation(); const g = timeline[curSeg]; if (!g || g.kind !== 'main' || !hasVid(P.sources[g.si])) return toast('Die Abspiellinie steht gerade auf keinem Video der Hauptspur');
+  if (!o.noPick) q('.cPick').onclick = e => { e.stopPropagation(); const g = timeline[curSeg]; if (!g || g.kind !== 'main' || !hasVid(P.sources[g.si])) return toast('Die Abspiellinie steht gerade auf keinem Video der Hauptspur');
     startKeyPick(col => { const w = wbFromPixel(col, o.other ? o.other() : null); if (w.err) return toast(w.err); o.set(f => colorSet(f, {...colorOf(f), temp: w.temp, tint: w.tint})); paint(); toast('Weißabgleich gesetzt'); },
       'Ins Bild tippen oder klicken: Diese Stelle wird farbneutral (am besten etwas Weißes oder Graues)'); };
   if (o.match) q('.cMatch').onclick = async e => { e.stopPropagation(); const b = q('.cMatch'); b.disabled = true; try { await o.match(paint); } finally { b.disabled = false; } };

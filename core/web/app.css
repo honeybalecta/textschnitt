@@ -1439,3 +1439,7 @@ body.sg-open{overflow:hidden}
 .pr-l{font-size:13px;color:var(--muted)}
 .pr-v{flex:none;width:34px;text-align:right;font:12.5px var(--mono);color:var(--text)}
 .pr-body .btn.small{min-height:30px}
+/* 2.54: Farbe und Filter für Videos und Bilder auf den Videospuren */
+.it-col{margin:10px 0;border-top:1px solid var(--line);padding-top:8px}
+.it-col summary{cursor:pointer;font-size:13px;color:var(--muted);padding:4px 0}
+.it-col[open] summary{color:var(--text)}

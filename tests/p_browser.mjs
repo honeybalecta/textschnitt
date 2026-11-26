@@ -173,6 +173,18 @@ try {
   const o5 = await probe(fr(30), (px) => ({ rot: px(160, 180), a: px(129, 181), c: px(142, 181) }));
   chk('weichgezeichnet: dieselbe Stelle verläuft (kein hartes Feld), die Form darüber bleibt scharf', !b5.error && o5 && o5.rot.join() === '255,0,0' && o5.a.join() !== o5.c.join() && o5.a[1] > o5.a[0], b5.error || (o5 && [o5.a, o5.c]));
 
+  // ── Farbe an Einblendungen (2.54): bright/contrast/sat/gray/wb am Element, wie an einem Abschnitt der Hauptspur ──
+  const fpx = px => ({ m: px(320, 180), aussen: px(60, 60) });
+  const f0 = await run(kplan({ overlays: [img('blau', 0.5, 0.5, 0.2)] })); const q0 = await probe(fr(30), fpx);
+  const f1 = await run(kplan({ overlays: [img('blau', 0.5, 0.5, 0.2, { gray: true })] })); const q1 = await probe(fr(30), fpx);
+  const f2 = await run(kplan({ overlays: [img('blau', 0.5, 0.5, 0.2, { wb: [2, 1, 0.5] })] })); const q2 = await probe(fr(30), fpx);
+  const f3 = await run(kplan({ overlays: [img('blau', 0.5, 0.5, 0.2, { bright: 0.5 })] })); const q3 = await probe(fr(30), fpx);
+  const nahe = (a, b, tol = 5) => !!a && a.slice(0, 3).every((v, i) => Math.abs(v - b[i]) <= tol);
+  chk('Einblendung ohne Farbwerte bleibt, wie sie ist', !f0.error && q0 && nahe(q0.m, [32, 64, 192], 3), f0.error || q0);
+  chk('Einblendung schwarzweiß: grau in ihrer Helligkeit, das Bild daneben bleibt unberührt', !f1.error && q1 && nahe(q1.m, [67, 67, 67], 6) && q1.aussen.join() === q0.aussen.join(), f1.error || q1);
+  chk('Einblendung mit Weißabgleich: Rot verdoppelt, Blau halbiert', !f2.error && q2 && nahe(q2.m, [64, 64, 96], 5), f2.error || q2);
+  chk('Einblendung heller (+50 %): alle Kanäle mal 1,5', !f3.error && q3 && nahe(q3.m, [48, 96, 255], 6) && q3.aussen.join() === q0.aussen.join(), f3.error || q3);
+
   // ── Bildgestaltung (2.36): Weißabgleich (wb) und Hintergrund hinter dem freigestellten Hauptbild (key.bg, key.bgImg) ──
   // Dieselben Erwartungen wie beim Windows-Export (backend_test.py, bild_236): das Feld (160, 128, 96) auf grüner Fläche.
   const gseg = (a, b, kw = {}) => ({ ...seg(a, b, kw), uri: 'gs' });

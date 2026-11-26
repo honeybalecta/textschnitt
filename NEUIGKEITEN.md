@@ -2,6 +2,13 @@
 
 Was sich mit jeder Version von HoneyCut ändert. Die Windows-App zeigt diese Stichpunkte an, sobald eine neuere Version bereitsteht.
 
+## 2.54.0 · Filter für Videos und Bilder auf den Videospuren
+
+- **Filter auf allen Videospuren:** Videos und Bilder auf den Spuren über der Hauptspur (B-Roll, Einblendung) bekommen dieselben Filter wie Clips der Hauptspur: Helligkeit, Kontrast, Sättigung, Schwarzweiß, dazu Farbtemperatur, Tönung und die Farb-Vorlagen.
+- **Wo:** Im Feld neben der Vorschau stehen sie beim ausgewählten Element im Reiter „Bild“, der Rest im Reiter „Farbe“. In schmalen Fenstern und auf dem Handy: Element antippen → „Größe, Lage, Ton“ → „Farbe und Filter“.
+- **Im fertigen Video:** Der Export rechnet die Filter am Computer, auf dem Handy und im Browser mit. Durchsichtige Stellen (PNG, freigestellte Videos) bleiben durchsichtig.
+- „Farbe für das ganze Video“ gilt wie bisher der Hauptspur.
+
 ## 2.53.0 · Spuren per Ton synchronisieren, weiße Leinwand, Eigenschaften neben dem Bild
 
 - **Spuren per Ton synchronisieren:** Liegt ein Video oder eine Tonaufnahme auf einer Spur über oder unter der Hauptspur, richtet HoneyCut sie am Ton aus: Studio → „Bearbeiten“ → „Spuren per Ton synchronisieren“ nimmt alle Clips mit Ton, am ausgewählten Clip steht „Per Ton synchronisieren“ für diesen einen. HoneyCut vergleicht die Tonspuren und verschiebt den Clip so, dass derselbe Moment zur selben Zeit läuft. Bezug ist die Hauptspur; passt dort nichts, ein anderer Clip mit Ton. Passt ein Clip nirgends (etwa Musik), bleibt er liegen, und HoneyCut sagt das. Läuft am Computer, auf dem Handy und im Browser.

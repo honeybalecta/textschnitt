@@ -1697,7 +1697,7 @@ function propTarget(){
 }
 function propTabs(t){
   if (t.kind === 'main') return [['bild', 'Bild'], ['farbe', 'Farbe'], ['ton', 'Ton & Tempo'], ['mehr', 'Werkzeuge']];
-  if (t.kind === 'ovl') return [['bild', 'Bild'], ...(!isImg(t.it.clip) && t.it.clip.hasAudio !== false ? [['ton', 'Ton']] : []), ['mehr', 'Werkzeuge']];
+  if (t.kind === 'ovl') return [['bild', 'Bild'], ...(ovColorOk(t.it) ? [['farbe', 'Farbe']] : []), ...(!isImg(t.it.clip) && t.it.clip.hasAudio !== false ? [['ton', 'Ton']] : []), ['mehr', 'Werkzeuge']];
   if (t.kind === 'aud') return [['ton', 'Ton'], ['mehr', 'Werkzeuge']];
   if (t.kind === 'mark' || (t.kind === 'title' && !t.it.lt)) return [['bild', 'Bild'], ['mehr', 'Werkzeuge']];
   return [['mehr', 'Werkzeuge']];
@@ -1721,7 +1721,8 @@ function propSetGeo(t, o){
   else if (t.kind === 'title'){ t.it.scale = +clamp(n.size / 100, 0.5, 3).toFixed(2); t.it.x = r3(clamp(n.x / 100 + 0.5, 0.02, 0.98)); t.it.y = r3(clamp(n.y / 100 + 0.5, 0.02, 0.98)); }
   else setElVals(t.it, curRel(t.it), {x: n.x / 100 + 0.5, y: n.y / 100 + 0.5, w: n.size / 100});
 }
-const propFx = (t, make) => t.kind !== 'main' ? null : make ? mainFxItem(t.g).fx : (t.g.fx || FX_DEF);
+const propFx = (t, make) => t.kind === 'main' ? (make ? mainFxItem(t.g).fx : (t.g.fx || FX_DEF)) : t.kind === 'ovl' && ovColorOk(t.it) ? (make ? (t.it.col ||= {}) : (t.it.col || {})) : null;
+const propHasFx = t => t.kind === 'main' || (t.kind === 'ovl' && ovColorOk(t.it));
 function propRefresh(t){ if (t && t.kind === 'title') updateTitles(outPos); seekOut(outPos, false); }
 // Regler und Zahlenfelder: beim ersten Ändern den Stand für „Rückgängig“ merken, beim Loslassen einen Schritt daraus machen
 function propLive(el, apply){
@@ -1729,6 +1730,7 @@ function propLive(el, apply){
   el.addEventListener('input', () => { const t = propTarget(); if (!t) return; if (!before) before = snapshot(); apply(t, el); changedLive(); propRefresh(t); paintProps(el); });
   el.addEventListener('change', () => { if (before){ undo.push(before); if (undo.length > 200) undo.shift(); redo = []; before = null; }
     const t = propTarget(); if (t && t.kind === 'main'){ const it = fxItemOf(t.g); if (it && !(it.fx.kf && it.fx.kf.length) && JSON.stringify({...FX_DEF, ...it.fx}) === JSON.stringify(FX_DEF)) P.items = P.items.filter(x => x !== it); }   // unveränderte Anpassung nicht stehen lassen
+    if (t && t.kind === 'ovl') ovColorTidy(t.it);
     changed(true); propRefresh(propTarget()); });
 }
 function propAct(fn){ const t = propTarget(); if (!t) return; commit(() => fn(t), true); propRefresh(propTarget()); paintProps(); }
@@ -1756,17 +1758,16 @@ function propsBild(body, t){
       <span class="pr-l" title="${hintPos}">Position</span><div class="pr-row" title="${hintPos}">${PR_NUM('prX', 'X', -300, 300, 0.5)}${PR_NUM('prY', 'Y', -300, 300, 0.5)}</div>
       <div class="pr-row wrap pr-wide"><button class="btn small" data-pa="mid">Mitte</button>${main ? '<button class="btn small" data-pa="fit" title="Ganz im Bild, in der Mitte">Einpassen</button><button class="btn small" data-pa="fill" title="Formatfüllend, in der Mitte">Füllen</button>' : title ? '' : '<button class="btn small" data-pa="wide">Volle Breite</button>'}${title ? '' : '<button class="btn small" id="prKf" data-pa="kf"></button>'}</div>
     </div>
-    ${main ? `<div class="pr-sec pr-grid"><h4>Filter</h4>
+    ${propHasFx(t) ? `<div class="pr-sec pr-grid"><h4>Filter</h4>
       <span class="pr-l">Helligkeit</span><div class="pr-row"><input type="range" id="prBr" min="-0.5" max="0.5" step="0.02"><b class="pr-v" id="prBrV"></b></div>
       <span class="pr-l">Kontrast</span><div class="pr-row"><input type="range" id="prCo" min="-0.5" max="0.5" step="0.02"><b class="pr-v" id="prCoV"></b></div>
       <span class="pr-l">Sättigung</span><div class="pr-row"><input type="range" id="prSa" min="-100" max="100" step="5"><b class="pr-v" id="prSaV"></b></div>
       <div class="pr-row wrap pr-wide"><label class="row"><input type="checkbox" id="prGray"> Schwarzweiß</label><button class="btn small" data-pa="nofilter" style="margin-left:auto">Zurücksetzen</button></div>
-      <p class="muted small">Gilt für diesen Clip. Farbtemperatur, Tönung und Farb-Vorlagen stehen im Reiter „Farbe“.</p></div>`
-      : t.kind === 'ovl' ? '<div class="pr-sec"><h4>Filter</h4><p class="muted small">Helligkeit, Kontrast und Sättigung gibt es bisher für Clips der Hauptspur.</p></div>' : ''}`;
+      <p class="muted small">Gilt für ${main ? 'diesen Clip' : 'dieses Element'}. Farbtemperatur, Tönung und Farb-Vorlagen stehen im Reiter „Farbe“.</p></div>` : ''}`;
   const size = (tt, el) => propSetGeo(tt, {size: +el.value || 100});
   propLive($('#prSize'), size); propLive($('#prSizeN'), size);
   propLive($('#prX'), (tt, el) => propSetGeo(tt, {x: +el.value || 0})); propLive($('#prY'), (tt, el) => propSetGeo(tt, {y: +el.value || 0}));
-  if (main){
+  if (propHasFx(t)){
     for (const [id, k] of [['prBr', 'bright'], ['prCo', 'contrast'], ['prSa', 'sat']]) propLive($('#' + id), (tt, el) => { propFx(tt, true)[k] = +el.value; });
     propLive($('#prGray'), (tt, el) => { propFx(tt, true).gray = el.checked; });
   }
@@ -1776,21 +1777,22 @@ function propsBild(body, t){
     else if (a === 'fit') propAct(x => propSetGeo(x, {size: 100, x: 0, y: 0}));
     else if (a === 'fill') propAct(x => { const [wf, hf] = fitFracOf(P.sources[x.g.si]); propSetGeo(x, {size: Math.max(1 / wf, 1 / hf) * 100, x: 0, y: 0}); });
     else if (a === 'wide') propAct(x => propSetGeo(x, {size: 100, x: 0}));
-    else if (a === 'nofilter') propAct(x => { const f = propFx(x, true); f.bright = 0; f.contrast = 0; f.sat = 0; f.gray = false; delete f.temp; delete f.tint; }); };
+    else if (a === 'nofilter') propAct(x => { if (x.kind === 'ovl'){ delete x.it.col; return; } const f = propFx(x, true); f.bright = 0; f.contrast = 0; f.sat = 0; f.gray = false; delete f.temp; delete f.tint; }); };
 }
 function propsFarbe(body, t){
-  const fx = () => { const tt = propTarget(); return tt && tt.kind === 'main' ? tt : null; };
+  const fx = () => { const tt = propTarget(); return tt && propHasFx(tt) ? tt : null; }, main = t.kind === 'main';
   let before = null; const mark = () => { if (!before) before = snapshot(); }, done = () => { if (before){ undo.push(before); if (undo.length > 200) undo.shift(); redo = []; before = null; } };
-  body.innerHTML = '<div class="pr-sec" id="prColHost"></div><p class="muted small">Gilt für diesen Clip. „Farbe für das ganze Video“ steht unter „Bearbeiten“ → „Farbe“.</p>';
-  colorBlock($('#prColHost'), {get: () => { const tt = fx(); return tt ? propFx(tt, false) : FX_DEF; }, other: () => P.color || null,
+  const tidy = () => { const tt = fx(); if (tt && tt.kind === 'ovl') ovColorTidy(tt.it); };
+  body.innerHTML = `<div class="pr-sec" id="prColHost"></div><p class="muted small">${main ? 'Gilt für diesen Clip. „Farbe für das ganze Video“ steht unter „Bearbeiten“ → „Farbe“.' : 'Gilt für dieses Element. „Farbe für das ganze Video“ betrifft die Hauptspur.'}</p>`;
+  colorBlock($('#prColHost'), {get: () => { const tt = fx(); return tt ? propFx(tt, false) : FX_DEF; }, other: () => main ? P.color || null : null, noPick: !main,
     live: fn => { const tt = fx(); if (!tt) return; mark(); fn(propFx(tt, true)); changedLive(); seekOut(outPos, false); },
-    set: fn => { const tt = fx(); if (!tt) return; mark(); fn(propFx(tt, true)); done(); changed(true); seekOut(outPos, false); },
-    match: async paintCol => { const tt = fx(); if (!tt) return; const it = mainFxItem(tt.g), ref = matchRef(it);
+    set: fn => { const tt = fx(); if (!tt) return; mark(); fn(propFx(tt, true)); tidy(); done(); changed(true); seekOut(outPos, false); },
+    ...(main ? {match: async paintCol => { const tt = fx(); if (!tt) return; const it = mainFxItem(tt.g), ref = matchRef(it);
       if (!ref) return toast('Dafür braucht es einen zweiten Abschnitt mit Bild');
       const m = await colorMatch(tt.g, ref); if (!m) return toast('Die Bilder ließen sich nicht vergleichen');
       mark(); if (m.temp) it.fx.temp = m.temp; else delete it.fx.temp; if (m.tint) it.fx.tint = m.tint; else delete it.fx.tint; it.fx.bright = m.bright;
-      done(); changed(true); seekOut(outPos, false); paintCol(); toast('Farbe und Helligkeit an den Clip davor angeglichen'); }});
-  $('#prColHost').addEventListener('change', () => { done(); changed(true); });
+      done(); changed(true); seekOut(outPos, false); paintCol(); toast('Farbe und Helligkeit an den Clip davor angeglichen'); }} : {})});
+  $('#prColHost').addEventListener('change', () => { tidy(); done(); changed(true); });
 }
 function propsTon(body, t){
   const main = t.kind === 'main';
@@ -1820,7 +1822,7 @@ function paintProps(skip){
     const g = propGeo(t), rd = v => Math.round(v * 10) / 10;
     set('prSize', Math.round(g.size)); set('prSizeN', rd(g.size)); set('prX', rd(g.x)); set('prY', rd(g.y));
     const kf = $('#prKf'); if (kf){ const has = t.kind === 'main' ? hasMainKfHere(t.g) : hasKfHere(t.it); kf.textContent = has ? '◆ Keyframe weg' : '◆ Keyframe'; kf.title = 'Keyframe an der Abspiellinie: Größe und Lage ändern sich über die Zeit (Taste M)'; }
-    if (t.kind === 'main'){ const f = propFx(t, false);
+    if (propHasFx(t)){ const f = propFx(t, false);
       set('prBr', f.bright || 0); set('prCo', f.contrast || 0); set('prSa', f.sat || 0); txt('prBrV', Math.round((f.bright || 0) * 100)); txt('prCoV', Math.round((f.contrast || 0) * 100)); txt('prSaV', Math.round(f.sat || 0));
       const gr = $('#prGray'); if (gr && gr !== skip) gr.checked = !!f.gray; }
   }

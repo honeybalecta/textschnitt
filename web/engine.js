@@ -234,6 +234,11 @@ function wbFilter(wb){
     const m = document.createElementNS(NS, 'feColorMatrix'); m.setAttribute('type', 'matrix'); m.setAttribute('values', `${wb[0]} 0 0 0 0 0 ${wb[1]} 0 0 0 0 0 ${wb[2]} 0 0 0 0 0 1 0`); f.append(m); host.append(f); }
   return `url(#${f.id})`;
 }
+// Farbwerte einer Einblendung aus dem Plan (2.54); null = keine
+function ovFx(o){
+  const fx = {bright: +o.bright || 0, contrast: +o.contrast || 0, sat: +o.sat || 0, gray: !!o.gray, wb: wbOf(o.wb)};
+  return fx.bright || fx.contrast || fx.sat || fx.gray || fx.wb ? fx : null;
+}
 function segFx(s){
   return {speed: clamp(+s.speed || 1, 0.25, 4), vol: clamp(s.vol == null ? 1 : +s.vol, 0, 8), bright:+s.bright || 0, contrast:+s.contrast || 0, sat:+s.sat || 0, gray:!!s.gray, wb: wbOf(s.wb),
     tx:+s.tx || 0, ty:+s.ty || 0, sc: clamp(+s.sc || 1, 0.002, 400), kf: Array.isArray(s.kf) && s.kf.length ? s.kf.map(k => ({t:+k.t || 0, tx:+k.tx || 0, ty:+k.ty || 0, sc: clamp(+k.sc || 1, 0.002, 400)})).sort((a, b) => a.t - b.t) : null};
@@ -657,9 +662,16 @@ class Renderer {
       if (im && o.key) im = this.keyed(im, o.key, o, 2048);   // freigestellt (Greenscreen)
       if (!im) continue;
       const op = o.opacity != null ? +o.opacity : 1; if (op < 0.999) ctx.globalAlpha = Math.max(0, op);
-      if (cr){ const iw = im.width, ih = im.height; ctx.drawImage(im, cl * iw, ct * ih, cw * iw, chh * ih, rect[0], rect[1], rect[2], rect[3]); }
-      else if (st.bm) drawFit(ctx, im, ...rect, true);
-      else ctx.drawImage(im, rect[0], rect[1], rect[2], rect[3]);
+      // Farbe des Elements (2.54): wie auf der Hauptspur – Weißabgleich, Helligkeit, Kontrast, Sättigung, Schwarzweiß
+      const col = ovFx(o), flt = col ? ((col.wb && this.canFilter ? wbFilter(col.wb) + ' ' : '') + cssFilter(col)).trim() : '';
+      const paint = (c, r) => { if (cr){ const iw = im.width, ih = im.height; c.drawImage(im, cl * iw, ct * ih, cw * iw, chh * ih, r[0], r[1], r[2], r[3]); }
+        else if (st.bm) drawFit(c, im, ...r, true);
+        else c.drawImage(im, r[0], r[1], r[2], r[3]); };
+      if (col && !this.canFilter){   // ältere Browser ohne Canvas-Filter: Element einzeln zeichnen und pixelweise anpassen
+        const f = Math.min(1, 2048 / Math.max(rect[2], rect[3])), tw = Math.max(2, Math.round(rect[2] * f)), th = Math.max(2, Math.round(rect[3] * f));
+        const tc = this.ovTmp || (this.ovTmp = document.createElement('canvas')); tc.width = tw; tc.height = th; const tx = tc.getContext('2d', {willReadFrequently: true});
+        paint(tx, [0, 0, tw, th]); manualFx(tx, tw, th, col); ctx.drawImage(tc, rect[0], rect[1], rect[2], rect[3]);
+      } else { if (flt) ctx.filter = flt; paint(ctx, rect); if (flt) ctx.filter = 'none'; }
       ctx.globalAlpha = 1;
     }
     if (!blurred) this.blurAll(t);

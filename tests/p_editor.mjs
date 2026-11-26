@@ -1,7 +1,9 @@
 // Editor (2.53): Spuren per Ton synchronisieren, weiße Leinwand, Griffe an allen vier Ecken, Eigenschaften neben der Vorschau.
 // Grundlage: kamera.mp4 (Ton mit Hall und Rauschen), mikrofon.wav (dasselbe Gespräch, 3,2 s früher gestartet), gespraech.mp4
 // (dieselbe Szene als zweites Video), musik.wav (fremder Ton), siehe medien.py.
+import fs from 'node:fs';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { launch, newProject, setPick, dropScratch, sleep, pruefung, MEDIA, OUT } from './drv.mjs';
 const { chk, ende } = pruefung('Editor');
 const { browser, page, logs } = await launch({ viewport: { width: 1480, height: 900 }, dpr: 1 });
@@ -138,7 +140,7 @@ try {
   // Video auf einer Videospur
   await selIt(cam2); await sleep(500);
   const po = await ev(id => { const it = P.items.find(x => x.id === id); return { title: document.querySelector('#prTitle').textContent, sub: document.querySelector('#prSub').textContent, tabs: [...document.querySelectorAll('#prTabs button')].map(b => b.textContent), size: +document.querySelector('#prSizeN').value, w: it.w, x: +document.querySelector('#prX').value, ix: it.x }; }, cam2);
-  chk('Video auf einer Videospur: Reiter Bild · Ton · Werkzeuge, Werte aus dem Element', po.title === 'Einblendung' && /gespraech\.mp4/.test(po.sub) && po.tabs.join('|') === 'Bild|Ton|Werkzeuge' && near(po.size, po.w * 100, 0.06) && near(po.x, (po.ix - 0.5) * 100, 0.06), po);
+  chk('Video auf einer Videospur: Reiter Bild · Farbe · Ton · Werkzeuge, Werte aus dem Element', po.title === 'Einblendung' && /gespraech\.mp4/.test(po.sub) && po.tabs.join('|') === 'Bild|Farbe|Ton|Werkzeuge' && near(po.size, po.w * 100, 0.06) && near(po.x, (po.ix - 0.5) * 100, 0.06), po);
   await setVal('#prSizeN', 50); await sleep(200); await page.click('#prBody [data-pa=mid]'); await sleep(300);
   const o1 = await item(cam2), bx = await rect('#pipBox'), stg = await rect('#stage');
   chk('Größe 50 % und „Mitte“: Das Element ist halb so breit wie das Bild und steht mittig – Rahmen im Bild und Feld stimmen überein', near(o1.w, 0.5, 0.001) && o1.x === 0.5 && o1.y === 0.5 && near(bx.w, stg.w / 2, 2) && near(bx.x + bx.w / 2, stg.x + stg.w / 2, 2), { o1, bx, stg });
@@ -148,6 +150,38 @@ try {
   await page.click('#prTabs [data-pt=ton]'); await sleep(150); await setVal('#prVol', 80); await sleep(200);
   chk('Reiter „Ton“ am Video der Videospur: Lautstärke und „Per Ton synchronisieren“', (await item(cam2)).vol === 0.8 && await ev(() => !!document.querySelector('#prBody [data-pa=sync]')));
   await shot('eigenschaften');
+  // ═════════ 5 · Filter für Videos auf den Videospuren (2.54) ═════════
+  await page.click('#prTabs [data-pt=bild]'); await sleep(200);
+  await ev(id => { const it = P.items.find(x => x.id === id); it.w = 0.5; it.x = 0.5; it.y = 0.5; delete it.kf; changed(true); seekOut(outPos, false); }, cam2); await sleep(300);
+  chk('Auch am Video der Videospur stehen die Filter direkt im Reiter „Bild“', await ev(() => ['prBr', 'prCo', 'prSa', 'prGray'].every(i => { const el = document.querySelector('#' + i); return el && el.getBoundingClientRect().height > 0; })));
+  await setVal('#prBr', 0.1); await setVal('#prGray', true); await sleep(300);
+  const oc = await ev(id => { const it = P.items.find(x => x.id === id), el = layers.get(id); exFmt = 'video'; const o = buildPlan(true).overlays.find(q => q.uri === it.clip.uri);
+    return { col: it.col, css: el.style.filter, main: document.querySelector('#stage video#v, #stage video').style.filter, plan: o && { b: o.bright, g: o.gray, c: o.contrast, s: o.sat } }; }, cam2);
+  chk('Helligkeit und Schwarzweiß wirken sofort am Element (nicht an der Hauptspur) und stehen im Exportplan', oc.col && oc.col.bright === 0.1 && oc.col.gray === true && /brightness\(1\.1/.test(oc.css) && /grayscale/.test(oc.css) && !/grayscale/.test(oc.main || '') && oc.plan && oc.plan.b === 0.1 && oc.plan.g === true, oc);
+  await page.click('#prTabs [data-pt=farbe]'); await sleep(200);
+  await setVal('#prBody .wb-temp', 40); await sleep(250);
+  const ow = await ev(id => { const it = P.items.find(x => x.id === id); exFmt = 'video'; const o = buildPlan(true).overlays.find(q => q.uri === it.clip.uri); return { temp: it.col.temp, wb: o.wb, pick: !!document.querySelector('#prBody .cPick'), looks: document.querySelectorAll('#prBody .look-chip').length }; }, cam2);
+  chk('Reiter „Farbe“ am Element: Farbtemperatur landet als Weißabgleich im Plan (Rot verstärkt, Blau gesenkt), Farb-Vorlagen vorhanden', ow.temp === 40 && ow.wb && ow.wb[0] > 1.05 && ow.wb[2] < 0.95 && !ow.pick && ow.looks >= 2, ow);
+  await page.click('#undoBtn'); await sleep(250);
+  chk('„Rückgängig“ nimmt die Farbtemperatur zurück, Helligkeit und Schwarzweiß bleiben', await ev(id => { const c = P.items.find(x => x.id === id).col; return c && !c.temp && c.gray === true && c.bright === 0.1; }, cam2));
+  // echter Export über ffmpeg (wie in der Windows-App): Das Element ist grau, die Hauptspur daneben bleibt farbig
+  const ex = await ev(async () => { P.settings.level = false; P.settings.burn = false; exFmt = 'video'; const plan = buildPlan(); plan.name = 'editor-filter';
+    const id = TS.exportVideo(JSON.stringify(plan)); for (;;){ await new Promise(r => setTimeout(r, 300)); const j = JSON.parse(TS.job(id)); if (j.status === 'done') return { ok: true, file: j.result.playable, files: j.result.files || [] }; if (j.status === 'error') return { ok: false, error: j.error }; } });
+  if (ex.ok){
+    const raw = execFileSync('ffmpeg', ['-v', 'error', '-ss', '1', '-i', ex.file, '-an', '-vf', 'scale=320:180', '-frames:v', '1', '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-'], { maxBuffer: 1 << 22 });
+    const at = (x, y) => { const i = (Math.round(y * 180) * 320 + Math.round(x * 320)) * 3; return [raw[i], raw[i + 1], raw[i + 2]]; }, spread = c => Math.max(...c) - Math.min(...c);
+    const innen = [at(0.4, 0.5), at(0.5, 0.45), at(0.6, 0.55)], aussen = [at(0.1, 0.8), at(0.9, 0.8), at(0.12, 0.5)];
+    chk('Export: Das Video auf der Videospur ist schwarzweiß, die Hauptspur daneben bleibt farbig', innen.every(c => spread(c) <= 14) && aussen.filter(c => spread(c) >= 80).length >= 2, { innen, aussen });
+    for (const f of [ex.file, ...ex.files]) try { fs.rmSync(f, { force: true }); } catch (_){}
+  } else chk('Export mit Filter am Element', false, ex.error);
+  await page.click('#prTabs [data-pt=bild]'); await sleep(150); await page.click('#prBody [data-pa=nofilter]'); await sleep(250);
+  chk('„Zurücksetzen“ nimmt die Filter des Elements heraus (Vorschau und Plan)', await ev(id => { const it = P.items.find(x => x.id === id); exFmt = 'video'; const o = buildPlan(true).overlays.find(q => q.uri === it.clip.uri); return !it.col && layers.get(id).style.filter === '' && !('bright' in o) && !('gray' in o); }, cam2));
+  // Dialog „Größe, Lage, Ton“ (Weg für schmale Fenster und das Handy)
+  await ev(id => openItem(id), cam2); await sleep(400);
+  const dl = await ev(() => { const d = document.querySelector('#sheet .it-col'); return { da: !!d && !d.classList.contains('hidden'), regler: d ? d.querySelectorAll('.cR').length : 0 }; });
+  await ev(() => { const d = document.querySelector('#sheet .it-col'); d.open = true; const r = d.querySelector('.cR[data-k=sat]'); r.value = -60; r.dispatchEvent(new Event('input', { bubbles: true })); r.dispatchEvent(new Event('change', { bubbles: true })); }); await sleep(250);
+  chk('Im Dialog des Elements steht „Farbe und Filter“ mit denselben Reglern', dl.da && dl.regler === 5 && await ev(id => { const it = P.items.find(x => x.id === id); return it.col && it.col.sat === -60 && /saturate\(0\.4/.test(layers.get(id).style.filter); }, cam2), dl);
+  await ev(id => { closeSheet(); const it = P.items.find(x => x.id === id); delete it.col; changed(true); }, cam2); await sleep(200);
   // ohne Auswahl
   await ev(() => { select(null); seekOut(30, false); }); await sleep(400);
   const pn = await ev(() => ({ title: document.querySelector('#prTitle').textContent, tabs: [...document.querySelectorAll('#prTabs button')].map(b => b.textContent), tools: document.querySelector('#tools').classList.contains('none') }));
