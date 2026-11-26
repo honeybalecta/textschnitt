@@ -1597,6 +1597,16 @@ def skript_240():
     chk("Die Browser-Fassung nimmt die Rechenkerne in den Bau und in den Zwischenspeicher für den Betrieb ohne Netz", all(build.count(f'"{f}"') == 2 for f in ("stimmen.js", "folgen.js", "skript.js")))
 
 
+def editor_253():
+    """2.53: Der Rechenkern für „Spuren per Ton synchronisieren“ wird mit der Oberfläche ausgeliefert."""
+    src = Path(T.__file__).read_text(encoding="utf-8")
+    html = (T.WEB_DIR / "index.html").read_text(encoding="utf-8")
+    chk("Die Oberfläche bekommt tonsync.js ausgeliefert", (T.WEB_DIR / "tonsync.js").is_file() and '"tonsync.js"' in src and 'src="tonsync.js"' in html)
+    chk("tonsync.js steht in der Seite vor der Oberfläche, die es benutzt", html.index('src="tonsync.js"') < html.index('src="app.js"') < html.index('src="studio.js"'))
+    build = (Path(T.__file__).parent / "web" / "build.py").read_text(encoding="utf-8")
+    chk("Die Browser-Fassung nimmt tonsync.js in den Bau und in den Zwischenspeicher für den Betrieb ohne Netz", build.count('"tonsync.js"') == 2)
+
+
 def ton_241():
     """2.41: Zweite Tonquelle angleichen – Versatz und Auseinanderlaufen messen (sync_measure) und die Kopie mit dem Ton des
     Mikrofons erzeugen (audio_sync_job). Die „Szene“ ist sprachähnlicher Ton; die Kamera hört sie mit Hall, Rauschen und leiser."""
@@ -1805,7 +1815,7 @@ def titelbild_2522():
     chk("Stückelung: Das Titelbild steht nur im ersten Stück", late["overlays"] == [], late["overlays"])
 
 
-PARTS = (speichern_und_fassungen, speicher, sicherung, projektpakete, kleine_helfer, quellen_und_belege, schrift_im_export, transkript, export_231, untertitel_effekte, ton_234, belege_235, bild_236, uebergabe_237, stimmen_238, folgen_239, skript_240, ton_241, exportordner_2521, titelbild_2522, neue_versionen, bericht_und_protokoll)
+PARTS = (speichern_und_fassungen, speicher, sicherung, projektpakete, kleine_helfer, quellen_und_belege, schrift_im_export, transkript, export_231, untertitel_effekte, ton_234, belege_235, bild_236, uebergabe_237, stimmen_238, folgen_239, skript_240, editor_253, ton_241, exportordner_2521, titelbild_2522, neue_versionen, bericht_und_protokoll)
 for part in [p for p in PARTS if p.__name__ == MODE] or PARTS:
     print(f"── {part.__name__.replace('_', ' ')} ──", flush=True)
     part()

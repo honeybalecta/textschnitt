@@ -15,7 +15,7 @@ VERSION = (WEB / "version.txt").read_text().strip()
 shutil.rmtree(OUT, ignore_errors=True)
 (OUT / "vendor" / "ort").mkdir(parents=True)
 
-for f in ("app.js", "studio.js", "slides.js", "deck-host.js", "app.css", "icons.js", "chroma.js", "stimmen.js", "folgen.js", "skript.js", "thumb-engine.js", "thumb-cut.js", "titelbild.js", "rec.js", "rec-docs.js", "rec.css", "rec-logo.svg",
+for f in ("app.js", "studio.js", "slides.js", "deck-host.js", "app.css", "icons.js", "chroma.js", "stimmen.js", "folgen.js", "skript.js", "tonsync.js", "thumb-engine.js", "thumb-cut.js", "titelbild.js", "rec.js", "rec-docs.js", "rec.css", "rec-logo.svg",
           "sg-core.js", "sg-host.js", "pfade.js"):
     shutil.copy(CORE / f, OUT / f)
 for f in ("pdf.min.mjs", "pdf.worker.min.mjs", "pdfjs-LIZENZ.txt"):   # pdf.js für HoneyRec
@@ -64,7 +64,7 @@ for p in ort:
 print("ONNX-Runtime:", ", ".join(names) or "– (wird vom CDN geladen)")
 
 fonts = sorted("fonts/" + p.name for p in (CORE / "fonts").iterdir() if p.suffix in (".ttf", ".otf"))
-shell = ["./", "index.html", "rec.html", "rec.js", "rec-docs.js", "rec.css", "rec-logo.svg", "sg-core.js", "sg-host.js", "pfade.js", "vendor/pdf.min.mjs", "vendor/pdf.worker.min.mjs", "app.js", "studio.js", "slides.js", "deck-host.js", "app.css", "icons.js", "chroma.js", "stimmen.js", "folgen.js", "skript.js", "thumb-engine.js", "thumb-cut.js", "titelbild.js", "web.css", "bridge-browser.js", "engine.js", "asr-worker.js",
+shell = ["./", "index.html", "rec.html", "rec.js", "rec-docs.js", "rec.css", "rec-logo.svg", "sg-core.js", "sg-host.js", "pfade.js", "vendor/pdf.min.mjs", "vendor/pdf.worker.min.mjs", "app.js", "studio.js", "slides.js", "deck-host.js", "app.css", "icons.js", "chroma.js", "stimmen.js", "folgen.js", "skript.js", "tonsync.js", "thumb-engine.js", "thumb-cut.js", "titelbild.js", "web.css", "bridge-browser.js", "engine.js", "asr-worker.js",
          "manifest.webmanifest", "icon.svg", "icon-192.png", "icon-512.png", "vendor/media.js", "vendor/asr.js"] + fonts
 sw = (WEB / "sw.js").read_text().replace("__VERSION__", VERSION + "-" + subprocess.run(
     ["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, capture_output=True, text=True).stdout.strip()).replace("__SHELL__", json.dumps(shell))

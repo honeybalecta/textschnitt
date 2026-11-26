@@ -37,7 +37,7 @@ os.environ.setdefault("HF_HUB_DISABLE_IMPLICIT_TOKEN", "1")
 import warnings  # noqa: E402
 warnings.filterwarnings("ignore", module="huggingface_hub")
 
-VERSION = "2.52.2"
+VERSION = "2.53.0"
 APP_DIR = Path(__file__).resolve().parent
 FROZEN = bool(getattr(sys, "frozen", False))          # als installierte .exe gebaut
 RES_DIR = Path(getattr(sys, "_MEIPASS", APP_DIR))      # mitgelieferte Dateien (Oberfläche, ffmpeg, Modelle)
@@ -6389,7 +6389,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not str(f).startswith(str(d.resolve())) or not f.is_file():
                     return self._json({"error": "Nicht gefunden"}, 404)
                 return self._send(200, f.read_bytes(), DECK_TYPES.get(f.suffix.lower(), "application/octet-stream"))
-            if rest in ("", "index.html", "app.js", "studio.js", "slides.js", "deck-host.js", "app.css", "bridge-http.js", "icons.js", "chroma.js", "stimmen.js", "folgen.js", "skript.js", "thumb-engine.js", "thumb-cut.js", "titelbild.js", "rec.html", "rec.js", "rec-docs.js", "rec.css", "rec-logo.svg", "vendor/pdf.min.mjs", "vendor/pdf.worker.min.mjs",
+            if rest in ("", "index.html", "app.js", "studio.js", "slides.js", "deck-host.js", "app.css", "bridge-http.js", "icons.js", "chroma.js", "stimmen.js", "folgen.js", "skript.js", "tonsync.js", "thumb-engine.js", "thumb-cut.js", "titelbild.js", "rec.html", "rec.js", "rec-docs.js", "rec.css", "rec-logo.svg", "vendor/pdf.min.mjs", "vendor/pdf.worker.min.mjs",
                         "sg-core.js", "sg-host.js", "pfade.js"):
                 f = WEB_DIR / (rest or "index.html")
                 ctype = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",

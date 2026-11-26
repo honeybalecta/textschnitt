@@ -73,7 +73,7 @@
       <div class="snap-guide"></div>
       <div class="subov" id="subOv" dir="auto" title="Ziehen, um die Untertitel zu verschieben"></div>
       <div class="title-ov" id="titleOv"></div>
-      <div class="pip-box hidden" id="pipBox" title="Ziehen zum Verschieben, Ecke ziehen (oder Mausrad) für die Größe"><i class="pip-h"></i></div>
+      <div class="pip-box hidden" id="pipBox" title="Ziehen zum Verschieben, eine Ecke ziehen (oder Mausrad) für die Größe"><i class="pip-h" data-c="nw"></i><i class="pip-h" data-c="ne"></i><i class="pip-h" data-c="sw"></i><i class="pip-h" data-c="se"></i></div>
       <div class="crop-box hidden" id="cropBox"><div class="crop-win" id="cropWin"><i data-h="nw"></i><i data-h="n"></i><i data-h="ne"></i><i data-h="e"></i><i data-h="se"></i><i data-h="s"></i><i data-h="sw"></i><i data-h="w"></i><b class="crop-grid"></b></div></div>
       <canvas class="sl-stage" id="slStage"></canvas>
       <div class="pin hidden" id="pin"></div>
@@ -82,6 +82,11 @@
       <div class="stage-hint hidden" id="stageHint">Ins Bild tippen oder klicken, um den Zoom-Mittelpunkt zu setzen</div>
     </div>
   </div>
+  <aside class="props" id="props" aria-label="Eigenschaften">
+    <div class="pr-head"><b id="prTitle">Eigenschaften</b><span class="muted small" id="prSub"></span></div>
+    <div class="pr-tabs" id="prTabs"></div>
+    <div class="pr-body" id="prBody"></div>
+  </aside>
   <div class="transport">
     <button class="play" id="playBtn" title="Abspielen / Pause (Leertaste)">▶</button>
     <button class="icon-btn t-cut" id="tPrevCut" title="Zum vorigen Schnitt" data-ico="cutprev"></button>
@@ -540,6 +545,7 @@
 <script src="stimmen.js"></script>
 <script src="folgen.js"></script>
 <script src="skript.js"></script>
+<script src="tonsync.js"></script>
 <script src="sg-core.js"></script>
 <script src="thumb-engine.js"></script>
 <script src="thumb-cut.js"></script>

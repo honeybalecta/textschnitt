@@ -2,6 +2,13 @@
 
 Was sich mit jeder Version von HoneyCut ändert. Die Windows-App zeigt diese Stichpunkte an, sobald eine neuere Version bereitsteht.
 
+## 2.53.0 · Spuren per Ton synchronisieren, weiße Leinwand, Eigenschaften neben dem Bild
+
+- **Spuren per Ton synchronisieren:** Liegt ein Video oder eine Tonaufnahme auf einer Spur über oder unter der Hauptspur, richtet HoneyCut sie am Ton aus: Studio → „Bearbeiten“ → „Spuren per Ton synchronisieren“ nimmt alle Clips mit Ton, am ausgewählten Clip steht „Per Ton synchronisieren“ für diesen einen. HoneyCut vergleicht die Tonspuren und verschiebt den Clip so, dass derselbe Moment zur selben Zeit läuft. Bezug ist die Hauptspur; passt dort nichts, ein anderer Clip mit Ton. Passt ein Clip nirgends (etwa Musik), bleibt er liegen, und HoneyCut sagt das. Läuft am Computer, auf dem Handy und im Browser.
+- **Leinwand weiß:** Im Studio und im Clip-Reiter ist die Leinwand weiß, die Umgebung bleibt dunkel. Beim Verschieben und Skalieren ist sofort zu sehen, wo die Leinwand liegt und ob Ränder frei bleiben. Im Vollbild und im fertigen Video sind freie Ränder schwarz wie bisher.
+- **Größe an allen Ecken:** Der Rahmen eines Videos hat vier Griffe. Beim Ziehen bleibt die gegenüberliegende Ecke stehen (auf der Hauptspur die Bildmitte). Füllt ein Video die Leinwand oder ragt darüber hinaus, sitzen die Griffe am Rand der Leinwand und bleiben greifbar.
+- **Eigenschaften neben der Vorschau:** Im Studio steht rechts neben dem Bild dauerhaft ein Feld für das ausgewählte Element – ohne Auswahl für den Clip an der Abspiellinie. Direkt sichtbar: Größe, Position (als Zahl, mit „Mitte“, „Einpassen“, „Füllen“) und die Filter Helligkeit, Kontrast, Sättigung und Schwarzweiß. Reiter oben führen zu „Farbe“, „Ton & Tempo“ und „Werkzeuge“ (alles aus der Leiste unter den Spuren). Jede Änderung ist ein Schritt für „Rückgängig“. Das Feld erscheint ab 1000 Pixeln Fensterbreite; in schmalen Fenstern und auf dem Handy bleibt alles wie bisher.
+
 ## 2.52.2 · Titelbild auf dem ersten Bild auch bei langen Videos
 
 - **Titelbild als erstes Bild des Videos:** Bei Videos mit 50 oder 60 Bildern je Sekunde und mehr als sechs Abschnitten fehlte das Titelbild im exportierten Video. So lange Exporte rechnet HoneyCut in Stücken, und dabei fiel alles heraus, was kürzer als 0,02 Sekunden im Bild steht – bei 50 und 60 Bildern je Sekunde ist ein einzelnes Bild kürzer. Jetzt steht das Titelbild wieder auf dem ersten Bild, aus der Vorlage wie importiert. Kurze Videos und Videos mit 25 oder 30 Bildern je Sekunde waren nicht betroffen.

@@ -2306,7 +2306,13 @@ function placeBox(W, H){
   box.classList.toggle('hidden', !r); box.classList.toggle('main', !curPip && !!r);
   box.classList.toggle('sel', !!r && (curPip ? selOvlId() === curPip.id : true)); box.classList.toggle('playing', !!playing);
   if (Crop.it) placeCrop(W, H);
-  if (r) Object.assign(box.style, {left: (r.cx - r.w / 2) + 'px', top: (r.cy - r.h / 2) + 'px', width: r.w + 'px', height: r.h + 'px'});
+  if (r){ Object.assign(box.style, {left: (r.cx - r.w / 2) + 'px', top: (r.cy - r.h / 2) + 'px', width: r.w + 'px', height: r.h + 'px'});
+    // Griffe an allen vier Ecken (2.53). Liegt eine Ecke am Rand oder außerhalb der Leinwand, rückt ihr Griff an den Rand –
+    // so bleibt jede Ecke greifbar, auch wenn das Bild die Leinwand füllt oder über sie hinausragt.
+    const hs = box._hs || (box._hs = [...box.querySelectorAll('.pip-h')]), L = r.cx - r.w / 2, T = r.cy - r.h / 2, m = Math.min(11, W / 4, H / 4);
+    for (const h of hs){ const c = h.dataset.c, hx = c[1] === 'w' ? L : L + r.w, hy = c[0] === 'n' ? T : T + r.h;
+      h.style.left = (clamp(hx, m, W - m) - L).toFixed(1) + 'px'; h.style.top = (clamp(hy, m, H - m) - T).toFixed(1) + 'px'; } }
+  if (window.propsLater) propsLater();   // Eigenschaften neben der Vorschau folgen der Abspiellinie und den Griffen (2.53)
 }
 // Hauptspur: Lage und Größe des ausgewählten Clips (in einer Anpassung gespeichert)
 const mainBoxOn = () => !!(typeof TL !== 'undefined' && TL.sel && TL.sel.kind === 'main' && timeline[TL.sel.i] && studioOn());
@@ -2449,15 +2455,16 @@ function resetCrop(){ if (Crop.it){ Crop.cur = {l:0, t:0, r:0, b:0}; Crop.ratio 
   box.addEventListener('dblclick', e => { e.stopPropagation(); endCrop(true); });
 })();
 const PipDrag = {on:false};
-$('#pipBox').addEventListener('pointerdown', e => pipDragStart(e, e.target.classList.contains('pip-h') ? 'size' : 'move'));
-function pipDragStart(e, mode){
+$('#pipBox').addEventListener('pointerdown', e => pipDragStart(e, e.target.classList.contains('pip-h') ? 'size' : 'move', e.target.dataset.c));
+function pipDragStart(e, mode, corner){   // corner: gegriffene Ecke (nw, ne, sw, se) – die gegenüberliegende bleibt stehen (2.53)
+  const cx = corner && corner[1] === 'w' ? -1 : 1, cy = corner && corner[0] === 'n' ? -1 : 1;
   if (!curPip && !mainBoxOn()) return; e.preventDefault(); e.stopPropagation(); $('#pipBox').setPointerCapture(e.pointerId);
   if (playing) pausePlay(); if (PipDrag.pinchT) return;
   const st = $('#stage').getBoundingClientRect(), W = st.width, H = st.height;
-  if (!curPip){ const f = mainFx(); Object.assign(PipDrag, {on:true, main:true, it:null, moved:false, mode, x0:e.clientX, y0:e.clientY, stx:f.tx, sty:f.ty, ssc:f.sc, tx:f.tx, ty:f.ty, sc:f.sc}); return; }
+  if (!curPip){ const f = mainFx(); Object.assign(PipDrag, {on:true, main:true, it:null, moved:false, mode, cx, cy, x0:e.clientX, y0:e.clientY, stx:f.tx, sty:f.ty, ssc:f.sc, tx:f.tx, ty:f.ty, sc:f.sc}); return; }
   const it = curPip, rel = outPos - pipTarget.at, v = elVals(it, rel) || coverVals(it), r = elRect(it, v, W, H) || {cx: W / 2, cy: H / 2, w: v.w * W, h: v.w * W / elAspect(it)};
-  Object.assign(PipDrag, {on:true, main:false, moved:false, it, rel, mode, x0:e.clientX, y0:e.clientY, ar: null, sh: r.h,
-    sx: r.cx / W, sy: r.cy / H, sw: r.w / W, left: r.cx - r.w / 2, top: r.cy - r.h / 2, x: r.cx / W, y: r.cy / H, w: r.w / W, clip: it.clip});
+  Object.assign(PipDrag, {on:true, main:false, moved:false, it, rel, mode, cx, cy, x0:e.clientX, y0:e.clientY, ar: null, sh: r.h,
+    sx: r.cx / W, sy: r.cy / H, sw: r.w / W, left: cx > 0 ? r.cx - r.w / 2 : r.cx + r.w / 2, top: cy > 0 ? r.cy - r.h / 2 : r.cy + r.h / 2, x: r.cx / W, y: r.cy / H, w: r.w / W, clip: it.clip});   // left/top: die Ecke, die beim Ziehen stehen bleibt
 }
 $('#pipBox').addEventListener('pointermove', e => {
   const g = PipDrag; if (!g.on || g.pinchT) return; const st = $('#stage').getBoundingClientRect(), W = st.width, H = st.height;
@@ -2465,7 +2472,7 @@ $('#pipBox').addEventListener('pointermove', e => {
   if (g.main){
     if (g.mode === 'move'){ let tx = g.stx + dx / W, ty = g.sty + dy / H; if (Math.abs(tx) < 0.015) tx = 0; if (Math.abs(ty) < 0.015) ty = 0; g.tx = tx; g.ty = ty; }
     else { const s0 = g.ssc, [wf, hf] = mainFit(), F0 = (P.frame && P.frame.sc) || 1, bw = s0 * F0 * W * wf / 2, bh = s0 * F0 * H * hf / 2;
-      const f = Math.max((bw + dx) / bw, (bh + dy) / bh); g.sc = clamp(s0 * f, 0.05, 20); if (Math.abs(g.sc - 1) < 0.02) g.sc = 1; }
+      const f = Math.max((bw + g.cx * dx) / bw, (bh + g.cy * dy) / bh); g.sc = clamp(s0 * f, 0.05, 20); if (Math.abs(g.sc - 1) < 0.02) g.sc = 1; }
     applyMainTransform(); placeBox(W, H); return;
   }
   if (g.mode === 'move'){ let x = g.sx + dx / W, y = g.sy + dy / H; const hw = g.w / 2, hh = g.w * W / elAspect(g.it) / H / 2;
@@ -2474,11 +2481,11 @@ $('#pipBox').addEventListener('pointermove', e => {
     for (const e of [0, 1]){ if (Math.abs(x - hw - e) < 0.015) x = e + hw; else if (Math.abs(x + hw - e) < 0.015) x = e - hw; if (Math.abs(y - hh - e) < 0.015) y = e + hh; else if (Math.abs(y + hh - e) < 0.015) y = e - hh; }
     x = clamp(x, 0.04 - hw, 0.96 + hw); y = clamp(y, 0.04 - hh, 0.96 + hh); g.x = x; g.y = y; }
   else if (isMark(g.it) && !e.shiftKey){   // Form oder Bereich: Breite und Höhe frei (Umschalt hält das Seitenverhältnis)
-    const mn = Math.min(W, H) * 0.02, pw = clamp(dx + g.sw * W, mn, W * 20); let ph = clamp(dy + g.sh, mn, H * 20);
+    const mn = Math.min(W, H) * 0.02, pw = clamp(g.cx * dx + g.sw * W, mn, W * 20); let ph = clamp(g.cy * dy + g.sh, mn, H * 20);
     if (Math.abs(pw / ph - 1) < 0.06 && (g.it.kind === 'ellipse' || g.it.form === 'ellipse' || g.it.kind === 'rect')) ph = pw;   // nahe am Quadrat bzw. Kreis: einrasten
-    g.ar = pw / ph; g.w = pw / W; g.x = (g.left + pw / 2) / W; g.y = (g.top + ph / 2) / H; }
-  else { const a = elAspect(g.it); let pw = Math.max(dx + g.sw * W, W * 0.03, (dy + g.sw * W / a) * a); pw = Math.min(pw, W * 20);
-    g.w = pw / W; g.x = (g.left + pw / 2) / W; g.y = (g.top + pw / a / 2) / H; }
+    g.ar = pw / ph; g.w = pw / W; g.x = (g.left + g.cx * pw / 2) / W; g.y = (g.top + g.cy * ph / 2) / H; }
+  else { const a = elAspect(g.it); let pw = Math.max(g.cx * dx + g.sw * W, W * 0.03, (g.cy * dy + g.sw * W / a) * a); pw = Math.min(pw, W * 20);
+    g.w = pw / W; g.x = (g.left + g.cx * pw / 2) / W; g.y = (g.top + g.cy * pw / a / 2) / H; }
   $('#stage').classList.toggle('snap-x', g.mode === 'move' && g.x === 0.5);
   updateOverlay(outPos);
 });
@@ -5498,7 +5505,7 @@ function openItem(id){
       <div class="field pipopt"><span>Splitscreen: Einblendung in die Hälfte</span><div class="seg-ctl" id="cSplit"><button data-v="o">Oben</button><button data-v="u">Unten</button><button data-v="l">Links</button><button data-v="r">Rechts</button><button data-v="">Aus</button></div></div>
       <div class="field pipopt"><span>Bild-im-Bild</span><div class="deco-row"><label class="row"><input type="checkbox" id="cFrame"> Rahmen</label><input type="text" id="cTag" maxlength="40" placeholder="Namensschild, z. B. @kanal" autocomplete="off" autocapitalize="off" spellcheck="false" dir="auto"></div></div>
       <p class="muted small pipopt">Splitscreen gilt für das ganze Video: Das Hauptvideo rückt in die andere Hälfte. Rahmen und Namensschild folgen dem Designprofil der Folien und erscheinen bei Einblendungen ohne Keyframes.</p>
-      <p class="muted small pipopt">Im Bild ziehen verschiebt, die Ecke unten rechts ändert die Größe${FINE ? ' (auch mit dem Mausrad)' : ''}. Mit Keyframes (Taste M) bewegt sich das Element über die Zeit.</p>`);
+      <p class="muted small pipopt">Im Bild ziehen verschiebt, jede Ecke ändert die Größe${FINE ? ' (auch mit dem Mausrad)' : ''}. Mit Keyframes (Taste M) bewegt sich das Element über die Zeit.</p>`);
   }
   if (it.type !== 'zoom' && it.type !== 'audio') keyBlock(body, {it, get: () => it.key || null, set: k => { it.key = k; }, el: () => layers.get(it.id) || $('#cPrev'),
     uri: () => isImg(it.clip) ? null : it.clip.uri, hasOrig: () => !!it.clip.orig, applyMatte: m => { commit(() => swapClip(it, m), true); paintItem(); }, restoreOrig: () => { commit(() => restoreClip(it), true); paintItem(); }});

@@ -794,9 +794,9 @@ function toolListBase(){
     T('◆', hasKfHere(it) ? 'Keyframe weg (M)' : 'Keyframe (M)', () => toggleKeyframe(it)),
     T('−', 'Kleiner', () => pipScale(1 / 1.15)), T('＋', 'Größer', () => pipScale(1.15)), T('↗', 'Ecke', cycleCorner),
     ...(it.w != null || it.type === 'pip' ? [T('▣', 'Vollbild', () => convert('broll'))] : []),
-    T('⚙', 'Größe, Lage, Ton', () => openItem(it.id)), T('↑', 'Spur hoch', () => moveTrack(it, elTrack(it) + 1)), ...(elTrack(it) > 1 ? [T('↓', 'Spur runter', () => moveTrack(it, elTrack(it) - 1))] : []),
+    T('⚙', 'Größe, Lage, Ton', () => openItem(it.id)), ...(syncable(it) ? [T('♪', 'Per Ton synchronisieren', () => syncByAudio())] : []), T('↑', 'Spur hoch', () => moveTrack(it, elTrack(it) + 1)), ...(elTrack(it) > 1 ? [T('↓', 'Spur runter', () => moveTrack(it, elTrack(it) - 1))] : []),
     T('⇄', 'Als Einschub', () => convert('insert'))]; }
-  if (s.kind === 'aud'){ const it = selItem(); return [T('🔊', 'Lautstärke & Ausschnitt', () => openItem(it.id)), T('🗑', 'Löschen', delSel, 'danger'), ...cuts,
+  if (s.kind === 'aud'){ const it = selItem(); return [T('🔊', 'Lautstärke & Ausschnitt', () => openItem(it.id)), T('♪', 'Per Ton synchronisieren', () => syncByAudio()), T('🗑', 'Löschen', delSel, 'danger'), ...cuts,
     T('↑', 'Spur hoch', () => moveATrack(it, (it.track || 1) - 1)), T('↓', 'Spur runter', () => moveATrack(it, (it.track || 1) + 1))]; }
   if (s.kind === 'zoom'){ const it = selItem(); return [T('◎', 'Mittelpunkt', () => openItem(it.id)), T('⟳', it.kind === 'punch' ? 'Sprung' : it.kind === 'in' ? 'Fahrt rein' : 'Fahrt raus', cycleZoomKind),
     T('−', 'Schwächer', () => zoomStrength(-0.05)), T('＋', 'Stärker', () => zoomStrength(0.05)), T('🗑', 'Löschen', delSel, 'danger'), ...cuts]; }
@@ -815,7 +815,7 @@ function barMenu(which){
   const base = playheadTools(), pick = (...names) => names.map(n => base.find(t => t.label === n)).filter(Boolean);
   if (which === 'insert') return [T('🎞', $('#mediaBin').classList.contains('hidden') ? 'Medienablage öffnen' : 'Medienablage schließen', () => toggleBin()), ...pick('Clip', 'Titel', 'Untertitel'),
     T('🖼', 'Folie (N)', () => slNext()), ...pick('Form', 'Standbild', 'Kapitel', 'Notiz')];
-  return [T('⚙', 'Anpassen (E)', () => { const g = curMainSeg(); if (!g) return toast('Abspiellinie auf einen Clip setzen'); openFx(g); }), ...pick('Zoom'), T('🔊', 'Lautstärke', () => openVolumes()),
+  return [T('⚙', 'Anpassen (E)', () => { const g = curMainSeg(); if (!g) return toast('Abspiellinie auf einen Clip setzen'); openFx(g); }), ...pick('Zoom'), T('🔊', 'Lautstärke', () => openVolumes()), T('♪', 'Spuren per Ton synchronisieren', () => syncByAudio(!(TL.sel && (TL.sel.kind === 'ovl' || TL.sel.kind === 'aud')))),
     ...pick('Farbe', 'Übergang', 'Unkenntlich', 'Fortschritt', 'Zoom-Schnitte', 'Leinwand', 'Titelbild'), T('🚩', 'Kapitel und Notizen', () => openMarks()),
     ...pick('Bis hier weg', 'Ab hier weg', 'Clip ab hier …', 'Reihenfolge zurück')];
 }
@@ -838,6 +838,7 @@ function updateTools(){
   const list = !s && !tlLite() && !TL.pick && !Crop.it ? [] : toolList();   // ohne Auswahl: siehe die Menüs der Leiste über den Spuren
   for (const t of list){ const b = document.createElement('button'); b.className = 'tool ' + t.cls; b.innerHTML = `<i>${t.icon}</i>${t.label}`; b.onclick = t.fn; b._t = t; box.append(b); }
   box.classList.toggle('none', !list.length); fitTools();
+  renderProps();
   $('#selLbl').textContent = !s ? '' : s.kind === 'main' ? 'Clip' : s.kind === 'insert' ? 'Einschub' : s.kind === 'cue' ? 'Untertitel' : TYPE_LBL[(selItem() || {}).type] || '';
   const info = $('#tlInfo');
   if (tlLite()) info.textContent = g && s.kind === 'main' ? `${fmtS(g.o)} – ${fmtS(g.o + segDur(g))} (${fmtD(segDur(g))} s) · Griffe an den Kanten ziehen verschiebt den Schnitt · „Anfang/Ende ±1“ versetzt ihn um ein Bild`
@@ -1678,6 +1679,229 @@ function loudness(a, from, to){
   for (let i = i0; i < i1; i++){ if (a[i] / 2.8 - 90 > g){ sum += pw(i); n++; } }
   return n ? 10 * Math.log10(sum / n) : null;
 }
+// ───────── Eigenschaften neben der Vorschau (2.53) ─────────
+// Im Studio steht bei genug Breite rechts neben dem Bild dauerhaft ein Feld für das ausgewählte Element – ohne Auswahl für den
+// Clip der Hauptspur an der Abspiellinie. Reiter oben: „Bild“ (Größe, Position, einfache Filter), „Farbe“, „Ton“, „Werkzeuge“
+// (alles aus der Leiste unter den Spuren). Die Werte hängen an denselben Funktionen wie die Griffe im Bild (setMainVals, setElVals).
+const Props = {key: '', tabs: {}, raf: 0};
+const propsOn = () => !!P && tab === 'studio' && getComputedStyle($('#props')).display !== 'none';
+function propTarget(){
+  if (!P) return null; const s = TL.sel;
+  if (s){
+    if (s.kind === 'main'){ const g = timeline[s.i]; return g && g.kind === 'main' ? {kind: 'main', g, id: 'm'} : null; }
+    if (s.kind === 'insert') return {kind: 'insert', id: 'n' + s.i};
+    if (s.kind === 'cue'){ const c = selCue(); return c ? {kind: 'cue', c, id: 'c' + c.id} : null; }
+    const it = selItem(); return it ? {kind: s.kind, it, id: 'i' + it.id} : null;
+  }
+  const g = curMainSeg(); return g ? {kind: 'main', g, implicit: true, id: 'p'} : {kind: 'none', id: '0'};
+}
+function propTabs(t){
+  if (t.kind === 'main') return [['bild', 'Bild'], ['farbe', 'Farbe'], ['ton', 'Ton & Tempo'], ['mehr', 'Werkzeuge']];
+  if (t.kind === 'ovl') return [['bild', 'Bild'], ...(!isImg(t.it.clip) && t.it.clip.hasAudio !== false ? [['ton', 'Ton']] : []), ['mehr', 'Werkzeuge']];
+  if (t.kind === 'aud') return [['ton', 'Ton'], ['mehr', 'Werkzeuge']];
+  if (t.kind === 'mark' || (t.kind === 'title' && !t.it.lt)) return [['bild', 'Bild'], ['mehr', 'Werkzeuge']];
+  return [['mehr', 'Werkzeuge']];
+}
+function propHead(t){
+  if (t.kind === 'main'){ const s = P.sources[t.g.si]; return [t.implicit ? 'Clip an der Abspiellinie' : 'Clip', `${s ? s.name : ''} · ${fmtS(t.g.o)} – ${fmtS(t.g.o + segDur(t.g))}`]; }
+  if (t.kind === 'none') return ['Nichts ausgewählt', 'Die Abspiellinie steht auf keinem Clip der Hauptspur'];
+  if (t.kind === 'insert') return ['Einschub', ''];
+  if (t.kind === 'cue') return ['Untertitel', (t.c.text != null ? t.c.text : (window.autoText ? autoText(t.c) : '')).slice(0, 60)];
+  const it = t.it; return [TYPE_LBL[it.type] || 'Element', it.clip ? it.clip.name : it.type === 'title' ? String(it.text || it.name || '').split('\n')[0].slice(0, 60) : ''];
+}
+// Größe und Lage in Prozent: Größe 100 = eingepasst (Hauptspur) bzw. volle Bildbreite (Elemente); X/Y = Abstand von der Bildmitte
+function propGeo(t){
+  if (t.kind === 'main'){ const f = mainFxAt(t.g, outToSrcT(outPos)); return {size: (f.sc || 1) * 100, x: (f.tx || 0) * 100, y: (f.ty || 0) * 100}; }
+  if (t.kind === 'title') return {size: (t.it.scale || 1) * 100, x: ((t.it.x ?? 0.5) - 0.5) * 100, y: ((t.it.y ?? 0.5) - 0.5) * 100};
+  const v = elVals(t.it, curRel(t.it)) || coverVals(t.it); return {size: v.w * 100, x: (v.x - 0.5) * 100, y: (v.y - 0.5) * 100};
+}
+function propSetGeo(t, o){
+  const n = {...propGeo(t), ...o};
+  if (t.kind === 'main') setMainVals(t.g, {sc: n.size / 100, tx: n.x / 100, ty: n.y / 100});
+  else if (t.kind === 'title'){ t.it.scale = +clamp(n.size / 100, 0.5, 3).toFixed(2); t.it.x = r3(clamp(n.x / 100 + 0.5, 0.02, 0.98)); t.it.y = r3(clamp(n.y / 100 + 0.5, 0.02, 0.98)); }
+  else setElVals(t.it, curRel(t.it), {x: n.x / 100 + 0.5, y: n.y / 100 + 0.5, w: n.size / 100});
+}
+const propFx = (t, make) => t.kind !== 'main' ? null : make ? mainFxItem(t.g).fx : (t.g.fx || FX_DEF);
+function propRefresh(t){ if (t && t.kind === 'title') updateTitles(outPos); seekOut(outPos, false); }
+// Regler und Zahlenfelder: beim ersten Ändern den Stand für „Rückgängig“ merken, beim Loslassen einen Schritt daraus machen
+function propLive(el, apply){
+  let before = null;
+  el.addEventListener('input', () => { const t = propTarget(); if (!t) return; if (!before) before = snapshot(); apply(t, el); changedLive(); propRefresh(t); paintProps(el); });
+  el.addEventListener('change', () => { if (before){ undo.push(before); if (undo.length > 200) undo.shift(); redo = []; before = null; }
+    const t = propTarget(); if (t && t.kind === 'main'){ const it = fxItemOf(t.g); if (it && !(it.fx.kf && it.fx.kf.length) && JSON.stringify({...FX_DEF, ...it.fx}) === JSON.stringify(FX_DEF)) P.items = P.items.filter(x => x !== it); }   // unveränderte Anpassung nicht stehen lassen
+    changed(true); propRefresh(propTarget()); });
+}
+function propAct(fn){ const t = propTarget(); if (!t) return; commit(() => fn(t), true); propRefresh(propTarget()); paintProps(); }
+function renderProps(){
+  const box = $('#props'); if (!box) return; if (!propsOn()){ Props.key = ''; return; }
+  const t = propTarget(); if (!t) return;
+  const tabs = propTabs(t), want = Props.tabs[t.kind], cur = tabs.some(x => x[0] === want) ? want : tabs[0][0], key = t.id + '|' + cur + '|' + tabs.map(x => x[0]).join();
+  const [title, sub] = propHead(t); $('#prTitle').textContent = title; $('#prSub').textContent = sub; $('#prSub').title = sub;
+  if (key !== Props.key){
+    Props.key = key;
+    $('#prTabs').innerHTML = tabs.map(([id, lbl]) => `<button type="button" data-pt="${id}" class="${id === cur ? 'on' : ''}">${lbl}</button>`).join('');
+    const body = $('#prBody'); body.innerHTML = ''; body.dataset.tab = cur; body.scrollTop = 0;
+    if (cur === 'bild') propsBild(body, t); else if (cur === 'farbe') propsFarbe(body, t); else if (cur === 'ton') propsTon(body, t);
+  }
+  if (cur === 'mehr') propsMehr($('#prBody'), t);
+  paintProps();
+}
+$('#prTabs').onclick = e => { const b = e.target.closest('[data-pt]'), t = propTarget(); if (!b || !t) return; Props.tabs[t.kind] = b.dataset.pt; renderProps(); };
+const PR_NUM = (id, lbl, min, max, step = 1) => `<label class="pr-num"><span>${lbl}</span><input type="number" id="${id}" min="${min}" max="${max}" step="${step}" inputmode="decimal"><em>%</em></label>`;
+function propsBild(body, t){
+  const main = t.kind === 'main', title = t.kind === 'title';
+  const hintSize = main ? '100 % = ganz im Bild (eingepasst)' : title ? '100 % = die gewählte Schriftgröße' : '100 % = volle Bildbreite', hintPos = 'Abstand von der Bildmitte in Prozent der Bildbreite (X) und der Bildhöhe (Y)';
+  body.innerHTML = `<div class="pr-sec pr-grid">
+      <span class="pr-l" title="${hintSize}">Größe</span><div class="pr-row" title="${hintSize}"><input type="range" id="prSize" min="${main ? 10 : title ? 50 : 5}" max="${main ? 400 : 300}" step="1">${PR_NUM('prSizeN', '', main ? 5 : title ? 50 : 3, main ? 2000 : title ? 300 : 2000)}</div>
+      <span class="pr-l" title="${hintPos}">Position</span><div class="pr-row" title="${hintPos}">${PR_NUM('prX', 'X', -300, 300, 0.5)}${PR_NUM('prY', 'Y', -300, 300, 0.5)}</div>
+      <div class="pr-row wrap pr-wide"><button class="btn small" data-pa="mid">Mitte</button>${main ? '<button class="btn small" data-pa="fit" title="Ganz im Bild, in der Mitte">Einpassen</button><button class="btn small" data-pa="fill" title="Formatfüllend, in der Mitte">Füllen</button>' : title ? '' : '<button class="btn small" data-pa="wide">Volle Breite</button>'}${title ? '' : '<button class="btn small" id="prKf" data-pa="kf"></button>'}</div>
+    </div>
+    ${main ? `<div class="pr-sec pr-grid"><h4>Filter</h4>
+      <span class="pr-l">Helligkeit</span><div class="pr-row"><input type="range" id="prBr" min="-0.5" max="0.5" step="0.02"><b class="pr-v" id="prBrV"></b></div>
+      <span class="pr-l">Kontrast</span><div class="pr-row"><input type="range" id="prCo" min="-0.5" max="0.5" step="0.02"><b class="pr-v" id="prCoV"></b></div>
+      <span class="pr-l">Sättigung</span><div class="pr-row"><input type="range" id="prSa" min="-100" max="100" step="5"><b class="pr-v" id="prSaV"></b></div>
+      <div class="pr-row wrap pr-wide"><label class="row"><input type="checkbox" id="prGray"> Schwarzweiß</label><button class="btn small" data-pa="nofilter" style="margin-left:auto">Zurücksetzen</button></div>
+      <p class="muted small">Gilt für diesen Clip. Farbtemperatur, Tönung und Farb-Vorlagen stehen im Reiter „Farbe“.</p></div>`
+      : t.kind === 'ovl' ? '<div class="pr-sec"><h4>Filter</h4><p class="muted small">Helligkeit, Kontrast und Sättigung gibt es bisher für Clips der Hauptspur.</p></div>' : ''}`;
+  const size = (tt, el) => propSetGeo(tt, {size: +el.value || 100});
+  propLive($('#prSize'), size); propLive($('#prSizeN'), size);
+  propLive($('#prX'), (tt, el) => propSetGeo(tt, {x: +el.value || 0})); propLive($('#prY'), (tt, el) => propSetGeo(tt, {y: +el.value || 0}));
+  if (main){
+    for (const [id, k] of [['prBr', 'bright'], ['prCo', 'contrast'], ['prSa', 'sat']]) propLive($('#' + id), (tt, el) => { propFx(tt, true)[k] = +el.value; });
+    propLive($('#prGray'), (tt, el) => { propFx(tt, true).gray = el.checked; });
+  }
+  body.onclick = e => { const b = e.target.closest('[data-pa]'); if (!b) return; const a = b.dataset.pa, tt = propTarget(); if (!tt) return;
+    if (a === 'kf'){ if (tt.kind === 'main') toggleMainKeyframe(tt.g); else toggleKeyframe(tt.it); paintProps(); return; }
+    if (a === 'mid') propAct(x => propSetGeo(x, {x: 0, y: 0}));
+    else if (a === 'fit') propAct(x => propSetGeo(x, {size: 100, x: 0, y: 0}));
+    else if (a === 'fill') propAct(x => { const [wf, hf] = fitFracOf(P.sources[x.g.si]); propSetGeo(x, {size: Math.max(1 / wf, 1 / hf) * 100, x: 0, y: 0}); });
+    else if (a === 'wide') propAct(x => propSetGeo(x, {size: 100, x: 0}));
+    else if (a === 'nofilter') propAct(x => { const f = propFx(x, true); f.bright = 0; f.contrast = 0; f.sat = 0; f.gray = false; delete f.temp; delete f.tint; }); };
+}
+function propsFarbe(body, t){
+  const fx = () => { const tt = propTarget(); return tt && tt.kind === 'main' ? tt : null; };
+  let before = null; const mark = () => { if (!before) before = snapshot(); }, done = () => { if (before){ undo.push(before); if (undo.length > 200) undo.shift(); redo = []; before = null; } };
+  body.innerHTML = '<div class="pr-sec" id="prColHost"></div><p class="muted small">Gilt für diesen Clip. „Farbe für das ganze Video“ steht unter „Bearbeiten“ → „Farbe“.</p>';
+  colorBlock($('#prColHost'), {get: () => { const tt = fx(); return tt ? propFx(tt, false) : FX_DEF; }, other: () => P.color || null,
+    live: fn => { const tt = fx(); if (!tt) return; mark(); fn(propFx(tt, true)); changedLive(); seekOut(outPos, false); },
+    set: fn => { const tt = fx(); if (!tt) return; mark(); fn(propFx(tt, true)); done(); changed(true); seekOut(outPos, false); },
+    match: async paintCol => { const tt = fx(); if (!tt) return; const it = mainFxItem(tt.g), ref = matchRef(it);
+      if (!ref) return toast('Dafür braucht es einen zweiten Abschnitt mit Bild');
+      const m = await colorMatch(tt.g, ref); if (!m) return toast('Die Bilder ließen sich nicht vergleichen');
+      mark(); if (m.temp) it.fx.temp = m.temp; else delete it.fx.temp; if (m.tint) it.fx.tint = m.tint; else delete it.fx.tint; it.fx.bright = m.bright;
+      done(); changed(true); seekOut(outPos, false); paintCol(); toast('Farbe und Helligkeit an den Clip davor angeglichen'); }});
+  $('#prColHost').addEventListener('change', () => { done(); changed(true); });
+}
+function propsTon(body, t){
+  const main = t.kind === 'main';
+  body.innerHTML = `<div class="pr-sec"><h4>Lautstärke</h4><label class="pr-sl"><span><b id="prVolV"></b></span><input type="range" id="prVol" min="0" max="200" step="5"></label>
+      <p class="muted small">Über 100 % hört man erst im Export.</p></div>
+    ${main ? `<div class="pr-sec"><h4>Tempo</h4><div class="seg-ctl" id="prSpeed">${SPEEDS.map(v => `<button data-v="${v}">${String(v).replace('.', ',')}×</button>`).join('')}</div>
+      <p class="muted small">Tempo-Verlauf, Greenscreen und „Bild beruhigen“ stehen unter „Werkzeuge“ → „Anpassen“.</p></div>`
+      : `<div class="pr-sec"><h4>Zeit</h4><div class="pr-row wrap"><button class="btn small" data-pa="sync">♪ Per Ton synchronisieren</button></div>
+      <p class="muted small">Vergleicht den Ton dieses Clips mit der Hauptspur und schiebt ihn an die passende Stelle.</p></div>`}`;
+  propLive($('#prVol'), (tt, el) => { if (tt.kind === 'main') propFx(tt, true).vol = +el.value / 100; else tt.it.vol = +el.value / 100; });
+  body.onclick = e => { const b = e.target.closest('button'); if (!b) return;
+    if (b.dataset.pa === 'sync') return syncByAudio();
+    if (b.dataset.v) propAct(x => { if (x.kind !== 'main') return; const f = propFx(x, true); f.speed = +b.dataset.v; delete f.speed2; }); };
+}
+function propsMehr(body, t){
+  if (body.querySelector('input:focus')) return;
+  const list = TL.sel || TL.pick || Crop.it ? toolList() : [...barMenu('edit'), ...barMenu('insert')];
+  body.innerHTML = `<div class="pr-tools">${list.map((x, k) => `<button type="button" class="pr-tool ${x.cls || ''}" data-k="${k}"><i>${icon(x.icon)}</i><span>${esc(x.label)}</span></button>`).join('')}</div>`;
+  body.onclick = e => { const b = e.target.closest('[data-k]'); if (!b) return; e.stopPropagation(); const x = list[+b.dataset.k]; if (x) x.fn(); setTimeout(renderProps, 0); };
+}
+// Werte in die Felder schreiben; das Feld, in dem gerade getippt oder gezogen wird, bleibt unberührt
+function paintProps(skip){
+  if (!propsOn()) return; const t = propTarget(), body = $('#prBody'); if (!t || !body) return;
+  const set = (id, v) => { const el = $('#' + id); if (el && el !== skip && document.activeElement !== el) el.value = v; };
+  const txt = (id, v) => { const el = $('#' + id); if (el) el.textContent = v; };
+  if (body.dataset.tab === 'bild' && $('#prSize')){
+    const g = propGeo(t), rd = v => Math.round(v * 10) / 10;
+    set('prSize', Math.round(g.size)); set('prSizeN', rd(g.size)); set('prX', rd(g.x)); set('prY', rd(g.y));
+    const kf = $('#prKf'); if (kf){ const has = t.kind === 'main' ? hasMainKfHere(t.g) : hasKfHere(t.it); kf.textContent = has ? '◆ Keyframe weg' : '◆ Keyframe'; kf.title = 'Keyframe an der Abspiellinie: Größe und Lage ändern sich über die Zeit (Taste M)'; }
+    if (t.kind === 'main'){ const f = propFx(t, false);
+      set('prBr', f.bright || 0); set('prCo', f.contrast || 0); set('prSa', f.sat || 0); txt('prBrV', Math.round((f.bright || 0) * 100)); txt('prCoV', Math.round((f.contrast || 0) * 100)); txt('prSaV', Math.round(f.sat || 0));
+      const gr = $('#prGray'); if (gr && gr !== skip) gr.checked = !!f.gray; }
+  }
+  if (body.dataset.tab === 'ton' && $('#prVol')){
+    const v = t.kind === 'main' ? (propFx(t, false).vol ?? 1) : (t.it.vol ?? (t.it.type === 'audio' || t.it.type === 'insert' ? 1 : 0));
+    set('prVol', Math.round(v * 100)); txt('prVolV', Math.round(v * 100) + ' %');
+    if (t.kind === 'main'){ const sp = propFx(t, false).speed || 1; $$('#prSpeed button').forEach(b => b.classList.toggle('on', Math.abs(+b.dataset.v - sp) < 0.001)); }
+  }
+}
+function propsLater(){ if (Props.raf || playing) return; Props.raf = requestAnimationFrame(() => { Props.raf = 0; if (!propsOn()) return;
+  const t = propTarget(); if (t && (t.id + '|') !== Props.key.slice(0, t.id.length + 1)) renderProps(); else { if (t){ const [a, b] = propHead(t); $('#prTitle').textContent = a; $('#prSub').textContent = b; } paintProps(); } }); }
+
+// ───────── Spuren per Ton synchronisieren (2.53) ─────────
+// Clips mit Ton auf den Videospuren (B-Roll, Einblendung) und Tonspuren lassen sich am Ton ausrichten: HoneyCut vergleicht die
+// Lautstärkeverläufe (TonSync, core/web/tonsync.js) und verschiebt den Clip so, dass derselbe Moment zur selben Zeit läuft.
+// Bezug ist die Hauptspur; findet sich dort nichts, ein anderer Clip mit Ton. Mit Auswahl: nur dieser Clip, sonst alle.
+const syncable = it => !!(it && it.clip && !isImg(it.clip) && it.clip.hasAudio !== false && ['audio', 'broll', 'pip'].includes(it.type));
+const syncEnv = new Map();   // Datei → Lautstärkeverlauf ab Zeit 0 der Datei
+function syncEnvOf(uri){
+  const src = P.sources.find(x => x.uri === uri); if (src && src.pad0 && envArr(src)) return Promise.resolve(envArr(src));
+  if (!src) return envOfUri(uri);
+  if (syncEnv.has(uri)) return syncEnv.get(uri);   // ältere Projekte: Der gemerkte Verlauf beginnt erst mit dem Ton – für den Vergleich neu ab Zeit 0 berechnen
+  const p = new Promise(res => { if (!TS.envelope) return res(envArr(src));
+    let id; try { id = TS.envelope(uri); } catch(_){ return res(envArr(src)); }
+    watchJob(id, () => {}, j => { const e = j.result && j.result.env; if (!e) return res(envArr(src)); const b = atob(e), a = new Uint8Array(b.length); for (let i = 0; i < b.length; i++) a[i] = b.charCodeAt(i); res(a); }, () => res(envArr(src))); });
+  syncEnv.set(uri, p); return p;
+}
+let syncBusy = false;
+async function syncByAudio(all){   // all: alle Clips mit Ton, auch wenn gerade etwas anderes ausgewählt ist (Menü „Bearbeiten“)
+  if (!P || !window.TonSync || syncBusy) return;
+  const sel = all !== true && TL.sel && (TL.sel.kind === 'ovl' || TL.sel.kind === 'aud') ? selItem() : null;
+  if (sel && !syncable(sel)) return toast('Dieser Clip hat keinen Ton zum Vergleichen');
+  const list = (sel ? [sel] : P.items.filter(syncable)).slice().sort((a, b) => (a.type === 'audio') - (b.type === 'audio') || a.at - b.at);
+  if (!list.length) return toast('Dafür braucht es einen Clip mit Ton auf einer Videospur oder Tonspur');
+  const srcs = P.sources.map((s, k) => ({s, k})).filter(x => x.s.hasAudio !== false && !x.s.noAudio);
+  syncBusy = true; toast('Vergleiche den Ton …', 60000);
+  try {
+    const E = new Map(), env = async uri => { if (!E.has(uri)) E.set(uri, await syncEnvOf(uri).catch(() => null)); return E.get(uri); };
+    // Wer nirgends passt, bleibt liegen und dient den folgenden Clips als Bezug (zwei Kameras auf Videospuren, die zueinander
+    // gehören, während die Hauptspur etwas anderes zeigt). Verschoben wird sofort, damit ein Bezug schon an seiner neuen Stelle liegt.
+    const anchors = sel ? P.items.filter(x => x !== sel && syncable(x)) : [], plans = [], used = new Set(), before = snapshot(); let fails = [];
+    for (const it of list){
+      const eb = await env(it.clip.uri); if (!eb){ fails.push({it, why: 'kein Ton'}); continue; }
+      let best = null;
+      for (const {s, k} of srcs){ if (s.uri === it.clip.uri) continue; const m = TonSync.measure(await env(s.uri), eb); if (TonSync.ok(m) && (!best || m.score > best.m.score)) best = {m, k}; }
+      if (!best) for (const r of anchors){ if (r.clip.uri === it.clip.uri) continue; const m = TonSync.measure(await env(r.clip.uri), eb); if (TonSync.ok(m) && (!best || m.score > best.m.score)) best = {m, r}; }
+      if (!best){ fails.push({it, why: 'keine passende Stelle'}); if (!sel) anchors.push(it); continue; }
+      const p = syncPlace(it, best); if (p.err){ fails.push({it, why: p.err}); continue; }
+      if (best.r) used.add(best.r);
+      if (Math.abs(p.delta) >= 0.0015 || Math.abs(p.in - (it.in || 0)) >= 0.0015){ const p0 = objStart(it); it.at = p.at; it.in = p.in; groupShift(it, objStart(it) - p0); p.moved = true; }
+      plans.push({it, ...p}); if (!sel) anchors.push(it);
+    }
+    fails = fails.filter(f => !used.has(f.it));
+    const moved = plans.filter(p => p.moved);
+    if (moved.length){ if (P.pfad && window.pfTouched) pfTouched(); undo.push(before); if (undo.length > 200) undo.shift(); redo = []; changed(true); }
+    const fmt = d => (d >= 0 ? '+' : '−') + Math.abs(d).toFixed(2).replace('.', ',') + ' s';
+    let msg = moved.length ? (moved.length === 1 ? `„${moved[0].it.clip.name}“ per Ton ausgerichtet (${fmt(moved[0].delta)})` : `${moved.length} Clips per Ton ausgerichtet (${moved.map(p => fmt(p.delta)).join(', ')})`) : plans.length ? (plans.length === 1 ? 'Der Clip liegt schon genau richtig' : 'Alle Clips liegen schon genau richtig') : '';
+    if (fails.length) msg += (msg ? ' · ' : '') + (fails.length === 1 ? `„${fails[0].it.clip.name}“: ${fails[0].why}` : `${fails.length} Clips ohne Ergebnis (${[...new Set(fails.map(f => f.why))].join(', ')})`);
+    toast(msg || 'Nichts auszurichten', 7000);
+    seekOut(outPos, false); if (tlOn()) renderTimeline();
+    return {moved: moved.map(p => ({id: p.it.id, delta: p.delta, score: p.score})), fails: fails.map(f => ({id: f.it.id, why: f.why}))};
+  } finally { syncBusy = false; }
+}
+// Wohin gehört der Clip? best = {m: Messung, k: Nummer der Aufnahme auf der Hauptspur} oder {m, r: anderer Clip als Bezug}
+function syncPlace(it, best){
+  const d = best.m.offset, before = objStart(it); let inN = it.in || 0, at;
+  if (best.r){ const r = best.r; let S = objStart(r) + (inN + d - (r.in || 0));   // Ausgabezeit, an der der Clip beginnen muss
+    if (S < 0){ inN -= S; S = 0; } if (S > total - 0.05) return {err: 'die passende Stelle liegt hinter dem Ende des Videos'};
+    at = r3(outToSrcT(S)); }
+  else { const s = P.sources[best.k]; let T = s.off + d + inN;   // Quellzeit, an der die Stelle „in“ des Clips liegt
+    if (T < s.off){ inN += s.off - T; T = s.off; }
+    const Tk = snapSrc(T); if (Tk > T + 0.001){ inN += Tk - T; T = Tk; }   // Stelle herausgeschnitten: Der Clip beginnt an der nächsten behaltenen Stelle, entsprechend später im Clip
+    if (T > s.off + s.duration - 0.05 || Tk < T - 0.001) return {err: 'die passende Stelle liegt außerhalb des Videos'};
+    const g = timeline.find(x => x.kind === 'main' && x.si === best.k && T >= x.in - 0.002 && T <= x.out + 0.002);
+    if (g && Math.abs((g.speed || 1) - 1) > 0.001) return {err: 'an dieser Stelle ist das Tempo des Videos geändert'};
+    at = r3(T); }
+  if (inN > (it.out ?? inN) - 0.1) return {err: 'die passende Stelle ist im Video herausgeschnitten'};
+  const keep = {at: it.at, in: it.in}; it.at = at; it.in = r3(inN); const after = objStart(it) - (it.in - (keep.in || 0)); it.at = keep.at; it.in = keep.in;
+  return {at, in: r3(inN), delta: r3(after - before), score: best.m.score};
+}
+
 const pct = v => Math.round(v * 100) + ' %';
 function openVolumes(){
   if (!P) return; const body = $('#sheetBody'), list = volClips();
