@@ -50,7 +50,7 @@ try {
   await ev(() => { if (!document.querySelector('#sheet').classList.contains('hidden')) closeSheet(); select(null); }); await page.click('#undoBtn'); await sleep(300);
   await page.click('#barEdit'); await sleep(200);
   const em = await menu(), eb = await ev(() => { const m = document.querySelector('#ctxMenu').getBoundingClientRect(); return m.bottom <= innerHeight && m.top >= 0; });
-  chk('Menü „Bearbeiten“: Anpassen, Zoom, Lautstärke, Spuren per Ton synchronisieren, Farbe, Übergang, Unkenntlich, Fortschritt, Zoom-Schnitte, Leinwand, Titelbild, Kapitel und Notizen, Schnitte an der Abspiellinie', em.join('|') === 'Anpassen (E)|Zoom|Lautstärke|Spuren per Ton synchronisieren|Farbe|Übergang|Unkenntlich|Fortschritt|Zoom-Schnitte|Leinwand|Titelbild|Kapitel und Notizen|Bis hier weg|Ab hier weg|Clip ab hier …' && eb, em);
+  chk('Menü „Bearbeiten“: Anpassen, Zoom, Lautstärke, Spuren per Ton synchronisieren, Farbe, Übergang, Unkenntlich, Fortschritt, Zoom-Schnitte, Leinwand, Titelbild, Kapitel und Notizen, Clips, Schnitte an der Abspiellinie', em.join('|') === 'Anpassen (E)|Zoom|Lautstärke|Spuren per Ton synchronisieren|Farbe|Übergang|Unkenntlich|Fortschritt|Zoom-Schnitte|Leinwand|Titelbild|Kapitel und Notizen|Clips|Bis hier weg|Ab hier weg|Clip ab hier …' && eb, em);
   await page.locator('#ctxMenu button', { hasText: 'Lautstärke' }).click(); await sleep(300);
   chk('„Lautstärke“ aus dem Menü öffnet das Blatt', await ev(() => !document.querySelector('#sheet').classList.contains('hidden') && /Lautstärke/.test(document.querySelector('#sheetBody').textContent)));
   await ev(() => closeSheet());

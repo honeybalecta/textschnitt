@@ -2,6 +2,14 @@
 
 Was sich mit jeder Version von HoneyCut ändert. Die Windows-App zeigt diese Stichpunkte an, sobald eine neuere Version bereitsteht.
 
+## 2.55.0 · Vorgemerkte Clips: schneller erreichbar, eigene Reihenfolge
+
+- **„Clips“ schneller erreichbar:** Der Knopf „Clips (Anzahl)“ steht jetzt vorn in der Leiste über dem Text, gleich neben der Suche – auch auf dem Handy ohne Wischen sichtbar. Zusätzlich steht er im Menü „⋯“ und im Studio unter „Bearbeiten“.
+- **Nach dem Vormerken:** Die Meldung bietet direkt „Clips öffnen“ an.
+- **Jeder Abschnitt ein Block:** Die vorgemerkten Abschnitte stehen nummeriert untereinander, jeweils zum Anhören, im Text Zeigen und Entfernen.
+- **Reihenfolge ändern:** Mit ↑ und ↓ oder durch Ziehen an der Nummer lassen sich die Abschnitte umstellen. Clip-Reihe („Teil 1/3“ …) und Zusammenschnitt folgen dieser Reihenfolge; im Zusammenschnitt stehen die Abschnitte danach genau so hintereinander. Neue Abschnitte kommen bei eigener Reihenfolge ans Ende. „Wie im Video ordnen“ stellt die ursprüngliche Reihenfolge wieder her. „Rückgängig“ nimmt jedes Umstellen zurück.
+- **Alle nacheinander:** „▶ Alle nacheinander“ spielt die Abschnitte in der Reihenfolge der Liste ab – so lässt sich ein Zusammenschnitt vorab anhören. Anhalten bricht ab.
+
 ## 2.54.0 · Filter für Videos und Bilder auf den Videospuren
 
 - **Filter auf allen Videospuren:** Videos und Bilder auf den Spuren über der Hauptspur (B-Roll, Einblendung) bekommen dieselben Filter wie Clips der Hauptspur: Helligkeit, Kontrast, Sättigung, Schwarzweiß, dazu Farbtemperatur, Tönung und die Farb-Vorlagen.

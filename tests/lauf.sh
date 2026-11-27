@@ -113,6 +113,7 @@ lauf hart node "$HERE/p_mikrofon.mjs"
 lauf hart node "$HERE/p_leisten.mjs"
 lauf hart node "$HERE/p_editor.mjs"
 lauf hart node "$HERE/p_titelbild.mjs"
+lauf hart node "$HERE/p_titelbild_knopf.mjs"
 lauf hart node "$HERE/p_browser.mjs"
 for p in stress edit multi editWord; do lauf hart node "$HERE/p_stand.mjs" $p; done
 for p in stress edit; do lauf hart node "$HERE/p_wiedergabe.mjs" $p; done

@@ -816,7 +816,7 @@ function barMenu(which){
   if (which === 'insert') return [T('🎞', $('#mediaBin').classList.contains('hidden') ? 'Medienablage öffnen' : 'Medienablage schließen', () => toggleBin()), ...pick('Clip', 'Titel', 'Untertitel'),
     T('🖼', 'Folie (N)', () => slNext()), ...pick('Form', 'Standbild', 'Kapitel', 'Notiz')];
   return [T('⚙', 'Anpassen (E)', () => { const g = curMainSeg(); if (!g) return toast('Abspiellinie auf einen Clip setzen'); openFx(g); }), ...pick('Zoom'), T('🔊', 'Lautstärke', () => openVolumes()), T('♪', 'Spuren per Ton synchronisieren', () => syncByAudio(!(TL.sel && (TL.sel.kind === 'ovl' || TL.sel.kind === 'aud')))),
-    ...pick('Farbe', 'Übergang', 'Unkenntlich', 'Fortschritt', 'Zoom-Schnitte', 'Leinwand', 'Titelbild'), T('🚩', 'Kapitel und Notizen', () => openMarks()),
+    ...pick('Farbe', 'Übergang', 'Unkenntlich', 'Fortschritt', 'Zoom-Schnitte', 'Leinwand', 'Titelbild'), T('🚩', 'Kapitel und Notizen', () => openMarks()), T('▤', 'Clips' + (clipListAll().length ? ` (${clipListAll().length} vorgemerkt)` : ''), () => openClips()),
     ...pick('Bis hier weg', 'Ab hier weg', 'Clip ab hier …', 'Reihenfolge zurück')];
 }
 function openBarMenu(which){ const b = $(which === 'insert' ? '#barInsert' : '#barEdit'), r = b.getBoundingClientRect(); showMenu(r.left, r.bottom + 4, barMenu(which)); }
@@ -1343,7 +1343,7 @@ function clipDialog(o1, o2, ids){   // ids: die markierten Wörter – dann läs
   const m = hcModal(`<h3>Clip erstellen</h3><p class="muted small">${fmtS(o1)} – ${fmtS(o2)} (${fmtD(o2 - o1)} s) wird ein eigenes Kurzvideo. Das Hauptprojekt bleibt unverändert.</p>
     <label class="field"><span>Name</span><input type="text" id="clipName"></label>
     <div class="field"><span>Format</span><div class="seg-ctl" id="clipNewFmt"><button data-v="9:16" class="on">9:16</button><button data-v="4:5">4:5</button><button data-v="1:1">1:1</button><button data-v="16:9">16:9</button><button data-v="">Original</button></div></div>
-    ${ids ? '<p class="muted small">„Vormerken“ sammelt den Abschnitt für eine Clip-Reihe oder einen Zusammenschnitt – unter „Clips“ in der Leiste über dem Text.</p>' : ''}
+    ${ids ? '<p class="muted small">„Vormerken“ sammelt den Abschnitt für eine Clip-Reihe oder einen Zusammenschnitt. Die Liste öffnet „Clips“ – über dem Text oder im Studio unter „Bearbeiten“.</p>' : ''}
     <div class="row" style="margin-top:12px"><button class="btn" id="clipNo">Abbrechen</button><span class="row" style="margin-left:auto;justify-content:flex-end">${ids ? '<button class="btn" id="clipKeep">Vormerken</button>' : ''}<button class="btn primary" id="clipGo">Clip öffnen</button></span></div>`);
   let fmt = '9:16'; m.querySelector('#clipName').value = `${P.name} – Clip ${n}`;
   m.querySelector('#clipNewFmt').onclick = e => { const b = e.target.closest('button'); if (!b) return; fmt = b.dataset.v; m.querySelectorAll('#clipNewFmt button').forEach(x => x.classList.toggle('on', x === b)); };

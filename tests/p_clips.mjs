@@ -124,6 +124,51 @@ st = await ev(() => ({ n: P.clipList.length, txt: document.querySelector('#clShe
 chk('„Liste leeren“ leert sie, der Hinweis erklärt das Vormerken', st.n === 0 && st.cl === 0 && /Noch nichts vorgemerkt/.test(st.txt) && /Taste V/.test(st.txt), st);
 await page.click('#undoBtn'); await page.click('#undoBtn'); await page.click('#undoBtn'); await sleep(250);
 chk('dreimal Rückgängig: die drei Abschnitte sind wieder da', (await ev(() => P.clipList.length)) === 3);
+// ── 2.55: Erreichbarkeit und eigene Reihenfolge ──
+st = await ev(() => { const tb = [...document.querySelectorAll('#textTools > *')].map(e => e.id); return { at: tb.indexOf('clipsBtn'), studio: barMenu('edit').some(t => /^Clips \(3 vorgemerkt\)$/.test(t.label)) }; });
+await ev(() => { closeSheet(); document.querySelector('#textMore').click(); }); await sleep(250);
+st.more = await ev(() => [...document.querySelectorAll('#ctxMenu button')].map(b => b.textContent.trim()).find(t => /^.?Clips/.test(t)) || ''); await page.keyboard.press('Escape'); await ev(() => { const m = document.querySelector('#ctxMenu'); if (m) m.remove(); });
+chk('„Clips“ steht vorn in der Leiste über dem Text, im Menü „⋯“ und im Studio unter „Bearbeiten“', st.at === 1 && /Clips \(3 vorgemerkt\)/.test(st.more) && st.studio, st);
+await ev(() => { const [a, b] = HX.para(2); HX.pick(a, b); }); await page.click('#selList'); await sleep(250);
+st = await ev(() => ({ t: document.querySelector('#toast').textContent, btn: (document.querySelector('#toast button') || {}).textContent, pe: getComputedStyle(document.querySelector('#toast')).pointerEvents }));
+chk('Nach dem Vormerken bietet die Meldung „Clips öffnen“ an', /4 Abschnitte vorgemerkt/.test(st.t) && st.btn === 'Clips öffnen (4)' && st.pe === 'auto', st);
+await page.click('#toast button'); await sleep(350);
+st = await ev(() => ({ open: clipsSheetOpen(), view: clipsView, first: P.clipList.map(x => HX.first(x)), nr: [...document.querySelectorAll('#clSheet .cl-nr')].map(e => e.textContent).join(), ord: (document.querySelector('#clSheet .cl-ord') || {}).textContent || '' }));
+chk('… und öffnet damit die Liste: nummeriert, wie im Video geordnet', st.open && st.view === 'list' && st.first.join('|') === 'Warum|Wer|Was|Am' && st.nr === '1,2,3,4' && /Reihenfolge wie im Video/.test(st.ord) && /Alle nacheinander/.test(st.ord), st);
+// Umstellen mit den Pfeilen
+await page.click('#clSheet .cl-row:nth-child(4) [data-a="up"]'); await sleep(150);
+await page.click('#clSheet .cl-row:nth-child(3) [data-a="up"]'); await sleep(150);
+await page.click('#clSheet .cl-row:nth-child(2) [data-a="up"]'); await sleep(150);
+st = await ev(() => ({ first: P.clipList.map(x => HX.first(x)), own: P.clipOrder, ord: document.querySelector('#clSheet .cl-ord').textContent, upOff: document.querySelector('#clSheet .cl-row:nth-child(1) [data-a="up"]').disabled, downOff: document.querySelector('#clSheet .cl-row:nth-child(4) [data-a="down"]').disabled }));
+chk('↑ stellt einen Abschnitt nach oben: „Am“ steht danach vorn; die Liste nennt die eigene Reihenfolge', st.first.join('|') === 'Am|Warum|Wer|Was' && st.own === 'own' && /Eigene Reihenfolge/.test(st.ord) && /Wie im Video ordnen/.test(st.ord) && st.upOff && st.downOff, st);
+// Ziehen: „Wer“ ans Ende
+const rWer = await page.locator('#clSheet .cl-row:nth-child(3) .cl-nr').boundingBox(), rWas = await page.locator('#clSheet .cl-row:nth-child(4)').boundingBox();
+await page.dragAndDrop('#clSheet .cl-row:nth-child(3) .cl-nr', '#clSheet .cl-row:nth-child(4)', { targetPosition: { x: 20, y: rWas.height - 4 } }); await sleep(250);
+st = await ev(() => P.clipList.map(x => HX.first(x)));
+chk('Ziehen stellt um: „Wer“ ans Ende', st.join('|') === 'Am|Warum|Was|Wer', st);
+// Neue Vormerkung kommt bei eigener Reihenfolge ans Ende
+await ev(() => { closeSheet(); const [a, b] = HX.para(1); HX.pick(a, b); clipListToggle(); }); await sleep(200);
+st = await ev(() => P.clipList.map(x => HX.first(x)));
+chk('Bei eigener Reihenfolge kommt ein neuer Abschnitt ans Ende', st.join('|') === 'Am|Warum|Was|Wer|Und', st);
+await page.click('#undoBtn'); await sleep(200);
+await page.click('#undoBtn'); await sleep(200);
+chk('„Rückgängig“ nimmt auch das Umstellen zurück', (await ev(() => P.clipList.map(x => HX.first(x)).join('|'))) === 'Am|Warum|Wer|Was');
+// alle nacheinander
+await ev(() => openClips('list')); await sleep(300);
+const rs4 = await ev(() => P.clipList.map(secOut));
+await page.click('#clSheet [data-a="playall"]'); await sleep(500);
+st = await ev(() => ({ playing, pos: outPos, stopAt, t: document.querySelector('#toast').textContent }));
+chk('„Alle nacheinander“ beginnt mit dem ersten Abschnitt der Liste', st.playing && st.pos >= rs4[0][0] - 0.05 && st.pos < rs4[0][1] && Math.abs(st.stopAt - rs4[0][1]) < 0.02 && /Abschnitt 1 von 4/.test(st.t), st);
+await ev(t => seekOut(t, false), rs4[0][1] - 0.3); await page.waitForFunction(r => playing && outPos >= r[0] - 0.05 && outPos < r[1], rs4[1], { timeout: 8000 }).catch(() => {});
+st = await ev(() => ({ playing, pos: outPos, stopAt }));
+chk('… und spielt danach den zweiten Abschnitt der Liste (nicht des Videos)', st.playing && st.pos >= rs4[1][0] - 0.05 && Math.abs(st.stopAt - rs4[1][1]) < 0.02, { st, rs4 });
+await ev(() => pausePlay()); await sleep(400);
+chk('Anhalten bricht „Alle nacheinander“ ab', await ev(() => !playing));
+// wieder wie im Video
+await page.click('#clSheet [data-a="vidorder"]'); await sleep(200);
+st = await ev(() => ({ first: P.clipList.map(x => HX.first(x)), own: 'clipOrder' in P }));
+chk('„Wie im Video ordnen“ stellt die Reihenfolge des Videos wieder her', st.first.join('|') === 'Warum|Wer|Was|Am' && !st.own, st);
+await ev(() => { commit(() => { P.clipList = P.clipList.filter(x => HX.first(x) !== 'Wer'); }, false); clipListChanged(); closeSheet(); }); await sleep(150);
 // gespeichert und nach dem Neuladen wieder da
 await ev(() => { closeSheet(); saveNow(); });
 await page.reload(); await page.waitForFunction(() => typeof showHome === 'function' && typeof P !== 'undefined'); await sleep(600);
@@ -398,6 +443,20 @@ chk('er ist ein gewöhnlicher Clip: eigenes Format, das Bild füllt die Leinwand
 await shot('zusammenschnitt');
 // überlappende Abschnitte verschmelzen; ein Bereich schneidet wie der bisherige Clip
 await open(idS);
+// 2.55: eigene Reihenfolge – der Zusammenschnitt folgt der Liste
+await injectT();
+await ev(() => { const L = P.clipList; commit(() => { L.unshift(L.pop()); P.clipOrder = 'own'; }, false); clipListChanged(); });
+const texts3o = await ev(() => P.clipList.map(x => HX.text(secIds(x))));
+await ev(() => { openClips('list'); }); await sleep(300); await page.click('#clSheet [data-a="best"]');
+await page.waitForFunction(() => P && P.clipOf && tab === 'clip' && /Best of/.test(P.name) && P.moves && P.moves.length, null, { timeout: 30000 }); await sleep(1000);
+await injectT();
+st = await ev(() => ({ id: P.id, total, text: HX.text(order), moves: P.moves.length, cueFirst: (computedCues().slice().sort((x, y) => (x.start ?? x.s) - (y.start ?? y.s))[0] || {}).text }));
+chk('Zusammenschnitt in eigener Reihenfolge: „Am“ zuerst, dann „Warum“ und „Was“, gleiche Länge', st.text === texts3o.join(' ') && /^Am/.test(st.text) && Math.abs(st.total - sum3) < 0.05 && st.moves === 3 && /^Am/.test(st.cueFirst || ''), { t: st.text.slice(0, 80), want: texts3o.map(t => t.slice(0, 20)), total: st.total, sum3, cue: st.cueFirst });
+const outB = await ev(async () => { P.settings.burn = false; exFmt = 'video'; const plan = buildPlan(); plan.name = 'clips-bestof-eigen'; const id = TS.exportVideo(JSON.stringify(plan)); for (;;){ await new Promise(r => setTimeout(r, 300)); const j = JSON.parse(TS.job(id)); if (j.status === 'done') return { file: j.result.playable, files: j.result.files || [] }; if (j.status === 'error') return { err: j.error }; } });
+if (outB.file){ for (const f of [outB.file, ...outB.files]) trash.add(f); chk('… und der Export hat genau diese Länge', Math.abs(dur(outB.file) - sum3) < 0.15, [dur(outB.file), sum3]); } else chk('Export des Zusammenschnitts in eigener Reihenfolge', false, outB.err);
+await open(idS); await injectT();
+await ev(i => { TS.deleteProject(i); if (TS.trashPurge) try { TS.trashPurge(i); } catch(_){} }, st.id);   // der zweite Zusammenschnitt soll die Suche weiter unten nicht verändern
+await ev(() => { commit(() => clipListSort(true), false); clipListChanged(); });
 st = await ev(() => { const c = clipData([[5, 20], [15, 30], [60, 70]], '', 'x'), kept = (c.tokens || []).length; let t = 0; const cut = c.dels.reduce((s, d) => s + d[1] - d[0], 0); return { ranges: c.clipRanges, range: c.clipRange, keptDur: +(P.sources[0].duration - cut).toFixed(2) }; });
 chk('überlappende Abschnitte zählen im Zusammenschnitt nur einmal', st.ranges.length === 2 && st.ranges[0].join() === '5,30' && st.ranges[1].join() === '60,70' && Math.abs(st.keptDur - 35) < 0.3, st);
 const idStress = await scratch(page, ids().stress); made.push(idStress);

@@ -29,7 +29,10 @@ const tokText = t => (P && P.edits && P.edits[t.i] != null) ? P.edits[t.i] : t.t
 const LOW_PR = 0.5;
 const isLowTok = t => t.type === 'word' && t.pr < LOW_PR && !t.ok && !(P && P.edits && P.edits[t.i] != null);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;'}[c]));
-function toast(msg, ms){ const t = $('#toast'); t.textContent = msg; t.classList.add('on'); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('on'), ms || 2600); }
+function toast(msg, ms){ const t = $('#toast'); t.textContent = msg; t.classList.remove('act'); t.classList.add('on'); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('on'), ms || 2600); }
+// Meldung mit einem Knopf (2.55), etwa „Clips öffnen“ nach dem Vormerken
+function toastAct(msg, label, fn, ms = 6000){ toast(msg, ms); const t = $('#toast'), b = document.createElement('button'); b.type = 'button'; b.textContent = label;
+  b.onclick = e => { e.stopPropagation(); t.classList.remove('on'); fn(); }; t.append(' ', b); t.classList.add('act'); }
 // Text nur dann ins Dokument schreiben, wenn er sich geändert hat – und dann in den vorhandenen Textknoten.
 // „el.textContent = …“ ersetzt den Textknoten jedes Mal, auch bei gleichem Text. In der Abspielschleife hieß das:
 // bei jedem Bild neue Knoten, neue Stil- und Layoutberechnung, neues Zeichnen – für Anzeigen, die sich gar nicht ändern.
@@ -4465,6 +4468,7 @@ for (const el of $$('.toolbar,.sel-acts')){ const f = () => el.classList.toggle(
 $('#textMore').onclick = e => {
   const r = e.currentTarget.getBoundingClientRect();
   showMenu(Math.min(r.left, innerWidth - 230), r.bottom + 4, [
+    {icon: icon('▤'), label: 'Clips' + (clipListAll().length ? ` (${clipListAll().length} vorgemerkt)` : ''), fn: () => openClips()},
     {icon: icon('🔊'), label: 'Lautstärke der Clips', fn: () => $('#volBtn').click()},
     {icon: icon('📋'), label: 'Text kopieren / Word', fn: () => $('#txChip').click()},
     {icon: icon('＋'), label: 'Video anhängen', fn: () => addSources()},
@@ -8464,7 +8468,16 @@ function clipListChanged(){ paintClipToks(); paintClipsBtn(); if (clipsSheetOpen
 // Das offene Blatt folgt dem Schnitt: Längen der Abschnitte und die Vorschläge kurz nach einer Änderung auffrischen (nicht, während im Feld der Schlagwörter getippt wird)
 let clipsLateT = 0;
 function clipsLater(){ clearTimeout(clipsLateT); clipsLateT = setTimeout(() => { if (P && clipsSheetOpen() && clipsView !== 'series' && document.activeElement !== $('#clWords')) renderClipsSheet(); }, 250); }
-function clipListSort(){ const k = x => (secSpan(x) || [1e9])[0]; P.clipList.sort((p, q) => k(p) - k(q)); }
+// Reihenfolge der vorgemerkten Abschnitte (2.55): wie im Video, bis sie von Hand umgestellt wird (P.clipOrder = 'own'). Danach
+// kommen neue Abschnitte ans Ende; „Wie im Video ordnen“ kehrt zurück. Die Reihenfolge gilt für Clip-Reihe und Zusammenschnitt.
+const secKey = x => (secSpan(x) || [1e9])[0];
+const clipOwnOrder = () => !!P && P.clipOrder === 'own' && clipListAll().some((x, k, a) => k && secKey(a[k - 1]) > secKey(x));
+function clipListSort(force){ if (P.clipOrder === 'own' && !force) return; P.clipList.sort((p, q) => secKey(p) - secKey(q)); if (force) delete P.clipOrder; }
+function clipListMove(x, d){   // d: −1 nach oben, +1 nach unten, 'top', 'end'
+  const L = P.clipList, k = L.indexOf(x); if (k < 0) return;
+  const to = d === 'top' ? 0 : d === 'end' ? L.length - 1 : Math.max(0, Math.min(L.length - 1, k + d)); if (to === k) return;
+  commit(() => { L.splice(k, 1); L.splice(to, 0, x); P.clipOrder = 'own'; }, false); clipListChanged();
+}
 // Anker eines Abschnitts aus markierten Wörtern (in der Reihenfolge des Textes) – null, wenn nichts Gesprochenes dabei ist
 function secOf(ids){ const said = ids.filter(isSaid); return said.length ? {at: r3(wS(tokens[said[0]])), end: r3(wE(tokens[said[said.length - 1]]))} : null; }
 const secSame = (p, q) => Math.abs(p.at - q.at) < 0.01 && Math.abs(p.end - q.end) < 0.01;
@@ -8486,7 +8499,7 @@ function clipListToggle(){
   if (dup){ clipListDrop(dup); return toast('Vormerkung entfernt'); }
   if (clipListAdd(ids)) clipListNoted();
 }
-function clipListNoted(){ clearSel(); const n = clipListAll().length; toast(n === 1 ? 'Vorgemerkt – weitere Abschnitte markieren, dann „Clips“ öffnen' : `${n} Abschnitte vorgemerkt – „Clips“ macht daraus eine Reihe oder einen Zusammenschnitt`); }
+function clipListNoted(){ clearSel(); const n = clipListAll().length; toastAct(n === 1 ? 'Vorgemerkt – weitere Abschnitte markieren' : `${n} Abschnitte vorgemerkt`, `Clips öffnen (${n})`, () => openClips('list')); }
 $('#selList').onclick = clipListToggle;
 function secShow(x){   // Abschnitt im Text markieren und zeigen
   const r = secSpan(x); if (!r || !spans.length) return;
@@ -8509,18 +8522,21 @@ const clipsSheetOpen = () => !$('#sheet').classList.contains('hidden') && !!$('#
 function projMap(){ const m = new Map(); for (const p of J(TS.listProjects() || '[]') || []) m.set(p.id, p); return m; }
 function clRow(q){
   const {x, r} = q;
-  return `<div class="cl-row${r ? '' : ' cut'}" data-id="${x.id}"><button type="button" class="mini" data-a="play" title="Anhören"${r ? '' : ' disabled'}>▶</button>
+  const L = clipListAll(), k = L.indexOf(x), n = L.length;
+  return `<div class="cl-row${r ? '' : ' cut'}" data-id="${x.id}" draggable="true"><span class="cl-nr" title="Ziehen zum Umstellen">${k + 1}</span><button type="button" class="mini" data-a="play" title="Anhören"${r ? '' : ' disabled'}>▶</button>
     <button type="button" class="mk-go" title="Im Text zeigen"><span class="mono">${r ? fmtT(r[0]) : '–'}</span><span class="mk-t"><b dir="auto">${esc(secQuote(x) || 'ohne Worte')}</b><i>${r ? fmtD(r[1] - r[0]) + ' s' : 'weggeschnitten – zählt nicht mit'}</i></span></button>
+    ${n > 1 ? `<span class="cl-mv"><button type="button" class="mini" data-a="up" title="Nach oben"${k ? '' : ' disabled'}>↑</button><button type="button" class="mini" data-a="down" title="Nach unten"${k < n - 1 ? '' : ' disabled'}>↓</button></span>` : ''}
     <button type="button" class="mini" data-a="drop" title="Vormerkung entfernen">×</button></div>`;
 }
 function clipsListHtml(){
   const list = clipListAll().map(x => ({x, r: secOut(x)})), ok = list.filter(q => q.r), tot = ok.reduce((s, q) => s + q.r[1] - q.r[0], 0), fmt = clipFmtGet();
   if (!list.length) return `<p class="muted small">Noch nichts vorgemerkt. ${getComputedStyle($('#selList')).display === 'none' ? 'Im Text einen Abschnitt markieren, „Clip“ wählen und dort „Vormerken“.' : 'Im Text einen Abschnitt markieren und „Vormerken“ wählen (Taste V); ohne Markierung merkt V den Satz an der Abspiellinie vor.'} Aus mehreren Abschnitten wird eine Clip-Reihe (je Abschnitt ein Clip) oder ein Zusammenschnitt (alle in einem Clip). Unter „Vorschläge“ stehen Abschnitte, die sich als Clip eignen könnten.</p>`;
   return `<p class="muted small">${!ok.length ? 'Die vorgemerkten Abschnitte sind inzwischen weggeschnitten.' : (ok.length === 1 ? 'Ein Abschnitt' : ok.length + ' Abschnitte') + ', zusammen ' + fmtT(tot) + '.'} Antippen zeigt den Abschnitt im Text.</p>
+    ${ok.length > 1 ? `<div class="row wrap cl-ord"><button type="button" class="btn small" data-a="playall" title="Alle Abschnitte nacheinander in dieser Reihenfolge abspielen">▶ Alle nacheinander</button><span class="muted small">${clipOwnOrder() ? 'Eigene Reihenfolge' : 'Reihenfolge wie im Video'} – mit ↑ ↓ oder durch Ziehen umstellen</span>${clipOwnOrder() ? '<button type="button" class="btn small ghost" data-a="vidorder">Wie im Video ordnen</button>' : ''}</div>` : ''}
     <div class="cl-list">${list.map(clRow).join('')}</div>
     ${ok.length ? `<div class="field"><span>Format der Clips</span><div class="seg-ctl" id="clFmt">${CL_FMTS.map(([v, l]) => `<button type="button" data-fmt="${v}"${v === fmt ? ' class="on"' : ''}>${l}</button>`).join('')}</div></div>` : ''}
     ${ok.length > 1 ? `<label class="row"><input type="checkbox" id="clPart"${lsGet('hc-clippart', '1') !== '0' ? ' checked' : ''}> „Teil 1/${ok.length}“ in jedem Clip der Reihe einblenden</label>` : ''}
-    <div class="row wrap">${ok.length > 1 ? `<button type="button" class="btn primary" data-a="series" title="Jeder Abschnitt wird ein eigener Clip">Clip-Reihe anlegen (${ok.length} Clips)</button><button type="button" class="btn" data-a="best" title="Alle vorgemerkten Abschnitte in einem Clip, in der Reihenfolge des Videos">Zusammenschnitt (${fmtT(tot)})</button>` : ok.length ? '<button type="button" class="btn primary" data-a="one">Als Clip öffnen</button>' : ''}
+    <div class="row wrap">${ok.length > 1 ? `<button type="button" class="btn primary" data-a="series" title="Jeder Abschnitt wird ein eigener Clip">Clip-Reihe anlegen (${ok.length} Clips)</button><button type="button" class="btn" data-a="best" title="Alle vorgemerkten Abschnitte in einem Clip, in der Reihenfolge der Liste">Zusammenschnitt (${fmtT(tot)})</button>` : ok.length ? '<button type="button" class="btn primary" data-a="one">Als Clip öffnen</button>' : ''}
       <button type="button" class="btn small ghost" data-a="clear">Liste leeren</button></div>`;
 }
 function clipsSeriesHtml(){
@@ -8546,10 +8562,30 @@ function openClips(view){
   if (!tokens.length && clipsView !== 'series') clipsView = seriesAll().length ? 'series' : 'list';
   const body = $('#sheetBody'); body.innerHTML = '<div id="clSheet"></div>';
   body.onclick = clipsClick; body.onchange = clipsChange;
-  sheetOnClose = () => { body.onchange = null; };
+  body.ondragstart = e => { const r = e.target.closest && e.target.closest('.cl-list .cl-row[data-id]'); if (!r) return; clDragId = r.dataset.id; r.classList.add('drag'); try { e.dataTransfer.setData('text/plain', clDragId); e.dataTransfer.effectAllowed = 'move'; } catch(_){} };
+  body.ondragover = e => { if (!clDragId) return; const r = e.target.closest('.cl-list .cl-row[data-id]'); if (!r) return; e.preventDefault(); $$('.cl-row.dropb, .cl-row.dropa').forEach(q => q.classList.remove('dropb', 'dropa'));
+    const bx = r.getBoundingClientRect(); r.classList.add(e.clientY < bx.top + bx.height / 2 ? 'dropb' : 'dropa'); };
+  body.ondrop = e => { if (!clDragId) return; e.preventDefault(); const r = e.target.closest('.cl-list .cl-row[data-id]'), x = clipListAll().find(q => q.id === clDragId); const after = r && r.classList.contains('dropa');
+    clDragId = null; if (!r || !x || r.dataset.id === x.id) return renderClipsSheet(); const L = P.clipList;
+    commit(() => { L.splice(L.indexOf(x), 1); const t = L.findIndex(q => q.id === r.dataset.id); L.splice(t + (after ? 1 : 0), 0, x); P.clipOrder = 'own'; }, false); clipListChanged(); };
+  body.ondragend = () => { clDragId = null; $$('.cl-row.drag, .cl-row.dropb, .cl-row.dropa').forEach(q => q.classList.remove('drag', 'dropb', 'dropa')); };
+  sheetOnClose = () => { body.onchange = null; body.ondragstart = body.ondragover = body.ondrop = body.ondragend = null; };
   renderClipsSheet(); openSheet(true);
 }
 $('#clipsBtn').onclick = () => openClips();
+let clDragId = null;
+// Alle vorgemerkten Abschnitte nacheinander abspielen, in der Reihenfolge der Liste; Anhalten bricht ab
+let clPlayRun = 0;
+async function clipsPlayAll(){
+  const rs = clipListAll().map(secOut).filter(Boolean); if (!rs.length) return; const run = ++clPlayRun;
+  for (let k = 0; k < rs.length; k++){
+    if (run !== clPlayRun || !P) return;
+    rangePlay(rs[k]); toast(`Abschnitt ${k + 1} von ${rs.length}`, 1500);
+    await waitMs(150);
+    while (playing && run === clPlayRun) await waitMs(80);
+    if (run !== clPlayRun || outPos < rs[k][1] - 0.15) return;   // von Hand angehalten
+  }
+}
 function clipsChange(e){
   if (e.target.id === 'clPart') lsSet('hc-clippart', e.target.checked ? '1' : '0');
   if (e.target.id === 'clWords'){ clipWordsSet(e.target.value); sugMemo = null; renderClipsSheet(); }
@@ -8560,10 +8596,12 @@ function clipsClick(e){
   const a = e.target.closest('[data-a]'), act = a ? a.dataset.a : '', row = e.target.closest('.cl-row');
   if (act === 'ok') return closeSheet();
   const x = row && row.dataset.id ? clipListAll().find(q => q.id === row.dataset.id) : null;
-  if (x){ if (act === 'play'){ const r = secOut(x); return r ? rangePlay(r) : null; } if (act === 'drop') return clipListDrop(x); if (e.target.closest('.mk-go')) return secShow(x); return; }
+  if (x){ if (act === 'play'){ const r = secOut(x); return r ? rangePlay(r) : null; } if (act === 'drop') return clipListDrop(x); if (act === 'up' || act === 'down') return clipListMove(x, act === 'up' ? -1 : 1); if (e.target.closest('.mk-go')) return secShow(x); return; }
   const sg = row && row.dataset.k != null ? clipSuggest()[+row.dataset.k] : null;
   if (sg){ if (act === 'play') return rangePlay([sg.o1, sg.o2]); if (act === 'take'){ if (clipListAdd(sg.ids, true)) toast('Vorgemerkt'); return; } if (e.target.closest('.mk-go')) return secShow(secOf(sg.ids)); return; }
   if (act === 'takeall'){ let n = 0; for (const q of clipSuggest()) if (!clipListAll().some(p => secSame(p, secOf(q.ids))) && clipListAdd(q.ids, true)) n++; if (n){ clipsView = 'list'; renderClipsSheet(); } return toast(n ? `${n} ${n === 1 ? 'Vorschlag' : 'Vorschläge'} vorgemerkt` : 'Alle Vorschläge sind schon vorgemerkt'); }
+  if (act === 'playall') return clipsPlayAll();
+  if (act === 'vidorder'){ commit(() => clipListSort(true), false); clipListChanged(); return toast('Wieder in der Reihenfolge des Videos'); }
   if (act === 'clear'){ if (!clipListAll().length) return; commit(() => { P.clipList = []; }, false); clipListChanged(); return toast('Liste geleert – „Rückgängig“ holt sie zurück'); }
   if (act === 'one'){ const q = clipListAll().map(secOut).find(Boolean); if (!q) return; closeSheet(); return clipDialog(q[0], q[1]); }
   if (act === 'series') return seriesCreate(clipFmtGet(), !$('#clPart') || $('#clPart').checked);
@@ -8599,7 +8637,15 @@ function bestCreate(fmt){
   const rs = clipListAll().map(secOut).filter(Boolean); if (rs.length < 2) return toast('Für einen Zusammenschnitt braucht es mindestens zwei vorgemerkte Abschnitte');
   if (playing) pausePlay(); saveNow(); closeSheet();
   const name = uniqueName(`${P.name} – Best of`, new Set([...projMap().values()].map(p => p.name)));
-  openClip(clipData(rs, fmt, name), 'Zusammenschnitt erstellt – hier Format, Ausschnitt, Untertitel und Hook einstellen');
+  const c = clipData(rs, fmt, name);
+  // Eigene Reihenfolge (2.55): die Abschnitte nacheinander ans Ende stellen – wie „Abschnitt verschieben“ im Text (P.moves)
+  // Grenzen in der Mitte zwischen benachbarten Abschnitten: Dazwischen ist im Clip ohnehin alles herausgeschnitten, so wandert
+  // jeder Abschnitt ganz mit, auch sein erstes und letztes Wort.
+  if (clipOwnOrder()){ const xs = clipListAll().filter(x => secOut(x)), by = xs.slice().sort((p, q) => p.at - q.at);
+    for (const x of xs){ const k = by.indexOf(x), pv = by[k - 1], nx = by[k + 1];
+      const a = r3(pv ? Math.max((pv.end + x.at) / 2, x.at - 0.5) : Math.max(0, x.at - 0.5)), b = r3(nx ? Math.min((x.end + nx.at) / 2, x.end + 0.5) : x.end + 0.5);
+      c.moves = [...(c.moves || []), {a, b, to: null}]; c.splits = [...(c.splits || []), a, b]; } }
+  openClip(c, 'Zusammenschnitt erstellt – hier Format, Ausschnitt, Untertitel und Hook einstellen');
 }
 // ── Reihe verwalten ──
 function seriesSave(){ saveNow(); if (clipsSheetOpen()) renderClipsSheet(); }
